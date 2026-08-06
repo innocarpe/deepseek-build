@@ -92,7 +92,7 @@ When the vendor tree lands (W1 integrate / G004+):
 | Concern | Direction |
 |---------|-----------|
 | Cargo | Prefer product root `Cargo.toml` as the **release workspace**; vendor crates as members or path deps. Avoid requiring users to `cd third_party/grok-build` for install. |
-| CI | Document in W1 if full Grok tree is not yet in `product-ci`; path-filter heavy lanes; shared Rust cache pattern may extend. |
+| CI | Document in W1 if full Grok tree is not yet in `ci.yml` / CI workflow; path-filter heavy lanes; shared Rust cache pattern may extend. |
 | Toolchain | Align `rust-toolchain.toml` with what the vendored tree needs (document drift in spike + integrate PRs). |
 | DotSlash / protoc | Grok build may require DotSlash + `bin/protoc`; product install docs must list these when building from source. |
 

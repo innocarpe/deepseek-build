@@ -1,45 +1,45 @@
 # GitHub Actions
 
-Product CI only — **no process-police**.
+Build/test CI only — **no process-police** (PR title/label regex bots).
 
 ## Primary workflow
 
 | Workflow | File | Required check name |
 |----------|------|---------------------|
-| **product-ci** | [`product-ci.yml`](./product-ci.yml) | **`gate`** (check run name) |
+| **CI** | [`ci.yml`](./ci.yml) | **`required`** (check run name) |
+
+GitHub UI shows checks as `CI / <job>` (e.g. `CI / fmt`, `CI / test`, `CI / required`).
 
 ### Jobs (parallel when paths match)
 
 | Job | When | Work |
 |-----|------|------|
-| `detect-paths` | always | `dorny/paths-filter` |
-| `cargo-fmt` | rust paths | `cargo fmt --check` |
-| `cargo-clippy` | rust paths | clippy |
-| `cargo-test-workspace` | rust paths | `cargo test --workspace` |
-| `offline-smoke` | product/smoke paths | `./scripts/smoke-dogfood.sh` |
-| `cargo-npm-version` | version files | SemVer match (no compile) |
-| **`gate`** | **always** | aggregate; branch protection requires this |
+| `changes` | always | `dorny/paths-filter` |
+| `fmt` | rust paths | `cargo fmt --check` |
+| `clippy` | rust paths | clippy |
+| `test` | rust paths | `cargo test --workspace` |
+| `smoke` | product/smoke paths | `./scripts/smoke-dogfood.sh` |
+| `semver` | version files | Cargo/npm SemVer match (no compile) |
+| **`required`** | **always** | aggregate; branch protection requires this |
 
 ```text
 PR / push
-   └─ detect-paths
+   └─ changes
          ├─ fmt ──────┐
          ├─ clippy ───┤  (parallel if rust)
          ├─ test ─────┤
          ├─ smoke ────┤  (parallel if product paths)
          ├─ semver ───┤  (if version files)
-         └─ gate (always) ← require this check only
+         └─ required (always) ← require this check only
 ```
 
 ### Why not only separate path-filtered workflows?
 
 GitHub treats **never-run required checks as failing**. Docs-only PRs would never
-report `rust-test` and could not merge. So:
+report `test` and could not merge. So:
 
 - **Work** is still split and parallel (jobs, not one serial mega-script).
-- **One always-on `gate`** is the only status check you should require.
-
-Legacy split YAMLs (`rust-fmt.yml`, etc.) were removed in favor of this pattern.
+- **One always-on `required`** is the only status check you should require.
 
 ## Caching
 
@@ -58,7 +58,7 @@ Legacy split YAMLs (`rust-fmt.yml`, etc.) were removed in favor of this pattern.
 | **smoke** | rust + `package.json`, `npm/**`, smoke/install scripts |
 | **semver** | `Cargo.toml`, `package.json`, check-semver scripts |
 
-Docs-only → detect + gate only (~seconds).
+Docs-only → `changes` + `required` only (~seconds).
 
 ## Not in CI
 
@@ -73,10 +73,14 @@ Docs-only → detect + gate only (~seconds).
 Require **exactly**:
 
 ```text
-gate
+required
 ```
 
-(Do **not** require individual fmt/clippy/test job names — path-skipped jobs would break merges.)
+(Do **not** require individual `fmt` / `clippy` / `test` job names — path-skipped jobs would break merges.)
+
+**Migration note:** older rulesets may still require `gate` (from the former
+`product-ci` workflow). Update the required check name to **`required`** when
+this lands on `main`.
 
 ## Local mirrors
 

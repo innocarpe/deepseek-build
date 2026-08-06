@@ -1,12 +1,14 @@
-# Product CI — parallel path-aware jobs + always-green merge gate.
+# CI — parallel path-aware jobs + always-green required check.
 # Not process-police. Not one serial mega-job.
 #
 # Why one workflow with many jobs (not only separate YAML files)?
 # GitHub treats *skipped* required checks as failures. Separate path-filtered
 # workflows never report when docs-only → branch protection blocks merges.
-# A single always-on `gate` job aggregates parallel work and stays required.
+# A single always-on `required` job aggregates parallel work and stays required.
+#
+# UI: "CI / fmt", "CI / test", "CI / required" (workflow name + job name).
 
-name: product-ci
+name: CI
 
 on:
   push:
@@ -15,7 +17,7 @@ on:
     branches: [main]
 
 concurrency:
-  group: product-ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -26,7 +28,7 @@ jobs:
   # Path filter — cheap always-on detector
   # ---------------------------------------------------------------------------
   changes:
-    name: detect-paths
+    name: changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -46,7 +48,7 @@ jobs:
               - 'rust-toolchain.toml'
               - 'rustfmt.toml'
               - 'clippy.toml'
-              - '.github/workflows/product-ci.yml'
+              - '.github/workflows/ci.yml'
             smoke:
               - 'crates/**'
               - 'Cargo.toml'
@@ -57,19 +59,19 @@ jobs:
               - 'scripts/smoke-dogfood.sh'
               - 'scripts/check-semver.sh'
               - 'scripts/install.sh'
-              - '.github/workflows/product-ci.yml'
+              - '.github/workflows/ci.yml'
             semver:
               - 'Cargo.toml'
               - 'package.json'
               - 'scripts/check-semver.sh'
               - 'npm/scripts/check-version-match.js'
-              - '.github/workflows/product-ci.yml'
+              - '.github/workflows/ci.yml'
 
   # ---------------------------------------------------------------------------
-  # Parallel product jobs (only when paths match)
+  # Parallel jobs (only when paths match)
   # ---------------------------------------------------------------------------
   fmt:
-    name: cargo-fmt
+    name: fmt
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
@@ -89,7 +91,7 @@ jobs:
       - run: cargo fmt --all -- --check
 
   clippy:
-    name: cargo-clippy
+    name: clippy
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
@@ -109,7 +111,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -W clippy::all
 
   test:
-    name: cargo-test-workspace
+    name: test
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
@@ -128,7 +130,7 @@ jobs:
       - run: cargo test --workspace
 
   smoke:
-    name: offline-smoke
+    name: smoke
     needs: changes
     if: needs.changes.outputs.smoke == 'true'
     runs-on: ubuntu-latest
@@ -155,7 +157,7 @@ jobs:
           DEEPSEEK_API_KEY: ""
 
   semver:
-    name: cargo-npm-version
+    name: semver
     needs: changes
     if: needs.changes.outputs.semver == 'true'
     runs-on: ubuntu-latest
@@ -173,16 +175,16 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Always-on merge gate (branch protection / rulesets should require THIS name)
-  # Context shown in GitHub UI: "product-ci / gate"
+  # Context shown in GitHub UI: "CI / required"
   # ---------------------------------------------------------------------------
-  gate:
-    name: gate
+  required:
+    name: required
     needs: [changes, fmt, clippy, test, smoke, semver]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Aggregate product CI
+      - name: Aggregate CI results
         run: |
           set -euo pipefail
           echo "changes=${{ needs.changes.result }}"
@@ -193,9 +195,9 @@ jobs:
           echo "semver=${{ needs.semver.result }}"
 
           fail=0
-          # detect-paths must succeed
+          # path detect must succeed
           if [[ "${{ needs.changes.result }}" != "success" ]]; then
-            echo "::error::path detect failed"
+            echo "::error::changes (path detect) failed"
             fail=1
           fi
 
@@ -221,4 +223,4 @@ jobs:
           if [[ "$fail" -ne 0 ]]; then
             exit 1
           fi
-          echo "product-ci gate green"
+          echo "CI required check green"

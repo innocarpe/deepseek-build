@@ -199,7 +199,7 @@ Units 2x-W0-2 + 2x-W0-3:
 ## G004 — W1-Integrate
 Unit 2x-W1-1:
 - Integrate Grok tree per ADR-0008
-- Document CI plan if full tree not yet in product-ci
+- Document CI plan if full tree not yet in CI workflow (`ci.yml`)
 - Allow Cargo/npm **2.0.0-alpha.N** when integration branch starts shipping binaries
 
 ## G005 — W1-EntryTUI

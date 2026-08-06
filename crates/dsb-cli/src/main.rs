@@ -10,16 +10,17 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use dsb_agent::{Agent, AgentConfig, Preset, SessionStore, TurnEvent};
-use dsb_config::{BuildHome, Credentials};
+use dsb_config::BuildHome;
 use dsb_context::discover_skills_index;
 use dsb_provider_deepseek::{Client, ClientConfig, ReasoningEffort};
 use dsb_tools::{AskChoice, Scope};
 
+mod onboard;
 mod theme;
 use theme::{Role, Theme};
 
 /// Resolve invocation name for help/version (`deepseek-build` or `dsb`).
-fn invocation_name() -> &'static str {
+pub(crate) fn invocation_name() -> &'static str {
     let arg0 = std::env::args().next().unwrap_or_default();
     let base = Path::new(&arg0)
         .file_name()
@@ -124,6 +125,28 @@ enum Commands {
     /// Skills index (stable prefix names; bodies load via tool `skill`).
     #[command(subcommand)]
     Skills(SkillsCmd),
+    /// First-time setup: save DeepSeek API key (interactive).
+    Setup {
+        /// Non-interactive: write key from this flag (prefer env in CI).
+        #[arg(long, env = "DEEPSEEK_API_KEY")]
+        api_key: Option<String>,
+    },
+    /// Auth helpers (login / status / logout).
+    #[command(subcommand)]
+    Auth(AuthCmd),
+}
+
+#[derive(Debug, Subcommand)]
+enum AuthCmd {
+    /// Interactive login (same as `setup`).
+    Login {
+        #[arg(long, env = "DEEPSEEK_API_KEY")]
+        api_key: Option<String>,
+    },
+    /// Show whether a key is configured (masked).
+    Status,
+    /// Remove saved credentials file (does not unset env).
+    Logout,
 }
 
 #[derive(Debug, Subcommand)]
@@ -155,13 +178,15 @@ fn parse_cli() -> Cli {
     };
     let long_about = format!(
         "DeepSeek Build — DeepSeek-native terminal coding agent.\n\n\
-Set DEEPSEEK_API_KEY or ~/.deepseek-build/credentials.json.\n\
+First run: `{name} setup` (or just `{name} chat` — prompts for API key on TTY).\n\
+Key storage: ~/.deepseek-build/credentials.json (0600) or DEEPSEEK_API_KEY.\n\
 Commands: `deepseek-build` (primary) and `dsb` (alias) are the same program.\n\
 Version is always full SemVer (MAJOR.MINOR.PATCH), e.g. {ver} — never bare \"{bare}\".\n\n\
 Examples:\n  \
+  {name} setup\n  \
+  {name} auth status\n  \
+  {name} --dogfood --session mywork chat\n  \
   {name} run \"explain this repo\"\n  \
-  {name} --dogfood --session mywork --effort high chat\n  \
-  {name} sessions list\n  \
   dsb chat"
     );
     let cmd = Cli::command()
@@ -185,10 +210,22 @@ async fn real_main() -> Result<()> {
     let inv = invocation_name();
     match cli.command {
         None => {
-            eprintln!(
-                "{inv}: no subcommand. Try `{inv} --help`, `{inv} run \"…\"`, or `{inv} chat`."
-            );
+            // First-run friendly: offer setup when unconfigured on TTY.
+            let home = BuildHome::resolve();
+            if !home.has_credentials() && onboard::can_prompt_setup() {
+                eprintln!("{inv}: no API key yet — starting setup.\n");
+                onboard::run_setup_wizard(&home)?;
+                eprintln!("You can start chatting with: `{inv} chat`\n");
+                return Ok(());
+            }
+            eprintln!("{inv}: no subcommand. Try `{inv} setup`, `{inv} chat`, or `{inv} --help`.");
             std::process::exit(2);
+        }
+        Some(Commands::Setup { ref api_key }) => {
+            run_setup_cmd(api_key.as_deref())?;
+        }
+        Some(Commands::Auth(ref cmd)) => {
+            run_auth_cmd(cmd)?;
         }
         Some(Commands::Run { ref message, pro }) => {
             let text = match message {
@@ -215,6 +252,29 @@ async fn real_main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn run_setup_cmd(api_key: Option<&str>) -> Result<()> {
+    let home = BuildHome::resolve();
+    if let Some(key) = api_key.map(str::trim).filter(|k| !k.is_empty()) {
+        let creds = dsb_config::Credentials::save(&home, key)?;
+        println!(
+            "Saved credentials → {} ({})",
+            home.credentials_path().display(),
+            creds.masked_key()
+        );
+        return Ok(());
+    }
+    onboard::run_setup_wizard(&home)?;
+    Ok(())
+}
+
+fn run_auth_cmd(cmd: &AuthCmd) -> Result<()> {
+    match cmd {
+        AuthCmd::Login { api_key } => run_setup_cmd(api_key.as_deref()),
+        AuthCmd::Status => onboard::print_auth_status(),
+        AuthCmd::Logout => onboard::logout(),
+    }
 }
 
 fn run_skills_cmd(cli: &Cli, cmd: &SkillsCmd) -> Result<()> {
@@ -341,9 +401,12 @@ fn persist_if_needed(agent: &Agent, session_id: Option<&str>) -> Result<()> {
 
 async fn build_agent(cli: &Cli) -> Result<Agent> {
     let home = BuildHome::resolve();
-    let creds = Credentials::load(&home).context(
-        "missing API key — set DEEPSEEK_API_KEY or create ~/.deepseek-build/credentials.json",
-    )?;
+    // First-run: chat/run on TTY open setup wizard instead of a dead-end error.
+    let interactive = matches!(
+        &cli.command,
+        Some(Commands::Chat | Commands::Repl | Commands::Run { .. })
+    ) && onboard::can_prompt_setup();
+    let creds = onboard::load_or_setup(interactive).context("credentials")?;
     let mut cfg = ClientConfig::new(creds.api_key());
     if let Some(url) = &cli.base_url {
         cfg = cfg.with_base_url(url);

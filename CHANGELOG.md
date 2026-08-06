@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.0 — 2026-08-06
+
+### Added
+
+- **First-run setup onboarding** — `setup` / `auth login|status|logout`
+- TTY `chat`/`run` auto-prompt for API key when missing; saves `credentials.json` (0600)
+- Bare `deepseek-build` with no key starts setup on TTY
+- User guide `00-setup.md`
+
 ## Unreleased
 
 ### CI

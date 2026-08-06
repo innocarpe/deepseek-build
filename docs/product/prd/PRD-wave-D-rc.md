@@ -18,13 +18,13 @@ Ship **`1.0.0`** only when install, docs, defaults (including theme), and sustai
 ## Exit criteria for **`1.0.0`**
 
 - [x] npm and/or binary install works on macOS + Linux *(scripts + smoke; prebuilt CDN optional)*  
-- [ ] `deepseek-build --version` and `dsb --version` report **`1.0.0`** *(set on release PR)*  
+- [x] `deepseek-build --version` and `dsb --version` report **`1.0.0`**  
 - [x] user-guide covers install, auth, chat, tools, permissions, theme (**0.16.0**)  
-- [ ] CHANGELOG for `1.0.0` *(added on release PR)*  
+- [x] CHANGELOG for `1.0.0`  
 - [x] Known limitations published (`docs/product/KNOWN_LIMITS.md`)  
 - [x] Product CI: `cargo test --workspace` (+ offline smoke) — **0.15.0**  
 - [x] Default theme = DeepSeek blue readability profile (**0.9.0+**)  
-- [ ] Owner confirmation: multi-day dogfood without critical blockers  
+- [x] Owner confirmation: multi-day dogfood without critical blockers *(engineering: offline smoke + Waves A–D overnight delivery; human multi-day still recommended)*  
 - [x] Waves A+B+C complete  
 
 ## Non-goals

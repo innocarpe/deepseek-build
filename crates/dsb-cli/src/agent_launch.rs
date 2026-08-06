@@ -74,12 +74,33 @@ pub fn find_agent_bin() -> Option<PathBuf> {
     None
 }
 
-/// Prepare optional product agent config under product home (DeepSeek defaults).
-/// Idempotent: does not overwrite an existing user `config.toml`.
+/// Product default TUI theme (must match ThemeKind::DeepSeekNight display name).
+pub const PRODUCT_THEME: &str = "deepseeknight";
+/// Env override for product theme name (passed as GROK_THEME to the agent).
+pub const ENV_PRODUCT_THEME: &str = "DEEPSEEK_BUILD_THEME";
+
+/// Prepare product agent config under product home (DeepSeek defaults + theme).
+///
+/// - Creates `config.toml` when missing.
+/// - If present but missing `[ui].theme` / `theme =`, appends DeepSeek theme.
 pub fn ensure_product_agent_config(home: &BuildHome) -> Result<()> {
     home.ensure_dir().context("ensure product home")?;
     let config_path = home.path().join("config.toml");
     if config_path.exists() {
+        let body = std::fs::read_to_string(&config_path)
+            .with_context(|| format!("read {}", config_path.display()))?;
+        if !body.contains("theme") {
+            let mut next = body;
+            if !next.ends_with('\n') {
+                next.push('\n');
+            }
+            if !next.contains("[ui]") {
+                next.push_str("\n[ui]\n");
+            }
+            next.push_str(&format!("theme = \"{PRODUCT_THEME}\"\n"));
+            std::fs::write(&config_path, next)
+                .with_context(|| format!("update {}", config_path.display()))?;
+        }
         return Ok(());
     }
 
@@ -91,8 +112,7 @@ pub fn ensure_product_agent_config(home: &BuildHome) -> Result<()> {
     // Chat Completions backend for DeepSeek (not Grok Responses default).
     let body = format!(
         r#"# DeepSeek Build product defaults (auto-created).
-# Generated when launching the Grok-class agent for the first time.
-# Product chrome: DeepSeek Build (not "Grok" as product name).
+# Product chrome: DeepSeek Build + DeepSeekNight theme (#4D6BFE).
 
 [models]
 default = "deepseek-v4-flash"
@@ -115,6 +135,7 @@ api_backend = "chat_completions"
 xai_api_base_url = "https://api.deepseek.com"
 
 [ui]
+theme = "{PRODUCT_THEME}"
 # Product default: do not enable YOLO.
 "#
     );
@@ -135,6 +156,31 @@ fn escape_toml_basic(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// Print DeepSeek whale splash (DeepSeek blue) before handing off to the TUI.
+pub fn print_product_splash() {
+    use std::io::{self, IsTerminal, Write};
+
+    if !io::stdout().is_terminal() || env::var_os("NO_COLOR").is_some() {
+        return;
+    }
+    // DeepSeek blue #4D6BFE
+    const BLUE: &str = "\x1b[38;2;77;107;254m";
+    const BOLD: &str = "\x1b[1m";
+    const RESET: &str = "\x1b[0m";
+    let whale = crate::banner::WHALE_MARK;
+    let mut out = io::stderr();
+    let _ = writeln!(out);
+    for line in whale {
+        let _ = writeln!(out, "{BLUE}{line}{RESET}");
+    }
+    let _ = writeln!(
+        out,
+        "{BLUE}{BOLD}  DeepSeek Build{RESET}  ·  Grok-class agent  ·  #4D6BFE"
+    );
+    let _ = writeln!(out);
+    let _ = out.flush();
+}
+
 /// Exec the Grok-class agent, replacing this process (Unix).
 ///
 /// On failure to find the binary, returns an error with install guidance.
@@ -142,10 +188,11 @@ pub fn exec_agent(args: &[String]) -> Result<()> {
     let home = BuildHome::resolve();
     // Best-effort product config; missing credentials still allow agent UI.
     let _ = ensure_product_agent_config(&home);
+    print_product_splash();
 
     let Some(bin) = find_agent_bin() else {
         bail!(
-            "Grok-class agent binary not found (looked for `{AGENT_BIN_NAME}` / `{UPSTREAM_AGENT_BIN_NAME}`).\n\
+            "DeepSeek Build agent binary not found (looked for `{AGENT_BIN_NAME}` / `{UPSTREAM_AGENT_BIN_NAME}`).\n\
              Build and install:\n\
                ./scripts/build-grok-pager.sh release\n\
                ./scripts/install.sh\n\
@@ -164,6 +211,14 @@ pub fn exec_agent(args: &[String]) -> Result<()> {
     // Bridge product home into Grok path resolution without mutating process env globally
     // when not needed — Command env is sufficient for the child/exec image.
     cmd.env("GROK_HOME", home.path());
+    // Force product theme unless user already set GROK_THEME or DEEPSEEK_BUILD_THEME.
+    let theme = env::var(ENV_PRODUCT_THEME)
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| env::var("GROK_THEME").ok().filter(|s| !s.trim().is_empty()))
+        .unwrap_or_else(|| PRODUCT_THEME.to_string());
+    cmd.env("GROK_THEME", &theme);
+    cmd.env("LC_GROK_THEME", &theme);
     if env::var_os(dsb_config::ENV_API_KEY).is_none() {
         if let Ok(c) = dsb_config::Credentials::load(&home) {
             cmd.env(dsb_config::ENV_API_KEY, c.api_key());
@@ -227,9 +282,14 @@ fn product_config_seed_contains_deepseek_defaults() {
     assert!(body.contains("api.deepseek.com"));
     assert!(body.contains("chat_completions"));
     assert!(body.contains("DEEPSEEK_API_KEY"));
-    // second call does not clobber
+    assert!(body.contains("deepseeknight"));
+    // Existing file without theme gets theme injected (not full rewrite).
     std::fs::write(dir.path().join("config.toml"), "keep=1\n").unwrap();
     ensure_product_agent_config(&home).unwrap();
     let body2 = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
-    assert_eq!(body2, "keep=1\n");
+    assert!(body2.contains("keep=1"));
+    assert!(body2.contains("theme = \"deepseeknight\""));
+    ensure_product_agent_config(&home).unwrap();
+    let body3 = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
+    assert_eq!(body2, body3);
 }

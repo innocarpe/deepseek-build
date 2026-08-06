@@ -1,7 +1,7 @@
 {
   "name": "@innocarpe/deepseek-build",
-  "version": "2.0.0",
-  "description": "DeepSeek Build 2.0.0 — Grok Build–class terminal coding agent with DeepSeek default. CLI: deepseek-build, dsb. (1.x = legacy scaffold.)",
+  "version": "2.0.1",
+  "description": "DeepSeek Build 2.0.1 — Grok-class agent with DeepSeek UI (whale + #4D6BFE). CLI: deepseek-build, dsb.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

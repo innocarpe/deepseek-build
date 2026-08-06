@@ -157,7 +157,7 @@ pub fn to_theme_kind(
 ) -> ThemeKind {
     match appearance {
         SystemAppearance::Light => light_theme.unwrap_or(ThemeKind::GrokDay),
-        SystemAppearance::Dark => dark_theme.unwrap_or(ThemeKind::GrokNight),
+        SystemAppearance::Dark => dark_theme.unwrap_or(ThemeKind::DeepSeekNight),
     }
 }
 
@@ -324,7 +324,7 @@ mod tests {
     #[test]
     fn to_theme_kind_dark_defaults_to_groknight() {
         let result = to_theme_kind(SystemAppearance::Dark, None, None);
-        assert_eq!(result, ThemeKind::GrokNight);
+        assert_eq!(result, ThemeKind::DeepSeekNight);
     }
 
     #[test]
@@ -366,7 +366,7 @@ mod tests {
     fn to_theme_kind_dark_ignores_light_override() {
         let result = to_theme_kind(SystemAppearance::Dark, None, Some(ThemeKind::TokyoNight));
         // Dark appearance should use the dark default, not the light override.
-        assert_eq!(result, ThemeKind::GrokNight);
+        assert_eq!(result, ThemeKind::DeepSeekNight);
     }
 
     #[test]

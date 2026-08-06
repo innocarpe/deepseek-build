@@ -9,7 +9,7 @@ Cargo workspace members for **DeepSeek Build** (`dsb`). Layout follows
 | `dsb-config` | Config + credentials load | M1 |
 | `dsb-provider-deepseek` | DeepSeek Chat Completions client | M1 |
 | `dsb-agent` | Turn / agent loop | planned |
-| `dsb-context` | Stable prefix / cache epochs (spec 10) | planned |
+| `dsb-context` | Stable prefix / cache epochs (spec 10) | M1 |
 | `dsb-tools` | Tool runtime | M2+ |
 
 Build / run from repo root:

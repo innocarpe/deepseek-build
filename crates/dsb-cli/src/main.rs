@@ -183,11 +183,11 @@ Key storage: ~/.deepseek-build/credentials.json (0600) or DEEPSEEK_API_KEY.\n\
 Commands: `deepseek-build` (primary) and `dsb` (alias) are the same program.\n\
 Version is always full SemVer (MAJOR.MINOR.PATCH), e.g. {ver} — never bare \"{bare}\".\n\n\
 Examples:\n  \
-  {name} setup\n  \
-  {name} auth status\n  \
-  {name} --dogfood --session mywork chat\n  \
+  {name}                    # start interactive agent (default)\n  \
+  {name} setup              # first-run API key\n  \
+  {name} --dogfood          # trusted local coding\n  \
   {name} run \"explain this repo\"\n  \
-  dsb chat"
+  dsb"
     );
     let cmd = Cli::command()
         .name(name)
@@ -206,20 +206,21 @@ async fn main() {
 }
 
 async fn real_main() -> Result<()> {
-    let cli = parse_cli();
+    let mut cli = parse_cli();
     let inv = invocation_name();
     match cli.command {
+        // Grok-style default: bare `dsb` / `deepseek-build` enters interactive chat.
         None => {
-            // First-run friendly: offer setup when unconfigured on TTY.
-            let home = BuildHome::resolve();
-            if !home.has_credentials() && onboard::can_prompt_setup() {
-                eprintln!("{inv}: no API key yet — starting setup.\n");
-                onboard::run_setup_wizard(&home)?;
-                eprintln!("You can start chatting with: `{inv} chat`\n");
-                return Ok(());
+            if !io::stdin().is_terminal() {
+                eprintln!(
+                    "{inv}: interactive agent (no args).\n\
+                     Pipe/CI: `{inv} run \"…\"` or `{inv} chat` on a TTY.\n\
+                     Setup: `{inv} setup` · help: `{inv} --help`"
+                );
+                std::process::exit(2);
             }
-            eprintln!("{inv}: no subcommand. Try `{inv} setup`, `{inv} chat`, or `{inv} --help`.");
-            std::process::exit(2);
+            cli.command = Some(Commands::Chat);
+            run_repl(&cli).await?;
         }
         Some(Commands::Setup { ref api_key }) => {
             run_setup_cmd(api_key.as_deref())?;
@@ -402,9 +403,10 @@ fn persist_if_needed(agent: &Agent, session_id: Option<&str>) -> Result<()> {
 async fn build_agent(cli: &Cli) -> Result<Agent> {
     let home = BuildHome::resolve();
     // First-run: chat/run on TTY open setup wizard instead of a dead-end error.
+    // Chat (including bare CLI default) and TTY run: offer setup wizard if needed.
     let interactive = matches!(
         &cli.command,
-        Some(Commands::Chat | Commands::Repl | Commands::Run { .. })
+        None | Some(Commands::Chat | Commands::Repl | Commands::Run { .. })
     ) && onboard::can_prompt_setup();
     let creds = onboard::load_or_setup(interactive).context("credentials")?;
     let mut cfg = ClientConfig::new(creds.api_key());
@@ -465,7 +467,7 @@ fn wants_interactive_permissions(cli: &Cli) -> bool {
         return io::stdin().is_terminal();
     }
     match &cli.command {
-        Some(Commands::Chat | Commands::Repl) => io::stdin().is_terminal(),
+        None | Some(Commands::Chat | Commands::Repl) => io::stdin().is_terminal(),
         _ => false,
     }
 }
@@ -544,45 +546,12 @@ async fn run_once(cli: &Cli, message: &str, pro: bool) -> Result<()> {
 async fn run_repl(cli: &Cli) -> Result<()> {
     let mut agent = build_agent(cli).await?;
     let session_id = bind_session(&mut agent, cli)?;
-    let inv = invocation_name();
-    let t = Theme::default_readable();
-    println!(
-        "{}",
-        t.paint(
-            Role::Accent,
-            &format!(
-                "{inv} chat — DeepSeek Build (Flash default). /pro /flash /preset /model /quit"
-            )
-        )
-    );
-    eprintln!(
-        "{}",
-        t.paint(
-            Role::Model,
-            &format!("[prefix_epoch={}]", agent.prefix_epoch_short())
-        )
-    );
-    if let Some(id) = &session_id {
-        eprintln!(
-            "{}",
-            t.paint(
-                Role::Model,
-                &format!("[session={id} — turns are persisted]")
-            )
-        );
-    }
-    if cli.effort.is_some() || cli.no_thinking || cli.thinking {
-        eprintln!(
-            "[surface effort={} thinking={}]",
-            cli.effort.as_deref().unwrap_or("default"),
-            if cli.no_thinking { "off" } else { "on" }
-        );
-    }
+    print_welcome_banner(cli, &agent, session_id.as_deref());
 
     let stdin = io::stdin();
     let mut stdout = io::stdout();
     loop {
-        print!("> ");
+        print!("❯ ");
         stdout.flush()?;
         let mut line = String::new();
         let n = stdin.lock().read_line(&mut line)?;
@@ -593,9 +562,15 @@ async fn run_repl(cli: &Cli) -> Result<()> {
         if line.is_empty() {
             continue;
         }
-        if line == "/quit" || line == "/exit" || line == ":q" {
+        if line == "/quit" || line == "/exit" || line == ":q" || line == "/q" {
             persist_if_needed(&agent, session_id.as_deref())?;
+            let t = Theme::default_readable();
+            println!("{}", t.paint(Role::Model, "bye."));
             break;
+        }
+        if line == "/help" || line == "/?" {
+            print_repl_help();
+            continue;
         }
 
         let show_reasoning = cli.show_reasoning;
@@ -605,7 +580,13 @@ async fn run_repl(cli: &Cli) -> Result<()> {
         {
             Ok(outcome) => {
                 println!();
-                eprintln!("[{}]", outcome.route.visibility_line());
+                eprintln!(
+                    "{}",
+                    Theme::default_readable().paint(
+                        Role::Model,
+                        &format!("[{}]", outcome.route.visibility_line())
+                    )
+                );
                 if let Err(e) = persist_if_needed(&agent, session_id.as_deref()) {
                     eprintln!("[warn] session persist failed: {e:#}");
                 }
@@ -616,6 +597,79 @@ async fn run_repl(cli: &Cli) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn print_welcome_banner(cli: &Cli, agent: &Agent, session_id: Option<&str>) {
+    let inv = invocation_name();
+    let ver = env!("CARGO_PKG_VERSION");
+    let t = Theme::default_readable();
+    let cwd = cli
+        .cwd
+        .clone()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let dog = if cli.dogfood { "dogfood" } else { "safe" };
+    println!();
+    println!(
+        "{}",
+        t.paint(Role::Accent, &format!("DeepSeek Build  v{ver}  ·  {inv}"))
+    );
+    println!(
+        "{}",
+        t.paint(
+            Role::Model,
+            "DeepSeek-native coding agent  ·  type to chat  ·  /help  ·  /quit"
+        )
+    );
+    println!(
+        "{}",
+        t.paint(
+            Role::Model,
+            &format!(
+                "cwd {}  ·  profile {}  ·  epoch {}",
+                cwd.display(),
+                dog,
+                agent.prefix_epoch_short()
+            )
+        )
+    );
+    if let Some(id) = session_id {
+        println!(
+            "{}",
+            t.paint(Role::Tool, &format!("session {id} (persisted)"))
+        );
+    }
+    if cli.effort.is_some() || cli.no_thinking || cli.thinking {
+        println!(
+            "{}",
+            t.paint(
+                Role::Model,
+                &format!(
+                    "effort={} thinking={}",
+                    cli.effort.as_deref().unwrap_or("default"),
+                    if cli.no_thinking { "off" } else { "on" }
+                )
+            )
+        );
+    }
+    println!();
+}
+
+fn print_repl_help() {
+    let t = Theme::default_readable();
+    println!(
+        "{}",
+        t.paint(
+            Role::Accent,
+            "Commands:  /pro <msg>  /flash <msg>  /preset flash|balanced|max  /help  /quit"
+        )
+    );
+    println!(
+        "{}",
+        t.paint(
+            Role::Model,
+            "Flags next launch: --dogfood  --session ID  --effort high  --show-reasoning"
+        )
+    );
 }
 
 fn render_event(ev: TurnEvent, show_reasoning: bool) {

@@ -6,7 +6,7 @@ use dsb_context::{
 };
 use dsb_tools::{
     PermissionPolicy, Scope, ToolExecutor, ToolName, ToolRequest, ToolResponse,
-    default_coding_policy, dogfood_coding_policy, tool_definitions,
+    default_coding_policy, tool_definitions,
 };
 use serde_json::json;
 use thiserror::Error;
@@ -182,6 +182,7 @@ pub fn parent_after_worker(parent_tools: &mut ToolExecutor, outcome: &WorkerOutc
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dsb_tools::dogfood_coding_policy;
     use std::fs;
     use tempfile::tempdir;
 

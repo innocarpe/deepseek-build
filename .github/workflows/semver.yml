@@ -1,0 +1,45 @@
+# Lightweight: Cargo ↔ npm SemVer match only. No Rust compile.
+name: semver
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.toml"
+      - "package.json"
+      - "scripts/check-semver.sh"
+      - "npm/scripts/check-version-match.js"
+      - ".github/workflows/semver.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "Cargo.toml"
+      - "package.json"
+      - "scripts/check-semver.sh"
+      - "npm/scripts/check-version-match.js"
+      - ".github/workflows/semver.yml"
+
+concurrency:
+  group: semver-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: cargo-npm-version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ripgrep
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ripgrep
+          fi
+
+      - name: check-semver
+        run: ./scripts/check-semver.sh
+
+      - name: npm version-check (if package.json)
+        run: node npm/scripts/check-version-match.js

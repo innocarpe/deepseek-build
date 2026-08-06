@@ -18,4 +18,18 @@ if [[ ! "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ 
   exit 1
 fi
 
+# When package.json exists, npm version must match workspace SemVer (ADR 0006).
+if [[ -f package.json ]]; then
+  npm_ver="$(node -e "console.log(require('./package.json').version)" 2>/dev/null || true)"
+  if [[ -z "$npm_ver" ]]; then
+    echo "check-semver: could not read package.json version" >&2
+    exit 1
+  fi
+  if [[ "$npm_ver" != "$ver" ]]; then
+    echo "check-semver: package.json version '$npm_ver' != Cargo.toml '$ver'" >&2
+    exit 1
+  fi
+  echo "check-semver: npm matches cargo ($npm_ver)"
+fi
+
 echo "check-semver: ok ($ver)"

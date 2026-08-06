@@ -1,92 +1,89 @@
 # GitHub Actions
 
-Product CI only — **no process-police** (no PR title regex, kind-label counters, markdown path inventories).
+Product CI only — **no process-police**.
 
-## Workflows (split + path-gated)
+## Primary workflow
 
-Jobs are **separate workflows** so they:
+| Workflow | File | Required check name |
+|----------|------|---------------------|
+| **product-ci** | [`product-ci.yml`](./product-ci.yml) | **`gate`** (check run name) |
 
-1. **Skip entirely** when paths do not match (docs-only PR → no Rust CI).
-2. **Run in parallel** when multiple paths match (fmt ∥ clippy ∥ test ∥ smoke).
-3. **Share Cargo caches** via Swatinem `shared-key: workspace-v1` (write mainly on `main`).
+### Jobs (parallel when paths match)
 
-| Workflow | File | Runs when | What |
-|----------|------|-----------|------|
-| **rust-fmt** | [`rust-fmt.yml`](./rust-fmt.yml) | `crates/**`, Cargo/*, rustfmt | `cargo fmt --check` |
-| **rust-clippy** | [`rust-clippy.yml`](./rust-clippy.yml) | `crates/**`, Cargo/*, clippy.toml | `cargo clippy --workspace` |
-| **rust-test** | [`rust-test.yml`](./rust-test.yml) | `crates/**`, Cargo/* | `cargo test --workspace` |
-| **smoke-dogfood** | [`smoke-dogfood.yml`](./smoke-dogfood.yml) | crates + scripts + package/npm | offline `./scripts/smoke-dogfood.sh` |
-| **semver** | [`semver.yml`](./semver.yml) | `Cargo.toml` / `package.json` only | version match (no compile) |
+| Job | When | Work |
+|-----|------|------|
+| `detect-paths` | always | `dorny/paths-filter` |
+| `cargo-fmt` | rust paths | `cargo fmt --check` |
+| `cargo-clippy` | rust paths | clippy |
+| `cargo-test-workspace` | rust paths | `cargo test --workspace` |
+| `offline-smoke` | product/smoke paths | `./scripts/smoke-dogfood.sh` |
+| `cargo-npm-version` | version files | SemVer match (no compile) |
+| **`gate`** | **always** | aggregate; branch protection requires this |
 
-```mermaid
-flowchart LR
-  subgraph paths["path filters"]
-    R[crates / Cargo]
-    S[scripts / npm]
-    V[Cargo.toml / package.json]
-    D[docs only]
-  end
-  subgraph parallel["parallel when matched"]
-    F[rust-fmt]
-    C[rust-clippy]
-    T[rust-test]
-    M[smoke-dogfood]
-    E[semver]
-  end
-  R --> F
-  R --> C
-  R --> T
-  R --> M
-  S --> M
-  V --> E
-  D -.->|no product CI| X[skip]
+```text
+PR / push
+   └─ detect-paths
+         ├─ fmt ──────┐
+         ├─ clippy ───┤  (parallel if rust)
+         ├─ test ─────┤
+         ├─ smoke ────┤  (parallel if product paths)
+         ├─ semver ───┤  (if version files)
+         └─ gate (always) ← require this check only
 ```
+
+### Why not only separate path-filtered workflows?
+
+GitHub treats **never-run required checks as failing**. Docs-only PRs would never
+report `rust-test` and could not merge. So:
+
+- **Work** is still split and parallel (jobs, not one serial mega-script).
+- **One always-on `gate`** is the only status check you should require.
+
+Legacy split YAMLs (`rust-fmt.yml`, etc.) were removed in favor of this pattern.
 
 ## Caching
 
-| Setting | Value | Why |
-|---------|--------|-----|
-| Action | `Swatinem/rust-cache@v2` | registry + git + target |
-| `shared-key` | `workspace-v1` | fmt/clippy/test/smoke share warm deps |
-| `save-if` | `main` only | PRs read cache; avoid PR stampede writes |
-| `cache-on-failure` | `true` | recover next run after red |
+| Setting | Value |
+|---------|--------|
+| Action | `Swatinem/rust-cache@v2` |
+| `shared-key` | `workspace-v1` |
+| `save-if` | `main` only |
+| `cache-on-failure` | `true` |
 
-Bump `shared-key` (e.g. `workspace-v2`) if the cache key needs a hard invalidate.
+## Path filters (skip expensive work)
 
-## What we intentionally do **not** run
+| Filter | Paths |
+|--------|--------|
+| **rust** | `crates/**`, `Cargo.toml`, `Cargo.lock`, toolchain, rustfmt, clippy, this workflow |
+| **smoke** | rust + `package.json`, `npm/**`, smoke/install scripts |
+| **semver** | `Cargo.toml`, `package.json`, check-semver scripts |
 
-| Not in CI | Reason |
-|-----------|--------|
-| Live DeepSeek API | Needs secrets; optional local only |
-| npm publish | Owner-gated (ADR 0007) |
-| Full monorepo rebuild after each job in one YAML | Split workflows + shared cache |
-| Process CI (title/label fashion) | Docs + review harness |
+Docs-only → detect + gate only (~seconds).
+
+## Not in CI
+
+| Skip | Why |
+|------|-----|
+| Live DeepSeek API | Secrets; local optional |
+| npm publish | Owner-gated ADR 0007 |
+| Process-police | Docs + review harness |
+
+## Branch protection / ruleset
+
+Require **exactly**:
+
+```text
+gate
+```
+
+(Do **not** require individual fmt/clippy/test job names — path-skipped jobs would break merges.)
 
 ## Local mirrors
 
 ```bash
-# fmt
 cargo fmt --all -- --check
-
-# clippy
 cargo clippy --workspace --all-targets -- -W clippy::all
-
-# tests
 cargo test --workspace
-
-# smoke (offline)
 ./scripts/smoke-dogfood.sh
-
-# semver only
-./scripts/check-semver.sh
-node npm/scripts/check-version-match.js
+./scripts/check-semver.sh && node npm/scripts/check-version-match.js
 ```
-
-## When to add a new workflow
-
-1. Does a **path-filtered** unit/integration **test** already cover it? Prefer that.
-2. Which **lane**: cheap PR gate vs main-only vs release-only?
-3. Can it **parallel** with existing jobs without a mega-job?
-4. Does it need a **new path filter** so unrelated PRs stay quiet?
-
-Do **not** reintroduce a single `ci.yml` that runs fmt+clippy+test+smoke serially for every PR.

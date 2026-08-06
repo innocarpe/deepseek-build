@@ -71,10 +71,10 @@ mindmap
 
 | Item | Value |
 |------|--------|
-| Version on `main` | Read `Cargo.toml` (expect **`1.0.0`** (Wave D complete)) |
-| Active ultragoal | **`rc-1.0.0` complete** (all waves A–D) |
-| Gates green | **G0–G3**, **G6a** (sessions), **G6b** (skills) |
-| Gates red | **G4**, **G5**, **G6c** (MCP), **G6d** (plan) |
+| Version on `main` | Read `Cargo.toml` (expect **`1.0.0`**) |
+| Active ultragoal | **`rc-1.0.0` complete** (chain A–D ledgers complete) |
+| Gates green | **G0–G5**, **G6a–G6d** (see `docs/GATES.md` — *ledger green ≠ product depth complete*) |
+| Honesty note | **`1.0.0` is tagged**; several L3/MCP/subagent paths are **MVP / thin** — see KNOWN_LIMITS + goal audit |
 
 Do **not** assume chat memory. Re-read `Cargo.toml` version and `omc ultragoal status --plan-id dogfood-0x`.
 

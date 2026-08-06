@@ -15,12 +15,12 @@ Behavioral contracts for what DeepSeek Build **must** do when implemented.
 | 20 | [Model routing Flash/Pro](./20-model-routing.md) | L2 | **ready-for-impl** |
 | 30 | [Thinking & effort](./30-thinking-effort.md) | L1 | **ready-for-impl** |
 | 40 | Core tools surface (small set) | L1 + L3 | TODO |
-| 45 | Snippet edit contract | L1 Deep Code A | TODO (blocks M2 edit) |
+| 45 | [Snippet edit contract](./45-snippet-edit.md) | L1 Deep Code A | **ready-for-impl** (blocks M2 free-form edit) |
 | 50 | Parallelism & background | L3 | TODO |
 | 60 | Subagents (+ worker cache law) | L3 under L2 | TODO |
 | 70 | Skills as structured context | L1 | TODO |
 | 80 | MCP | L1 | TODO |
-| 90 | Side-effect permissions | L1 | TODO (min before shell) |
+| 90 | [Side-effect permissions](./90-permissions.md) | L1 | **ready-for-impl (minimum)** (blocks M2 shell) |
 | 100 | Sessions | L1 | TODO |
 | 110 | Plan mode (light) | L1 | TODO |
 | 120 | Project config | All → config owner | TODO |

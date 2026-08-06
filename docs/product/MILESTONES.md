@@ -53,11 +53,11 @@ North star for every milestone: **wall-clock progress on real coding tasks**
 - [x] Toolchain ADR (0004)  
 - [x] Provider contract ADR (0005)  
 - [x] Specs 10 / 15 / 20 / 30 **ready-for-impl**  
-- [ ] DeepSeek provider client (streaming)  
-- [ ] Stable prefix builder + **golden byte tests**  
-- [ ] Tool-call repair on provider path (**M1 must**, not M6)  
-- [ ] Flash/Pro + effort **flags** (API); polished `/model` UX can wait for M3  
-- [ ] Smoke: multi-turn session with **golden prefix equality and** cache evidence protocol (per provider ADR; not golden-only)  
+- [x] DeepSeek provider client (streaming)  
+- [x] Stable prefix builder + **golden byte tests**  
+- [x] Tool-call repair on provider path (**M1 must**, not M6)  
+- [x] Flash/Pro + effort **flags** (API); polished `/model` UX can wait for M3  
+- [x] Smoke: multi-turn session with **golden prefix equality and** cache evidence protocol (per provider ADR; not golden-only)  
 
 **Not in M1:** full snippet edit, parallel fan-out, subagents, MCP, full TUI polish.
 
@@ -76,8 +76,8 @@ North star for every milestone: **wall-clock progress on real coding tasks**
 
 **Work items (examples)**
 
-- [ ] Spec 45 snippet edit ready (before free-form edit)  
-- [ ] Spec 90 **minimum** (path scopes + bash side-effect declare + ask/deny) — **before** shell  
+- [x] Spec 45 snippet edit ready (before free-form edit)  
+- [x] Spec 90 **minimum** (path scopes + bash side-effect declare + ask/deny) — **before** shell  
 - [ ] Specs 40 / 50 ready  
 - [ ] Tool runtime implementing snippet contract + write bypass law  
 - [ ] Parallel dispatch + ordering / cancel / partial failure (50)  

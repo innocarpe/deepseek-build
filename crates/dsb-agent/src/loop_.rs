@@ -419,9 +419,8 @@ impl Agent {
                 break;
             }
 
-            for call in &tool_calls {
-                self.handle_tool_call(call, &mut on_event)?;
-            }
+            // Spec 50 / G4: concurrent read-only tools; mutating serial after.
+            self.handle_tool_calls_batch(&tool_calls, &mut on_event)?;
             // continue loop for model to consume tool results
         }
 
@@ -432,6 +431,219 @@ impl Agent {
             model_used,
             tool_rounds,
         })
+    }
+
+    /// Spec 50: run read-only tools concurrently (capped), then mutating tools serially.
+    fn handle_tool_calls_batch<F>(
+        &mut self,
+        tool_calls: &[ToolCall],
+        on_event: &mut F,
+    ) -> Result<(), AgentError>
+    where
+        F: FnMut(TurnEvent),
+    {
+        if tool_calls.is_empty() {
+            return Ok(());
+        }
+        if tool_calls.len() == 1 {
+            return self.handle_tool_call(&tool_calls[0], on_event);
+        }
+
+        // Repair arguments first (serial; cheap) so classification uses fixed JSON.
+        let mut prepared: Vec<(ToolCall, Result<serde_json::Value, String>)> = Vec::new();
+        for call in tool_calls {
+            on_event(TurnEvent::ToolCallProposed {
+                name: call.function.name.clone(),
+                arguments: call.function.arguments.clone(),
+            });
+            let schema = self
+                .config
+                .tools
+                .iter()
+                .find(|t| t.function.name == call.function.name)
+                .and_then(|t| t.function.parameters.clone());
+            match repair_tool_arguments(&call.function.arguments, schema.as_ref()) {
+                Ok(outcome) => {
+                    if outcome.repair_applied {
+                        on_event(TurnEvent::ToolRepairApplied {
+                            name: call.function.name.clone(),
+                        });
+                    }
+                    prepared.push((call.clone(), Ok(outcome.arguments)));
+                }
+                Err(e) => prepared.push((call.clone(), Err(e.to_string()))),
+            }
+        }
+
+        let class_input: Vec<(String, serde_json::Value)> = prepared
+            .iter()
+            .map(|(c, r)| {
+                (
+                    c.function.name.clone(),
+                    r.as_ref()
+                        .ok()
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!({})),
+                )
+            })
+            .collect();
+        let (ro_idx, mu_idx) = crate::parallel::partition_indices(&class_input);
+
+        // Parallel read-only: isolated executors (separate snippet tables — safe for reads).
+        if ro_idx.len() > 1 {
+            on_event(TurnEvent::Warning(format!(
+                "parallel_readonly n={} (spec 50 / G4)",
+                ro_idx.len().min(crate::parallel::MAX_PARALLEL_READONLY)
+            )));
+            let workspace = self.tools.workspace.clone();
+            let policy = self.tools.policy.clone();
+            let user_skills = self.tools.user_skills_root.clone();
+            let chunk: Vec<_> = ro_idx
+                .iter()
+                .take(crate::parallel::MAX_PARALLEL_READONLY)
+                .copied()
+                .collect();
+            let mut handles = Vec::new();
+            for i in chunk {
+                let (call, repaired) = &prepared[i];
+                let call = call.clone();
+                let repaired = repaired.clone();
+                let workspace = workspace.clone();
+                let policy = policy.clone();
+                let user_skills = user_skills.clone();
+                handles.push(std::thread::spawn(move || {
+                    let content = match repaired {
+                        Err(e) => serde_json::json!({
+                            "error": "invalid_tool_arguments",
+                            "tool": call.function.name,
+                            "message": e
+                        })
+                        .to_string(),
+                        Ok(args) => {
+                            let mut ex = ToolExecutor::new(workspace, policy);
+                            ex.user_skills_root = user_skills;
+                            match ToolName::parse(&call.function.name) {
+                                Some(name) => {
+                                    let req = ToolRequest {
+                                        name,
+                                        arguments: args,
+                                    };
+                                    match ex.execute(&req) {
+                                        Ok(r) => r.content,
+                                        Err(e) => serde_json::json!({
+                                            "error": "tool_failed",
+                                            "tool": call.function.name,
+                                            "message": e.to_string()
+                                        })
+                                        .to_string(),
+                                    }
+                                }
+                                None => serde_json::json!({
+                                    "error": "unknown_tool",
+                                    "tool": call.function.name
+                                })
+                                .to_string(),
+                            }
+                        }
+                    };
+                    (call.id, content)
+                }));
+            }
+            for h in handles {
+                match h.join() {
+                    Ok((id, content)) => {
+                        self.tail.push(ChatMessage::tool_result(id, content));
+                    }
+                    Err(_) => {
+                        on_event(TurnEvent::Warning(
+                            "parallel tool worker panicked".into(),
+                        ));
+                    }
+                }
+            }
+            // Remainder read-only beyond cap: serial
+            for i in ro_idx
+                .iter()
+                .skip(crate::parallel::MAX_PARALLEL_READONLY)
+                .copied()
+            {
+                self.finish_prepared_call(&prepared[i], on_event)?;
+            }
+        } else {
+            for i in ro_idx {
+                self.finish_prepared_call(&prepared[i], on_event)?;
+            }
+        }
+
+        for i in mu_idx {
+            self.finish_prepared_call(&prepared[i], on_event)?;
+        }
+        Ok(())
+    }
+
+    fn finish_prepared_call<F>(
+        &mut self,
+        prepared: &(ToolCall, Result<serde_json::Value, String>),
+        on_event: &mut F,
+    ) -> Result<(), AgentError>
+    where
+        F: FnMut(TurnEvent),
+    {
+        let (call, repaired) = prepared;
+        let repaired = match repaired {
+            Ok(v) => v.clone(),
+            Err(e) => {
+                on_event(TurnEvent::ToolError {
+                    name: call.function.name.clone(),
+                    error: e.clone(),
+                });
+                let body = serde_json::json!({
+                    "error": "invalid_tool_arguments",
+                    "tool": call.function.name,
+                    "message": e
+                });
+                self.tail
+                    .push(ChatMessage::tool_result(call.id.clone(), body.to_string()));
+                return Ok(());
+            }
+        };
+        let exec_result = if let Some(name) = ToolName::parse(&call.function.name) {
+            let req = ToolRequest {
+                name,
+                arguments: repaired.clone(),
+            };
+            self.tools.execute(&req)
+        } else if call.function.name.starts_with("mcp__") {
+            self.tools.execute_mcp(&call.function.name, &repaired)
+        } else {
+            let body = serde_json::json!({
+                "error": "unknown_tool",
+                "tool": call.function.name
+            });
+            self.tail
+                .push(ChatMessage::tool_result(call.id.clone(), body.to_string()));
+            return Ok(());
+        };
+        match exec_result {
+            Ok(resp) => {
+                self.tail
+                    .push(ChatMessage::tool_result(call.id.clone(), resp.content));
+            }
+            Err(e) => {
+                on_event(TurnEvent::ToolError {
+                    name: call.function.name.clone(),
+                    error: e.to_string(),
+                });
+                let body = serde_json::json!({
+                    "error": "tool_failed",
+                    "tool": call.function.name,
+                    "message": e.to_string()
+                });
+                self.tail
+                    .push(ChatMessage::tool_result(call.id.clone(), body.to_string()));
+            }
+        }
+        Ok(())
     }
 
     fn handle_tool_call<F>(&mut self, call: &ToolCall, on_event: &mut F) -> Result<(), AgentError>
@@ -475,46 +687,7 @@ impl Agent {
             }
         };
 
-        // Built-in tools or MCP wire names (mcp__server__tool).
-        let exec_result = if let Some(name) = ToolName::parse(&call.function.name) {
-            let req = ToolRequest {
-                name,
-                arguments: repaired.clone(),
-            };
-            self.tools.execute(&req)
-        } else if call.function.name.starts_with("mcp__") {
-            self.tools
-                .execute_mcp(&call.function.name, &repaired)
-        } else {
-            let body = serde_json::json!({
-                "error": "unknown_tool",
-                "tool": call.function.name
-            });
-            self.tail
-                .push(ChatMessage::tool_result(call.id.clone(), body.to_string()));
-            return Ok(());
-        };
-
-        match exec_result {
-            Ok(resp) => {
-                self.tail
-                    .push(ChatMessage::tool_result(call.id.clone(), resp.content));
-            }
-            Err(e) => {
-                on_event(TurnEvent::ToolError {
-                    name: call.function.name.clone(),
-                    error: e.to_string(),
-                });
-                let body = serde_json::json!({
-                    "error": "tool_failed",
-                    "tool": call.function.name,
-                    "message": e.to_string()
-                });
-                self.tail
-                    .push(ChatMessage::tool_result(call.id.clone(), body.to_string()));
-            }
-        }
-        Ok(())
+        self.finish_prepared_call(&(call.clone(), Ok(repaired)), on_event)
     }
 
     /// Dual-call cache evidence helper (ADR 0005 substitute).

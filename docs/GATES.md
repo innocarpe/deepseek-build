@@ -11,7 +11,7 @@
 | **G1b** | DeepSeek provider contract ADR (pinned ids) | **green** | `docs/adr/0005-deepseek-provider-contract.md` | innocarpe |
 | **G2** | Specs **10, 15, 20, 30** ready-for-impl | **green** | specs 10/15/20/30 | innocarpe |
 | **G3** | Specs **45** + **90 minimum** ready | **green** | specs 45/90 | innocarpe |
-| **G4** | Spec **50** ready | **red** | — | — |
+| **G4** | Spec **50** ready | **green** | `docs/specs/50-parallelism-background.md` + agent parallel readonly (**0.12.0**) | innocarpe |
 | **G5** | Spec **60** ready | **red** | — | — |
 | **G6a** | Spec **100** sessions ready | **green** | `docs/specs/100-sessions.md` + runtime **0.5.0** (#24) | innocarpe |
 | **G6b** | Spec **70** skills ready | **green** | `docs/specs/70-skills.md` + runtime **0.6.0** (#25) | innocarpe |

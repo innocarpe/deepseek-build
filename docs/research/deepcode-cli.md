@@ -2,6 +2,7 @@
 
 **Upstream:** https://github.com/lessweb/deepcode-cli  
 **Architecture (EN):** https://github.com/lessweb/deepcode-cli/blob/main/docs/architecture_en.md  
+**Pinned review note:** Design extraction reviewed 2026-08-06 against `architecture_en.md` on `main` (re-verify before major edit-contract changes; prefer pinning a commit SHA in future ADRs).  
 **Package:** `@vegamo/deepcode-cli`  
 **DeepSeek docs:** agent integration “Deep Code”
 

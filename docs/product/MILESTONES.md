@@ -3,7 +3,15 @@
 These map 1:1 to **GitHub Milestones** on the repository.  
 Issues and PRs should set a milestone whenever possible (`milestone-aligned` label optional).
 
-North star for every milestone: **wall-clock progress on real coding tasks**.
+North star for every milestone: **wall-clock progress on real coding tasks**  
+**without** violating L1/L2 harness invariants ([HARNESS_PHILOSOPHY](../architecture/HARNESS_PHILOSOPHY.md)).
+
+**Invariant gates (every L3-heavy milestone must restate):**
+
+- Snippet edit safety (when edit exists)  
+- Cache byte-stability / epoch rules  
+- Side-effect permissions for shell/file/network  
+- Worker cache law for subagents  
 
 ---
 
@@ -34,20 +42,24 @@ North star for every milestone: **wall-clock progress on real coding tasks**.
 |--|--|
 | **Goal** | Minimal DeepSeek-native loop that is already cheaper/faster to leave running than a naive client |
 | **Exit criteria** | Headless or TUI-thin loop: user message → model → (optional tools stub) → response; Flash default; Pro escalate; cache contract documented **and** implemented for system/tools prefix stability; API key config without committing secrets |
-| **Specs** | `10` cache, `15` tool-call repair, `20` routing, `30` thinking/effort (+ provider slice of `40`) |
-| **Sources** | L1/L2 first (Deep Code session + Reasonix cache/routing); Grok only for loop shape |
-| **Gate** | [HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.md) accepted; toolchain ADR |
+| **Specs** | `10` cache, `15` tool-call repair, `20` routing, `30` thinking/effort API (+ provider slice of `40` **read-only tools only**) |
+| **Sources** | L1/L2 first; Grok only for loop shape |
+| **Gate** | **G0+G1+G2** — philosophy merged; toolchain ADR; specs 10/15/20/30 ready-for-impl |
+| **Failure if** | Implementation PRs land with TODO specs; no golden prefix bytes; repair deferred to “later” |
 
 **Work items (examples)**
 
 - [x] Harness philosophy doc (Deep Code four pillars + Reasonix + Grok L3)  
-- [ ] Toolchain ADR (language, package name)  
-- [ ] Specs 10 / 15 / 20 / 30 ready  
+- [ ] Toolchain ADR (language, package name, state dir, secrets)  
+- [ ] Provider contract doc (models, stream, thinking/effort fields, cache usage)  
+- [ ] Specs 10 / 15 / 20 / 30 **ready-for-impl**  
 - [ ] DeepSeek provider client (streaming)  
-- [ ] Stable prefix builder + tests (“byte-stable across turns”)  
-- [ ] Tool-call repair on provider path  
-- [ ] Flash/Pro switch + effort flags  
-- [ ] Smoke: one multi-turn session with measurable prefix reuse intent  
+- [ ] Stable prefix builder + **golden byte tests**  
+- [ ] Tool-call repair on provider path (**M1 must**, not M6)  
+- [ ] Flash/Pro + effort **flags** (API); polished `/model` UX can wait for M3  
+- [ ] Smoke: multi-turn session with cache hit telemetry **or** golden prefix equality  
+
+**Not in M1:** full snippet edit, parallel fan-out, subagents, MCP, full TUI polish.
 
 ---
 
@@ -57,15 +69,18 @@ North star for every milestone: **wall-clock progress on real coding tasks**.
 |--|--|
 | **Goal** | Agent can complete small–medium repo tasks without subagents |
 | **Exit criteria** | Tools: read, search/grep, edit, shell; parallel independent tool calls in one turn; background shell + collect output; project instructions (`AGENTS.md` or equivalent) loaded into **cache-safe** slots |
-| **Specs** | **`45` snippet-edit first**, then `40` tools, `50` parallelism |
-| **Sources** | Deep Code pillar A (edit) + small tool set; Grok L3 for parallel/bg only |
+| **Specs** | **`45` snippet-edit**, **`90` minimum permissions**, then `40`, then `50` |
+| **Sources** | Deep Code A+D first; Grok L3 only after L1 tool/perm contracts exist |
+| **Gate** | **G3** (45 + min 90) before mutating tools/shell; **G4** (50) before parallel dispatch |
+| **Failure if** | Free-form whole-file edit as primary path; YOLO shell; parallel tools without 50 |
 
 **Work items (examples)**
 
 - [ ] Spec 45 snippet edit ready (before free-form edit)  
+- [ ] Spec 90 **minimum** (path scopes + bash side-effect declare + ask/deny) — **before** shell  
 - [ ] Specs 40 / 50 ready  
-- [ ] Tool runtime implementing snippet contract  
-- [ ] Parallel dispatch + ordering of results  
+- [ ] Tool runtime implementing snippet contract + write bypass law  
+- [ ] Parallel dispatch + ordering / cancel / partial failure (50)  
 - [ ] Background shell task IDs  
 - [ ] Dogfood: implement a small feature in this repo using the agent  
 

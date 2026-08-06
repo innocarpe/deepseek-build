@@ -8,5 +8,6 @@ Non-binding notes on other tools. **Do not treat as product commitment.**
 | [reasonix.md](reasonix.md) | Cache-first loop, Flash/Pro |
 | [deepcode-cli.md](deepcode-cli.md) | Official DeepSeek CLI surface |
 | [gajae-code.md](gajae-code.md) | Why deferred for v1 |
+| [adversarial-review-2026-08-06-codex-xhigh.md](adversarial-review-2026-08-06-codex-xhigh.md) | Codex xhigh FAIL review of harness philosophy (amendments applied in same design PR) |
 
 When a research insight becomes a product rule, promote it into `docs/product/`, `docs/specs/`, or an ADR — do not leave it only here.

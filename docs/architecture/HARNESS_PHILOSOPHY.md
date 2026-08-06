@@ -91,7 +91,15 @@ These are first-class design pillars for DeepSeek Build. Spec IDs are where they
 
 `bash`, `read`, `write`, `edit`, `ask_user` (or equivalent), light plan update, `web_search` — plus dynamically mounted MCP. Prefer a **small, predictable action language** over an exploding tool zoo.
 
-**Spec:** `45-snippet-edit` (and parts of `40-tools`).
+**Bypass law (normative):**
+
+| Tool | Rule |
+|------|------|
+| `edit` | **Must** use valid `snippet_id` (spec 45). |
+| `write` | **Create-new only** by default, or overwrite only with explicit flag **and** same version/safety policy as edit for existing paths (spec 45/40). Must not become “edit without snippet.” |
+| `bash` | File mutation via shell is a **high side-effect** class (spec 90). Default policy: **ask** (or deny) for write/delete outside an allowlist; never a silent full bypass of snippet safety for routine edits. |
+
+**Spec:** `45-snippet-edit` (and parts of `40-tools`, `90-permissions`).
 
 **Grok note:** Hashline/anchor edits may inform implementation **only if** they satisfy the snippet/version/scope semantics above. Do not replace the contract with a different shape “because Grok has anchors.”
 
@@ -124,6 +132,18 @@ DeepSeek context/prefix cache rewards **stable repeated prefixes** (best-effort;
 **Spec:** `10-cache-contract` (shared Reasonix + Deep Code).
 
 **Reasonix emphasis:** prefix **byte-stability** across turns is an **invariant**, not a nice-to-have. Mid-session mutation of the stable system/tool/memory prefix is a **bug**.
+
+**Ownership when Deep Code session layout and Reasonix byte-stability conflict:**  
+Reasonix **wins on what must stay byte-identical** across turns. Deep Code **wins on which logical sections** belong in the prefix vs tail and on tool/result pairing repair. Spec 10 must encode both; if they clash, **byte-stability of the declared stable sections wins**, and the section boundaries adjust via ADR.
+
+**What “byte-stable” means (minimum for spec 10 — not optional):**
+
+- Canonical serialization (field order, JSON key order, newlines, Unicode normalization)  
+- Epoch / invalidation when tools schema or skills index changes  
+- Golden fixtures: two consecutive builds with identical inputs → identical prefix bytes  
+- Provider cache hit/miss telemetry when the API reports it; “intent to reuse” is not acceptance  
+
+Philosophy names the invariant; **spec 10 makes it executable**.
 
 ### 4.3 Pillar C — Skills as **structured on-demand context**
 
@@ -247,20 +267,41 @@ Plan is a **tool for the model**, not a project-management religion.
 
 ---
 
-## 11. Review checklist for future changes
+## 11. Implementation gates (hard)
+
+These gates exist so L3 work cannot ship on prose-only L1/L2.
+
+| Gate | Required before |
+|------|-----------------|
+| **G0** HARNESS_PHILOSOPHY + SOURCES layered model merged | Any runtime PR |
+| **G1** Toolchain/config ADR (language, binary name, state dir, secrets) | Any `crates/` / package scaffolding |
+| **G2** Specs **10, 15, 20, 30** status = ready-for-impl | M1 provider loop code |
+| **G3** Specs **45 + minimum 90** (or shell denied until 90) ready | M2 mutating tools / shell |
+| **G4** Spec **50** ready | Parallel tool dispatch |
+| **G5** Spec **60** ready (worker cache law measurable) | Subagent fan-out |
+| **G6** Specs **70, 80, 100, 110** ready | Skills/MCP/sessions/plan product surface |
+
+**Definition of ready-for-impl:** acceptance criteria + failure modes + non-goals + test plan (golden or manual) + philosophy section citations. Index row must not say `TODO`.
+
+**Launch definition (PRD):** “M1 implementation started” is **invalid** until G1+G2 pass. Starting code with empty specs is a process bug.
+
+---
+
+## 12. Review checklist for future changes
 
 Any PR that touches tools, prompts, sessions, skills, or permissions must answer:
 
 1. Which layer (L1/L2/L3) does this change?  
 2. Does it weaken snippet/edit safety, cache stability, skill leanness, or side-effect honesty?  
 3. Cache-impact: none / low / medium / high — why?  
-4. If it copies Grok behavior, does it still satisfy Deep Code pillars A–D?
+4. If it copies Grok behavior, does it still satisfy Deep Code pillars A–D?  
+5. Which **gate** (G0–G6) does this PR assume is already green?
 
 If the answer to (2) is yes without an ADR, **reject**.
 
 ---
 
-## 12. References
+## 13. References
 
 - Deep Code architecture (EN): https://github.com/lessweb/deepcode-cli/blob/main/docs/architecture_en.md  
 - Reasonix project (local): `OpenSources/DeepSeek-Reasonix`  

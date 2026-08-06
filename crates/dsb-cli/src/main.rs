@@ -46,6 +46,15 @@ struct Cli {
     #[arg(long, global = true, default_value_t = false)]
     show_reasoning: bool,
 
+    /// Allow workspace write/delete without interactive ask (headless M2).
+    /// Still denies write/delete outside the workspace.
+    #[arg(long, global = true, default_value_t = false)]
+    allow_workspace_write: bool,
+
+    /// Actually execute bash (default: classify + permission only).
+    #[arg(long, global = true, default_value_t = false)]
+    bash_execute: bool,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -123,6 +132,9 @@ async fn build_agent(cli: &Cli) -> Result<Agent> {
         workspace_root: workspace,
         preset,
         show_model: !cli.quiet_model,
+        allow_workspace_write: cli.allow_workspace_write,
+        bash_execute: cli.bash_execute,
+        headless: true,
         ..AgentConfig::default()
     };
     Ok(Agent::new(client, agent_cfg)?)

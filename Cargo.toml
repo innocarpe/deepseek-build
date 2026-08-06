@@ -6,6 +6,7 @@ members = [
     "crates/dsb-config",
     "crates/dsb-context",
     "crates/dsb-provider-deepseek",
+    "crates/dsb-tools",
 ]
 # Prefer `cargo test --workspace` in CI/docs so library crates always run.
 

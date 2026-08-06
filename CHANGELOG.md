@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 2.0.0 — 2026-08-06
+
+### Product
+
+- **First product release** matching REPLAN_2.0 P0: Grok Build–class agent entry with DeepSeek default
+- Vendored Grok Build under `third_party/grok-build/` (ADR-0008)
+- No-args TTY `dsb` / `deepseek-build` launches `deepseek-build-agent` (Grok pager)
+- DeepSeek models + `api.deepseek.com` + chat_completions config seed
+- Setup/auth under `~/.deepseek-build/` (credentials 0600)
+- L1/L2 evidence: `docs/product/evidence/W3_L1_L2_MATRIX.md`
+- W2 chat/edit dogfood evidence under `docs/product/evidence/`
+- `1.x` remains legacy scaffold on npm history
+
+### Notes
+
+- npm publish may still require human OTP (ADR 0007 residual)
+- Upstream pager chrome may still say “Grok” in places; product CLI/docs use DeepSeek Build
+
+
 ## 2.0.0-alpha.2 — 2026-08-06
 
 ### Added

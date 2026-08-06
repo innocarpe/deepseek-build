@@ -216,3 +216,20 @@ mod tests {
         assert_eq!(escape_toml_basic(r#"a"b"#), r#"a\"b"#);
     }
 }
+
+#[test]
+fn product_config_seed_contains_deepseek_defaults() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dsb_config::BuildHome::from_path(dir.path());
+    ensure_product_agent_config(&home).unwrap();
+    let body = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
+    assert!(body.contains("deepseek-v4-flash"));
+    assert!(body.contains("api.deepseek.com"));
+    assert!(body.contains("chat_completions"));
+    assert!(body.contains("DEEPSEEK_API_KEY"));
+    // second call does not clobber
+    std::fs::write(dir.path().join("config.toml"), "keep=1\n").unwrap();
+    ensure_product_agent_config(&home).unwrap();
+    let body2 = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
+    assert_eq!(body2, "keep=1\n");
+}

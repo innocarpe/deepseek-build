@@ -5,14 +5,14 @@
 **Commands:** `deepseek-build` (primary) · `dsb` (alias) — same program ([ADR 0006](docs/adr/0006-cli-names-and-semver.md)).  
 **Versions:** always full SemVer `MAJOR.MINOR.PATCH` — [versioning.md](docs/contributing/versioning.md).
 
-> ## Version honesty (read this)
+> ## Product status
 >
 > | Line | Meaning |
 > |------|---------|
-> | **npm / git `1.x` (now)** | **Scaffold** — contracts, thin agent, setup. Useful, **not** the final product. |
-> | **Target `2.0.0`** | **`dsb` opens a Grok Build–class coding agent** (full agent/TUI), based on **open-source Grok Build**, DeepSeek-native, with Deep Code + Reasonix strengths. |
+> | **`2.0.0` (current product)** | **`dsb` / `deepseek-build` opens a Grok Build–class coding agent** (full-screen TUI + agent loop), base runtime vendored from open-source Grok Build, **DeepSeek** default provider. |
+> | **`1.x` (legacy scaffold)** | Thin clap agent / contracts — still installable for experiments; **not** the product DoD. |
 >
-> Full replan: **[docs/product/REPLAN_2.0.md](docs/product/REPLAN_2.0.md)**.
+> Replan / DoD: **[docs/product/REPLAN_2.0.md](docs/product/REPLAN_2.0.md)**. Ultragoal board: **[GROKBASE_2X_GOALS.md](docs/product/GROKBASE_2X_GOALS.md)**.
 
 Combines three first-class references:
 
@@ -39,8 +39,10 @@ From the repo root (default prefix `~/.deepseek-build/bin`):
 git clone https://github.com/innocarpe/deepseek-build.git
 cd deepseek-build
 ./scripts/install.sh
+# Builds product wrapper + Grok-class agent (deepseek-build-agent). First agent build is long.
 # If PATH note printed:
 export PATH="$HOME/.deepseek-build/bin:$PATH"
+dsb   # no-args TTY → full-screen DeepSeek agent
 ```
 
 Alternative — install into Cargo’s bin dir (often already on PATH):
@@ -71,11 +73,11 @@ Open a **new** terminal (or source your shell config), then:
 
 ```bash
 deepseek-build --version
-# → deepseek-build 1.1.0
+# → deepseek-build 2.0.0
 dsb --version
-# → dsb 1.1.0
+# → dsb 2.0.0
 ./scripts/check-semver.sh
-# → check-semver: ok (1.1.0)
+# → check-semver: ok (2.0.0)
 ```
 
 Both commands must report the **same** full SemVer.

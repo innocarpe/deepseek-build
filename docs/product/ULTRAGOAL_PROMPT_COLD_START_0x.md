@@ -95,14 +95,19 @@ Expected state after prior work: **G001-plandoc complete**; **next = G002-v0.2.0
 
 # WORK STYLE
 
+0. **PR plan first (mandatory):** `docs/product/ULTRAGOAL_PR_PLANNING.md`
+   - List PR units before any code
+   - Explicit sequential vs parallel DAG
+   - Atomic Conventional Commits on the branch
+   - Stack/chain sequential PRs (`--base` previous); merge bottom-up
 1. One meaningful unit per PR; prefer vertical slices that can ship a **SemVer bump**
 2. Branch: `feat/...` | `fix/...` | `docs/...` | `chore/...`
 3. Title: Conventional Commits
 4. Ready PRs: **exactly one kind label** (`feat|fix|docs|spec|chore|refactor|test|ci`)
-5. PR body Orca-level: Problem / What changed / Out of scope / Testing / AI review / Security / Notes / Cache-impact
-6. Squash-merge; never force-push `main`
+5. PR body Orca-level: Problem / What changed / Out of scope / Testing / AI review / Security / Notes / Cache-impact (+ unit plan if multi-unit story)
+6. Squash-merge to main; never force-push `main`
 7. After each merge: `git checkout main && git pull origin main` before next branch
-8. Version bump PR (or same PR): update `Cargo.toml` workspace version + progress log in `RELEASE_TRAIN_0x.md` + README if needed
+8. Version bump: at most one unit owns SemVer; update Cargo.toml + RELEASE_TRAIN_0x log
 9. Always document **both** CLI names when install/UX changes
 
 # STORY OBJECTIVES (detail)

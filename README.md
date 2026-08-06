@@ -82,32 +82,28 @@ dsb --version
 
 Both commands must report the **same** full SemVer.
 
-### npm (both bins)
+### npm (product path)
 
 | | |
 |--|--|
-| **Package name** | `@innocarpe/deepseek-build` |
-| **CLI commands** (unchanged) | `deepseek-build` · `dsb` |
-| **version** | matches Cargo workspace SemVer |
+| **Package** | `@innocarpe/deepseek-build` |
+| **CLI** | `deepseek-build` · `dsb` |
+| **Product entry** | **`dsb`** (TTY, no args) → DeepSeek full-screen TUI |
 
 ```bash
-# After registry publish (owner):
+# Needs Node ≥18 and Rust (cargo). First install builds the agent (several minutes).
+# Also need protoc (brew install protobuf) or: cargo install dotslash --locked
 npm install -g @innocarpe/deepseek-build
-# or:
-npx @innocarpe/deepseek-build --version
 
-# Commands are still the product names (not the scoped package id):
-deepseek-build --version
+# Product bins land under ~/.deepseek-build/bin — put on PATH if needed:
+export PATH="$HOME/.deepseek-build/bin:$PATH"
+
 dsb --version
-
-# From a git checkout (dev / pre-publish):
-npm install -g .
-# postinstall builds native bins when cargo is available
-
-# Version consistency (cargo ↔ npm):
-node npm/scripts/check-version-match.js
-./scripts/check-semver.sh
+dsb                 # DeepSeek Build full-screen TUI
+dsb setup           # API key if needed
 ```
+
+postinstall installs **wrapper + agent TUI**. Skip agent only with `DEEPSEEK_BUILD_SKIP_AGENT_BUILD=1` (not recommended).
 
 Native binary still needs Rust/cargo once (postinstall or `./scripts/install.sh`) until prebuilt binaries land.
 

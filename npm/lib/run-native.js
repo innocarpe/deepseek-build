@@ -5,12 +5,17 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+const pkgRoot = path.resolve(__dirname, '..', '..');
+
 /**
  * Resolve native binary for deepseek-build / dsb.
- * Order: env override → product home bin → cargo bin → package-local release build.
+ * Order: env → product home → cargo bin → package native-bin → package target/release
  */
 function candidatePaths(binName) {
   const out = [];
+  if (process.env.DEEPSEEK_BUILD_BIN) {
+    out.push(process.env.DEEPSEEK_BUILD_BIN);
+  }
   const envHome = process.env.DEEPSEEK_BUILD_HOME;
   const home = envHome || path.join(os.homedir(), '.deepseek-build');
   out.push(path.join(home, 'bin', binName));
@@ -18,13 +23,13 @@ function candidatePaths(binName) {
   const cargoHome = process.env.CARGO_HOME || path.join(os.homedir(), '.cargo');
   out.push(path.join(cargoHome, 'bin', binName));
 
-  // When developing from a checkout that built release bins:
-  const pkgRoot = path.resolve(__dirname, '..', '..');
+  // npm package-local copies (postinstall may place agent here)
+  out.push(path.join(pkgRoot, 'npm', 'native-bin', binName));
   out.push(path.join(pkgRoot, 'target', 'release', binName));
+  out.push(
+    path.join(pkgRoot, 'third_party', 'grok-build', 'target', 'release', 'xai-grok-pager')
+  );
 
-  if (process.env.DEEPSEEK_BUILD_BIN) {
-    out.unshift(process.env.DEEPSEEK_BUILD_BIN);
-  }
   return out;
 }
 
@@ -32,6 +37,7 @@ function findBinary(binName) {
   for (const p of candidatePaths(binName)) {
     try {
       if (fs.existsSync(p) && fs.statSync(p).isFile()) {
+        // For agent name, also accept xai-grok-pager path when looking for agent
         return p;
       }
     } catch {
@@ -41,23 +47,81 @@ function findBinary(binName) {
   return null;
 }
 
+function findAgentBinary() {
+  const names = [
+    process.env.DEEPSEEK_BUILD_AGENT_BIN,
+    path.join(
+      process.env.DEEPSEEK_BUILD_HOME || path.join(os.homedir(), '.deepseek-build'),
+      'bin',
+      'deepseek-build-agent'
+    ),
+    path.join(pkgRoot, 'npm', 'native-bin', 'deepseek-build-agent'),
+    path.join(pkgRoot, 'third_party', 'grok-build', 'target', 'release', 'xai-grok-pager'),
+  ].filter(Boolean);
+  for (const p of names) {
+    try {
+      if (fs.existsSync(p) && fs.statSync(p).isFile()) return p;
+    } catch {
+      // continue
+    }
+  }
+  return null;
+}
+
+/**
+ * Product contract: bare `dsb` / `deepseek-build` with no args on a TTY
+ * must open the DeepSeek full-screen agent TUI.
+ *
+ * Prefer native wrapper (handles setup + splash + GROK_THEME). If wrapper
+ * is missing but agent exists, exec agent directly so install still works.
+ */
 function run(binName, args) {
-  const bin = findBinary(binName);
+  const isBare =
+    args.length === 0 ||
+    (args.length === 1 && (args[0] === 'agent' || args[0] === '--'));
+
+  // Always prefer installed wrapper when present.
+  let bin = findBinary(binName);
+  if (!bin && binName === 'dsb') {
+    bin = findBinary('deepseek-build');
+  }
+
   if (!bin) {
+    const agent = findAgentBinary();
+    if (agent && (isBare || args[0] === 'agent')) {
+      const agentArgs = args[0] === 'agent' ? args.slice(1) : args;
+      return exec(agent, agentArgs, productEnv());
+    }
     console.error(
       `deepseek-build: native binary "${binName}" not found.\n` +
         `Tried: ${candidatePaths(binName).join(', ')}\n` +
-        `Fix:\n` +
-        `  1) From a git checkout: ./scripts/install.sh\n` +
-        `  2) Or: cargo install --path crates/dsb-cli --locked --force --root ~/.deepseek-build\n` +
-        `  3) Ensure ~/.deepseek-build/bin is on PATH, then re-run npm/npx.\n` +
-        `Auth: ~/.deepseek-build/credentials.json or DEEPSEEK_API_KEY`
+        `Fix (needs Rust once):\n` +
+        `  npm install -g @innocarpe/deepseek-build\n` +
+        `  # or from package: ./scripts/install.sh\n` +
+        `  export PATH="$HOME/.deepseek-build/bin:$PATH"\n` +
+        `Then: dsb`
     );
     process.exit(127);
   }
+
+  return exec(bin, args, process.env);
+}
+
+function productEnv() {
+  const home = process.env.DEEPSEEK_BUILD_HOME || path.join(os.homedir(), '.deepseek-build');
+  const theme = process.env.DEEPSEEK_BUILD_THEME || process.env.GROK_THEME || 'deepseeknight';
+  return {
+    ...process.env,
+    GROK_HOME: process.env.GROK_HOME || home,
+    GROK_THEME: theme,
+    LC_GROK_THEME: theme,
+  };
+}
+
+function exec(bin, args, env) {
   const result = spawnSync(bin, args, {
     stdio: 'inherit',
-    env: process.env,
+    env,
   });
   if (result.error) {
     console.error(`deepseek-build: failed to spawn ${bin}: ${result.error.message}`);
@@ -66,4 +130,4 @@ function run(binName, args) {
   process.exit(result.status === null ? 1 : result.status);
 }
 
-module.exports = { run, findBinary, candidatePaths };
+module.exports = { run, findBinary, findAgentBinary, candidatePaths };

@@ -10,16 +10,17 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use dsb_agent::{Agent, AgentConfig, Preset, SessionStore, TurnEvent};
-use dsb_config::{BuildHome, Credentials};
+use dsb_config::BuildHome;
 use dsb_context::discover_skills_index;
 use dsb_provider_deepseek::{Client, ClientConfig, ReasoningEffort};
 use dsb_tools::{AskChoice, Scope};
 
+mod onboard;
 mod theme;
 use theme::{Role, Theme};
 
 /// Resolve invocation name for help/version (`deepseek-build` or `dsb`).
-fn invocation_name() -> &'static str {
+pub(crate) fn invocation_name() -> &'static str {
     let arg0 = std::env::args().next().unwrap_or_default();
     let base = Path::new(&arg0)
         .file_name()
@@ -124,6 +125,28 @@ enum Commands {
     /// Skills index (stable prefix names; bodies load via tool `skill`).
     #[command(subcommand)]
     Skills(SkillsCmd),
+    /// First-time setup: save DeepSeek API key (interactive).
+    Setup {
+        /// Non-interactive: write key from this flag (prefer env in CI).
+        #[arg(long, env = "DEEPSEEK_API_KEY")]
+        api_key: Option<String>,
+    },
+    /// Auth helpers (login / status / logout).
+    #[command(subcommand)]
+    Auth(AuthCmd),
+}
+
+#[derive(Debug, Subcommand)]
+enum AuthCmd {
+    /// Interactive login (same as `setup`).
+    Login {
+        #[arg(long, env = "DEEPSEEK_API_KEY")]
+        api_key: Option<String>,
+    },
+    /// Show whether a key is configured (masked).
+    Status,
+    /// Remove saved credentials file (does not unset env).
+    Logout,
 }
 
 #[derive(Debug, Subcommand)]
@@ -155,14 +178,16 @@ fn parse_cli() -> Cli {
     };
     let long_about = format!(
         "DeepSeek Build — DeepSeek-native terminal coding agent.\n\n\
-Set DEEPSEEK_API_KEY or ~/.deepseek-build/credentials.json.\n\
+First run: `{name} setup` (or just `{name} chat` — prompts for API key on TTY).\n\
+Key storage: ~/.deepseek-build/credentials.json (0600) or DEEPSEEK_API_KEY.\n\
 Commands: `deepseek-build` (primary) and `dsb` (alias) are the same program.\n\
 Version is always full SemVer (MAJOR.MINOR.PATCH), e.g. {ver} — never bare \"{bare}\".\n\n\
 Examples:\n  \
+  {name}                    # start interactive agent (default)\n  \
+  {name} setup              # first-run API key\n  \
+  {name} --dogfood          # trusted local coding\n  \
   {name} run \"explain this repo\"\n  \
-  {name} --dogfood --session mywork --effort high chat\n  \
-  {name} sessions list\n  \
-  dsb chat"
+  dsb"
     );
     let cmd = Cli::command()
         .name(name)
@@ -181,14 +206,27 @@ async fn main() {
 }
 
 async fn real_main() -> Result<()> {
-    let cli = parse_cli();
+    let mut cli = parse_cli();
     let inv = invocation_name();
     match cli.command {
+        // Grok-style default: bare `dsb` / `deepseek-build` enters interactive chat.
         None => {
-            eprintln!(
-                "{inv}: no subcommand. Try `{inv} --help`, `{inv} run \"…\"`, or `{inv} chat`."
-            );
-            std::process::exit(2);
+            if !io::stdin().is_terminal() {
+                eprintln!(
+                    "{inv}: interactive agent (no args).\n\
+                     Pipe/CI: `{inv} run \"…\"` or `{inv} chat` on a TTY.\n\
+                     Setup: `{inv} setup` · help: `{inv} --help`"
+                );
+                std::process::exit(2);
+            }
+            cli.command = Some(Commands::Chat);
+            run_repl(&cli).await?;
+        }
+        Some(Commands::Setup { ref api_key }) => {
+            run_setup_cmd(api_key.as_deref())?;
+        }
+        Some(Commands::Auth(ref cmd)) => {
+            run_auth_cmd(cmd)?;
         }
         Some(Commands::Run { ref message, pro }) => {
             let text = match message {
@@ -215,6 +253,29 @@ async fn real_main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn run_setup_cmd(api_key: Option<&str>) -> Result<()> {
+    let home = BuildHome::resolve();
+    if let Some(key) = api_key.map(str::trim).filter(|k| !k.is_empty()) {
+        let creds = dsb_config::Credentials::save(&home, key)?;
+        println!(
+            "Saved credentials → {} ({})",
+            home.credentials_path().display(),
+            creds.masked_key()
+        );
+        return Ok(());
+    }
+    onboard::run_setup_wizard(&home)?;
+    Ok(())
+}
+
+fn run_auth_cmd(cmd: &AuthCmd) -> Result<()> {
+    match cmd {
+        AuthCmd::Login { api_key } => run_setup_cmd(api_key.as_deref()),
+        AuthCmd::Status => onboard::print_auth_status(),
+        AuthCmd::Logout => onboard::logout(),
+    }
 }
 
 fn run_skills_cmd(cli: &Cli, cmd: &SkillsCmd) -> Result<()> {
@@ -341,9 +402,13 @@ fn persist_if_needed(agent: &Agent, session_id: Option<&str>) -> Result<()> {
 
 async fn build_agent(cli: &Cli) -> Result<Agent> {
     let home = BuildHome::resolve();
-    let creds = Credentials::load(&home).context(
-        "missing API key — set DEEPSEEK_API_KEY or create ~/.deepseek-build/credentials.json",
-    )?;
+    // First-run: chat/run on TTY open setup wizard instead of a dead-end error.
+    // Chat (including bare CLI default) and TTY run: offer setup wizard if needed.
+    let interactive = matches!(
+        &cli.command,
+        None | Some(Commands::Chat | Commands::Repl | Commands::Run { .. })
+    ) && onboard::can_prompt_setup();
+    let creds = onboard::load_or_setup(interactive).context("credentials")?;
     let mut cfg = ClientConfig::new(creds.api_key());
     if let Some(url) = &cli.base_url {
         cfg = cfg.with_base_url(url);
@@ -402,7 +467,7 @@ fn wants_interactive_permissions(cli: &Cli) -> bool {
         return io::stdin().is_terminal();
     }
     match &cli.command {
-        Some(Commands::Chat | Commands::Repl) => io::stdin().is_terminal(),
+        None | Some(Commands::Chat | Commands::Repl) => io::stdin().is_terminal(),
         _ => false,
     }
 }
@@ -481,45 +546,12 @@ async fn run_once(cli: &Cli, message: &str, pro: bool) -> Result<()> {
 async fn run_repl(cli: &Cli) -> Result<()> {
     let mut agent = build_agent(cli).await?;
     let session_id = bind_session(&mut agent, cli)?;
-    let inv = invocation_name();
-    let t = Theme::default_readable();
-    println!(
-        "{}",
-        t.paint(
-            Role::Accent,
-            &format!(
-                "{inv} chat — DeepSeek Build (Flash default). /pro /flash /preset /model /quit"
-            )
-        )
-    );
-    eprintln!(
-        "{}",
-        t.paint(
-            Role::Model,
-            &format!("[prefix_epoch={}]", agent.prefix_epoch_short())
-        )
-    );
-    if let Some(id) = &session_id {
-        eprintln!(
-            "{}",
-            t.paint(
-                Role::Model,
-                &format!("[session={id} — turns are persisted]")
-            )
-        );
-    }
-    if cli.effort.is_some() || cli.no_thinking || cli.thinking {
-        eprintln!(
-            "[surface effort={} thinking={}]",
-            cli.effort.as_deref().unwrap_or("default"),
-            if cli.no_thinking { "off" } else { "on" }
-        );
-    }
+    print_welcome_banner(cli, &agent, session_id.as_deref());
 
     let stdin = io::stdin();
     let mut stdout = io::stdout();
     loop {
-        print!("> ");
+        print!("❯ ");
         stdout.flush()?;
         let mut line = String::new();
         let n = stdin.lock().read_line(&mut line)?;
@@ -530,9 +562,15 @@ async fn run_repl(cli: &Cli) -> Result<()> {
         if line.is_empty() {
             continue;
         }
-        if line == "/quit" || line == "/exit" || line == ":q" {
+        if line == "/quit" || line == "/exit" || line == ":q" || line == "/q" {
             persist_if_needed(&agent, session_id.as_deref())?;
+            let t = Theme::default_readable();
+            println!("{}", t.paint(Role::Model, "bye."));
             break;
+        }
+        if line == "/help" || line == "/?" {
+            print_repl_help();
+            continue;
         }
 
         let show_reasoning = cli.show_reasoning;
@@ -542,7 +580,13 @@ async fn run_repl(cli: &Cli) -> Result<()> {
         {
             Ok(outcome) => {
                 println!();
-                eprintln!("[{}]", outcome.route.visibility_line());
+                eprintln!(
+                    "{}",
+                    Theme::default_readable().paint(
+                        Role::Model,
+                        &format!("[{}]", outcome.route.visibility_line())
+                    )
+                );
                 if let Err(e) = persist_if_needed(&agent, session_id.as_deref()) {
                     eprintln!("[warn] session persist failed: {e:#}");
                 }
@@ -553,6 +597,79 @@ async fn run_repl(cli: &Cli) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn print_welcome_banner(cli: &Cli, agent: &Agent, session_id: Option<&str>) {
+    let inv = invocation_name();
+    let ver = env!("CARGO_PKG_VERSION");
+    let t = Theme::default_readable();
+    let cwd = cli
+        .cwd
+        .clone()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let dog = if cli.dogfood { "dogfood" } else { "safe" };
+    println!();
+    println!(
+        "{}",
+        t.paint(Role::Accent, &format!("DeepSeek Build  v{ver}  ·  {inv}"))
+    );
+    println!(
+        "{}",
+        t.paint(
+            Role::Model,
+            "DeepSeek-native coding agent  ·  type to chat  ·  /help  ·  /quit"
+        )
+    );
+    println!(
+        "{}",
+        t.paint(
+            Role::Model,
+            &format!(
+                "cwd {}  ·  profile {}  ·  epoch {}",
+                cwd.display(),
+                dog,
+                agent.prefix_epoch_short()
+            )
+        )
+    );
+    if let Some(id) = session_id {
+        println!(
+            "{}",
+            t.paint(Role::Tool, &format!("session {id} (persisted)"))
+        );
+    }
+    if cli.effort.is_some() || cli.no_thinking || cli.thinking {
+        println!(
+            "{}",
+            t.paint(
+                Role::Model,
+                &format!(
+                    "effort={} thinking={}",
+                    cli.effort.as_deref().unwrap_or("default"),
+                    if cli.no_thinking { "off" } else { "on" }
+                )
+            )
+        );
+    }
+    println!();
+}
+
+fn print_repl_help() {
+    let t = Theme::default_readable();
+    println!(
+        "{}",
+        t.paint(
+            Role::Accent,
+            "Commands:  /pro <msg>  /flash <msg>  /preset flash|balanced|max  /help  /quit"
+        )
+    );
+    println!(
+        "{}",
+        t.paint(
+            Role::Model,
+            "Flags next launch: --dogfood  --session ID  --effort high  --show-reasoning"
+        )
+    );
 }
 
 fn render_event(ev: TurnEvent, show_reasoning: bool) {

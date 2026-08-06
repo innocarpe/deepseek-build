@@ -1,6 +1,6 @@
 # 01 — Install
 
-**Product version:** `1.0.0`+ (install path since **0.2.0**)  
+**Product version:** `1.1.0`+ (install path since **0.2.0**)  
 **Commands:** `deepseek-build` (primary) · `dsb` (alias) — [ADR 0006](../adr/0006-cli-names-and-semver.md)
 
 ## Requirements
@@ -41,9 +41,9 @@ export PATH="$HOME/.deepseek-build/bin:$PATH"
 
 ```bash
 deepseek-build --version
-# deepseek-build 1.0.0
+# deepseek-build 1.1.0
 dsb --version
-# dsb 1.0.0
+# dsb 1.1.0
 ```
 
 npm (optional): see [05-npm.md](./05-npm.md).

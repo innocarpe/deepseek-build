@@ -62,11 +62,11 @@ Open a **new** terminal (or source your shell config), then:
 
 ```bash
 deepseek-build --version
-# → deepseek-build 1.0.0
+# → deepseek-build 1.1.0
 dsb --version
-# → dsb 1.0.0
+# → dsb 1.1.0
 ./scripts/check-semver.sh
-# → check-semver: ok (1.0.0)
+# → check-semver: ok (1.1.0)
 ```
 
 Both commands must report the **same** full SemVer.
@@ -102,21 +102,25 @@ Native binary still needs Rust/cargo once (postinstall or `./scripts/install.sh`
 
 Config directory (not a command name): `~/.deepseek-build/`.
 
-## Auth
+## Auth / first-run setup
 
-Either:
+**Install is not enough** — you need a DeepSeek API key before chat works.
+
+On a TTY, first run prompts automatically:
 
 ```bash
-export DEEPSEEK_API_KEY=sk-...
+deepseek-build setup          # recommended
+# or just:
+deepseek-build chat           # wizard if no key yet
+deepseek-build auth status
+deepseek-build auth logout
 ```
 
-Or create `~/.deepseek-build/credentials.json` (mode `0600` recommended):
+Key is saved to `~/.deepseek-build/credentials.json` (mode `0600`).  
+Env `DEEPSEEK_API_KEY` still works and **wins** over the file.
 
-```json
-{ "api_key": "sk-..." }
-```
-
-**Never commit secrets.** Override home with `DEEPSEEK_BUILD_HOME` if needed.
+**Never commit secrets.** Override home with `DEEPSEEK_BUILD_HOME` if needed.  
+Details: [docs/user-guide/00-setup.md](docs/user-guide/00-setup.md).
 
 ## Run
 

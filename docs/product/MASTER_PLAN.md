@@ -71,8 +71,8 @@ mindmap
 
 | Item | Value |
 |------|--------|
-| Version on `main` | Read `Cargo.toml` (expect **`0.13.0`** after bg shell) |
-| Active ultragoal | **`throughput-0x`** in progress (Wave C); native-0x complete |
+| Version on `main` | Read `Cargo.toml` (expect **`0.14.0`** after subagents (Wave C complete)) |
+| Active ultragoal | **`throughput-0x` complete** → next **`rc-1.0.0`** (Wave D) |
 | Gates green | **G0–G3**, **G6a** (sessions), **G6b** (skills) |
 | Gates red | **G4**, **G5**, **G6c** (MCP), **G6d** (plan) |
 
@@ -162,9 +162,9 @@ Detail for Wave A minors: [RELEASE_TRAIN_0x.md](./RELEASE_TRAIN_0x.md).
 - [x] Spec **50** + **G4 green** + parallel tools (**0.12.0**)  
 - [x] Parallel independent tools + cancel/partial failure  
 - [x] Background shell + collect (**0.13.0**)  
-- [ ] Spec **60** + **G5 green**  
-- [ ] Subagents + worker cache law + optional worktree  
-- [ ] Ship **`0.12.0`–`0.14.0`**  
+- [x] Spec **60** + **G5 green**  
+- [x] Subagents + worker cache law (in-process; worktree optional later)  
+- [x] Ship **`0.12.0`–`0.14.0`** (Wave C complete)  
 
 **Exit:** wall-clock progress comparable to Grok-class tools on multi-step tasks, without cache collapse.
 
@@ -249,6 +249,7 @@ From [NON_GOALS.md](./NON_GOALS.md): Gajae multi-stage team harness as identity;
 | `0.11.0` | B | 2026-08-06 | MCP + light plan; G6c/G6d green (#39–#40) |
 | `0.12.0` | C | 2026-08-06 | Spec 50 + G4 parallel readonly tools (#41–#42) |
 | `0.13.0` | C | 2026-08-06 | Background bash + bash_collect (#43–#44) |
+| `0.14.0` | C | 2026-08-06 | Spec 60 + G5 subagents/cache law (#45–#46) |
 | … | B–D | — | Update on each minor release PR |
 
 ---

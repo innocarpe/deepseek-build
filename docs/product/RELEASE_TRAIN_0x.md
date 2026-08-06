@@ -1,8 +1,9 @@
-# Release train — `0.x.y` until dogfood-usable
+# Release train — Wave A (`0.x.y` dogfood band)
 
-**Status:** Active planning spine for product development  
+**Status:** Active Wave A detail (see full vision board: [MASTER_PLAN.md](./MASTER_PLAN.md))  
 **SemVer rule:** Always full `MAJOR.MINOR.PATCH` — see [versioning.md](../contributing/versioning.md).  
-**CLI:** `deepseek-build` (primary) · `dsb` (alias) — [ADR 0006](../adr/0006-cli-names-and-semver.md).
+**CLI:** `deepseek-build` (primary) · `dsb` (alias) — [ADR 0006](../adr/0006-cli-names-and-semver.md).  
+**After this train:** continue [ULTRAGOAL_CHAIN.md](./ULTRAGOAL_CHAIN.md) → `native-0x` (not stop forever).
 
 ---
 
@@ -26,11 +27,11 @@ Milestones **M0–M6** (feature themes) still apply. This file is the **SemVer r
 
 | Item | Value |
 |------|--------|
-| Current version | **`0.2.0`** |
-| What works | Cargo workspace; provider; cache prefix; repair/routing; thin `run`/`chat`; tools core (read/edit/write/bash gate); dual binaries; **PATH install** via `./scripts/install.sh` or `cargo install --path crates/dsb-cli` |
-| What does **not** | npm; daily-driver defaults for write/bash; search/grep; sessions; skills; parallel/subagents; “open laptop → type command → code for an hour” without flags |
+| Current version | **`0.3.0`** |
+| What works | PATH install; provider; cache; routing; `run`/`chat`; tools: **read/edit/write/grep/bash**; **`--dogfood`** profile (workspace write + bash execute; out-of-cwd still denied) |
+| What does **not** | npm; sessions; skills; parallel/subagents; fully frictionless hour-long coding without reading flags once |
 
-**Honest label for `0.2.0`:** installable CLI (both bins on PATH); still not full dogfood-usable (see §3).
+**Honest label for `0.3.0`:** installable + coding tools daily (`grep` + dogfood write/bash profile); dogfood-usable §3 still needs real-owner proof (**0.4.0**).
 
 ---
 
@@ -65,9 +66,9 @@ Patch versions (`0.y.z`, z>0) are bugfixes/docs on the same theme. Minors below 
 | **`0.5.0`** | **Sessions** | Resume a prior chat/session under `~/.deepseek-build/` | M5 partial |
 | **`0.6.0`** | **Surface** | Skills index + load; thinking/effort user flags; basic `/model` or flags | M3 partial |
 | **`0.7.0`** | **npm distribute** | `npm i -g …` exposes both bin names; version matches cargo | packaging |
-| **`0.8.0`** | **Parallel tools** | Independent tools in one turn; bg shell collect (needs G4 / spec 50) | M2 parallel / M4 prep |
-| **`0.9.0`** | **Hardening** | CI smoke; known-limits; cost/cache hints; changelog discipline | M6 partial |
-| **`1.0.0`** | **Later** | Only after sustained dogfood + boring install | *not this train* |
+| **`0.8.0`+** | **Later waves** | Parallel / native surface / throughput — see [MASTER_PLAN.md](./MASTER_PLAN.md) Waves B–D (not all Wave A) | B–D |
+
+Wave A **stops at dogfood-usable / `0.7.0` npm**. Parallel and `1.0.0` are **not** Wave A.
 
 ### Explicit non-goals of the `0.x` train (until scheduled)
 
@@ -111,8 +112,11 @@ After **DogfoodProof (`0.4.0`)** the owner re-evaluates: keep pushing `0.5.0+` o
 
 | SemVer | Date | Notes |
 |--------|------|--------|
-| `0.1.0` | 2026-08-06 | Engine + dual CLI from source; tools core; not installable daily |
+| `0.1.0` | 2026-08-06 | Engine + dual CLI from source; tools core |
+| `0.2.0` | 2026-08-06 | PATH install for `deepseek-build` + `dsb` (#18) |
+| `0.3.0` | 2026-08-06 | grep + `--dogfood` write/bash profile |
 | `0.2.0` | 2026-08-06 | Install path: `scripts/install.sh` + documented `cargo install`; both `deepseek-build` and `dsb` on PATH; README clean-shell smoke |
+| `0.3.0` | 2026-08-06 | Tools daily: `grep` tool; bash execute under policy; `--dogfood` workspace-write+bash profile (out-of-cwd denied); tests green |
 
 ---
 

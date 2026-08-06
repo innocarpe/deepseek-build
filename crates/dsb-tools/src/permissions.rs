@@ -155,6 +155,21 @@ pub fn default_coding_policy(headless: bool) -> PermissionPolicy {
     }
 }
 
+/// Trusted local dogfood profile: allow workspace write/delete + read/query-git.
+/// Still **denies** write/delete outside the workspace (fail-closed).
+/// Pair with CLI `--dogfood` which also enables bash execution.
+pub fn dogfood_coding_policy(headless: bool) -> PermissionPolicy {
+    let mut p = default_coding_policy(headless);
+    p.allow.insert(Scope::WriteInCwd);
+    p.allow.insert(Scope::DeleteInCwd);
+    p.ask.remove(&Scope::WriteInCwd);
+    p.ask.remove(&Scope::DeleteInCwd);
+    // Keep out-of-cwd write/delete denied.
+    p.deny.insert(Scope::WriteOutCwd);
+    p.deny.insert(Scope::DeleteOutCwd);
+    p
+}
+
 pub fn decide(policy: &PermissionPolicy, scopes: &[Scope]) -> Decision {
     policy.decide(scopes)
 }
@@ -348,6 +363,15 @@ mod tests {
         let classified = classify_bash("rm -rf build");
         let eff = effective_scopes(&declared, &classified);
         assert!(eff.iter().any(|s| s.danger_rank() >= Scope::DeleteInCwd.danger_rank()));
+    }
+
+    #[test]
+    fn dogfood_allows_write_in_cwd_denies_out() {
+        let p = dogfood_coding_policy(true);
+        assert_eq!(decide(&p, &[Scope::WriteInCwd]), Decision::Allow);
+        assert_eq!(decide(&p, &[Scope::DeleteInCwd]), Decision::Allow);
+        assert_eq!(decide(&p, &[Scope::WriteOutCwd]), Decision::Deny);
+        assert_eq!(decide(&p, &[Scope::DeleteOutCwd]), Decision::Deny);
     }
 
     #[test]

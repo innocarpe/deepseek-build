@@ -296,7 +296,7 @@ dependencies = [
 
 [[package]]
 name = "dsb-agent"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "dsb-context",
@@ -311,7 +311,7 @@ dependencies = [
 
 [[package]]
 name = "dsb-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -323,7 +323,7 @@ dependencies = [
 
 [[package]]
 name = "dsb-config"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "dirs",
  "serde",
@@ -334,7 +334,7 @@ dependencies = [
 
 [[package]]
 name = "dsb-context"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "dsb-provider-deepseek",
  "hex",
@@ -347,7 +347,7 @@ dependencies = [
 
 [[package]]
 name = "dsb-provider-deepseek"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytes",
  "futures-util",
@@ -361,7 +361,7 @@ dependencies = [
 
 [[package]]
 name = "dsb-tools"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "dsb-provider-deepseek",
  "hex",

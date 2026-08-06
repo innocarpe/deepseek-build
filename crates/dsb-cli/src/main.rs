@@ -41,7 +41,7 @@ pub(crate) fn invocation_name() -> &'static str {
 #[command(
     name = "deepseek-build",
     version,
-    about = "DeepSeek Build — DeepSeek-native terminal coding agent",
+    about = "DeepSeek Build — DeepSeek-native full-screen coding agent",
     long_about = None
 )]
 struct Cli {
@@ -118,17 +118,17 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         pro: bool,
     },
-    /// Multi-turn thin REPL (1.x scaffold). Prefer no-args TTY for Grok-class agent.
+    /// Line-mode chat (old 1.x UI — not the product TUI). Prefer bare `dsb`.
     Chat,
-    /// Alias for `chat` (legacy thin REPL).
+    /// Alias for `chat` (line-mode only).
     Repl,
-    /// Explicit 1.x thin REPL (same as `chat`).
-    #[command(name = "repl-legacy")]
+    /// Hidden alias for line-mode chat (old name). Prefer bare `dsb` for the product TUI.
+    #[command(name = "repl-legacy", hide = true)]
     ReplLegacy,
-    /// Launch the Grok-class full-screen agent (same as no-args TTY).
-    /// Extra args are forwarded to the agent binary.
+    /// Open the DeepSeek Build full-screen TUI (same as no-args TTY).
+    /// Extra args are forwarded to the agent.
     Agent {
-        /// Arguments forwarded to `deepseek-build-agent` / `xai-grok-pager`.
+        /// Arguments forwarded to the DeepSeek Build agent binary.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -190,16 +190,16 @@ fn parse_cli() -> Cli {
         }
     };
     let long_about = format!(
-        "DeepSeek Build — DeepSeek-native Grok-class coding agent.\n\n\
-First run: `{name}` (TTY) or `{name} setup` — API key → ~/.deepseek-build (0600).\n\
-Default no-args TTY opens the **full-screen agent** (Grok Build runtime).\n\
-Thin 1.x REPL: `{name} repl-legacy` (or `chat`).\n\
+        "DeepSeek Build — DeepSeek-native full-screen coding agent TUI.\n\n\
+Product entry: type `{name}` on a TTY → DeepSeek Build TUI (whale + DeepSeek blue).\n\
+First-run: `{name} setup` stores API key under ~/.deepseek-build/ (0600).\n\
+Line-mode only (old UI, not the product): `{name} chat`.\n\
 Commands: `deepseek-build` (primary) and `dsb` (alias) are the same program.\n\
 Version is always full SemVer (MAJOR.MINOR.PATCH), e.g. {ver} — never bare \"{bare}\".\n\n\
 Examples:\n  \
-  {name}                    # Grok-class full-screen agent (default TTY)\n  \
+  {name}                    # DeepSeek Build full-screen TUI (default)\n  \
   {name} setup              # first-run API key\n  \
-  {name} repl-legacy        # thin 1.x scaffold REPL\n  \
+  {name} chat               # line-mode chat only (legacy)\n  \
   {name} --dogfood          # trusted local coding\n  \
   {name} run \"explain this repo\"\n  \
   dsb"
@@ -224,12 +224,12 @@ async fn real_main() -> Result<()> {
     let cli = parse_cli();
     let inv = invocation_name();
     match cli.command {
-        // Product 2.0: bare TTY → Grok-class full-screen agent (not thin REPL).
+        // Product: bare TTY → DeepSeek Build full-screen TUI only.
         None => {
             if !io::stdin().is_terminal() {
                 eprintln!(
-                    "{inv}: interactive Grok-class agent (no args, TTY).\n\
-                     Pipe/CI: `{inv} run \"…\"` · thin REPL: `{inv} repl-legacy`\n\
+                    "{inv}: opens the DeepSeek Build TUI (requires a TTY).\n\
+                     Pipe/CI: `{inv} run \"…\"` · line-mode: `{inv} chat`\n\
                      Setup: `{inv} setup` · help: `{inv} --help`"
                 );
                 std::process::exit(2);

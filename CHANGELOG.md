@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 2.0.2 — 2026-08-07
+
+### Product entry (DeepSeek TUI only)
+
+- Bare `dsb` / `deepseek-build` = **DeepSeek Build full-screen TUI** (product)
+- CLI binary name / help Usage: **dsb** (not `grok`)
+- User-facing help no longer describes the product as "Grok-class" / Grok Build UI
+- `repl-legacy` hidden; line-mode remains as `chat` only for legacy/script use
+
+
 ## 2.0.1 — 2026-08-07
 
 ### UI / UX (DeepSeek product chrome)

@@ -12,6 +12,7 @@ deepseek-build/
 ├── docs/                     # Product + engineering truth (see docs/README.md)
 │   └── architecture/
 │       ├── HARNESS_PHILOSOPHY.md   # Normative design spine (Deep Code/Reasonix/Grok layers)
+│       ├── SYSTEM_ARCHITECTURE.md  # Runtime design + mermaid
 │       └── REPO_LAYOUT.md          # This file
 ├── crates/                   # Implementation packages (layout inspired by Grok; contracts by L1/L2)
 ├── skills/                   # Bundled Skills + agent harness skills (e.g. pr-authoring)

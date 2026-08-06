@@ -2,8 +2,10 @@
 resolver = "2"
 members = [
     "crates/dsb-cli",
+    "crates/dsb-config",
+    "crates/dsb-provider-deepseek",
 ]
-default-members = ["crates/dsb-cli"]
+# Prefer `cargo test --workspace` in CI/docs so library crates always run.
 
 [workspace.package]
 version = "0.1.0"

@@ -15,7 +15,8 @@ Combines three first-class references:
 
 **Not in v1 scope:** Gajae-code multi-stage planning/team harness (too slow for our north star).
 
-> Status: **M1 runtime** — provider + stable prefix + repair/routing + thin CLI. Tools (snippet edit, shell) are M2+.
+> Status: **`0.1.0`** source preview — provider, cache, routing, thin CLI, tools core.  
+> Release train: stay on **`0.x.y`** until dogfood-usable → [RELEASE_TRAIN_0x.md](docs/product/RELEASE_TRAIN_0x.md). **`1.0.0` is not the near goal.**
 
 ## Quickstart (M1)
 

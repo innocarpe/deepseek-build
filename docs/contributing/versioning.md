@@ -55,12 +55,13 @@ footer / changelog note. Prefer not to; if you must, document migration.
 
 | Range | Meaning for this project |
 |-------|---------------------------|
-| `0.y.z` | Development / preview; API and CLI may change |
-| `1.0.0` | First **installable, dogfoodable** release meeting the release checklist in [releases](./releases.md) (when present) or M6 + packaging DoD |
-| `1.x.y` | Compatible evolution of the 1.x CLI/user contract |
+| `0.y.z` | **Active product line for a long time** — development, install, dogfood; API/CLI may change between minors with changelog notes |
+| `1.0.0` | **Later** — only after sustained dogfood + boring packaging (see [RELEASE_TRAIN_0x.md](../product/RELEASE_TRAIN_0x.md)); not the near goal |
+| `1.x.y` | Compatible evolution of the 1.x CLI/user contract (after `1.0.0` exists) |
 | `2.0.0` | Intentional break of that contract |
 
-Do **not** market or tag **1.0.0** until install path + documented smoke work.
+**Near north star:** ship the **`0.x` train** until [dogfood-usable](../product/RELEASE_TRAIN_0x.md) (section 3).  
+Do **not** market or tag **`1.0.0`** during that train.
 
 ---
 

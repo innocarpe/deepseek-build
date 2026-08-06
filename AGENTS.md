@@ -4,8 +4,9 @@ This file is standing instructions for any coding agent working in this repo.
 
 ## Current phase
 
-**Runtime + docs harness.** M1 engine and G3 specs are on `main`; M2 tools started.
-Ship via PRs. Product packaging (npm / global install) is not done yet.
+**`0.x.y` release train** toward **dogfood-usable** (not `1.0.0` yet).  
+Normative plan: [`docs/product/RELEASE_TRAIN_0x.md`](docs/product/RELEASE_TRAIN_0x.md).  
+Current product version: **`0.1.0`** (source preview). Next target theme: **`0.2.0`** installable CLI.
 
 ## SemVer — fail-close (mandatory)
 

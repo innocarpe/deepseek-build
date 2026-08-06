@@ -24,10 +24,30 @@ When packaging lands:
 - `bin` map exposes **both** `deepseek-build` and `dsb`  
 - Install smoke: `deepseek-build --version` and `dsb --version` equal  
 
-## Pre-1.0.0 checklist (minimum)
+## `0.x.y` train (default)
 
-- [ ] Version fields consistent (`Cargo.toml` / npm / tag)  
-- [ ] `deepseek-build --version` and `dsb --version` → `deepseek-build X.Y.Z` / `dsb X.Y.Z` with **X.Y.Z** full triple  
-- [ ] README install path works from a clean machine  
-- [ ] Documented smoke (chat or run) with API key  
-- [ ] CHANGELOG entry for that SemVer  
+Normative schedule and dogfood definition:  
+[**RELEASE_TRAIN_0x.md**](../product/RELEASE_TRAIN_0x.md).
+
+Stay on **`0.y.z`** until dogfood-usable. Do not plan **`1.0.0`** in ultragoal stories for this phase.
+
+### Every `0.y.z` release checklist
+
+- [ ] Version fields consistent (`Cargo.toml` / npm if any / tag `vMAJOR.MINOR.PATCH`)  
+- [ ] `./scripts/check-semver.sh` passes  
+- [ ] `deepseek-build --version` and `dsb --version` show the **same** full SemVer  
+- [ ] README smoke commands updated for that minor’s theme  
+- [ ] CHANGELOG (when file exists) or PR body lists user-visible delta  
+- [ ] Progress log row in `RELEASE_TRAIN_0x.md`  
+
+### Dogfood-usable (see train §3) — not `1.0.0`
+
+- [ ] PATH install works  
+- [ ] Auth works  
+- [ ] Chat + tools (read/edit/write/search/bash under policy) for real work  
+- [ ] Documented workspace write profile  
+- [ ] Owner dogfood note recorded  
+
+### Later: `1.0.0` (out of current train)
+
+Only after sustained dogfood + boring npm/install; separate plan.

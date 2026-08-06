@@ -15,8 +15,8 @@ Combines three first-class references:
 
 **Not in v1 scope:** Gajae-code multi-stage planning/team harness (too slow for our north star).
 
-> Status: **`0.3.0`** — installable CLI + coding tools daily (`grep`, `--dogfood` write/bash profile).  
-> Release train: stay on **`0.x.y`** until dogfood-usable → [RELEASE_TRAIN_0x.md](docs/product/RELEASE_TRAIN_0x.md). **`1.0.0` is not the near goal.**
+> Status: see `Cargo.toml` SemVer. **Master plan (final goal + waves):** [docs/product/MASTER_PLAN.md](docs/product/MASTER_PLAN.md).  
+> Wave A: [RELEASE_TRAIN_0x.md](docs/product/RELEASE_TRAIN_0x.md) · Chain: [ULTRAGOAL_CHAIN.md](docs/product/ULTRAGOAL_CHAIN.md) · Architecture: [SYSTEM_ARCHITECTURE.md](docs/architecture/SYSTEM_ARCHITECTURE.md).
 
 ## Install (PATH)
 

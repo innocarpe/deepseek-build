@@ -3,7 +3,8 @@
 Paste the fenced block into a **new** session (Grok Build / Claude Code / etc.).  
 Workspace = **`deepseek-build` git root** on latest **`main`**.
 
-**Why new session:** this train is multi-PR and multi-minor (`0.2.0`→`0.7.0`). A cold start avoids stale M1-only context and forces reload of `RELEASE_TRAIN_0x` + ultragoal ledger.
+**Full vision board:** `docs/product/MASTER_PLAN.md` · **When this wave ends:** `docs/product/ULTRAGOAL_CHAIN.md` → `native-0x` automatically.  
+**Why new session:** multi-PR multi-minor Wave A. Cold start reloads train + ledger.
 
 **Plan id:** `dogfood-0x` (already exists under `.omc/ultragoal/plans/dogfood-0x/` if prior session created it; if missing, recreate with the goals listed in the prompt).
 
@@ -164,15 +165,19 @@ Expected state after prior work: **G001-plandoc complete**; **next = G002-v0.2.0
 
 # FINAL REPORT
 
-List: PRs, SemVer sequence shipped, how to install/run, dogfood status vs §3 checklist, remaining gaps, **next gate** (e.g. G4 / `0.8.0` parallel).
+List: PRs, SemVer sequence shipped, how to install/run, dogfood status vs §3 checklist.
+**When dogfood-0x is 100% complete:** do not stop — immediately follow
+`docs/product/ULTRAGOAL_CHAIN.md` and start **`native-0x`** (Wave B).
 
 # START NOW
 
 1. Pull `main`
-2. `omc ultragoal status --plan-id dogfood-0x` (recreate plan if missing)
-3. `omc ultragoal complete-goals --plan-id dogfood-0x`
-4. If next is Install: implement **0.2.0** install + version bump + PR
+2. Read `docs/product/MASTER_PLAN.md` (final goal immutable)
+3. `omc ultragoal status --plan-id dogfood-0x` (recreate plan if missing)
+4. `omc ultragoal complete-goals --plan-id dogfood-0x`
+5. Work the printed story (likely **0.4.0** dogfood proof if 0.2/0.3 already shipped)
 ```
+
 
 ---
 

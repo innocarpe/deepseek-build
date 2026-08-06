@@ -66,9 +66,9 @@ Patch versions (`0.y.z`, z>0) are bugfixes/docs on the same theme. Minors below 
 | **`0.5.0`** | **Sessions** | Resume a prior chat/session under `~/.deepseek-build/` | M5 partial |
 | **`0.6.0`** | **Surface** | Skills index + load; thinking/effort user flags; basic `/model` or flags | M3 partial |
 | **`0.7.0`** | **npm distribute** | `npm i -g …` exposes both bin names; version matches cargo | packaging |
-| **`0.8.0`** | **Parallel tools** | Independent tools in one turn; bg shell collect (needs G4 / spec 50) | M2 parallel / M4 prep |
-| **`0.9.0`** | **Hardening** | CI smoke; known-limits; cost/cache hints; changelog discipline | M6 partial |
-| **`1.0.0`** | **Later** | Only after sustained dogfood + boring install | *not this train* |
+| **`0.8.0`+** | **Later waves** | Parallel / native surface / throughput — see [MASTER_PLAN.md](./MASTER_PLAN.md) Waves B–D (not all Wave A) | B–D |
+
+Wave A **stops at dogfood-usable / `0.7.0` npm**. Parallel and `1.0.0` are **not** Wave A.
 
 ### Explicit non-goals of the `0.x` train (until scheduled)
 
@@ -114,6 +114,7 @@ After **DogfoodProof (`0.4.0`)** the owner re-evaluates: keep pushing `0.5.0+` o
 |--------|------|--------|
 | `0.1.0` | 2026-08-06 | Engine + dual CLI from source; tools core |
 | `0.2.0` | 2026-08-06 | PATH install for `deepseek-build` + `dsb` (#18) |
+| `0.3.0` | 2026-08-06 | grep + `--dogfood` write/bash profile |
 | `0.2.0` | 2026-08-06 | Install path: `scripts/install.sh` + documented `cargo install`; both `deepseek-build` and `dsb` on PATH; README clean-shell smoke |
 | `0.3.0` | 2026-08-06 | Tools daily: `grep` tool; bash execute under policy; `--dogfood` workspace-write+bash profile (out-of-cwd denied); tests green |
 

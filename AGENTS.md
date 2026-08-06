@@ -4,9 +4,12 @@ This file is standing instructions for any coding agent working in this repo.
 
 ## Current phase
 
-**`0.x.y` release train** toward **dogfood-usable** (not `1.0.0` yet).  
-Normative plan: [`docs/product/RELEASE_TRAIN_0x.md`](docs/product/RELEASE_TRAIN_0x.md).  
-Current product version: **`0.3.0`** (installable + tools daily). Next target theme: **`0.4.0`** dogfood proof.
+**Final goal + all waves:** [`docs/product/MASTER_PLAN.md`](docs/product/MASTER_PLAN.md) (SSOT board).  
+**Overnight chain:** [`docs/product/ULTRAGOAL_CHAIN.md`](docs/product/ULTRAGOAL_CHAIN.md)  
+(`dogfood-0x` → `native-0x` → `throughput-0x` → `rc-1.0.0`).  
+**Wave A detail:** [`docs/product/RELEASE_TRAIN_0x.md`](docs/product/RELEASE_TRAIN_0x.md).  
+**Architecture:** [`docs/architecture/SYSTEM_ARCHITECTURE.md`](docs/architecture/SYSTEM_ARCHITECTURE.md).  
+**SemVer on disk:** read root `Cargo.toml` (do not hardcode). Re-check ultragoal status each session.
 
 ## SemVer — fail-close (mandatory)
 

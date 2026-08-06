@@ -318,6 +318,7 @@ dependencies = [
  "clap",
  "dsb-agent",
  "dsb-config",
+ "dsb-context",
  "dsb-provider-deepseek",
  "dsb-tools",
  "tokio",

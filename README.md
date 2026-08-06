@@ -62,11 +62,11 @@ Open a **new** terminal (or source your shell config), then:
 
 ```bash
 deepseek-build --version
-# → deepseek-build 0.15.0
+# → deepseek-build 0.16.0
 dsb --version
-# → dsb 0.15.0
+# → dsb 0.16.0
 ./scripts/check-semver.sh
-# → check-semver: ok (0.15.0)
+# → check-semver: ok (0.16.0)
 ```
 
 Both commands must report the **same** full SemVer.

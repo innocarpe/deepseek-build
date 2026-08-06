@@ -15,13 +15,15 @@ Overnight agents and humans need a **non-inventable** npm path: dual bins (`deep
 
 | Field | Value |
 |-------|--------|
-| npm name | **`deepseek-build`** (unscoped) |
+| npm name | **`@innocarpe/deepseek-build`** (scoped, public) |
+| CLI commands | **`deepseek-build`**, **`dsb`** — not the scoped package id (ADR 0006) |
 | Version | **Must equal** workspace `Cargo.toml` `[workspace.package].version` full SemVer |
 | Bins | `deepseek-build` → `npm/bin/deepseek-build.js`; `dsb` → `npm/bin/dsb.js` |
+| `publishConfig.access` | `public` |
 | Node engines | `>=18` |
 | License | Apache-2.0 |
 
-If the name is taken on the public registry, **do not invent a random name overnight**. Open a follow-up ADR for `@innocarpe/deepseek-build` (or owner choice) and use local `npm pack` until resolved.
+**Rationale for scoped name:** org ownership (`@innocarpe`), avoid unscoped name squatting, clear brand ownership. Install UX is still short CLIs after install. Do **not** invent alternate package names overnight; change only via ADR amendment.
 
 ### Distribution strategy (v1 / `0.7.0`)
 
@@ -53,9 +55,14 @@ If story text required public publish, checkpoint **`blocked-awaiting-human`** w
 ```bash
 ./scripts/check-semver.sh
 npm run version-check
+npm whoami   # must be member of @innocarpe org (or create org on npmjs.com)
 npm pack
-# smoke: npm i -g ./deepseek-build-<ver>.tgz  (or npm i -g .)
+# smoke: npm i -g ./innocarpe-deepseek-build-<ver>.tgz  (or npm i -g .)
 npm publish --access public
+# verify:
+npm view @innocarpe/deepseek-build version
+npm i -g @innocarpe/deepseek-build
+deepseek-build --version && dsb --version
 ```
 
 ### Non-goals

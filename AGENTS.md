@@ -6,7 +6,7 @@ This file is standing instructions for any coding agent working in this repo.
 
 **`0.x.y` release train** toward **dogfood-usable** (not `1.0.0` yet).  
 Normative plan: [`docs/product/RELEASE_TRAIN_0x.md`](docs/product/RELEASE_TRAIN_0x.md).  
-Current product version: **`0.1.0`** (source preview). Next target theme: **`0.2.0`** installable CLI.
+Current product version: **`0.2.0`** (installable CLI). Next target theme: **`0.3.0`** coding tools daily.
 
 ## SemVer — fail-close (mandatory)
 

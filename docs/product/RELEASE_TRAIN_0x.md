@@ -26,11 +26,11 @@ Milestones **M0–M6** (feature themes) still apply. This file is the **SemVer r
 
 | Item | Value |
 |------|--------|
-| Current version | **`0.1.0`** |
-| What works | Cargo workspace; provider; cache prefix; repair/routing; thin `run`/`chat`; tools core (read/edit/write/bash gate); dual binaries when built from source |
-| What does **not** | Global PATH install; npm; daily-driver defaults for write/bash; search/grep; sessions; skills; parallel/subagents; “open laptop → type command → code for an hour” without flags |
+| Current version | **`0.2.0`** |
+| What works | Cargo workspace; provider; cache prefix; repair/routing; thin `run`/`chat`; tools core (read/edit/write/bash gate); dual binaries; **PATH install** via `./scripts/install.sh` or `cargo install --path crates/dsb-cli` |
+| What does **not** | npm; daily-driver defaults for write/bash; search/grep; sessions; skills; parallel/subagents; “open laptop → type command → code for an hour” without flags |
 
-**Honest label for `0.1.0`:** developer preview (source build only), not daily product.
+**Honest label for `0.2.0`:** installable CLI (both bins on PATH); still not full dogfood-usable (see §3).
 
 ---
 
@@ -112,6 +112,7 @@ After **DogfoodProof (`0.4.0`)** the owner re-evaluates: keep pushing `0.5.0+` o
 | SemVer | Date | Notes |
 |--------|------|--------|
 | `0.1.0` | 2026-08-06 | Engine + dual CLI from source; tools core; not installable daily |
+| `0.2.0` | 2026-08-06 | Install path: `scripts/install.sh` + documented `cargo install`; both `deepseek-build` and `dsb` on PATH; README clean-shell smoke |
 
 ---
 

@@ -18,7 +18,6 @@ GitHub UI shows checks as `CI / <job>` (e.g. `CI / fmt`, `CI / test`, `CI / requ
 | `fmt` | rust paths | `cargo fmt --check` |
 | `clippy` | rust paths | clippy |
 | `test` | rust paths | `cargo test --workspace` |
-| `smoke` | product/smoke paths | `./scripts/smoke-dogfood.sh` |
 | `semver` | version files | Cargo/npm SemVer match (no compile) |
 | **`required`** | **always** | aggregate; branch protection requires this |
 
@@ -28,7 +27,6 @@ PR / push
          ├─ fmt ──────┐
          ├─ clippy ───┤  (parallel if rust)
          ├─ test ─────┤
-         ├─ smoke ────┤  (parallel if product paths)
          ├─ semver ───┤  (if version files)
          └─ required (always) ← require this check only
 ```
@@ -55,7 +53,6 @@ report `test` and could not merge. So:
 | Filter | Paths |
 |--------|--------|
 | **rust** | `crates/**`, `Cargo.toml`, `Cargo.lock`, toolchain, rustfmt, clippy, this workflow |
-| **smoke** | rust + `package.json`, `npm/**`, smoke/install scripts |
 | **semver** | `Cargo.toml`, `package.json`, check-semver scripts |
 
 Docs-only → `changes` + `required` only (~seconds).
@@ -64,7 +61,8 @@ Docs-only → `changes` + `required` only (~seconds).
 
 | Skip | Why |
 |------|-----|
-| Live DeepSeek API | Secrets; local optional |
+| `./scripts/smoke-dogfood.sh` | Largely duplicates `test` + `semver` (re-runs workspace tests + version checks). Keep as **local / release** checklist |
+| Live DeepSeek API | Secrets; optional in the smoke script when `DEEPSEEK_API_KEY` is set |
 | npm publish | Owner-gated ADR 0007 |
 | Process-police | Docs + review harness |
 
@@ -78,16 +76,13 @@ required
 
 (Do **not** require individual `fmt` / `clippy` / `test` job names — path-skipped jobs would break merges.)
 
-**Migration note:** older rulesets may still require `gate` (from the former
-`product-ci` workflow). Update the required check name to **`required`** when
-this lands on `main`.
-
 ## Local mirrors
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -W clippy::all
 cargo test --workspace
-./scripts/smoke-dogfood.sh
 ./scripts/check-semver.sh && node npm/scripts/check-version-match.js
+# release / dogfood checklist (not a CI job):
+./scripts/smoke-dogfood.sh
 ```

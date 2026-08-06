@@ -33,7 +33,6 @@ jobs:
     timeout-minutes: 5
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
-      smoke: ${{ steps.filter.outputs.smoke }}
       semver: ${{ steps.filter.outputs.semver }}
     steps:
       - uses: actions/checkout@v4
@@ -48,17 +47,6 @@ jobs:
               - 'rust-toolchain.toml'
               - 'rustfmt.toml'
               - 'clippy.toml'
-              - '.github/workflows/ci.yml'
-            smoke:
-              - 'crates/**'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - 'rust-toolchain.toml'
-              - 'package.json'
-              - 'npm/**'
-              - 'scripts/smoke-dogfood.sh'
-              - 'scripts/check-semver.sh'
-              - 'scripts/install.sh'
               - '.github/workflows/ci.yml'
             semver:
               - 'Cargo.toml'
@@ -129,33 +117,6 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --workspace
 
-  smoke:
-    name: smoke
-    needs: changes
-    if: needs.changes.outputs.smoke == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.94.0"
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: workspace-v1
-          cache-all-crates: true
-          cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Install ripgrep
-        run: |
-          if ! command -v rg >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq ripgrep
-          fi
-      - run: ./scripts/smoke-dogfood.sh
-        env:
-          DEEPSEEK_API_KEY: ""
-
   semver:
     name: semver
     needs: changes
@@ -179,7 +140,7 @@ jobs:
   # ---------------------------------------------------------------------------
   required:
     name: required
-    needs: [changes, fmt, clippy, test, smoke, semver]
+    needs: [changes, fmt, clippy, test, semver]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -191,7 +152,6 @@ jobs:
           echo "fmt=${{ needs.fmt.result }}"
           echo "clippy=${{ needs.clippy.result }}"
           echo "test=${{ needs.test.result }}"
-          echo "smoke=${{ needs.smoke.result }}"
           echo "semver=${{ needs.semver.result }}"
 
           fail=0
@@ -206,7 +166,6 @@ jobs:
             "fmt:${{ needs.fmt.result }}" \
             "clippy:${{ needs.clippy.result }}" \
             "test:${{ needs.test.result }}" \
-            "smoke:${{ needs.smoke.result }}" \
             "semver:${{ needs.semver.result }}"
           do
             name="${pair%%:*}"

@@ -1,11 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### CI
+
+- Split product CI into path-gated parallel workflows (`rust-fmt`, `rust-clippy`, `rust-test`, `smoke-dogfood`, `semver`) with shared Cargo cache (`workspace-v1`); docs-only PRs skip Rust jobs
+
 ## 1.0.0 — 2026-08-06
 
 ### Release
 
 - First **1.0.0** after Waves A–D: dogfood core, DeepSeek-native surface, Grok-class throughput, RC harden/docs
-- Product CI (fmt/clippy/test/offline smoke)
+- Product CI (later refined into split path-gated workflows)
 - Full user-guide + known limits
 - Dual CLI `deepseek-build` / `dsb`; npm package `@innocarpe/deepseek-build` (registry publish remains owner-gated)
 

@@ -1,6 +1,6 @@
 {
   "name": "@innocarpe/deepseek-build",
-  "version": "2.0.0-alpha.1",
+  "version": "2.0.0-alpha.2",
   "description": "DeepSeek Build 2.0.0-alpha — Grok Build–class coding agent (DeepSeek default). 1.x = legacy scaffold.",
   "license": "Apache-2.0",
   "repository": {

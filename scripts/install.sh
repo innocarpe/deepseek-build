@@ -102,12 +102,46 @@ if [[ ! -x "$BIN_DIR/deepseek-build" || ! -x "$BIN_DIR/dsb" ]]; then
   exit 1
 fi
 
+# Product 2.0: Grok-class agent composition root as deepseek-build-agent.
+AGENT_NAME="deepseek-build-agent"
+VENDOR_PAGER=""
+if [[ -d "$ROOT/third_party/grok-build" ]]; then
+  echo "install.sh: building vendored Grok pager (xai-grok-pager) — may take several minutes…"
+  if ! "$ROOT/scripts/build-grok-pager.sh" release; then
+    echo "install.sh: WARNING: Grok pager build failed; wrapper installs but no-args TTY agent will error until agent bin exists." >&2
+  else
+    for cand in \
+      "$ROOT/third_party/grok-build/target/release/xai-grok-pager" \
+      "$ROOT/third_party/grok-build/target/release/xai-grok-pager-bin"; do
+      if [[ -x "$cand" ]]; then
+        VENDOR_PAGER="$cand"
+        break
+      fi
+    done
+  fi
+else
+  echo "install.sh: WARNING: third_party/grok-build missing — skip agent binary" >&2
+fi
+
+if [[ -n "$VENDOR_PAGER" ]]; then
+  install -m 755 "$VENDOR_PAGER" "$BIN_DIR/$AGENT_NAME"
+  # Also keep upstream name for debugging.
+  install -m 755 "$VENDOR_PAGER" "$BIN_DIR/xai-grok-pager"
+  echo "install.sh: installed agent:"
+  echo "  $BIN_DIR/$AGENT_NAME  ←  $VENDOR_PAGER"
+else
+  echo "install.sh: agent binary not installed (build failed or missing vendor tree)"
+fi
+
 PRIMARY_VER="$("$BIN_DIR/deepseek-build" --version 2>&1 || true)"
 ALIAS_VER="$("$BIN_DIR/dsb" --version 2>&1 || true)"
 
 echo "install.sh: installed:"
 echo "  $BIN_DIR/deepseek-build  →  $PRIMARY_VER"
 echo "  $BIN_DIR/dsb             →  $ALIAS_VER"
+if [[ -x "$BIN_DIR/$AGENT_NAME" ]]; then
+  echo "  $BIN_DIR/$AGENT_NAME  (Grok-class full-screen entry for no-args TTY)"
+fi
 
 # PATH check (best-effort; do not fail install if shell config is nonstandard)
 path_has_bin=0

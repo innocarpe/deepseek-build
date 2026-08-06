@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 2.0.0-alpha.2 — 2026-08-06
+
+### Added
+
+- **No-args TTY** `dsb` / `deepseek-build` launches Grok-class full-screen agent (`deepseek-build-agent`)
+- `agent` subcommand + `repl-legacy` thin REPL path
+- Install builds/installs vendored `xai-grok-pager` as `deepseek-build-agent`
+- Product `config.toml` seed: DeepSeek models, `api.deepseek.com`, chat_completions
+- First-run setup before agent launch; credentials 0600 under `~/.deepseek-build/`
+- Smoke note: `docs/product/evidence/W1_ENTRY_SMOKE.md`
+
+
 ## 2.0.0-alpha.1 — 2026-08-06
 
 ### Added

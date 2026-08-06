@@ -12,14 +12,16 @@ Users should feel: *I asked for a change, and the tool made progress immediately
 
 ## Product pillars
 
-1. **DeepSeek-first harness**  
-   Thinking mode, reasoning effort, Skills, MCP, permissions, and plan mode follow the official DeepSeek-oriented CLI surface ([Deep Code](https://github.com/lessweb/deepcode-cli)) and DeepSeek API contracts.
+Normative detail: [HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.md).
 
-2. **Cache- and cost-aware loop**  
-   Stable system/tool/memory prefix so DeepSeek automatic prefix/KV cache stays warm (Reasonix lesson). Flash-first; Pro on demand.
+1. **DeepSeek-first harness (L1 — Deep Code)**  
+   Tool shapes (including **snippet-scoped edit**), skills as structured on-demand context, side-effect permissions, thinking/effort UX, and session surface follow DeepSeek-native contracts—not a generic multi-vendor tool zoo.
 
-3. **Parallel orchestration**  
-   Parallel tool calls, background shell, subagents, optional worktree isolation (Grok Build lesson). Progress over ceremony.
+2. **Cache- and cost-aware loop (L2 — Reasonix + Deep Code)**  
+   Byte-stable system/tool/memory **prefix**; dynamics on the turn tail; Flash-first / Pro escalate; tool-call repair. Cache is an invariant, not a late optimization.
+
+3. **Parallel orchestration (L3 — Grok Build)**  
+   Parallel tool calls, background shell, subagents, optional worktree isolation—**without** violating L1/L2 (worker cache law).
 
 ## Default models
 

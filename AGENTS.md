@@ -7,13 +7,18 @@ This file is standing instructions for any coding agent working in this repo.
 **Docs-first product definition + process harness.** Prefer editing `docs/` and
 shipping via PRs until the toolchain ADR and MVP specs unlock runtime work.
 
-## Source priorities (fail-close)
+## Source priorities (fail-close) — layered
 
-1. **Grok Build** — wall-clock speed, parallel orchestration patterns  
-2. **Reasonix** — DeepSeek prefix-cache contract, cost loop  
-3. **Deep Code CLI** — official DeepSeek-oriented CLI surface (thinking, effort, skills, MCP, permissions, plan)
+Normative: [`docs/architecture/HARNESS_PHILOSOPHY.md`](docs/architecture/HARNESS_PHILOSOPHY.md)
 
-**Do not** pull Gajae-code multi-stage planning harnesses into v1 design.
+| Layer | Owner | Owns |
+|-------|-------|------|
+| **L1** | Deep Code (+ Reasonix cache) | Snippet edit, skills-as-context, side-effect permissions, DeepSeek-native surface |
+| **L2** | Reasonix | Prefix cache invariant, Flash/Pro, tool-call repair |
+| **L3** | Grok Build | Parallel tools, subagents, bg shell — **never overrides L1/L2** |
+
+**Do not** pull Gajae-code multi-stage planning harnesses into v1 design.  
+**Do not** implement free-form whole-file edit as primary path if it skips the snippet contract (spec 45).
 
 ## Pull requests = harness (not CI)
 

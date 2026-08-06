@@ -69,37 +69,50 @@ Out of scope for v1 messaging: enterprises needing SSO fleets, multi-tenant gate
 
 ## 5. Design sources (binding)
 
-Priority: **Grok Build → Reasonix → Deep Code**. Details: [SOURCES.md](./SOURCES.md). ADR: [0002](../adr/0002-source-priorities.md).
+**Layered ownership** (not a single global rank for every decision):
+
+| Layer | Owner | Owns |
+|-------|-------|------|
+| L1 | Deep Code (+ Reasonix cache) | Tool/edit (snippets), skills-as-context, permissions, DeepSeek-native surface |
+| L2 | Reasonix | Prefix cache invariant, Flash/Pro, tool-call repair |
+| L3 | Grok Build | Parallelism, subagents, bg shell — **cannot override L1/L2** |
+
+Normative spine: [HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.md).  
+Summary table: [SOURCES.md](./SOURCES.md). Historical ADR: [0002](../adr/0002-source-priorities.md) (amended by layered model in philosophy doc).
 
 ## 6. Scope — v1 capabilities
 
 ### 6.1 Must have (MVP exit ≈ end of M5)
 
-| Capability | Source bias | Spec (planned) |
-|------------|-------------|----------------|
-| DeepSeek chat + tool loop | Deep Code / Reasonix | 40, 10 |
-| Flash default + Pro escalate | Reasonix + Deep Code | 20 |
-| Thinking on/off + reasoning effort | Deep Code + API | 30 |
-| Cache-stable prefix contract | Reasonix | 10 |
-| Core tools: read, edit, shell, search | Grok + Deep Code | 40 |
-| Parallel tools + background shell | Grok | 50 |
-| Skills discovery (`.agents/skills` + project paths) | Deep Code | 70 |
-| Permissions (ask / allow / deny classes) | Deep Code | 90 |
-| Sessions: new / resume / fork (or equivalent) | Deep Code | 100 |
-| Light plan mode | Deep Code | 110 |
-| Subagents (at least explore + implement) | Grok | 60 |
-| MCP client | Deep Code | 80 |
-| Project surface `.deepseek-build/` | All | 120 |
-| Interactive TUI or capable CLI loop | Grok UX bar | — |
+| Capability | Source bias | Spec (planned) | Milestone |
+|------------|-------------|----------------|-----------|
+| DeepSeek chat + streaming provider | Deep Code / Reasonix | provider + 40 slice | M1 |
+| Cache-stable prefix + golden bytes | Reasonix + Deep Code B | 10 | M1 |
+| Tool-call / tool-result repair | Reasonix | 15 | **M1 (must)** |
+| Flash default + Pro escalate (provider + flags) | Reasonix + Deep Code | 20 | M1 |
+| Thinking + effort **API wiring** | Deep Code + API | 30 | M1 |
+| Thinking + effort **UX** (`/model`, presets polish) | Deep Code | 30 UX | M3 |
+| Snippet-scoped edit (+ safe write) | Deep Code A | 45 | M2 |
+| Core tools: read, write, edit, shell, search | Deep Code set + L3 speed | 40 | M2 |
+| **Minimum** side-effect permissions (shell/file) | Deep Code D | 90 min | **M2 (with tools)** |
+| Parallel tools + background shell | Grok L3 | 50 | M2 |
+| Full permissions polish | Deep Code D | 90 | M3 |
+| Skills as structured context | Deep Code C | 70 | M3 |
+| Sessions: new / resume / fork | Deep Code | 100 | M5 |
+| Light plan mode | Deep Code | 110 | M5 |
+| Subagents (+ worker cache law) | Grok under L2 | 60 | M4 |
+| MCP client (+ schema epoch rules) | Deep Code | 80 | M5 |
+| Project surface `.deepseek-build/` | All | 120 | M3 |
+| Interactive TUI or capable CLI loop | Grok UX bar | — | M2–M5 |
 
 ### 6.2 Should have (M6 preview)
 
-- Cache hit / cost indicators in UI  
-- `/preset flash|balanced|max`  
-- Tool-call repair  
+- User-visible cache hit / cost indicators in TUI (M1 still requires **provider** cache telemetry when API reports it)  
+- `/preset flash|balanced|max` polish  
 - Notify hook after turn  
 - Worktree isolation for subagents  
-- Headless/CI mode stub  
+- Headless/CI **product** test suite  
+- Adversarial acceptance suite expansion
 
 ### 6.3 Could have (post-v1)
 
@@ -214,15 +227,23 @@ Authoritative list: **[MILESTONES.md](./MILESTONES.md)** (mirrored as GitHub Mil
 4. Compaction strategy vs cache stability  
 5. Whether worktree isolation is M4 must or should  
 
-## 14. Launch definition — “PRD v1 done”
+## 14. Launch definition — gates before runtime code
 
-v1 is **accepted for implementation** when:
+See also [HARNESS_PHILOSOPHY §11](../architecture/HARNESS_PHILOSOPHY.md).
+
+**PRD / foundation complete:**
 
 - [x] Public GitHub repo with OSS scaffolding  
 - [x] This PRD + milestones published  
-- [ ] Toolchain ADR accepted  
-- [ ] Specs 10, 20, 30, 40, 50 drafted to “ready for impl” quality  
-- [ ] M1 implementation started on `main` or versioned branch  
+- [x] Harness philosophy (L1/L2/L3 + Deep Code four pillars)  
+
+**M1 code may start only when:**
+
+- [ ] **G1** Toolchain/config ADR accepted  
+- [ ] **G2** Specs **10, 15, 20, 30** status = ready-for-impl (not TODO)  
+- [ ] Provider contract documented (models, streaming, thinking/effort fields, cache usage, errors)  
+
+**Forbidden:** opening a large `feat(provider)` PR while specs 10/15/20/30 remain empty stubs.
 
 ---
 
@@ -231,3 +252,4 @@ v1 is **accepted for implementation** when:
 | Date | Change |
 |------|--------|
 | 2026-08-06 | Initial PRD v1 from product design discussions |
+| 2026-08-06 | Layered sources; tool-call repair → M1 must; gates before code; Codex adversarial review amendments |

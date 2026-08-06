@@ -18,10 +18,11 @@ Combines three first-class references:
 
 | Doc | Description |
 |-----|-------------|
+| [**Harness philosophy**](docs/architecture/HARNESS_PHILOSOPHY.md) | **Design spine** — Deep Code / Reasonix / Grok layers & conflict rules |
 | [PRD v1](docs/product/PRD-v1.md) | Problem, goals, scope, journeys, success |
 | [Milestones](docs/product/MILESTONES.md) | M0–M6 development plan (GitHub Milestones) |
 | [Vision](docs/product/VISION.md) | North star and pillars |
-| [Sources](docs/product/SOURCES.md) | Grok / Reasonix / Deep Code priorities |
+| [Sources](docs/product/SOURCES.md) | Layered source ownership (L1/L2/L3) |
 | [Non-goals](docs/product/NON_GOALS.md) | Explicit v1 exclusions |
 
 ## Contributing

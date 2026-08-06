@@ -62,6 +62,11 @@ pub fn discover_skills_index(
                 continue;
             }
             let raw = fs::read_to_string(&skill_md)?;
+            if skill_opts_out_of_index(&raw) {
+                // Still overridable: an later root without opt-out may re-insert.
+                by_name.remove(&name);
+                continue;
+            }
             let description = extract_description(&raw);
             by_name.insert(
                 name.clone(),
@@ -73,6 +78,35 @@ pub fn discover_skills_index(
         }
     }
     Ok(by_name.into_values().collect())
+}
+
+/// Frontmatter `disable-model-invocation` / `disable_model_invocation` truthy → omit from index.
+fn skill_opts_out_of_index(raw: &str) -> bool {
+    let text = raw.trim();
+    if !text.starts_with("---") {
+        return false;
+    }
+    let Some(rest) = text.strip_prefix("---") else {
+        return false;
+    };
+    let Some(end) = rest.find("\n---") else {
+        return false;
+    };
+    let fm = &rest[..end];
+    for line in fm.lines() {
+        let line = line.trim();
+        let lower = line.to_ascii_lowercase();
+        if lower.starts_with("disable-model-invocation:")
+            || lower.starts_with("disable_model_invocation:")
+        {
+            let v = line
+                .split_once(':')
+                .map(|(_, v)| v.trim().trim_matches('"').trim_matches('\'').to_ascii_lowercase())
+                .unwrap_or_default();
+            return matches!(v.as_str(), "true" | "yes" | "1");
+        }
+    }
+    false
 }
 
 /// Load full skill body by name (on-demand; does not affect stable prefix).
@@ -181,5 +215,55 @@ mod tests {
         let body = load_skill_body(dir.path(), None, "x").unwrap();
         assert!(body.contains("BODY_MARKER"));
         assert!(load_skill_body(dir.path(), None, "../etc").is_err());
+    }
+
+    #[test]
+    fn opt_out_excluded_from_index() {
+        let dir = tempdir().unwrap();
+        let hidden = dir.path().join("skills").join("hidden");
+        let visible = dir.path().join("skills").join("visible");
+        fs::create_dir_all(&hidden).unwrap();
+        fs::create_dir_all(&visible).unwrap();
+        fs::write(
+            hidden.join("SKILL.md"),
+            "---\ndescription: secret\ndisable-model-invocation: true\n---\n\n# Hidden\n",
+        )
+        .unwrap();
+        fs::write(
+            visible.join("SKILL.md"),
+            "---\ndescription: public\n---\n\n# Visible\n",
+        )
+        .unwrap();
+        let idx = discover_skills_index(dir.path(), None).unwrap();
+        assert_eq!(idx.len(), 1);
+        assert_eq!(idx[0].name, "visible");
+    }
+
+    #[test]
+    fn user_root_overrides_project_body() {
+        let dir = tempdir().unwrap();
+        let user = tempdir().unwrap();
+        let proj = dir.path().join("skills").join("shared");
+        let usr = user.path().join("shared");
+        fs::create_dir_all(&proj).unwrap();
+        fs::create_dir_all(&usr).unwrap();
+        fs::write(proj.join("SKILL.md"), "# Project\nPROJECT_BODY\n").unwrap();
+        fs::write(usr.join("SKILL.md"), "# User\nUSER_BODY\n").unwrap();
+        let body = load_skill_body(dir.path(), Some(user.path()), "shared").unwrap();
+        assert!(body.contains("USER_BODY"));
+        assert!(!body.contains("PROJECT_BODY"));
+    }
+
+    #[test]
+    fn index_sorted_by_name() {
+        let dir = tempdir().unwrap();
+        for name in ["zeta", "alpha", "mid"] {
+            let p = dir.path().join("skills").join(name);
+            fs::create_dir_all(&p).unwrap();
+            fs::write(p.join("SKILL.md"), format!("---\ndescription: {name}\n---\n")).unwrap();
+        }
+        let idx = discover_skills_index(dir.path(), None).unwrap();
+        let names: Vec<_> = idx.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["alpha", "mid", "zeta"]);
     }
 }

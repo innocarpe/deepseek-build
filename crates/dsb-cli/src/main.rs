@@ -11,6 +11,7 @@ use anyhow::{bail, Context, Result};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use dsb_agent::{Agent, AgentConfig, Preset, SessionStore, TurnEvent};
 use dsb_config::{BuildHome, Credentials};
+use dsb_context::discover_skills_index;
 use dsb_provider_deepseek::{Client, ClientConfig, ReasoningEffort};
 use dsb_tools::{AskChoice, Scope};
 
@@ -120,6 +121,15 @@ enum Commands {
     /// Manage persisted sessions (`~/.deepseek-build/sessions/*.jsonl`).
     #[command(subcommand)]
     Sessions(SessionsCmd),
+    /// Skills index (stable prefix names; bodies load via tool `skill`).
+    #[command(subcommand)]
+    Skills(SkillsCmd),
+}
+
+#[derive(Debug, Subcommand)]
+enum SkillsCmd {
+    /// List discovered skills (name + description), sorted.
+    List,
 }
 
 #[derive(Debug, Subcommand)]
@@ -203,6 +213,46 @@ async fn real_main() -> Result<()> {
         }
         Some(Commands::Sessions(ref cmd)) => {
             run_sessions_cmd(cmd)?;
+        }
+        Some(Commands::Skills(ref cmd)) => {
+            run_skills_cmd(&cli, cmd)?;
+        }
+    }
+    Ok(())
+}
+
+fn run_skills_cmd(cli: &Cli, cmd: &SkillsCmd) -> Result<()> {
+    match cmd {
+        SkillsCmd::List => {
+            let home = BuildHome::resolve();
+            let workspace = cli
+                .cwd
+                .clone()
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            let user_skills = {
+                let p = home.path().join("skills");
+                if p.is_dir() {
+                    Some(p)
+                } else {
+                    None
+                }
+            };
+            let idx = discover_skills_index(&workspace, user_skills.as_deref())
+                .context("discover skills")?;
+            if idx.is_empty() {
+                println!("(no skills found under skills/, .deepseek-build/skills/, or ~/.deepseek-build/skills/)");
+                return Ok(());
+            }
+            let t = Theme::default_readable();
+            for ent in idx {
+                println!(
+                    "{}",
+                    t.paint(
+                        Role::Tool,
+                        &format!("{:<24} {}", ent.name, ent.description)
+                    )
+                );
+            }
         }
     }
     Ok(())

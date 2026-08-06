@@ -23,6 +23,7 @@ path = "src/main.rs"
 clap = { version = "4", features = ["derive", "env"] }
 dsb-agent = { path = "../dsb-agent" }
 dsb-config = { path = "../dsb-config" }
+dsb-context = { path = "../dsb-context" }
 dsb-provider-deepseek = { path = "../dsb-provider-deepseek" }
 dsb-tools = { path = "../dsb-tools" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util"] }

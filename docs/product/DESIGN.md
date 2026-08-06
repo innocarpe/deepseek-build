@@ -70,7 +70,7 @@ Chat / bare interactive start prints a **boxed card**:
 
 Rules:
 
-1. **Whale mark** — original terminal rendering (braille silhouette) inspired by the official DeepSeek whale mascot; not an embedded PNG/SVG of the trademarked logo file.  
+1. **Whale mark** — braille raster of the official DeepSeek whale silhouette (body curve, belly cutout, eye/smile, fluke, fin) at CLI scale; not an embedded PNG/SVG binary.  
 2. **Brand blue only** for the mark, box edges, title, and prompt — no second “hero” color.  
 3. **Narrow terminals** (`COLUMNS` < 64) use `WHALE_MARK_COMPACT`.  
 4. **`NO_COLOR=1`** keeps the box + mark structure, strips ANSI.  

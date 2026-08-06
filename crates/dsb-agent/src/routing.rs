@@ -271,6 +271,7 @@ pub fn apply_routing_command(router: &mut ModelRouter, line: &str) -> (String, O
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dsb_provider_deepseek::MODEL_FLASH;
 
     #[test]
     fn default_is_flash() {

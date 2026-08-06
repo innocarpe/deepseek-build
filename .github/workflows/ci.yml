@@ -44,14 +44,20 @@ jobs:
           echo "ok: required paths present"
 
       - name: Labels JSON is valid
-        run: python3 -c "import json; json.load(open('.github/labels.json')); print('ok: labels.json')"
+        run: |
+          python3 - <<'PY'
+          import json
+          json.load(open(".github/labels.json"))
+          print("ok labels.json")
+          PY
 
-      - name: No accidental secrets patterns in docs
+      - name: No accidental secrets patterns in tracked files
         run: |
           set -euo pipefail
           # Cheap guard: sk- live keys should not be committed
-          if git grep -nE 'sk-[a-zA-Z0-9]{20,}' -- ':!*.md' ':!.github/**' 2>/dev/null; then
+          if git grep -nE 'sk-[a-zA-Z0-9]{20,}' -- . \
+            ':(exclude)*.md' ':(exclude).github/**' 2>/dev/null; then
             echo "possible API key material in non-doc files" >&2
             exit 1
           fi
-          echo "ok: no obvious key patterns in code paths"
+          echo "ok no obvious key patterns in code paths"

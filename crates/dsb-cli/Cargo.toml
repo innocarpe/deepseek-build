@@ -14,7 +14,12 @@ name = "dsb"
 path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
+dsb-agent = { path = "../dsb-agent" }
+dsb-config = { path = "../dsb-config" }
+dsb-provider-deepseek = { path = "../dsb-provider-deepseek" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util"] }
+anyhow = "1"
 
 [lints]
 workspace = true

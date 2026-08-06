@@ -76,6 +76,11 @@ impl BuildHome {
     pub fn credentials_path(&self) -> PathBuf {
         self.path.join("credentials.json")
     }
+
+    /// Multi-turn session transcripts (JSONL) live under `sessions/`.
+    pub fn sessions_dir(&self) -> PathBuf {
+        self.path.join("sessions")
+    }
 }
 
 fn default_home_path() -> PathBuf {

@@ -27,11 +27,11 @@ Milestones **M0–M6** (feature themes) still apply. This file is the **SemVer r
 
 | Item | Value |
 |------|--------|
-| Current version | **`0.4.0`** |
-| What works | PATH install; auth via credentials file; Flash chat; tools read/edit/write/grep/bash; **`--dogfood`**; **owner live dogfood note** (`docs/dogfood/`) |
-| What does **not** | npm; sessions; skills; parallel/subagents; `login`/`auth status` polish; hour-long frictionless sessions |
+| Current version | **`0.5.0`** |
+| What works | PATH install; auth; Flash chat; tools; **`--dogfood`**; dogfood notes; **session persist/resume** (`--session`, `sessions list`) under `~/.deepseek-build/sessions/` |
+| What does **not** | npm; skills body load polish; parallel/subagents; `login` UX; interactive ask |
 
-**Honest label for `0.4.0`:** dogfood **proof** on this repo (live API + agent write). Full dogfood-usable §3 still gaps: sessions, search defaults comfort, npm, interactive ask.
+**Honest label for `0.5.0`:** multi-turn sessions JSONL + tool-pair repair on load. Still missing skills surface / npm for fuller dogfood-usable.
 
 ---
 
@@ -116,6 +116,7 @@ After **DogfoodProof (`0.4.0`)** the owner re-evaluates: keep pushing `0.5.0+` o
 | `0.2.0` | 2026-08-06 | PATH install for `deepseek-build` + `dsb` (#18) |
 | `0.3.0` | 2026-08-06 | Tools daily: `grep` + `--dogfood` write/bash profile (out-of-cwd denied) (#19) |
 | `0.4.0` | 2026-08-06 | Dogfood proof: live `run` pong + agent write of `docs/dogfood/2026-08-06-live-smoke.md`; auth via credentials.json |
+| `0.5.0` | 2026-08-06 | Sessions: JSONL under `~/.deepseek-build/sessions/`; `--session` resume; `sessions list/show/delete`; spec 15 tool-pair repair on load |
 
 ---
 

@@ -17,9 +17,10 @@ use dsb_tools::{
 };
 use thiserror::Error;
 
-use crate::pairing::{pair_tool_results, tools_in_play};
+use crate::pairing::{pair_tool_results, tools_in_play, InterruptedTool};
 use crate::repair::{repair_tool_arguments, RepairError};
 use crate::routing::{apply_routing_command, ModelRouter, Preset, RouteDecision};
+use crate::session::{SessionError, SessionStore};
 
 #[derive(Debug, Error)]
 pub enum AgentError {
@@ -29,6 +30,8 @@ pub enum AgentError {
     Context(#[from] dsb_context::PrefixError),
     #[error("repair: {0}")]
     Repair(#[from] RepairError),
+    #[error(transparent)]
+    Session(#[from] SessionError),
     #[error("{0}")]
     Message(String),
 }
@@ -161,6 +164,39 @@ impl Agent {
 
     pub fn transcript_tail(&self) -> &[ChatMessage] {
         &self.tail.messages
+    }
+
+    /// Replace volatile transcript (e.g. session load). Applies tool-pair repair (spec 15).
+    pub fn load_transcript(
+        &mut self,
+        messages: Vec<ChatMessage>,
+    ) -> (usize, Vec<InterruptedTool>) {
+        let (paired, holes) = pair_tool_results(&messages);
+        let n = holes.len();
+        self.tail.messages = paired;
+        (n, holes)
+    }
+
+    /// Load session from store; returns number of repaired interrupted tool holes.
+    pub fn resume_session(
+        &mut self,
+        store: &SessionStore,
+        id: &str,
+    ) -> Result<usize, AgentError> {
+        let (messages, holes, _) = store.load(id)?;
+        self.tail.messages = messages;
+        Ok(holes.len())
+    }
+
+    /// Persist current volatile transcript to the session store.
+    pub fn persist_session(
+        &self,
+        store: &SessionStore,
+        id: &str,
+    ) -> Result<(), AgentError> {
+        let ws = self.config.workspace_root.to_string_lossy();
+        store.save(id, &self.tail.messages, Some(ws.as_ref()))?;
+        Ok(())
     }
 
     /// Run one user turn (may include internal tool rounds; M1 tools return stub errors).

@@ -71,8 +71,8 @@ mindmap
 
 | Item | Value |
 |------|--------|
-| Version on `main` | Read `Cargo.toml` (expect **`0.11.0`** after MCP + plan (Wave B complete)) |
-| Active ultragoal | **`native-0x` complete** → start **`throughput-0x`** (Wave C) |
+| Version on `main` | Read `Cargo.toml` (expect **`0.12.0`** after parallel tools (Wave C)) |
+| Active ultragoal | **`throughput-0x`** in progress (Wave C); native-0x complete |
 | Gates green | **G0–G3**, **G6a** (sessions), **G6b** (skills) |
 | Gates red | **G4**, **G5**, **G6c** (MCP), **G6d** (plan) |
 
@@ -159,8 +159,8 @@ Detail for Wave A minors: [RELEASE_TRAIN_0x.md](./RELEASE_TRAIN_0x.md).
 
 ### Wave C — Grok throughput (`throughput-0x`)
 
-- [ ] Spec **50** + **G4 green**  
-- [ ] Parallel independent tools + cancel/partial failure  
+- [x] Spec **50** + **G4 green** + parallel tools (**0.12.0**)  
+- [x] Parallel independent tools + cancel/partial failure  
 - [ ] Background shell + collect  
 - [ ] Spec **60** + **G5 green**  
 - [ ] Subagents + worker cache law + optional worktree  
@@ -247,6 +247,7 @@ From [NON_GOALS.md](./NON_GOALS.md): Gajae multi-stage team harness as identity;
 | `0.9.0` | B | 2026-08-06 | Permissions TTY grants + DeepSeek blue theme v1 (#34–#36) |
 | `0.10.0` | B | 2026-08-06 | Skills product expand + list CLI (#37–#38) |
 | `0.11.0` | B | 2026-08-06 | MCP + light plan; G6c/G6d green (#39–#40) |
+| `0.12.0` | C | 2026-08-06 | Spec 50 + G4 parallel readonly tools (#41–#42) |
 | … | B–D | — | Update on each minor release PR |
 
 ---

@@ -177,7 +177,7 @@ Exact names may differ; behavior is what ships against specs.
 | Constraint | Note |
 |------------|------|
 | API | `https://api.deepseek.com` (OpenAI-compatible where applicable) |
-| Models (v1 focus) | Flash tier + Pro tier; **wire ids TBD in provider contract ADR (G1b)** |
+| Models (v1 focus) | `deepseek-v4-flash`, `deepseek-v4-pro` ([ADR 0005](../adr/0005-deepseek-provider-contract.md)) |
 | Layout | See [REPO_LAYOUT.md](../architecture/REPO_LAYOUT.md) |
 | Language | **Not locked** — ADR required before `crates/` fills |
 | License | Apache-2.0 |
@@ -239,11 +239,12 @@ See also [HARNESS_PHILOSOPHY §11](../architecture/HARNESS_PHILOSOPHY.md).
 
 **M1 code may start only when ([GATES.md](../GATES.md)):**
 
-- [ ] **G1** Toolchain/config ADR accepted  
-- [ ] **G1b** Provider contract ADR accepted (pinned model ids + stream/thinking/effort/cache fields)  
-- [ ] **G2** Specs **10, 15, 20, 30** status = ready-for-impl (not TODO; automated tests for 10/15)  
+- [x] **G0** Harness philosophy  
+- [x] **G1** Toolchain ADR (`docs/adr/0004-toolchain.md`) — green on merge of preflight PR  
+- [x] **G1b** Provider contract ADR (`docs/adr/0005-deepseek-provider-contract.md`)  
+- [x] **G2** Specs **10, 15, 20, 30** ready-for-impl  
 
-**Forbidden:** opening a large `feat(provider)` PR while G1/G1b/G2 are red.
+**Forbidden:** opening `feat` work that implements M2+ (snippet edit, shell, parallel) without G3+.
 
 ---
 

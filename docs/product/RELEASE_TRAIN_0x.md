@@ -1,10 +1,10 @@
 # Release train — Wave A only (`0.2.0`–`0.7.0`)
 
-**Status:** Wave A **complete on `main`** (re-check `Cargo.toml`; patch line **`0.7.1`**).  
+**Status:** Wave A **complete** (last Wave A patch **`0.7.1`**). Product SemVer continues on [MASTER_PLAN.md](./MASTER_PLAN.md) (**`0.8.0`+** Wave B).  
 **Full vision board:** [MASTER_PLAN.md](./MASTER_PLAN.md)  
 **SSOT priority:** [SSOT.md](./SSOT.md)  
 **PR units (historical fixed DAG):** [WAVE_A_PR_DAG.md](./WAVE_A_PR_DAG.md)  
-**After Wave A:** [ULTRAGOAL_CHAIN.md](./ULTRAGOAL_CHAIN.md) → **`native-0x`** (Wave B). Do **not** use this file for `0.8.0+`.
+**After Wave A:** [ULTRAGOAL_CHAIN.md](./ULTRAGOAL_CHAIN.md) → **`native-0x`** (Wave B). Do **not** use this file for `0.8.0+` delivery notes.
 
 **SemVer:** full `MAJOR.MINOR.PATCH` only.  
 **CLI:** `deepseek-build` · `dsb` (ADR 0006).
@@ -22,12 +22,12 @@ Ship user-visible **`0.y.0`** minors until **dogfood-usable** and npm **package*
 
 | Item | Value |
 |------|--------|
-| Version | Read `Cargo.toml` (expect **`0.7.1`**) |
+| Version (Wave A end) | **`0.7.1`** last A patch; current product → read `Cargo.toml` / MASTER_PLAN |
 | Install | `./scripts/install.sh` + npm `@innocarpe/deepseek-build` ([01-install](../user-guide/01-install.md), [05-npm](../user-guide/05-npm.md)) |
-| Tools | read/edit/write/grep/bash; `--dogfood` |
+| Tools | read/edit/write/grep/skill/bash; `--dogfood` (Spec **40** from **0.8.0**) |
 | Sessions | **0.5.0** JSONL persist/resume |
 | Surface | **0.6.0** skills index min + thinking/effort UX |
-| npm | **0.7.1** `@innocarpe/deepseek-build` published; dual bins; Rust needed for postinstall |
+| npm | `@innocarpe/deepseek-build` dual bins; version matches Cargo; Rust needed for postinstall |
 
 ---
 

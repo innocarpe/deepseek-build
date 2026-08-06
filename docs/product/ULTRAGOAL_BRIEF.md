@@ -19,7 +19,8 @@ Implement **M1 — Provider + cache + routing** for DeepSeek Build:
 
 - Follow [HARNESS_PHILOSOPHY](../architecture/HARNESS_PHILOSOPHY.md) L1/L2/L3.  
 - PRs only; [skills/pr-authoring](../../skills/pr-authoring/SKILL.md); Orca-level bodies.  
-- **Do not** implement M2+ (snippet edit 45, shell, parallel 50, subagents 60) until those specs exist and G3+ green.  
+- Active product plan: **`0.x.y` train** until dogfood-usable — [RELEASE_TRAIN_0x.md](./RELEASE_TRAIN_0x.md). Do **not** aim ultragoal at **`1.0.0`**.  
+- **Do not** implement parallel (50) / subagents (60) until those specs exist and G4/G5 green.  
 - **Do not** add process-police CI.  
 - **Do not** import Gajae multi-stage planning.  
 - Update [GATES.md](../GATES.md) only when flipping gates with evidence.

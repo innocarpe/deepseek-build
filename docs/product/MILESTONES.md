@@ -6,6 +6,9 @@ Issues and PRs should set a milestone whenever possible (`milestone-aligned` lab
 North star for every milestone: **wall-clock progress on real coding tasks**  
 **without** violating L1/L2 harness invariants ([HARNESS_PHILOSOPHY](../architecture/HARNESS_PHILOSOPHY.md)).
 
+**SemVer release train (how we ship):** stay on **`0.y.z`** until dogfood-usable —  
+see [**RELEASE_TRAIN_0x.md**](./RELEASE_TRAIN_0x.md). Do not treat **`1.0.0`** as the near finish line.
+
 **Invariant gates (every L3-heavy milestone must restate):**
 
 - Snippet edit safety **before any edit tool ships** (no conditional dodge)  

@@ -18,9 +18,9 @@ Both must print the same `--version` string (workspace SemVer).
 
 ## npm (ADR 0007)
 
-- Package name: **`deepseek-build`**  
+- Package name: **`@innocarpe/deepseek-build`** (scoped)  
+- CLI bins: **`deepseek-build`** + **`dsb`**  
 - `package.json` version = Cargo workspace SemVer  
-- Bins: both `deepseek-build` and `dsb`  
 - Agent complete: pack + local install smoke; **publish = human**  
 - See [ADR 0007](../adr/0007-npm-packaging.md) · [user-guide/05-npm.md](../user-guide/05-npm.md)
 

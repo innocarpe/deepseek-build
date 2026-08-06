@@ -37,5 +37,9 @@
   { "name": "priority/p2", "color": "FBCA04", "description": "Normal" },
   { "name": "priority/p3", "color": "C2E0C6", "description": "Low / later" },
 
-  { "name": "milestone-aligned", "color": "BFD4F2", "description": "Tracked against an active milestone" }
+  { "name": "milestone-aligned", "color": "BFD4F2", "description": "Tracked against an active milestone" },
+
+  { "name": "size/S", "color": "C2E0C6", "description": "PR size: small (preferred)" },
+  { "name": "size/M", "color": "FEF2C0", "description": "PR size: medium" },
+  { "name": "size/L", "color": "F9D0C4", "description": "PR size: large — split if possible" }
 ]

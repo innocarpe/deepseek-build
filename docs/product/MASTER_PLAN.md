@@ -71,8 +71,8 @@ mindmap
 
 | Item | Value |
 |------|--------|
-| Version on `main` | Read `Cargo.toml` (expect **`0.14.0`** after subagents (Wave C complete)) |
-| Active ultragoal | **`throughput-0x` complete** → next **`rc-1.0.0`** (Wave D) |
+| Version on `main` | Read `Cargo.toml` (expect **`0.15.0`** after product CI smoke) |
+| Active ultragoal | **`rc-1.0.0`** in progress (Wave D) |
 | Gates green | **G0–G3**, **G6a** (sessions), **G6b** (skills) |
 | Gates red | **G4**, **G5**, **G6c** (MCP), **G6d** (plan) |
 
@@ -170,7 +170,7 @@ Detail for Wave A minors: [RELEASE_TRAIN_0x.md](./RELEASE_TRAIN_0x.md).
 
 ### Wave D — RC → **`1.0.0`** (`rc-1.0.0`)
 
-- [ ] CI build/test smoke (product, not process-police)  
+- [x] CI build/test smoke (product, not process-police) — **0.15.0**  
 - [ ] user-guide complete for shipped commands  
 - [ ] CHANGELOG + known-limits  
 - [ ] Sustained dogfood evidence  
@@ -250,6 +250,7 @@ From [NON_GOALS.md](./NON_GOALS.md): Gajae multi-stage team harness as identity;
 | `0.12.0` | C | 2026-08-06 | Spec 50 + G4 parallel readonly tools (#41–#42) |
 | `0.13.0` | C | 2026-08-06 | Background bash + bash_collect (#43–#44) |
 | `0.14.0` | C | 2026-08-06 | Spec 60 + G5 subagents/cache law (#45–#46) |
+| `0.15.0` | D | 2026-08-06 | Product CI smoke workflow (#47–#48) |
 | … | B–D | — | Update on each minor release PR |
 
 ---

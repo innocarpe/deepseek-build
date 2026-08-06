@@ -14,7 +14,7 @@ Behavioral contracts for what DeepSeek Build **must** do when implemented.
 | 15 | [Tool-call repair](./15-tool-call-repair.md) | L2 | **ready-for-impl** |
 | 20 | [Model routing Flash/Pro](./20-model-routing.md) | L2 | **ready-for-impl** |
 | 30 | [Thinking & effort](./30-thinking-effort.md) | L1 | **ready-for-impl** |
-| 40 | Core tools surface (small set) | L1 + L3 | TODO (Wave B) |
+| 40 | [Core tools surface](./40-core-tools-surface.md) | L1 + L3 | **ready-for-impl** (Wave B `0.8.0`) |
 | 45 | [Snippet edit contract](./45-snippet-edit.md) | L1 Deep Code A | **ready-for-impl** |
 | 50 | Parallelism & background | L3 | TODO (needs **G4**) |
 | 60 | Subagents (+ worker cache law) | L3 under L2 | TODO (needs **G5**) |

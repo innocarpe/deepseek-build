@@ -33,7 +33,8 @@
 
 - **Wave A dogfood** through **`0.7.0` npm package** shipped on `main` (install + tools + sessions + surface min + npm wrappers).  
 - **Registry `npm publish`** remains **human-gated** ([ADR 0007](adr/0007-npm-packaging.md)).  
-- **Wave B** (`native-0x`): theme, full permissions UX, expand skills, MCP/plan — needs G6c/G6d for those runtimes.  
+- **Wave B** (`native-0x`): Spec **40** tools surface (`0.8.0`); theme, full permissions UX, expand skills, MCP/plan — needs G6c/G6d for those runtimes.  
+- Spec **40** is **ready-for-impl** (`docs/specs/40-core-tools-surface.md`); it is **not** a G-number gate (G3 remains 45+90).  
 - **Wave C**: G4 then G5.  
 
 **Ultragoal:** after `dogfood-0x` complete → `native-0x` ([ULTRAGOAL_CHAIN.md](product/ULTRAGOAL_CHAIN.md)).

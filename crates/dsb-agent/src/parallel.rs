@@ -9,7 +9,9 @@ pub fn is_mutating_tool(name: &str, arguments: &Value) -> bool {
         return true;
     }
     match ToolName::parse(name) {
-        Some(ToolName::Read) | Some(ToolName::Grep) | Some(ToolName::Skill) => false,
+        Some(ToolName::Read) | Some(ToolName::Grep) | Some(ToolName::Skill) | Some(ToolName::BashCollect) => {
+            false
+        }
         Some(ToolName::Plan) => {
             // Only `get` is read-only; missing action → mutating.
             !matches!(arguments.get("action").and_then(|v| v.as_str()), Some("get"))

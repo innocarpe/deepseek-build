@@ -8,6 +8,7 @@ use dsb_provider_deepseek::{ToolDefinition, ToolFunction};
 use serde_json::{json, Value};
 use thiserror::Error;
 
+use crate::bg_shell::BgJobStore;
 use crate::grants::{AskChoice, PermissionGrants};
 use crate::permissions::{
     classify_bash, decide, effective_scopes, resolve_workspace_path, scopes_for_path, Decision,
@@ -27,6 +28,17 @@ pub const CORE_TOOL_NAMES: &[&str] = &["read", "edit", "write", "grep", "skill",
 /// Built-ins including light plan tool (Wave B 0.11.0+).
 pub const CORE_TOOL_NAMES_WITH_PLAN: &[&str] =
     &["read", "edit", "write", "grep", "skill", "bash", "plan"];
+/// Built-ins including plan + background collect (Wave C 0.13.0+).
+pub const CORE_TOOL_NAMES_WITH_BG: &[&str] = &[
+    "read",
+    "edit",
+    "write",
+    "grep",
+    "skill",
+    "bash",
+    "plan",
+    "bash_collect",
+];
 
 /// Returns [`CORE_TOOL_NAMES`] (stable order).
 pub fn core_tool_names() -> &'static [&'static str] {
@@ -44,6 +56,8 @@ pub enum ToolName {
     Bash,
     /// Light non-blocking plan (spec 110).
     Plan,
+    /// Collect background bash job by id (spec 50 §1.4).
+    BashCollect,
 }
 
 impl ToolName {
@@ -56,6 +70,7 @@ impl ToolName {
             Self::Skill => "skill",
             Self::Bash => "bash",
             Self::Plan => "plan",
+            Self::BashCollect => "bash_collect",
         }
     }
 
@@ -69,6 +84,7 @@ impl ToolName {
             "skill" | "load_skill" => Some(Self::Skill),
             "bash" => Some(Self::Bash),
             "plan" => Some(Self::Plan),
+            "bash_collect" | "collect_bash" => Some(Self::BashCollect),
             _ => None,
         }
     }
@@ -116,6 +132,8 @@ pub struct ToolExecutor {
     pub plan: PlanStore,
     /// MCP wire-name → catalog entry for dispatch (spec 80).
     pub mcp_catalog: crate::mcp::McpCatalog,
+    /// Background bash jobs (spec 50 §1.4).
+    pub bg_jobs: BgJobStore,
 }
 
 impl ToolExecutor {
@@ -130,6 +148,7 @@ impl ToolExecutor {
             ask_callback: None,
             plan: PlanStore::new(),
             mcp_catalog: crate::mcp::McpCatalog::default(),
+            bg_jobs: BgJobStore::new(),
         }
     }
 
@@ -207,6 +226,28 @@ impl ToolExecutor {
             ToolName::Skill => self.skill(&req.arguments),
             ToolName::Bash => self.bash(&req.arguments),
             ToolName::Plan => self.plan_tool(&req.arguments),
+            ToolName::BashCollect => self.bash_collect(&req.arguments),
+        }
+    }
+
+    fn bash_collect(&mut self, args: &Value) -> Result<ToolResponse, ToolError> {
+        let job_id = arg_str(args, "job_id")?;
+        let wait_ms = args
+            .get("wait_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            .min(120_000);
+        match self.bg_jobs.snapshot_json(job_id, wait_ms) {
+            Ok(v) => Ok(ToolResponse {
+                ok: true,
+                content: v.to_string(),
+                mutated: false,
+            }),
+            Err(e) => Ok(ToolResponse {
+                ok: false,
+                content: json!({"error": e}).to_string(),
+                mutated: false,
+            }),
         }
     }
 
@@ -484,6 +525,11 @@ impl ToolExecutor {
             self.snippets.expire_all();
         }
 
+        let background = args
+            .get("background")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
         if !self.bash_execute {
             return Ok(ToolResponse {
                 ok: true,
@@ -492,6 +538,24 @@ impl ToolExecutor {
                     "dry_run": true,
                     "classified": classified.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
                     "message": "bash execution disabled (permission/classify only); use --dogfood or --bash-execute"
+                })
+                .to_string(),
+                mutated: may_mutate,
+            });
+        }
+
+        if background {
+            let job_id = self
+                .bg_jobs
+                .spawn(&self.workspace, command)
+                .map_err(ToolError::Other)?;
+            return Ok(ToolResponse {
+                ok: true,
+                content: json!({
+                    "ok": true,
+                    "background": true,
+                    "job_id": job_id,
+                    "message": "use bash_collect with job_id to retrieve output"
                 })
                 .to_string(),
                 mutated: may_mutate,
@@ -599,11 +663,15 @@ fn path_display(workspace: &Path, full: &Path) -> String {
 /// Order matches [`CORE_TOOL_NAMES`] / [`CORE_TOOL_NAMES_WITH_PLAN`] and is part of the stable prefix (spec 10).
 /// Schemas use canonical names only; aliases are parse-only ([`ToolName::parse`]).
 pub fn tool_definitions() -> Vec<ToolDefinition> {
-    tool_definitions_with_plan(true)
+    tool_definitions_with_options(true, true)
 }
 
 /// When `include_plan` is false, omit the light plan tool (pre-G6d builds).
 pub fn tool_definitions_with_plan(include_plan: bool) -> Vec<ToolDefinition> {
+    tool_definitions_with_options(include_plan, include_plan)
+}
+
+pub fn tool_definitions_with_options(include_plan: bool, include_bg_collect: bool) -> Vec<ToolDefinition> {
     let mut defs = vec![
         ToolDefinition {
             type_: "function".into(),
@@ -715,6 +783,10 @@ pub fn tool_definitions_with_plan(include_plan: bool) -> Vec<ToolDefinition> {
                             "type": "array",
                             "items": {"type": "string"},
                             "description": "Advisory scope strings; classifier is authoritative"
+                        },
+                        "background": {
+                            "type": "boolean",
+                            "description": "If true, return job_id immediately; collect with bash_collect"
                         }
                     },
                     "required": ["command", "side_effects"],
@@ -744,7 +816,29 @@ pub fn tool_definitions_with_plan(include_plan: bool) -> Vec<ToolDefinition> {
             },
         });
     }
-    let expected: &[&str] = if include_plan {
+    if include_bg_collect {
+        defs.push(ToolDefinition {
+            type_: "function".into(),
+            function: ToolFunction {
+                name: "bash_collect".into(),
+                description: Some(
+                    "Collect stdout/stderr for a background bash job_id (spec 50). Optional wait_ms.".into(),
+                ),
+                parameters: Some(json!({
+                    "type": "object",
+                    "properties": {
+                        "job_id": {"type": "string"},
+                        "wait_ms": {"type": "integer", "description": "Max wait 0..=120000 (default 0 poll)"}
+                    },
+                    "required": ["job_id"],
+                    "additionalProperties": false
+                })),
+            },
+        });
+    }
+    let expected: &[&str] = if include_bg_collect {
+        CORE_TOOL_NAMES_WITH_BG
+    } else if include_plan {
         CORE_TOOL_NAMES_WITH_PLAN
     } else {
         CORE_TOOL_NAMES
@@ -992,10 +1086,10 @@ mod tests {
     fn registry_names_match_core_catalog() {
         let defs = tool_definitions();
         let names: Vec<&str> = defs.iter().map(|d| d.function.name.as_str()).collect();
-        assert_eq!(names, CORE_TOOL_NAMES_WITH_PLAN);
+        assert_eq!(names, CORE_TOOL_NAMES_WITH_BG);
         assert_eq!(core_tool_names(), CORE_TOOL_NAMES);
-        assert_eq!(names.len(), 7);
-        let without = tool_definitions_with_plan(false);
+        assert_eq!(names.len(), 8);
+        let without = tool_definitions_with_options(false, false);
         assert_eq!(
             without
                 .iter()
@@ -1016,6 +1110,7 @@ mod tests {
             ("skill", &["name"]),
             ("bash", &["command", "side_effects"]),
             ("plan", &["action"]),
+            ("bash_collect", &["job_id"]),
         ];
         let defs = tool_definitions();
         for (name, reqs) in expected {

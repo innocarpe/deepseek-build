@@ -1,5 +1,8 @@
 # scripts/
 
-Dev and release helpers. Empty until toolchain ADR.
+| Script | Role |
+|--------|------|
+| `check-pr-title.sh` | **Optional** local Conventional Commits title check (not CI) |
+| `sync-labels.sh` | Push `.github/labels.json` to GitHub labels |
 
-Examples to expect later: format, lint, smoke-run, install-local, check-docs-links.
+Product build/test scripts arrive with the toolchain ADR / runtime.

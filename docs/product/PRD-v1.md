@@ -177,7 +177,7 @@ Exact names may differ; behavior is what ships against specs.
 | Task progress feel | Maintainer dogfood: multi-file tasks complete without “stuck planning” |
 | Cost discipline | Flash default; Pro turns are intentional and visible |
 | Cache discipline | Spec 10 implemented; no mid-session rewrite of tool schema prefix |
-| OSS hygiene | Labels, milestones, CI docs-hygiene green; PRs labeled |
+| OSS hygiene | Labels, milestones, Orca-level PR bodies; PR harness (`skills/pr-authoring`) |
 | Spec coverage | MVP specs 10–50, 70, 90, 100 written before their implementation PRs |
 
 Quantitative latency benchmarks are **M6+**, after a runnable agent exists.

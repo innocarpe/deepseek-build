@@ -8,7 +8,7 @@ Use this when reviewing someone else’s PR **or** self-merging.
 
 - [ ] Title matches Conventional Commits (`type` / `type(scope): summary`)
 - [ ] Exactly one **kind** label; matches title type
-- [ ] CI green: `docs-hygiene`, `pr-title`, `pr-kind-label` (and future jobs)
+- [ ] Product CI green when it exists (build/tests) — ignore process-police jobs if any reappear; remove them
 - [ ] Milestone set when the work maps to M1–M6
 - [ ] **Summary is an Orca-level narrative**: Problem + What changed + Out of scope (not a file list)
 - [ ] **Screenshots/evidence** present or explicit “No visual change” with review paths

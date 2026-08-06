@@ -115,7 +115,7 @@ Call out:
 
 | Orca | DeepSeek Build |
 |------|----------------|
-| `pnpm lint/typecheck/test/build` | Project commands as they exist (today: docs-hygiene CI + local scripts; later cargo/go/…) |
+| `pnpm lint/typecheck/test/build` | Project commands as they exist (later: cargo/go/… once runtime lands) |
 | Screenshots of Electron UI | TUI captures, CLI output, before/after tables |
 | IPC / TCC / Electron notes | Tool permissions, sandbox, API keys, cache-stable prefix |
 | STA-#### issue ids | GitHub issues + milestone M1–M6 |

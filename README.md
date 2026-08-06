@@ -38,7 +38,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). **All meaningful work lands via PR.**
 | [Branches](docs/contributing/branches.md) | Branch naming |
 | [Labels](docs/maintainers/github-labels.md) | Kind / area / size catalog |
 
-PR title must be Conventional Commits; ready PRs need exactly one kind label (CI enforced).
+PR title must be Conventional Commits; ready PRs need exactly one kind label.  
+Enforced by **agent skill + review harness**, not by process-police CI.
 
 ## Repository map
 

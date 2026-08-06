@@ -12,9 +12,16 @@ Deep, **normative** process docs. Skim the root [CONTRIBUTING.md](../../CONTRIBU
 | [branches.md](./branches.md) | Naming, lifecycle, stacking, protection expectations |
 | [../maintainers/github-labels.md](../maintainers/github-labels.md) | Label catalog + sync |
 | [../adr/0003-pr-process.md](../adr/0003-pr-process.md) | Why this process (alternatives rejected) |
+| [../../skills/pr-authoring/SKILL.md](../../skills/pr-authoring/SKILL.md) | Agent skill (harness) for PR authoring |
+
+## Enforcement
+
+**Harness, not process CI:** agents load `pr-authoring`; humans use the checklist.  
+Do not reintroduce GitHub Actions that only lint titles/labels/markdown inventories.
 
 ## Design sources for process (not product features)
 
-Process shape draws from common OSS practice (Conventional Commits, small PRs, squash-on-main, labeled intents) as used across many large repos—not a clone of any single project’s CONTRIBUTING.
+Narrative density is inspired by product repos like **Orca** (detailed PR bodies).  
+Commit/label shape draws from common Conventional Commits practice.
 
 Product priorities remain: Grok Build / Reasonix / Deep Code (see [SOURCES](../product/SOURCES.md)).

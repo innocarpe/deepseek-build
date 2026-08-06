@@ -62,11 +62,11 @@ Open a **new** terminal (or source your shell config), then:
 
 ```bash
 deepseek-build --version
-# → deepseek-build 0.5.0
+# → deepseek-build 0.6.0
 dsb --version
-# → dsb 0.5.0
+# → dsb 0.6.0
 ./scripts/check-semver.sh
-# → check-semver: ok (0.5.0)
+# → check-semver: ok (0.6.0)
 ```
 
 Both commands must report the **same** full SemVer.
@@ -98,6 +98,19 @@ deepseek-build run "Say hello in one short sentence."
 # alias:
 dsb run "Say hello in one short sentence."
 ```
+
+### Model / thinking / effort
+
+Each turn logs visibility like: `model=deepseek-v4-flash thinking=on effort=high`.
+
+```bash
+deepseek-build --effort max run "design the system"
+deepseek-build --no-thinking run "quick yes/no"
+deepseek-build --thinking --effort high chat
+# In chat: /pro  /flash  /preset max|flash|balanced  /model
+```
+
+Skills: index of `skills/*/SKILL.md` (and `~/.deepseek-build/skills/`) goes into the **stable** prefix; full body loads only via the `skill` tool (no prefix thrash).
 
 ### Sessions (persist / resume)
 

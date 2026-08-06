@@ -4,12 +4,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use dsb_context::{
-    assemble_messages, discover_project_instructions, EnvironmentSummary, PrefixBuildInputs,
-    PrefixBuilder, SkillIndexEntry, StablePrefix, VolatileTail, DEFAULT_SYSTEM_PROMPT,
+    assemble_messages, discover_project_instructions, discover_skills_index, EnvironmentSummary,
+    PrefixBuildInputs, PrefixBuilder, SkillIndexEntry, StablePrefix, VolatileTail,
+    DEFAULT_SYSTEM_PROMPT,
 };
+use dsb_provider_deepseek::ReasoningEffort;
 use dsb_provider_deepseek::{
     ChatMessage, ChatRequestBuilder, Client, ModelId, ProviderError, StreamEvent, ToolCall,
-    ToolDefinition, MODEL_PRO,
+    ToolDefinition, ThinkingMode, MODEL_PRO,
 };
 use dsb_tools::{
     default_coding_policy, dogfood_coding_policy, tool_definitions, PermissionPolicy, Scope,
@@ -55,6 +57,14 @@ pub struct AgentConfig {
     /// Trusted local dogfood profile: workspace write + bash execute under policy.
     /// Still denies write/delete outside the workspace.
     pub dogfood: bool,
+    /// Optional user skills directory (`~/.deepseek-build/skills`).
+    pub user_skills_root: Option<PathBuf>,
+    /// When true, auto-discover skills into the stable index.
+    pub discover_skills: bool,
+    /// Override reasoning effort for all turns (CLI `--effort`).
+    pub effort_override: Option<ReasoningEffort>,
+    /// When Some(false), disable thinking for the session.
+    pub thinking_enabled: Option<bool>,
 }
 
 impl Default for AgentConfig {
@@ -71,6 +81,10 @@ impl Default for AgentConfig {
             allow_workspace_write: false,
             bash_execute: false,
             dogfood: false,
+            user_skills_root: None,
+            discover_skills: true,
+            effort_override: None,
+            thinking_enabled: None,
         }
     }
 }
@@ -132,10 +146,19 @@ impl Agent {
     pub fn new(client: Arc<Client>, config: AgentConfig) -> Result<Self, AgentError> {
         let project_instructions = discover_project_instructions(&config.workspace_root)?;
         let environment = EnvironmentSummary::detect(&config.workspace_root);
+        let skills_index = if config.discover_skills && config.skills_index.is_empty() {
+            discover_skills_index(
+                &config.workspace_root,
+                config.user_skills_root.as_deref(),
+            )
+            .unwrap_or_default()
+        } else {
+            config.skills_index.clone()
+        };
         let inputs = PrefixBuildInputs {
             system_prompt: config.system_prompt.clone(),
             tools: config.tools.clone(),
-            skills_index: config.skills_index.clone(),
+            skills_index,
             environment,
             project_instructions,
         };
@@ -144,6 +167,7 @@ impl Agent {
         let policy = build_policy(&config);
         let mut tools = ToolExecutor::new(config.workspace_root.clone(), policy);
         tools.bash_execute = config.bash_execute || config.dogfood;
+        tools.user_skills_root = config.user_skills_root.clone();
         Ok(Self {
             client,
             config,
@@ -222,7 +246,17 @@ impl Agent {
             });
         }
 
-        let route = self.router.route_turn_for_preset(&user_text);
+        let mut route = self.router.route_turn_for_preset(&user_text);
+        if let Some(e) = self.config.effort_override {
+            route.effort = e;
+        }
+        if let Some(enabled) = self.config.thinking_enabled {
+            route.thinking = if enabled {
+                ThinkingMode::enabled()
+            } else {
+                ThinkingMode::disabled()
+            };
+        }
         if self.config.show_model {
             on_event(TurnEvent::ModelVisibility(route.visibility_line()));
         }

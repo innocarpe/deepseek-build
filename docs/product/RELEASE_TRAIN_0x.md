@@ -27,11 +27,11 @@ Milestones **M0–M6** (feature themes) still apply. This file is the **SemVer r
 
 | Item | Value |
 |------|--------|
-| Current version | **`0.5.0`** |
-| What works | PATH install; auth; Flash chat; tools; **`--dogfood`**; dogfood notes; **session persist/resume** (`--session`, `sessions list`) under `~/.deepseek-build/sessions/` |
-| What does **not** | npm; skills body load polish; parallel/subagents; `login` UX; interactive ask |
+| Current version | **`0.6.0`** |
+| What works | PATH install; auth; chat; tools; dogfood; sessions; **skills index (stable) + `skill` tool body load**; **`--effort` / `--thinking` / visibility** |
+| What does **not** | npm distribute; parallel/subagents; interactive ask; full login UX |
 
-**Honest label for `0.5.0`:** multi-turn sessions JSONL + tool-pair repair on load. Still missing skills surface / npm for fuller dogfood-usable.
+**Honest label for `0.6.0`:** product surface (skills + model/effort UX). Remaining train slice: **0.7.0** npm.
 
 ---
 
@@ -117,6 +117,7 @@ After **DogfoodProof (`0.4.0`)** the owner re-evaluates: keep pushing `0.5.0+` o
 | `0.3.0` | 2026-08-06 | Tools daily: `grep` + `--dogfood` write/bash profile (out-of-cwd denied) (#19) |
 | `0.4.0` | 2026-08-06 | Dogfood proof: live `run` pong + agent write of `docs/dogfood/2026-08-06-live-smoke.md`; auth via credentials.json |
 | `0.5.0` | 2026-08-06 | Sessions: JSONL under `~/.deepseek-build/sessions/`; `--session` resume; `sessions list/show/delete`; spec 15 tool-pair repair on load |
+| `0.6.0` | 2026-08-06 | Surface: skills index in stable prefix; on-demand `skill` tool; `--effort` / `--thinking` / `--no-thinking`; model visibility includes thinking+effort |
 
 ---
 

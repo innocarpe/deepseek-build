@@ -58,7 +58,19 @@ pub struct RouteDecision {
 
 impl RouteDecision {
     pub fn visibility_line(&self) -> String {
-        let mut s = format!("model={}", self.wire_model);
+        let thinking = match self.thinking.type_ {
+            dsb_provider_deepseek::ThinkingType::Enabled => "on",
+            dsb_provider_deepseek::ThinkingType::Disabled => "off",
+        };
+        let effort = match self.effort {
+            ReasoningEffort::Low => "low",
+            ReasoningEffort::High => "high",
+            ReasoningEffort::Max => "max",
+        };
+        let mut s = format!(
+            "model={} thinking={thinking} effort={effort}",
+            self.wire_model
+        );
         if let Some(r) = &self.escalate_reason {
             s.push_str(&format!(" escalate_reason={r}"));
         }
@@ -265,6 +277,11 @@ pub fn apply_routing_command(router: &mut ModelRouter, line: &str) -> (String, O
             return (after, Some("preset"));
         }
     }
+    // /model is informational in the REPL (CLI prints visibility each turn).
+    if trimmed == "/model" || trimmed.starts_with("/model ") {
+        let rest = trimmed.trim_start_matches("/model").trim().to_string();
+        return (rest, Some("model_status"));
+    }
     (line.to_string(), None)
 }
 
@@ -337,7 +354,10 @@ mod tests {
         let mut r = ModelRouter::default();
         r.set_auto_router(false);
         let d = r.route_turn("hi");
-        assert!(d.visibility_line().contains(MODEL_FLASH));
+        let line = d.visibility_line();
+        assert!(line.contains(MODEL_FLASH));
+        assert!(line.contains("thinking="));
+        assert!(line.contains("effort="));
     }
 
     #[test]

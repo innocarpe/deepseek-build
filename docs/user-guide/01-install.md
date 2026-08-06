@@ -1,6 +1,6 @@
 # 01 — Install
 
-**Product version:** `0.5.0`+ (install path since **0.2.0**)  
+**Product version:** `0.6.0`+ (install path since **0.2.0**)  
 **Commands:** `deepseek-build` (primary) · `dsb` (alias) — [ADR 0006](../adr/0006-cli-names-and-semver.md)
 
 ## Requirements
@@ -41,9 +41,9 @@ export PATH="$HOME/.deepseek-build/bin:$PATH"
 
 ```bash
 deepseek-build --version
-# deepseek-build 0.5.0
+# deepseek-build 0.6.0
 dsb --version
-# dsb 0.5.0
+# dsb 0.6.0
 ```
 
 Both must print the **same** full SemVer triple.

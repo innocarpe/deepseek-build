@@ -11,7 +11,7 @@ use anyhow::{bail, Context, Result};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use dsb_agent::{Agent, AgentConfig, Preset, SessionStore, TurnEvent};
 use dsb_config::{BuildHome, Credentials};
-use dsb_provider_deepseek::{Client, ClientConfig};
+use dsb_provider_deepseek::{Client, ClientConfig, ReasoningEffort};
 
 /// Resolve invocation name for help/version (`deepseek-build` or `dsb`).
 fn invocation_name() -> &'static str {
@@ -75,6 +75,18 @@ struct Cli {
     #[arg(long, global = true)]
     session: Option<String>,
 
+    /// Reasoning effort: low | high | max (default: from preset / model).
+    #[arg(long, global = true)]
+    effort: Option<String>,
+
+    /// Disable thinking mode for this process (default: thinking enabled).
+    #[arg(long, global = true, default_value_t = false)]
+    no_thinking: bool,
+
+    /// Force thinking enabled (default when not --no-thinking).
+    #[arg(long, global = true, default_value_t = false)]
+    thinking: bool,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -118,10 +130,10 @@ fn parse_cli() -> Cli {
         "DeepSeek Build — DeepSeek-native terminal coding agent.\n\n\
 Set DEEPSEEK_API_KEY or ~/.deepseek-build/credentials.json.\n\
 Commands: `deepseek-build` (primary) and `dsb` (alias) are the same program.\n\
-Version is always full SemVer (MAJOR.MINOR.PATCH), e.g. 0.5.0 — never bare \"0.5\".\n\n\
+Version is always full SemVer (MAJOR.MINOR.PATCH), e.g. 0.6.0 — never bare \"0.6\".\n\n\
 Examples:\n  \
   {name} run \"explain this repo\"\n  \
-  {name} --dogfood --session mywork chat\n  \
+  {name} --dogfood --session mywork --effort high chat\n  \
   {name} sessions list\n  \
   dsb chat"
     );
@@ -280,6 +292,22 @@ async fn build_agent(cli: &Cli) -> Result<Agent> {
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
     let preset = Preset::parse(&cli.preset).unwrap_or(Preset::Flash);
+    let effort_override = cli.effort.as_deref().map(ReasoningEffort::from_product);
+    let thinking_enabled = if cli.no_thinking {
+        Some(false)
+    } else if cli.thinking {
+        Some(true)
+    } else {
+        None
+    };
+    let user_skills_root = {
+        let p = home.path().join("skills");
+        if p.is_dir() {
+            Some(p)
+        } else {
+            None
+        }
+    };
     let agent_cfg = AgentConfig {
         workspace_root: workspace,
         preset,
@@ -288,6 +316,10 @@ async fn build_agent(cli: &Cli) -> Result<Agent> {
         bash_execute: cli.bash_execute || cli.dogfood,
         dogfood: cli.dogfood,
         headless: true,
+        user_skills_root,
+        discover_skills: true,
+        effort_override,
+        thinking_enabled,
         ..AgentConfig::default()
     };
     Ok(Agent::new(client, agent_cfg)?)
@@ -325,10 +357,23 @@ async fn run_repl(cli: &Cli) -> Result<()> {
     let mut agent = build_agent(cli).await?;
     let session_id = bind_session(&mut agent, cli)?;
     let inv = invocation_name();
-    println!("{inv} chat — DeepSeek Build (Flash default). /pro /preset max|flash /quit");
+    println!(
+        "{inv} chat — DeepSeek Build (Flash default). /pro /flash /preset /model /quit"
+    );
     eprintln!("[prefix_epoch={}]", agent.prefix_epoch_short());
     if let Some(id) = &session_id {
         eprintln!("[session={id} — turns are persisted]");
+    }
+    if cli.effort.is_some() || cli.no_thinking || cli.thinking {
+        eprintln!(
+            "[surface effort={} thinking={}]",
+            cli.effort.as_deref().unwrap_or("default"),
+            if cli.no_thinking {
+                "off"
+            } else {
+                "on"
+            }
+        );
     }
 
     let stdin = io::stdin();

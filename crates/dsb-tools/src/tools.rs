@@ -21,6 +21,8 @@ pub enum ToolName {
     Write,
     Grep,
     Bash,
+    /// On-demand skill body load (not in stable prefix).
+    Skill,
 }
 
 impl ToolName {
@@ -31,6 +33,7 @@ impl ToolName {
             Self::Write => "write",
             Self::Grep => "grep",
             Self::Bash => "bash",
+            Self::Skill => "skill",
         }
     }
 
@@ -41,6 +44,7 @@ impl ToolName {
             "write" => Some(Self::Write),
             "grep" | "search" => Some(Self::Grep),
             "bash" => Some(Self::Bash),
+            "skill" | "load_skill" => Some(Self::Skill),
             _ => None,
         }
     }
@@ -78,6 +82,8 @@ pub struct ToolExecutor {
     pub snippets: SnippetStore,
     /// When false, bash only classifies/permission-checks (dry-run).
     pub bash_execute: bool,
+    /// Optional user skills root (`~/.deepseek-build/skills`).
+    pub user_skills_root: Option<PathBuf>,
 }
 
 impl ToolExecutor {
@@ -87,6 +93,7 @@ impl ToolExecutor {
             policy,
             snippets: SnippetStore::new(),
             bash_execute: false,
+            user_skills_root: None,
         }
     }
 
@@ -111,6 +118,33 @@ impl ToolExecutor {
             ToolName::Write => self.write(&req.arguments),
             ToolName::Grep => self.grep(&req.arguments),
             ToolName::Bash => self.bash(&req.arguments),
+            ToolName::Skill => self.skill(&req.arguments),
+        }
+    }
+
+    fn skill(&mut self, args: &Value) -> Result<ToolResponse, ToolError> {
+        let name = arg_str(args, "name")?;
+        // skill body load is a read of trusted skill paths only (no out-of-cwd free path)
+        match dsb_context::load_skill_body(
+            &self.workspace,
+            self.user_skills_root.as_deref(),
+            name,
+        ) {
+            Ok(body) => Ok(ToolResponse {
+                ok: true,
+                content: json!({
+                    "name": name,
+                    "body": body,
+                    "note": "skill body loaded on-demand; stable skills index unchanged"
+                })
+                .to_string(),
+                mutated: false,
+            }),
+            Err(e) => Ok(ToolResponse {
+                ok: false,
+                content: json!({"error": e.to_string(), "name": name}).to_string(),
+                mutated: false,
+            }),
         }
     }
 
@@ -515,6 +549,23 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             type_: "function".into(),
             function: ToolFunction {
+                name: "skill".into(),
+                description: Some(
+                    "Load the full body of a skill by name from the skills index (on-demand). Does not modify the stable prefix. Call when you need detailed skill instructions.".into(),
+                ),
+                parameters: Some(json!({
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Skill directory name from the skills index"}
+                    },
+                    "required": ["name"],
+                    "additionalProperties": false
+                })),
+            },
+        },
+        ToolDefinition {
+            type_: "function".into(),
+            function: ToolFunction {
                 name: "bash".into(),
                 description: Some(
                     "Run a shell command. Declare side_effects scopes; classifier is authoritative. Execution requires --bash-execute or --dogfood.".into(),
@@ -681,5 +732,22 @@ mod tests {
     fn search_alias_parses_as_grep() {
         assert_eq!(ToolName::parse("search"), Some(ToolName::Grep));
         assert_eq!(ToolName::parse("grep"), Some(ToolName::Grep));
+    }
+
+    #[test]
+    fn skill_tool_loads_body_on_demand() {
+        let dir = tempdir().unwrap();
+        let skill_dir = dir.path().join("skills").join("demo");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "# Demo\n\nHELLO_SKILL\n").unwrap();
+        let mut ex = ToolExecutor::new(dir.path().to_path_buf(), default_coding_policy(true));
+        let req = ToolRequest {
+            name: ToolName::Skill,
+            arguments: json!({"name": "demo"}),
+        };
+        let resp = ex.execute(&req).unwrap();
+        assert!(resp.ok);
+        assert!(resp.content.contains("HELLO_SKILL"));
+        assert!(!resp.mutated);
     }
 }

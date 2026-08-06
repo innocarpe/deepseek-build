@@ -2,14 +2,15 @@
 //!
 //! - Spec **45**: session snippets + `read` / `edit` / `write`
 //! - Spec **90** minimum: path scopes, policy, bash classifier
+//! - Daily coding: `grep` + dogfood profile (`dogfood_coding_policy`)
 
 mod permissions;
 mod snippets;
 mod tools;
 
 pub use permissions::{
-    classify_bash, decide, default_coding_policy, Decision, PermissionError, PermissionPolicy,
-    Scope,
+    classify_bash, decide, default_coding_policy, dogfood_coding_policy, Decision, PermissionError,
+    PermissionPolicy, Scope,
 };
 pub use snippets::{EditError, Snippet, SnippetStore, WriteError};
 pub use tools::{

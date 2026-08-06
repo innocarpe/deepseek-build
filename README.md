@@ -15,7 +15,7 @@ Combines three first-class references:
 
 **Not in v1 scope:** Gajae-code multi-stage planning/team harness (too slow for our north star).
 
-> Status: **`0.2.0`** — installable CLI (both bins on PATH). Still early dogfood; tools defaults and npm come later.  
+> Status: **`0.3.0`** — installable CLI + coding tools daily (`grep`, `--dogfood` write/bash profile).  
 > Release train: stay on **`0.x.y`** until dogfood-usable → [RELEASE_TRAIN_0x.md](docs/product/RELEASE_TRAIN_0x.md). **`1.0.0` is not the near goal.**
 
 ## Install (PATH)
@@ -62,11 +62,11 @@ Open a **new** terminal (or source your shell config), then:
 
 ```bash
 deepseek-build --version
-# → deepseek-build 0.2.0
+# → deepseek-build 0.3.0
 dsb --version
-# → dsb 0.2.0
+# → dsb 0.3.0
 ./scripts/check-semver.sh
-# → check-semver: ok (0.2.0)
+# → check-semver: ok (0.3.0)
 ```
 
 Both commands must report the **same** full SemVer.
@@ -116,17 +116,35 @@ deepseek-build chat
 # > /quit
 ```
 
-### Agent tool flags (still early)
+### Dogfood profile (trusted local coding)
 
-Mutating tools are fail-closed by default:
+For daily use on a repo you trust, prefer **one flag**:
 
 ```bash
-# Allow write/edit/create inside the workspace (still denies out-of-cwd)
+deepseek-build --dogfood chat
+# alias:
+dsb --dogfood chat
+```
+
+`--dogfood` enables:
+
+| Capability | Behavior |
+|------------|----------|
+| Workspace write/edit/create/delete | Allowed **inside** the workspace |
+| Bash execution | Real execute (not dry-run-only) under classifier + policy |
+| Out-of-workspace write/delete | **Still denied** (fail-closed) |
+
+Or combine finer flags:
+
+```bash
+# Workspace write only (bash still dry-run unless also --bash-execute)
 deepseek-build --allow-workspace-write chat
 
-# Actually run bash (default: classify / permission only)
+# Execute bash under policy (writes still need --allow-workspace-write or --dogfood)
 deepseek-build --bash-execute chat
 ```
+
+Built-in tools (model-visible): `read`, `edit`, `write`, **`grep`**, `bash`.
 
 ## Develop from source
 

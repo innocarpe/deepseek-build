@@ -1,5 +1,6 @@
-//! Built-in tools: read / edit / write (+ bash classify gate stub).
+//! Built-in tools: read / edit / write / grep / bash (spec 45/90 + dogfood daily).
 
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -18,6 +19,7 @@ pub enum ToolName {
     Read,
     Edit,
     Write,
+    Grep,
     Bash,
 }
 
@@ -27,6 +29,7 @@ impl ToolName {
             Self::Read => "read",
             Self::Edit => "edit",
             Self::Write => "write",
+            Self::Grep => "grep",
             Self::Bash => "bash",
         }
     }
@@ -36,6 +39,7 @@ impl ToolName {
             "read" => Some(Self::Read),
             "edit" => Some(Self::Edit),
             "write" => Some(Self::Write),
+            "grep" | "search" => Some(Self::Grep),
             "bash" => Some(Self::Bash),
             _ => None,
         }
@@ -105,6 +109,7 @@ impl ToolExecutor {
             ToolName::Read => self.read(&req.arguments),
             ToolName::Edit => self.edit(&req.arguments),
             ToolName::Write => self.write(&req.arguments),
+            ToolName::Grep => self.grep(&req.arguments),
             ToolName::Bash => self.bash(&req.arguments),
         }
     }
@@ -187,6 +192,102 @@ impl ToolExecutor {
         }
     }
 
+    fn grep(&mut self, args: &Value) -> Result<ToolResponse, ToolError> {
+        let pattern = arg_str(args, "pattern")?;
+        if pattern.is_empty() {
+            return Err(ToolError::Args("pattern must be non-empty".into()));
+        }
+        let path_arg = args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".");
+        let case_insensitive = args
+            .get("case_insensitive")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let max_matches = args
+            .get("max_matches")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as usize)
+            .unwrap_or(50)
+            .clamp(1, 500);
+        let glob_ext = args
+            .get("glob")
+            .and_then(|v| v.as_str())
+            .map(|g| g.trim_start_matches("*.").to_string());
+
+        let root = resolve_workspace_path(&self.workspace, path_arg);
+        let scopes = scopes_for_path(&self.workspace, &root, PathOp::Read)
+            .map_err(|e| ToolError::Other(e.to_string()))?;
+        self.check(&scopes)?;
+
+        if !root.exists() {
+            return Ok(ToolResponse {
+                ok: false,
+                content: json!({"error": "path_not_found", "path": path_arg}).to_string(),
+                mutated: false,
+            });
+        }
+
+        let needle = if case_insensitive {
+            pattern.to_ascii_lowercase()
+        } else {
+            pattern.to_string()
+        };
+
+        let mut matches: Vec<Value> = Vec::new();
+        let mut truncated = false;
+        let mut files_scanned = 0usize;
+        let workspace = self.workspace.clone();
+
+        walk_text_files(&root, glob_ext.as_deref(), &mut |file| {
+            if matches.len() >= max_matches {
+                truncated = true;
+                return;
+            }
+            files_scanned += 1;
+            let Ok(text) = fs::read_to_string(file) else {
+                return;
+            };
+            // Skip likely-binary / huge blobs
+            if text.chars().take(4096).any(|c| c == '\0') {
+                return;
+            }
+            for (idx, line) in text.lines().enumerate() {
+                if matches.len() >= max_matches {
+                    truncated = true;
+                    break;
+                }
+                let hay = if case_insensitive {
+                    line.to_ascii_lowercase()
+                } else {
+                    line.to_string()
+                };
+                if hay.contains(&needle) {
+                    matches.push(json!({
+                        "path": path_display(&workspace, file),
+                        "line": idx + 1,
+                        "text": line.chars().take(400).collect::<String>(),
+                    }));
+                }
+            }
+        });
+
+        Ok(ToolResponse {
+            ok: true,
+            content: json!({
+                "pattern": pattern,
+                "path": path_arg,
+                "match_count": matches.len(),
+                "files_scanned": files_scanned,
+                "truncated": truncated,
+                "matches": matches,
+            })
+            .to_string(),
+            mutated: false,
+        })
+    }
+
     fn bash(&mut self, args: &Value) -> Result<ToolResponse, ToolError> {
         let command = arg_str(args, "command")?;
         let declared = parse_declared_scopes(args);
@@ -227,7 +328,7 @@ impl ToolExecutor {
                     "ok": true,
                     "dry_run": true,
                     "classified": classified.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-                    "message": "bash execution disabled (permission/classify only)"
+                    "message": "bash execution disabled (permission/classify only); use --dogfood or --bash-execute"
                 })
                 .to_string(),
                 mutated: may_mutate,
@@ -248,10 +349,57 @@ impl ToolExecutor {
                 "exit_code": output.status.code(),
                 "stdout": stdout,
                 "stderr": stderr,
+                "dry_run": false,
             })
             .to_string(),
             mutated: may_mutate,
         })
+    }
+}
+
+/// Recursively visit text-ish files under `root`. Optional extension filter: `"rs"` matches `*.rs`.
+fn walk_text_files(root: &Path, ext_filter: Option<&str>, visit: &mut dyn FnMut(&Path)) {
+    const SKIP_DIRS: &[&str] = &[
+        ".git",
+        "target",
+        "node_modules",
+        ".deepseek-build",
+        "dist",
+        "build",
+    ];
+    if root.is_file() {
+        if ext_ok(root, ext_filter) {
+            visit(root);
+        }
+        return;
+    }
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let name = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default();
+            if SKIP_DIRS.contains(&name) {
+                continue;
+            }
+            walk_text_files(&path, ext_filter, visit);
+        } else if path.is_file() && ext_ok(&path, ext_filter) {
+            visit(&path);
+        }
+    }
+}
+
+fn ext_ok(path: &Path, ext_filter: Option<&str>) -> bool {
+    match ext_filter {
+        None => true,
+        Some(ext) => path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case(ext)),
     }
 }
 
@@ -346,9 +494,30 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             type_: "function".into(),
             function: ToolFunction {
+                name: "grep".into(),
+                description: Some(
+                    "Search workspace text files for a literal pattern (substring). Prefer over bash grep. Optional path and file extension glob (e.g. \"rs\").".into(),
+                ),
+                parameters: Some(json!({
+                    "type": "object",
+                    "properties": {
+                        "pattern": {"type": "string"},
+                        "path": {"type": "string", "description": "File or directory under workspace (default \".\")"},
+                        "glob": {"type": "string", "description": "File extension filter without star, e.g. \"rs\" or \"md\""},
+                        "case_insensitive": {"type": "boolean"},
+                        "max_matches": {"type": "integer"}
+                    },
+                    "required": ["pattern"],
+                    "additionalProperties": false
+                })),
+            },
+        },
+        ToolDefinition {
+            type_: "function".into(),
+            function: ToolFunction {
                 name: "bash".into(),
                 description: Some(
-                    "Run a shell command. Declare side_effects scopes; classifier is authoritative.".into(),
+                    "Run a shell command. Declare side_effects scopes; classifier is authoritative. Execution requires --bash-execute or --dogfood.".into(),
                 ),
                 parameters: Some(json!({
                     "type": "object",
@@ -427,5 +596,90 @@ mod tests {
         };
         let err = ex.execute(&req).unwrap_err();
         assert!(matches!(err, ToolError::Args(_)));
+    }
+
+    #[test]
+    fn grep_finds_literal_matches() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("src")).unwrap();
+        fs::write(dir.path().join("src/a.rs"), "fn hello() {}\nfn other() {}\n").unwrap();
+        fs::write(dir.path().join("src/b.txt"), "hello world\n").unwrap();
+        let mut ex = ToolExecutor::new(dir.path().to_path_buf(), default_coding_policy(true));
+        let req = ToolRequest {
+            name: ToolName::Grep,
+            arguments: json!({"pattern": "hello", "glob": "rs"}),
+        };
+        let resp = ex.execute(&req).unwrap();
+        assert!(resp.ok);
+        let v: Value = serde_json::from_str(&resp.content).unwrap();
+        assert_eq!(v["match_count"], 1);
+        assert!(v["matches"][0]["path"].as_str().unwrap().contains("a.rs"));
+        assert_eq!(v["matches"][0]["line"], 1);
+    }
+
+    #[test]
+    fn grep_empty_pattern_args_error() {
+        let dir = tempdir().unwrap();
+        let mut ex = ToolExecutor::new(dir.path().to_path_buf(), default_coding_policy(true));
+        let req = ToolRequest {
+            name: ToolName::Grep,
+            arguments: json!({"pattern": ""}),
+        };
+        let err = ex.execute(&req).unwrap_err();
+        assert!(matches!(err, ToolError::Args(_)));
+    }
+
+    #[test]
+    fn bash_execute_runs_when_enabled() {
+        let dir = tempdir().unwrap();
+        let mut ex = ToolExecutor::new(dir.path().to_path_buf(), default_coding_policy(true));
+        ex.bash_execute = true;
+        let req = ToolRequest {
+            name: ToolName::Bash,
+            arguments: json!({"command": "echo dogfood-ok", "side_effects": ["read-in-cwd"]}),
+        };
+        let resp = ex.execute(&req).unwrap();
+        assert!(resp.ok);
+        let v: Value = serde_json::from_str(&resp.content).unwrap();
+        assert_eq!(v["dry_run"], false);
+        assert!(v["stdout"].as_str().unwrap().contains("dogfood-ok"));
+    }
+
+    #[test]
+    fn bash_dry_run_when_execute_disabled() {
+        let dir = tempdir().unwrap();
+        let mut ex = ToolExecutor::new(dir.path().to_path_buf(), default_coding_policy(true));
+        assert!(!ex.bash_execute);
+        let req = ToolRequest {
+            name: ToolName::Bash,
+            arguments: json!({"command": "echo no", "side_effects": ["read-in-cwd"]}),
+        };
+        let resp = ex.execute(&req).unwrap();
+        let v: Value = serde_json::from_str(&resp.content).unwrap();
+        assert_eq!(v["dry_run"], true);
+    }
+
+    #[test]
+    fn write_out_of_cwd_denied_under_write_allow() {
+        let dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let mut ex = ToolExecutor::new(dir.path().to_path_buf(), policy_allow_write());
+        let outside_path = outside.path().join("escape.txt");
+        let req = ToolRequest {
+            name: ToolName::Write,
+            arguments: json!({
+                "path": outside_path.to_string_lossy(),
+                "content": "nope"
+            }),
+        };
+        let err = ex.execute(&req).unwrap_err();
+        assert!(matches!(err, ToolError::Permission(_)));
+        assert!(!outside_path.exists());
+    }
+
+    #[test]
+    fn search_alias_parses_as_grep() {
+        assert_eq!(ToolName::parse("search"), Some(ToolName::Grep));
+        assert_eq!(ToolName::parse("grep"), Some(ToolName::Grep));
     }
 }

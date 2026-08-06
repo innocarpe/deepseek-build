@@ -65,6 +65,11 @@ struct Cli {
     #[arg(long, global = true, default_value_t = false)]
     bash_execute: bool,
 
+    /// Trusted local dogfood profile: workspace write + bash execute under policy.
+    /// Still denies write/delete outside the workspace. Prefer this for daily local coding.
+    #[arg(long, global = true, default_value_t = false)]
+    dogfood: bool,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -91,9 +96,10 @@ fn parse_cli() -> Cli {
         "DeepSeek Build — DeepSeek-native terminal coding agent.\n\n\
 Set DEEPSEEK_API_KEY or ~/.deepseek-build/credentials.json.\n\
 Commands: `deepseek-build` (primary) and `dsb` (alias) are the same program.\n\
-Version is always full SemVer (MAJOR.MINOR.PATCH), e.g. 0.1.0 — never bare \"1.0\".\n\n\
+Version is always full SemVer (MAJOR.MINOR.PATCH), e.g. 0.3.0 — never bare \"0.3\".\n\n\
 Examples:\n  \
   {name} run \"explain this repo\"\n  \
+  {name} --dogfood chat\n  \
   {name} run --pro \"design the architecture\"\n  \
   dsb chat"
     );
@@ -165,8 +171,9 @@ async fn build_agent(cli: &Cli) -> Result<Agent> {
         workspace_root: workspace,
         preset,
         show_model: !cli.quiet_model,
-        allow_workspace_write: cli.allow_workspace_write,
-        bash_execute: cli.bash_execute,
+        allow_workspace_write: cli.allow_workspace_write || cli.dogfood,
+        bash_execute: cli.bash_execute || cli.dogfood,
+        dogfood: cli.dogfood,
         headless: true,
         ..AgentConfig::default()
     };

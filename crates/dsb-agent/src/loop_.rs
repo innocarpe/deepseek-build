@@ -12,8 +12,8 @@ use dsb_provider_deepseek::{
     ToolDefinition, MODEL_PRO,
 };
 use dsb_tools::{
-    default_coding_policy, tool_definitions, PermissionPolicy, Scope, ToolExecutor, ToolName,
-    ToolRequest,
+    default_coding_policy, dogfood_coding_policy, tool_definitions, PermissionPolicy, Scope,
+    ToolExecutor, ToolName, ToolRequest,
 };
 use thiserror::Error;
 
@@ -49,6 +49,9 @@ pub struct AgentConfig {
     pub allow_workspace_write: bool,
     /// Actually execute bash (default false: classify + permission only).
     pub bash_execute: bool,
+    /// Trusted local dogfood profile: workspace write + bash execute under policy.
+    /// Still denies write/delete outside the workspace.
+    pub dogfood: bool,
 }
 
 impl Default for AgentConfig {
@@ -64,19 +67,28 @@ impl Default for AgentConfig {
             headless: true,
             allow_workspace_write: false,
             bash_execute: false,
+            dogfood: false,
         }
     }
 }
 
 fn build_policy(cfg: &AgentConfig) -> PermissionPolicy {
-    let mut p = default_coding_policy(cfg.headless);
-    if cfg.allow_workspace_write {
-        p.allow.insert(Scope::WriteInCwd);
-        p.allow.insert(Scope::DeleteInCwd);
-        p.ask.remove(&Scope::WriteInCwd);
-        p.ask.remove(&Scope::DeleteInCwd);
+    if cfg.dogfood || cfg.allow_workspace_write {
+        let mut p = if cfg.dogfood {
+            dogfood_coding_policy(cfg.headless)
+        } else {
+            default_coding_policy(cfg.headless)
+        };
+        if cfg.allow_workspace_write || cfg.dogfood {
+            p.allow.insert(Scope::WriteInCwd);
+            p.allow.insert(Scope::DeleteInCwd);
+            p.ask.remove(&Scope::WriteInCwd);
+            p.ask.remove(&Scope::DeleteInCwd);
+        }
+        p
+    } else {
+        default_coding_policy(cfg.headless)
     }
-    p
 }
 
 /// Events emitted during a turn (for CLI rendering).
@@ -128,7 +140,7 @@ impl Agent {
         let router = ModelRouter::new(config.preset);
         let policy = build_policy(&config);
         let mut tools = ToolExecutor::new(config.workspace_root.clone(), policy);
-        tools.bash_execute = config.bash_execute;
+        tools.bash_execute = config.bash_execute || config.dogfood;
         Ok(Self {
             client,
             config,

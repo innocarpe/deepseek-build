@@ -1,4 +1,4 @@
-//! Built-in tools: read / edit / write / grep / bash (spec 45/90 + dogfood daily).
+//! Built-in tools: read / edit / write / grep / skill / bash (spec **40** + 45/90/70).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,15 +14,25 @@ use crate::permissions::{
 };
 use crate::snippets::{EditError, SnippetStore, WriteError};
 
+/// Canonical built-in tool names in **stable prefix order** (spec 40 §3.3).
+///
+/// Do not reorder without starting a new cache epoch (spec 10).
+pub const CORE_TOOL_NAMES: &[&str] = &["read", "edit", "write", "grep", "skill", "bash"];
+
+/// Returns [`CORE_TOOL_NAMES`] (stable order).
+pub fn core_tool_names() -> &'static [&'static str] {
+    CORE_TOOL_NAMES
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolName {
     Read,
     Edit,
     Write,
     Grep,
-    Bash,
     /// On-demand skill body load (not in stable prefix).
     Skill,
+    Bash,
 }
 
 impl ToolName {
@@ -32,19 +42,20 @@ impl ToolName {
             Self::Edit => "edit",
             Self::Write => "write",
             Self::Grep => "grep",
-            Self::Bash => "bash",
             Self::Skill => "skill",
+            Self::Bash => "bash",
         }
     }
 
+    /// Parse a model-supplied tool name. Accepts aliases from spec 40 §1.1.
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "read" => Some(Self::Read),
             "edit" => Some(Self::Edit),
             "write" => Some(Self::Write),
             "grep" | "search" => Some(Self::Grep),
-            "bash" => Some(Self::Bash),
             "skill" | "load_skill" => Some(Self::Skill),
+            "bash" => Some(Self::Bash),
             _ => None,
         }
     }
@@ -117,8 +128,8 @@ impl ToolExecutor {
             ToolName::Edit => self.edit(&req.arguments),
             ToolName::Write => self.write(&req.arguments),
             ToolName::Grep => self.grep(&req.arguments),
-            ToolName::Bash => self.bash(&req.arguments),
             ToolName::Skill => self.skill(&req.arguments),
+            ToolName::Bash => self.bash(&req.arguments),
         }
     }
 
@@ -465,22 +476,25 @@ fn path_display(workspace: &Path, full: &Path) -> String {
         .unwrap_or_else(|_| full.display().to_string())
 }
 
-/// OpenAI-style tool definitions for the model (stable schema — keep key order stable via serde).
+/// OpenAI-style tool definitions for the model (spec 40).
+///
+/// Order matches [`CORE_TOOL_NAMES`] and is part of the stable prefix (spec 10).
+/// Schemas use canonical names only; aliases are parse-only ([`ToolName::parse`]).
 pub fn tool_definitions() -> Vec<ToolDefinition> {
-    vec![
+    let defs = vec![
         ToolDefinition {
             type_: "function".into(),
             function: ToolFunction {
                 name: "read".into(),
                 description: Some(
-                    "Read a text file and obtain a snippet_id required for edit.".into(),
+                    "Read a text file and obtain a snippet_id required for edit (spec 45).".into(),
                 ),
                 parameters: Some(json!({
                     "type": "object",
                     "properties": {
                         "path": {"type": "string"},
-                        "start_line": {"type": "integer"},
-                        "end_line": {"type": "integer"}
+                        "start_line": {"type": "integer", "description": "1-based inclusive start"},
+                        "end_line": {"type": "integer", "description": "1-based inclusive end"}
                     },
                     "required": ["path"],
                     "additionalProperties": false
@@ -530,7 +544,7 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
             function: ToolFunction {
                 name: "grep".into(),
                 description: Some(
-                    "Search workspace text files for a literal pattern (substring). Prefer over bash grep. Optional path and file extension glob (e.g. \"rs\").".into(),
+                    "Search workspace text files for a literal substring (not regex). Prefer over bash grep. Optional path and file extension filter (e.g. \"rs\").".into(),
                 ),
                 parameters: Some(json!({
                     "type": "object",
@@ -539,7 +553,7 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
                         "path": {"type": "string", "description": "File or directory under workspace (default \".\")"},
                         "glob": {"type": "string", "description": "File extension filter without star, e.g. \"rs\" or \"md\""},
                         "case_insensitive": {"type": "boolean"},
-                        "max_matches": {"type": "integer"}
+                        "max_matches": {"type": "integer", "description": "Default 50, clamp 1..=500"}
                     },
                     "required": ["pattern"],
                     "additionalProperties": false
@@ -568,7 +582,7 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
             function: ToolFunction {
                 name: "bash".into(),
                 description: Some(
-                    "Run a shell command. Declare side_effects scopes; classifier is authoritative. Execution requires --bash-execute or --dogfood.".into(),
+                    "Run a shell command. Declare side_effects scopes; classifier is authoritative (spec 90). Execution requires --bash-execute or --dogfood.".into(),
                 ),
                 parameters: Some(json!({
                     "type": "object",
@@ -576,7 +590,8 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
                         "command": {"type": "string"},
                         "side_effects": {
                             "type": "array",
-                            "items": {"type": "string"}
+                            "items": {"type": "string"},
+                            "description": "Advisory scope strings; classifier is authoritative"
                         }
                     },
                     "required": ["command", "side_effects"],
@@ -584,7 +599,14 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
                 })),
             },
         },
-    ]
+    ];
+    debug_assert_eq!(
+        defs.iter()
+            .map(|d| d.function.name.as_str())
+            .collect::<Vec<_>>(),
+        CORE_TOOL_NAMES.to_vec()
+    );
+    defs
 }
 
 #[cfg(test)]
@@ -735,6 +757,13 @@ mod tests {
     }
 
     #[test]
+    fn skill_alias_parses_as_skill() {
+        assert_eq!(ToolName::parse("skill"), Some(ToolName::Skill));
+        assert_eq!(ToolName::parse("load_skill"), Some(ToolName::Skill));
+        assert_eq!(ToolName::parse("unknown_tool_xyz"), None);
+    }
+
+    #[test]
     fn skill_tool_loads_body_on_demand() {
         let dir = tempdir().unwrap();
         let skill_dir = dir.path().join("skills").join("demo");
@@ -749,5 +778,64 @@ mod tests {
         assert!(resp.ok);
         assert!(resp.content.contains("HELLO_SKILL"));
         assert!(!resp.mutated);
+    }
+
+    /// Spec 40 T1: registry name set is exactly the six canonical tools in stable order.
+    #[test]
+    fn registry_names_match_core_catalog() {
+        let defs = tool_definitions();
+        let names: Vec<&str> = defs.iter().map(|d| d.function.name.as_str()).collect();
+        assert_eq!(names, CORE_TOOL_NAMES);
+        assert_eq!(core_tool_names(), CORE_TOOL_NAMES);
+        assert_eq!(names.len(), 6);
+    }
+
+    /// Spec 40 T3: required argument sets match the wire table.
+    #[test]
+    fn registry_required_fields_match_spec40() {
+        let expected: &[(&str, &[&str])] = &[
+            ("read", &["path"]),
+            ("edit", &["snippet_id", "old_string", "new_string"]),
+            ("write", &["path", "content"]),
+            ("grep", &["pattern"]),
+            ("skill", &["name"]),
+            ("bash", &["command", "side_effects"]),
+        ];
+        let defs = tool_definitions();
+        for (name, reqs) in expected {
+            let def = defs
+                .iter()
+                .find(|d| d.function.name == *name)
+                .unwrap_or_else(|| panic!("missing tool {name}"));
+            let params = def.function.parameters.as_ref().expect("parameters");
+            assert_eq!(params["type"], "object");
+            assert_eq!(params["additionalProperties"], false);
+            let required: Vec<&str> = params["required"]
+                .as_array()
+                .expect("required array")
+                .iter()
+                .map(|v| v.as_str().unwrap())
+                .collect();
+            assert_eq!(&required, reqs, "required mismatch for {name}");
+        }
+    }
+
+    /// Spec 40 T11: tool schema JSON is byte-stable across consecutive builds.
+    #[test]
+    fn registry_schema_json_is_byte_stable() {
+        let a = serde_json::to_vec(&tool_definitions()).unwrap();
+        let b = serde_json::to_vec(&tool_definitions()).unwrap();
+        assert_eq!(a, b);
+        // Pin schema size band so accidental schema explosion is noticed.
+        assert!(a.len() > 400, "schema unexpectedly small: {}", a.len());
+        assert!(a.len() < 16_384, "schema unexpectedly large: {}", a.len());
+    }
+
+    #[test]
+    fn tool_name_as_str_roundtrips_core_catalog() {
+        for name in CORE_TOOL_NAMES {
+            let tn = ToolName::parse(name).expect(name);
+            assert_eq!(tn.as_str(), *name);
+        }
     }
 }

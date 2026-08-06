@@ -44,14 +44,19 @@ contract + the `pr-authoring` skill**, not by process-police GitHub Actions.
 
 ### Explicitly do **not**
 
-- Add CI that only lints PR titles, counts labels, or inventories markdown paths “to look professional”
+- Add **process-police CI** (PR title regex, kind-label counting, random markdown path inventories “to look professional”)
 - Mark work done when Summary is a file list
 - Mix multiple milestone exit criteria into one PR without a split plan
+- Claim a gate is green without updating [`docs/GATES.md`](docs/GATES.md)
+- Start runtime code while G1/G1b/G2 are red
 
 ## Product CI (future)
 
 Real CI belongs when there is something to **build and test** (provider, tools,
 prefix hash goldens, etc.). See [`.github/workflows/README.md`](.github/workflows/README.md).
+
+**Allowed later (not process-police):** job that fails if someone claims G2 while
+`docs/specs/10-*.md` is missing or `docs/GATES.md` still says red — artifact truth, not title fashion.
 
 ## Documentation rules
 

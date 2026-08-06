@@ -103,13 +103,16 @@ Reason: wall-clock progress too poor vs north star; multi-stage planning stalls.
 ## Document precedence
 
 ```text
-HARNESS_PHILOSOPHY (this product’s spine)
+HARNESS_PHILOSOPHY (spine)
   > VISION + NON_GOALS
-  > adr/
-  > specs/  (must cite philosophy sections)
+  > adr/ that does NOT claim supersession
+  > specs/  (must cite philosophy sections; make contracts executable)
   > research/  (non-binding evidence)
   > “looks cool in another tool”
 ```
+
+**Exception:** An ADR that **explicitly supersedes named HARNESS_PHILOSOPHY sections** outranks those sections only. See philosophy §1 amendment path.  
+**Gates ledger:** [GATES.md](../GATES.md) is the authority for green/red implementation gates.
 
 ## Research notes
 

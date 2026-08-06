@@ -15,8 +15,8 @@
 | **G5** | Spec **60** ready | **red** | — | — |
 | **G6a** | Spec **100** sessions ready | **green** | `docs/specs/100-sessions.md` + runtime **0.5.0** (#24) | innocarpe |
 | **G6b** | Spec **70** skills ready | **green** | `docs/specs/70-skills.md` + runtime **0.6.0** (#25) | innocarpe |
-| **G6c** | Spec **80** MCP ready | **red** | — | — |
-| **G6d** | Spec **110** plan light ready | **red** | — | — |
+| **G6c** | Spec **80** MCP ready | **green** | `docs/specs/80-mcp.md` + `dsb-tools` mcp catalog/fingerprint (**0.11.0**) | innocarpe |
+| **G6d** | Spec **110** plan light ready | **green** | `docs/specs/110-plan-mode.md` + `plan` tool (**0.11.0**) | innocarpe |
 
 **Legacy label G6:** means “all of G6a–G6d green.” Partial progress is tracked per subgate.
 

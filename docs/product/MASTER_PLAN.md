@@ -34,6 +34,7 @@ This board still holds scaffold history. **Product SSOT for direction is REPLAN_
 | [ULTRAGOAL_CHAIN.md](./ULTRAGOAL_CHAIN.md) | How to chain plans overnight |
 | [ULTRAGOAL_PR_PLANNING.md](./ULTRAGOAL_PR_PLANNING.md) | **Mandatory:** PR units, parallel/sequential DAG, atomic commits, stacking |
 | [SSOT.md](./SSOT.md) | Conflict priority when docs disagree |
+| [GROKBASE_2X_GOALS.md](./GROKBASE_2X_GOALS.md) | **Product ultragoal board** G001–G012 → 2.0.0 |
 | [WAVE_2x_PR_DAG.md](./WAVE_2x_PR_DAG.md) | **Product** fixed units W0–W4 (Grok base) |
 | [WAVE_A_PR_DAG.md](./WAVE_A_PR_DAG.md) / [WAVE_B_PR_DAG.md](./WAVE_B_PR_DAG.md) | Historical scaffold unit DAGs |
 | [stack-merge-runbook.md](../contributing/stack-merge-runbook.md) | Squash-stack repair + failure ladder |

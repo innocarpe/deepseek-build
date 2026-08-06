@@ -5,7 +5,8 @@
 ### Documentation
 
 - **Product replan for 2.0.0** — [REPLAN_2.0.md](docs/product/REPLAN_2.0.md): 1.x repositioned as **scaffold**; real product DoD is **`dsb` opens a Grok Build–class coding agent** on open-source Grok Build + DeepSeek/Deep Code/Reasonix overlays
-- Fixed PR units: [WAVE_2x_PR_DAG.md](docs/product/WAVE_2x_PR_DAG.md); cold-start [ULTRAGOAL_PROMPT_COLD_START_2.0.md](docs/product/ULTRAGOAL_PROMPT_COLD_START_2.0.md)
+- **One-plate ultragoal** `grokbase-2x` G001–G012: [GROKBASE_2X_GOALS.md](docs/product/GROKBASE_2X_GOALS.md), [ULTRAGOAL_BRIEF_2.0.md](docs/product/ULTRAGOAL_BRIEF_2.0.md), cold-start through cut
+- Fixed PR units: [WAVE_2x_PR_DAG.md](docs/product/WAVE_2x_PR_DAG.md)
 - README / SSOT / versioning / MASTER_PLAN / KNOWN_LIMITS honesty banners
 
 ## 1.1.0 — 2026-08-06

@@ -8,16 +8,25 @@
 
 ## Active product chain (from 2026-08-06)
 
-| Order | Plan / stage | Wave | Prompt / DAG |
+**One ultragoal plate through product `2.0.0` — plan id `grokbase-2x` (12 stories).**  
+There is **no** separate overnight plan after this for the original owner intent.
+
+| Order | Plan / stage | Role | Prompt / board |
 |-------|--------------|------|----------------|
-| **0** | replan + wiring | docs | [REPLAN_2.0.md](./REPLAN_2.0.md) |
-| **1** | `grokbase-2x` | W0–W4 | [ULTRAGOAL_PROMPT_COLD_START_2.0.md](./ULTRAGOAL_PROMPT_COLD_START_2.0.md) · [WAVE_2x_PR_DAG.md](./WAVE_2x_PR_DAG.md) |
+| **1** | **`grokbase-2x`** | **Only active product plan** G001→G012 | [ULTRAGOAL_PROMPT_COLD_START_2.0.md](./ULTRAGOAL_PROMPT_COLD_START_2.0.md) · [GROKBASE_2X_GOALS.md](./GROKBASE_2X_GOALS.md) · [WAVE_2x_PR_DAG.md](./WAVE_2x_PR_DAG.md) · [REPLAN_2.0.md](./REPLAN_2.0.md) |
 
 ```text
-replan-2.0 → ADR-0008 → W0 research → W1 shell → W2 DeepSeek → W3 L1/L2 → W4 cut 2.0.0
+G001 ReplanOnMain (docs #55 — often already complete)
+  → G002 ADR-0008 base
+  → G003 W0 spike
+  → G004–G006 W1 shell alpha (integrate → entry TUI → brand/auth)
+  → G007–G008 W2 DeepSeek beta (default models → edit loop)
+  → G009–G010 W3 L1/L2 overlays
+  → G011–G012 W4 install/docs → tag 2.0.0
 ```
 
-**Do not** restart A–D plans as product SSOT. Those closed the **scaffold** line only.
+**Do not** restart A–D plans as product SSOT. Those closed the **scaffold** line only.  
+**Do not** invent a second product plan-id mid-train; extend [GROKBASE_2X_GOALS.md](./GROKBASE_2X_GOALS.md) only via docs PR if the board must change.
 
 ---
 
@@ -32,17 +41,18 @@ replan-2.0 → ADR-0008 → W0 research → W1 shell → W2 DeepSeek → W3 L1/L
 
 ---
 
-## Operator loop (product)
+## Operator loop (product — run until 12/12)
 
 ```bash
 # Always
 git fetch origin && git checkout main && git pull origin main
 
-# Product plan
-omc ultragoal status --plan-id grokbase-2x   # create if missing per cold-start 2.0
+# Single product plan
+omc ultragoal status --plan-id grokbase-2x   # create if missing: GROKBASE_2X_GOALS.md
+omc ultragoal complete-goals --plan-id grokbase-2x
 
-# Work next incomplete WAVE_2x unit only
-# … implement, PR, merge, pull …
+# Active story only → PR units from WAVE_2x → merge → checkpoint complete → complete-goals again
+# Stop only when status shows 12/12 complete (or blocked with evidence)
 ```
 
 ## Continuity rules
@@ -60,12 +70,8 @@ omc ultragoal status --plan-id grokbase-2x   # create if missing per cold-start 
 ## Status snapshot template (for human)
 
 ```text
-Product replan:      merged | open
-W0 research:         ?/3
-W1 shell:            not started | n/m
-W2 deepseek:         not started | n/m
-W3 l1/l2:            not started | n/m
-W4 cut 2.0.0:        not started | n/m
+Plan grokbase-2x:    n/12 complete
+Next story:          G00x-…
 Scaffold A–D:        complete (historical)
-Cargo/npm:           1.x scaffold | 2.0.0-alpha.* | …
+Cargo/npm:           1.x scaffold | 2.0.0-alpha.* | 2.0.0-beta.* | 2.0.0
 ```

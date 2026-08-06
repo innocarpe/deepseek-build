@@ -8,9 +8,11 @@
 
 | Doc | Role |
 |-----|------|
-| [ULTRAGOAL_PROMPT_COLD_START_2.0.md](./ULTRAGOAL_PROMPT_COLD_START_2.0.md) | Session bootstrap for product work |
+| [GROKBASE_2X_GOALS.md](./GROKBASE_2X_GOALS.md) | **One-plate ultragoal story board** (G001–G012 → 2.0.0) |
+| [ULTRAGOAL_PROMPT_COLD_START_2.0.md](./ULTRAGOAL_PROMPT_COLD_START_2.0.md) | Paste-ready cold start until 12/12 |
+| [ULTRAGOAL_BRIEF_2.0.md](./ULTRAGOAL_BRIEF_2.0.md) | Mission brief for `create-goals` / overnight |
 | [WAVE_2x_PR_DAG.md](./WAVE_2x_PR_DAG.md) | Fixed PR units (W0–W4) — no overnight invention |
-| [ULTRAGOAL_CHAIN.md](./ULTRAGOAL_CHAIN.md) | Active plan order (2.x supersedes A–D for product) |
+| [ULTRAGOAL_CHAIN.md](./ULTRAGOAL_CHAIN.md) | Active plan = `grokbase-2x` only |
 | [versioning.md](../contributing/versioning.md) | SemVer bands after replan |
 
 ---
@@ -216,22 +218,25 @@ Fixed PR units: **[WAVE_2x_PR_DAG.md](./WAVE_2x_PR_DAG.md)**.
 
 ---
 
-## 6. Ultragoal chain (product SSOT)
+## 6. Ultragoal — one plate through 2.0.0
 
-Previous chain closed **scaffold** work (historical). New chain for product:
+Previous A–D chain closed **scaffold** work (historical).  
+**Product work is a single plan id:** **`grokbase-2x`** with **12 stories** (G001–G012).
+
+| Artifact | Role |
+|----------|------|
+| [GROKBASE_2X_GOALS.md](./GROKBASE_2X_GOALS.md) | Story board + create-goals command |
+| [ULTRAGOAL_PROMPT_COLD_START_2.0.md](./ULTRAGOAL_PROMPT_COLD_START_2.0.md) | Overnight paste prompt — run until 12/12 |
+| Local ledger | `.omc/ultragoal/plans/grokbase-2x/goals.json` |
 
 ```text
-replan-2.0 (this doc + wiring)          ← current docs PR
-  → ADR-0008 grok-build-base
-  → grokbase-w0-research
-  → grokbase-w1-shell
-  → grokbase-w2-deepseek
-  → grokbase-w3-l1l2
-  → grokbase-w4-cut-2.0.0
+G001 ReplanOnMain → G002 ADR-0008 → G003 W0 spike
+  → G004–G006 W1 alpha → G007–G008 W2 beta
+  → G009–G010 W3 overlays → G011–G012 cut 2.0.0
 ```
 
-Cold-start: [ULTRAGOAL_PROMPT_COLD_START_2.0.md](./ULTRAGOAL_PROMPT_COLD_START_2.0.md).  
-Do **not** restart `dogfood-0x` / `native-0x` / `throughput-0x` / `rc-1.0.0` as product SSOT.
+Do **not** restart `dogfood-0x` / `native-0x` / `throughput-0x` / `rc-1.0.0` as product SSOT.  
+Do **not** split into a second product plan-id mid-train.
 
 ---
 

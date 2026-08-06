@@ -30,7 +30,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). **All meaningful work lands via PR.**
 
 | Doc | Topic |
 |-----|--------|
-| [PR conventions](docs/contributing/pull-requests.md) | Size, titles, labels, review, squash-merge |
+| [PR conventions](docs/contributing/pull-requests.md) | Units of work, titles, labels, merge |
+| [PR body standard](docs/contributing/pr-body-standard.md) | Orca-level narrative bar |
+| [PR examples](docs/contributing/examples.md) | Filled bodies for spec/feat/fix/docs |
+| [Review checklist](docs/contributing/review-checklist.md) | Self-merge / reviewer gates |
 | [Commits](docs/contributing/commits.md) | Conventional Commits |
 | [Branches](docs/contributing/branches.md) | Branch naming |
 | [Labels](docs/maintainers/github-labels.md) | Kind / area / size catalog |

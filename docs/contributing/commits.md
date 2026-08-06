@@ -1,6 +1,9 @@
 # Commit conventions
 
-We follow [Conventional Commits](https://www.conventionalcommits.org/) so history stays greppable and squash-merge titles stay consistent with PR titles.
+We follow [Conventional Commits](https://www.conventionalcommits.org/).  
+On `main`, history is primarily **one squash commit per PR** (see [pull-requests.md](./pull-requests.md) §Merge). Branch commits still matter for review and bisect *before* merge.
+
+---
 
 ## Format
 
@@ -12,19 +15,36 @@ We follow [Conventional Commits](https://www.conventionalcommits.org/) so histor
 [optional footer(s)]
 ```
 
-### Type
+### Types
 
-Same set as PR titles: `feat` `fix` `docs` `spec` `chore` `refactor` `test` `ci` `perf` `build`.
+| Type | Meaning | Typical kind label on the PR |
+|------|---------|------------------------------|
+| `feat` | New behavior | `feat` |
+| `fix` | Bug fix | `fix` |
+| `docs` | Docs / guides / research notes | `docs` |
+| `spec` | Behavior contracts, PRD/ADR locking behavior | `spec` |
+| `chore` | Housekeeping | `chore` |
+| `refactor` | Same behavior, better structure | `refactor` |
+| `test` | Tests only | `test` |
+| `ci` | CI only | `ci` |
+| `perf` | Performance only | usually `feat` or `chore` until dedicated label |
+| `build` | Build system | `chore` |
 
-### Summary
+### Summary rules
 
-- Imperative, present tense: `add` not `added`  
+- Imperative: `add`, `fix`, `define` — not `added` / `adds`  
 - No trailing period  
-- ~72 characters or less  
+- ≤ ~72 characters  
+- Scope optional but encouraged when area is clear: `cache`, `provider`, `tools`, `contributing`
 
 ### Body
 
-Use when the *why* is non-obvious. Wrap at ~72–100 chars. Bullets are fine.
+Write a body when the **why** is not obvious from the summary. Good body content:
+
+- Motivation (user pain, bug report, milestone exit criterion)  
+- Approach in 2–5 sentences  
+- Tradeoffs / alternatives rejected  
+- Cache-impact when relevant  
 
 ### Footers
 
@@ -32,39 +52,75 @@ Use when the *why* is non-obvious. Wrap at ~72–100 chars. Bullets are fine.
 Fixes #123
 Closes #123
 Refs #123
-BREAKING CHANGE: description
-Cache-impact: low — tool schema field order stabilized
+BREAKING CHANGE: description of break and migration
+Cache-impact: low — sorted tool schema keys only
 ```
 
-## Local history vs squash
+---
 
-Default merge is **squash**. That means:
+## Branch commits vs squash on `main`
 
-- Intermediate commits on a branch may be informal **only if** the branch is short-lived and the **PR title** is conventional.  
-- Prefer still writing conventional commits on the branch — they become the PR discussion trail and help `git bisect` before merge.  
-- After squash, `main` history is essentially **one conventional commit per PR**.
+| Location | Expectation |
+|----------|-------------|
+| Feature branch | Prefer conventional commits; small WIP commits OK if PR title is solid and final squash is clean |
+| `main` after squash | **PR title** becomes the subject; should stand alone as a changelog line |
 
-## Examples
+Do **not** rely on squash to hide a PR that mixed three features—split the PR instead.
+
+---
+
+## Examples (good)
 
 ```text
 spec(cache): define byte-stable system prefix rules
 
-Lock tools schema and skills index as cache-stable.
-Dynamic reminders move to the turn tail.
+Stable: system, tools schema, skills index, standing memory.
+Unstable/tail: user turn, dynamic reminders, volatile paths.
 
 Cache-impact: high — defines the contract
 ```
 
 ```text
-fix(tools): avoid truncating shell output mid-line
+feat(provider): stream DeepSeek chat completions
+
+OpenAI-compatible SSE client for deepseek-v4-flash/pro.
+No tool loop yet — that is a follow-up PR against spec 40.
+
+Refs docs/specs/20-model-routing.md
 ```
 
 ```text
-chore: add size labels to catalog
+fix(tools): preserve executable bit on shell-created files
 ```
 
-## What to avoid
+```text
+docs(contributing): deepen PR conventions with examples
+```
 
-- `WIP`, `tmp`, `asdf`, `update files`  
-- Mixing unrelated concerns in one commit when you still plan multi-commit review  
-- Rewriting `main` history  
+```text
+ci: require conventional PR titles
+```
+
+---
+
+## Examples (bad)
+
+```text
+update
+WIP
+fix stuff
+address review
+asdf
+implemented a lot of the agent
+```
+
+---
+
+## Amending and force-push
+
+| Action | On feature branch | On `main` |
+|--------|-------------------|-----------|
+| `commit --amend` + force-push | OK if you own the branch and no one else builds on it (or coordinate) | **Forbidden** |
+| Rewrite shared history | Avoid for long-lived stacked branches | **Forbidden** |
+
+Prefer new commits responding to review unless history is pure noise (typo-only) and the PR is still open.

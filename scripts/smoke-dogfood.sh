@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Executable dogfood-usable smoke (Wave A §3). Offline-friendly where possible.
+# Local / release dogfood smoke (Wave A §3). Offline-friendly where possible.
+# Not a GitHub Actions job: CI already runs fmt/clippy/test/semver; this script
+# re-runs build + workspace tests and is intended for humans/agents before cut.
 # Live API tests only if DEEPSEEK_API_KEY is set.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

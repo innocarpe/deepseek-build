@@ -607,6 +607,9 @@ impl Agent {
                 return Ok(());
             }
         };
+        if let Some(ToolName::Subagent) = ToolName::parse(&call.function.name) {
+            return self.run_subagent_tool(call, &repaired, on_event);
+        }
         let exec_result = if let Some(name) = ToolName::parse(&call.function.name) {
             let req = ToolRequest {
                 name,
@@ -637,6 +640,75 @@ impl Agent {
                 let body = serde_json::json!({
                     "error": "tool_failed",
                     "tool": call.function.name,
+                    "message": e.to_string()
+                });
+                self.tail
+                    .push(ChatMessage::tool_result(call.id.clone(), body.to_string()));
+            }
+        }
+        Ok(())
+    }
+
+    fn run_subagent_tool<F>(
+        &mut self,
+        call: &ToolCall,
+        args: &serde_json::Value,
+        on_event: &mut F,
+    ) -> Result<(), AgentError>
+    where
+        F: FnMut(TurnEvent),
+    {
+        let kind_s = args
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let task = args.get("task").and_then(|v| v.as_str()).unwrap_or("");
+        let Some(kind) = crate::subagent::WorkerKind::parse(kind_s) else {
+            let body = serde_json::json!({
+                "error": "unknown_kind",
+                "kind": kind_s
+            });
+            self.tail
+                .push(ChatMessage::tool_result(call.id.clone(), body.to_string()));
+            return Ok(());
+        };
+        if task.is_empty() {
+            let body = serde_json::json!({"error": "missing task"});
+            self.tail
+                .push(ChatMessage::tool_result(call.id.clone(), body.to_string()));
+            return Ok(());
+        }
+        on_event(TurnEvent::Warning(format!(
+            "subagent kind={} (spec 60 / G5)",
+            kind.as_str()
+        )));
+        match crate::subagent::run_worker(
+            kind,
+            &self.config.workspace_root,
+            task,
+            &self.tools.policy,
+            self.tools.user_skills_root.as_deref(),
+        ) {
+            Ok(out) => {
+                crate::subagent::parent_after_worker(&mut self.tools, &out);
+                let body = serde_json::json!({
+                    "ok": true,
+                    "kind": out.kind.as_str(),
+                    "summary": out.summary,
+                    "tool_rounds": out.tool_rounds,
+                    "mutated": out.mutated,
+                    "prefix_epoch": out.prefix_epoch_short,
+                });
+                self.tail
+                    .push(ChatMessage::tool_result(call.id.clone(), body.to_string()));
+            }
+            Err(e) => {
+                on_event(TurnEvent::ToolError {
+                    name: call.function.name.clone(),
+                    error: e.to_string(),
+                });
+                let body = serde_json::json!({
+                    "error": "subagent_failed",
                     "message": e.to_string()
                 });
                 self.tail

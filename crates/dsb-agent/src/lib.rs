@@ -9,6 +9,7 @@ mod parallel;
 mod repair;
 mod routing;
 mod session;
+mod subagent;
 
 pub use loop_::{Agent, AgentConfig, TurnEvent, TurnOutcome};
 pub use pairing::{pair_tool_results, InterruptedTool, PAIRING_INTERRUPTED_CONTENT};
@@ -16,3 +17,6 @@ pub use parallel::{is_mutating_tool, partition_indices, MAX_PARALLEL_READONLY};
 pub use repair::{repair_tool_arguments, RepairError, RepairOutcome};
 pub use routing::{ModelRouter, Preset, RouteDecision, RouteSource, TurnModelOverride};
 pub use session::{SessionError, SessionRecord, SessionStore, SessionSummary};
+pub use subagent::{
+    parent_after_worker, run_worker, worker_stable_prefix, SubagentError, WorkerKind, WorkerOutcome,
+};

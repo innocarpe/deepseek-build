@@ -5,13 +5,26 @@ This product includes software developed by DeepSeek Build contributors.
 
 ---
 
-Design and architecture are informed by (without implying endorsement):
+## Vendored third-party software
 
-- Grok Build (SpaceXAI) — Apache License 2.0  
-  https://github.com/ (see local OpenSources/grok-build)  
+### Grok Build (SpaceXAI)
+
+- **Path:** `third_party/grok-build/`
+- **License:** Apache License 2.0 (see `third_party/grok-build/LICENSE`)
+- **Notices:** `third_party/grok-build/THIRD-PARTY-NOTICES`
+- **Upstream:** https://github.com/xai-org/grok-build
+- **Pin:** `third_party/grok-build/SOURCE_REV` (full monorepo/sync SHA)
+- **Strategy:** ADR-0008 strategy B (git subtree / vendor pin)
+
+Grok Build is the **base runtime** for product 2.0.0 (pager/TUI + agent loop).
+DeepSeek Build layers branding, DeepSeek provider defaults, and L1/L2 policy
+overlays on top of this tree. SpaceXAI / xAI does not endorse this product.
+
+---
+
+## Design influences (not necessarily vendored source)
+
 - Reasonix / DeepSeek-Reasonix — see upstream license  
-  https://github.com/esengine/DeepSeek-Reasonix  
+  https://github.com/esengine/DeepSeek-Reasonix
 - Deep Code CLI — MIT  
-  https://github.com/lessweb/deepcode-cli  
-
-Ported or vendored source, if any, will be listed under `third_party/` with full license texts.
+  https://github.com/lessweb/deepcode-cli

@@ -195,6 +195,8 @@ pub fn scopes_for_path(
 pub enum PathOp {
     Read,
     Write,
+    /// Reserved for delete-like tools; already mapped in `scopes_for_path`.
+    #[allow(dead_code)]
     Delete,
 }
 

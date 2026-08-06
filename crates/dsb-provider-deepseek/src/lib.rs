@@ -17,9 +17,9 @@ mod usage;
 pub use client::{Client, ClientConfig, CompletedChat, StreamEvent};
 pub use error::ProviderError;
 pub use models::{
-    AssistantMessage, ChatMessage, ContentPart, FunctionCall, ModelId, ReasoningEffort, Role,
-    ThinkingMode, ThinkingType, ToolCall, ToolChoice, ToolDefinition, ToolFunction,
-    MODEL_FLASH, MODEL_PRO,
+    AssistantMessage, ChatMessage, ContentPart, FunctionCall, MODEL_FLASH, MODEL_PRO, ModelId,
+    ReasoningEffort, Role, ThinkingMode, ThinkingType, ToolCall, ToolChoice, ToolDefinition,
+    ToolFunction,
 };
 pub use request::{ChatRequest, ChatRequestBuilder};
 pub use usage::{CacheEvidence, Usage, UsageRaw};

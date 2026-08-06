@@ -1,12 +1,12 @@
 //! In-process subagents + worker cache law (spec 60 / G5).
 
 use dsb_context::{
-    discover_project_instructions, discover_skills_index, EnvironmentSummary, PrefixBuildInputs,
-    PrefixBuilder, StablePrefix, DEFAULT_SYSTEM_PROMPT,
+    DEFAULT_SYSTEM_PROMPT, EnvironmentSummary, PrefixBuildInputs, PrefixBuilder, StablePrefix,
+    discover_project_instructions, discover_skills_index,
 };
 use dsb_tools::{
-    default_coding_policy, dogfood_coding_policy, tool_definitions, PermissionPolicy, Scope,
-    ToolExecutor, ToolName, ToolRequest, ToolResponse,
+    PermissionPolicy, Scope, ToolExecutor, ToolName, ToolRequest, ToolResponse,
+    default_coding_policy, dogfood_coding_policy, tool_definitions,
 };
 use serde_json::json;
 use thiserror::Error;
@@ -61,8 +61,7 @@ pub fn worker_stable_prefix(
 ) -> Result<StablePrefix, SubagentError> {
     let project_instructions = discover_project_instructions(workspace)?;
     let environment = EnvironmentSummary::detect(workspace);
-    let skills_index =
-        discover_skills_index(workspace, user_skills_root).unwrap_or_default();
+    let skills_index = discover_skills_index(workspace, user_skills_root).unwrap_or_default();
     let inputs = PrefixBuildInputs {
         system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
         tools,
@@ -183,7 +182,6 @@ pub fn parent_after_worker(parent_tools: &mut ToolExecutor, outcome: &WorkerOutc
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dsb_tools::default_coding_policy;
     use std::fs;
     use tempfile::tempdir;
 

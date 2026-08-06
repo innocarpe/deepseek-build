@@ -9,12 +9,16 @@ pub fn is_mutating_tool(name: &str, arguments: &Value) -> bool {
         return true;
     }
     match ToolName::parse(name) {
-        Some(ToolName::Read) | Some(ToolName::Grep) | Some(ToolName::Skill) | Some(ToolName::BashCollect) => {
-            false
-        }
+        Some(ToolName::Read)
+        | Some(ToolName::Grep)
+        | Some(ToolName::Skill)
+        | Some(ToolName::BashCollect) => false,
         Some(ToolName::Plan) => {
             // Only `get` is read-only; missing action → mutating.
-            !matches!(arguments.get("action").and_then(|v| v.as_str()), Some("get"))
+            !matches!(
+                arguments.get("action").and_then(|v| v.as_str()),
+                Some("get")
+            )
         }
         Some(ToolName::Edit)
         | Some(ToolName::Write)
@@ -52,7 +56,10 @@ mod tests {
         assert!(!is_mutating_tool("grep", &json!({"pattern": "x"})));
         assert!(!is_mutating_tool("skill", &json!({"name": "s"})));
         assert!(!is_mutating_tool("plan", &json!({"action": "get"})));
-        assert!(is_mutating_tool("plan", &json!({"action": "set", "items": ["a"]})));
+        assert!(is_mutating_tool(
+            "plan",
+            &json!({"action": "set", "items": ["a"]})
+        ));
         assert!(is_mutating_tool("edit", &json!({})));
         assert!(is_mutating_tool("write", &json!({})));
         assert!(is_mutating_tool("bash", &json!({})));

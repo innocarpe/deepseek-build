@@ -115,7 +115,7 @@ impl PermissionPolicy {
             return Decision::Allow;
         }
         // unknown always ask unless denied above
-        if scopes.iter().any(|s| *s == Scope::Unknown) {
+        if scopes.contains(&Scope::Unknown) {
             return self.apply_headless(Decision::Ask);
         }
         if scopes.iter().any(|s| self.ask.contains(s)) {
@@ -306,8 +306,18 @@ pub fn classify_bash(command: &str) -> Vec<Scope> {
 
     // Network
     for tok in [
-        "curl ", "curl\t", "wget ", "npm i", "npm install", "pnpm i", "yarn add", "cargo install",
-        "pip install", "git clone", "http://", "https://",
+        "curl ",
+        "curl\t",
+        "wget ",
+        "npm i",
+        "npm install",
+        "pnpm i",
+        "yarn add",
+        "cargo install",
+        "pip install",
+        "git clone",
+        "http://",
+        "https://",
     ] {
         if lower.contains(tok) {
             scopes.insert(Scope::Network);
@@ -332,7 +342,14 @@ pub fn classify_bash(command: &str) -> Vec<Scope> {
             scopes.insert(Scope::MutateGit);
         } else if contains_any(
             &lower,
-            &["git status", "git log", "git show", "git diff", "git blame", "git branch"],
+            &[
+                "git status",
+                "git log",
+                "git show",
+                "git diff",
+                "git blame",
+                "git branch",
+            ],
         ) {
             scopes.insert(Scope::QueryGit);
         } else {
@@ -344,7 +361,12 @@ pub fn classify_bash(command: &str) -> Vec<Scope> {
     if contains_any(&lower, &["rm ", "rm\t", "rmdir ", "unlink "]) {
         scopes.insert(Scope::DeleteInCwd);
     }
-    if contains_any(&lower, &[" >", ">>", " tee ", "mv ", "cp ", "touch ", "chmod ", "mkdir "]) {
+    if contains_any(
+        &lower,
+        &[
+            " >", ">>", " tee ", "mv ", "cp ", "touch ", "chmod ", "mkdir ",
+        ],
+    ) {
         scopes.insert(Scope::WriteInCwd);
     }
     if lower.contains("sudo ") {
@@ -354,8 +376,12 @@ pub fn classify_bash(command: &str) -> Vec<Scope> {
     if scopes.is_empty() {
         // simple echo/true → no scopes → treat as unknown? Spec: unrecognized → unknown
         // pure read-ish like `ls` / `cat` — allow as read-in-cwd for common safe tools
-        if contains_any(&lower, &["ls ", "ls\t", "cat ", "head ", "tail ", "pwd", "echo ", "true", "false"])
-            || lower.trim() == "ls"
+        if contains_any(
+            &lower,
+            &[
+                "ls ", "ls\t", "cat ", "head ", "tail ", "pwd", "echo ", "true", "false",
+            ],
+        ) || lower.trim() == "ls"
             || lower.trim() == "pwd"
         {
             scopes.insert(Scope::ReadInCwd);
@@ -408,7 +434,10 @@ mod tests {
         let declared = vec![Scope::ReadInCwd];
         let classified = classify_bash("rm -rf build");
         let eff = effective_scopes(&declared, &classified);
-        assert!(eff.iter().any(|s| s.danger_rank() >= Scope::DeleteInCwd.danger_rank()));
+        assert!(
+            eff.iter()
+                .any(|s| s.danger_rank() >= Scope::DeleteInCwd.danger_rank())
+        );
     }
 
     #[test]

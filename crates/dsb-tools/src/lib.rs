@@ -15,18 +15,18 @@ mod snippets;
 mod tools;
 
 pub use bg_shell::{BgJobStore, JobSnapshot};
-pub use grants::{AskChoice, PermissionGrants, GRANTS_FILE};
+pub use grants::{AskChoice, GRANTS_FILE, PermissionGrants};
 pub use mcp::{
-    catalog_from_config, catalog_tool_definitions, load_mcp_config, wire_name, McpCatalog,
-    McpCatalogEntry, McpConfigFile, McpError,
+    McpCatalog, McpCatalogEntry, McpConfigFile, McpError, catalog_from_config,
+    catalog_tool_definitions, load_mcp_config, wire_name,
 };
 pub use permissions::{
-    classify_bash, decide, default_coding_policy, dogfood_coding_policy, Decision, PermissionError,
-    PermissionPolicy, Scope,
+    Decision, PermissionError, PermissionPolicy, Scope, classify_bash, decide,
+    default_coding_policy, dogfood_coding_policy,
 };
 pub use plan::{PlanError, PlanItem, PlanStore};
 pub use snippets::{EditError, Snippet, SnippetStore, WriteError};
 pub use tools::{
+    AskCallback, CORE_TOOL_NAMES, ToolError, ToolExecutor, ToolName, ToolRequest, ToolResponse,
     core_tool_names, tool_definitions, tool_definitions_with_options, tool_definitions_with_plan,
-    AskCallback, ToolError, ToolExecutor, ToolName, ToolRequest, ToolResponse, CORE_TOOL_NAMES,
 };

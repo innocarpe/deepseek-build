@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use ulid::Ulid;
 
 #[derive(Debug, Clone)]
@@ -68,22 +68,22 @@ impl BgJobStore {
             let out = match child.wait_with_output() {
                 Ok(o) => o,
                 Err(e) => {
-                    if let Ok(mut map) = store.inner.lock() {
-                        if let Some(job) = map.get_mut(&job_id) {
-                            job.done = true;
-                            job.stderr = e.to_string();
-                        }
+                    if let Ok(mut map) = store.inner.lock()
+                        && let Some(job) = map.get_mut(&job_id)
+                    {
+                        job.done = true;
+                        job.stderr = e.to_string();
                     }
                     return;
                 }
             };
-            if let Ok(mut map) = store.inner.lock() {
-                if let Some(job) = map.get_mut(&job_id) {
-                    job.done = true;
-                    job.exit_code = out.status.code();
-                    job.stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-                    job.stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-                }
+            if let Ok(mut map) = store.inner.lock()
+                && let Some(job) = map.get_mut(&job_id)
+            {
+                job.done = true;
+                job.exit_code = out.status.code();
+                job.stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+                job.stderr = String::from_utf8_lossy(&out.stderr).into_owned();
             }
         });
         Ok(id)

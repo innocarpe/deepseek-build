@@ -1,0 +1,69 @@
+# Product CI — build/test/smoke only (not process-police).
+# Wave D 0.15.0: verify shipped behavior on PR + main.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: cargo-test-workspace
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.94.0"
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      # Product CI: clippy must run; -D warnings can expand over time without blocking smoke.
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -W clippy::all
+
+      - name: cargo test --workspace
+        run: cargo test --workspace
+
+  smoke:
+    name: smoke-dogfood-offline
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.94.0"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install ripgrep (smoke script)
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - name: Offline dogfood smoke
+        run: ./scripts/smoke-dogfood.sh
+        env:
+          # Never require live API in CI.
+          DEEPSEEK_API_KEY: ""

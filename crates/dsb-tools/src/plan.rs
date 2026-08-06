@@ -1,7 +1,7 @@
 //! Light non-blocking plan checklist (spec 110).
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -112,7 +112,9 @@ mod tests {
     fn invalid_index_errors() {
         let mut p = PlanStore::new();
         p.apply(&json!({"action":"set","items":["a"]})).unwrap();
-        let err = p.apply(&json!({"action":"complete","index":9})).unwrap_err();
+        let err = p
+            .apply(&json!({"action":"complete","index":9}))
+            .unwrap_err();
         assert!(matches!(err, PlanError::InvalidIndex(_)));
     }
 }

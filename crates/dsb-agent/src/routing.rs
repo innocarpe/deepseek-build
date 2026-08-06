@@ -1,6 +1,6 @@
 //! Flash / Pro model routing (spec 20).
 
-use dsb_provider_deepseek::{ModelId, ReasoningEffort, ThinkingMode, MODEL_PRO};
+use dsb_provider_deepseek::{MODEL_PRO, ModelId, ReasoningEffort, ThinkingMode};
 
 /// Session preset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -167,16 +167,11 @@ impl ModelRouter {
             }
         }
 
-        if self.auto_router {
-            if let Some(reason) = auto_escalate_reason(user_text) {
-                // Only escalate if user did not force flash (already handled).
-                return Self::decision(
-                    ModelId::Pro,
-                    RouteSource::AutoRouter,
-                    Some(reason),
-                    None,
-                );
-            }
+        if self.auto_router
+            && let Some(reason) = auto_escalate_reason(user_text)
+        {
+            // Only escalate if user did not force flash (already handled).
+            return Self::decision(ModelId::Pro, RouteSource::AutoRouter, Some(reason), None);
         }
 
         let source = if self.preset == Preset::Flash {
@@ -257,7 +252,10 @@ fn auto_escalate_reason(user_text: &str) -> Option<String> {
 
 /// Parse slash-style routing commands from a user line.
 /// Returns (cleaned_user_text, optional override applied to router).
-pub fn apply_routing_command(router: &mut ModelRouter, line: &str) -> (String, Option<&'static str>) {
+pub fn apply_routing_command(
+    router: &mut ModelRouter,
+    line: &str,
+) -> (String, Option<&'static str>) {
     let trimmed = line.trim();
     if trimmed == "/pro" || trimmed.starts_with("/pro ") {
         router.request_pro_once();

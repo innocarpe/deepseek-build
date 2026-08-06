@@ -95,10 +95,10 @@ pub fn parse_sse_data(data: &str) -> Result<Vec<ParsedSse>, ProviderError> {
 
     let mut out = Vec::new();
 
-    if let Some(model) = chunk.model {
-        if !model.is_empty() {
-            out.push(ParsedSse::Model(model));
-        }
+    if let Some(model) = chunk.model
+        && !model.is_empty()
+    {
+        out.push(ParsedSse::Model(model));
     }
 
     if let Some(usage) = chunk.usage {
@@ -115,15 +115,15 @@ pub fn parse_sse_data(data: &str) -> Result<Vec<ParsedSse>, ProviderError> {
         // role-only deltas are ignored
         let _ = delta.role;
 
-        if let Some(rc) = delta.reasoning_content {
-            if !rc.is_empty() {
-                out.push(ParsedSse::ReasoningDelta(rc));
-            }
+        if let Some(rc) = delta.reasoning_content
+            && !rc.is_empty()
+        {
+            out.push(ParsedSse::ReasoningDelta(rc));
         }
-        if let Some(c) = delta.content {
-            if !c.is_empty() {
-                out.push(ParsedSse::ContentDelta(c));
-            }
+        if let Some(c) = delta.content
+            && !c.is_empty()
+        {
+            out.push(ParsedSse::ContentDelta(c));
         }
         if let Some(tcs) = delta.tool_calls {
             for tc in tcs {
@@ -192,20 +192,26 @@ struct PartialToolCall {
 }
 
 impl ToolCallAccumulator {
-    pub fn apply(&mut self, index: usize, id: Option<String>, name: Option<String>, arguments: Option<String>) {
+    pub fn apply(
+        &mut self,
+        index: usize,
+        id: Option<String>,
+        name: Option<String>,
+        arguments: Option<String>,
+    ) {
         while self.slots.len() <= index {
             self.slots.push(PartialToolCall::default());
         }
         let slot = &mut self.slots[index];
-        if let Some(id) = id {
-            if !id.is_empty() {
-                slot.id = id;
-            }
+        if let Some(id) = id
+            && !id.is_empty()
+        {
+            slot.id = id;
         }
-        if let Some(name) = name {
-            if !name.is_empty() {
-                slot.name = name;
-            }
+        if let Some(name) = name
+            && !name.is_empty()
+        {
+            slot.name = name;
         }
         if let Some(args) = arguments {
             slot.arguments.push_str(&args);
@@ -263,21 +269,29 @@ mod tests {
     #[test]
     fn feed_buffer_split_across_chunks() {
         let mut buf = String::new();
-        let e1 = feed_sse_buffer(&mut buf, "data: {\"choices\":[{\"delta\":{\"content\":\"hel").unwrap();
-        assert!(e1.is_empty());
-        let e2 = feed_sse_buffer(
+        let e1 = feed_sse_buffer(
             &mut buf,
-            "lo\"},\"index\":0}]}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hel",
         )
         .unwrap();
-        assert!(e2.iter().any(|e| matches!(e, ParsedSse::ContentDelta(s) if s == "hello")));
+        assert!(e1.is_empty());
+        let e2 = feed_sse_buffer(&mut buf, "lo\"},\"index\":0}]}\n\ndata: [DONE]\n\n").unwrap();
+        assert!(
+            e2.iter()
+                .any(|e| matches!(e, ParsedSse::ContentDelta(s) if s == "hello"))
+        );
         assert!(e2.iter().any(|e| matches!(e, ParsedSse::Done)));
     }
 
     #[test]
     fn accumulates_tool_calls() {
         let mut acc = ToolCallAccumulator::default();
-        acc.apply(0, Some("call_1".into()), Some("read".into()), Some("{\"p".into()));
+        acc.apply(
+            0,
+            Some("call_1".into()),
+            Some("read".into()),
+            Some("{\"p".into()),
+        );
         acc.apply(0, None, None, Some("ath\":\"a\"}".into()));
         let tools = acc.finish();
         assert_eq!(tools.len(), 1);

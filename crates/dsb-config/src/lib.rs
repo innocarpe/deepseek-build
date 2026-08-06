@@ -19,7 +19,9 @@ pub const ENV_API_KEY: &str = "DEEPSEEK_API_KEY";
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
-    #[error("missing API key: set {ENV_API_KEY} or create credentials.json under the user config root")]
+    #[error(
+        "missing API key: set {ENV_API_KEY} or create credentials.json under the user config root"
+    )]
     MissingApiKey,
     #[error("credentials file {path}: {source}")]
     CredentialsIo {
@@ -184,7 +186,11 @@ mod tests {
     #[test]
     fn load_prefers_env_over_file() {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("credentials.json"), r#"{"api_key":"file-key"}"#).unwrap();
+        fs::write(
+            dir.path().join("credentials.json"),
+            r#"{"api_key":"file-key"}"#,
+        )
+        .unwrap();
         let home = BuildHome::from_path(dir.path());
         let creds = Credentials::load_with(&home, Some("env-key")).unwrap();
         assert_eq!(creds.api_key(), "env-key");

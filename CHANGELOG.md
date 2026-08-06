@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 2.0.0-alpha.1 — 2026-08-06
+
+### Added
+
+- **Grok Build vendor pin** under `third_party/grok-build/` (ADR-0008 strategy B)
+- `SOURCE_REV` pin + Apache-2.0 / `THIRD-PARTY-NOTICES` retained in vendor tree
+- Root `NOTICE` attribution for SpaceXAI Grok Build
+- `scripts/build-grok-pager.sh` + [GROK_VENDOR.md](docs/architecture/GROK_VENDOR.md) (dual workspace + CI plan)
+- Product SemVer band opens at **`2.0.0-alpha.1`** (not 2.0.0 cut)
+
+### Notes
+
+- Default `dsb` entry still product overlay until W1 entry/TUI stories land
+- Full Grok `cargo check -p xai-grok-pager-bin` verified on vendor tree (local evidence)
+
+
+## Prior unreleased notes (folded)
+
+
 ### Added
 
 - **Welcome banner v2** — DeepSeek braille whale mark + boxed product card on interactive chat (`banner.rs`)

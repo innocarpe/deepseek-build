@@ -1,7 +1,7 @@
 {
   "name": "@innocarpe/deepseek-build",
-  "version": "1.1.0",
-  "description": "DeepSeek-native terminal coding agent (CLI: deepseek-build, dsb)",
+  "version": "2.0.0-alpha.1",
+  "description": "DeepSeek Build 2.0.0-alpha — Grok Build–class coding agent (DeepSeek default). 1.x = legacy scaffold.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -32,7 +32,10 @@
     "rust-toolchain.toml",
     "README.md",
     "LICENSE",
-    "NOTICE"
+    "NOTICE",
+    "third_party/grok-build/**",
+    "docs/architecture/GROK_VENDOR.md",
+    "scripts/build-grok-pager.sh"
   ],
   "scripts": {
     "postinstall": "node npm/scripts/postinstall.js",

@@ -16,7 +16,7 @@ Behavioral contracts for what DeepSeek Build **must** do when implemented.
 | 30 | [Thinking & effort](./30-thinking-effort.md) | L1 | **ready-for-impl** |
 | 40 | [Core tools surface](./40-core-tools-surface.md) | L1 + L3 | **ready-for-impl** (Wave B `0.8.0`) |
 | 45 | [Snippet edit contract](./45-snippet-edit.md) | L1 Deep Code A | **ready-for-impl** |
-| 50 | Parallelism & background | L3 | TODO (needs **G4**) |
+| 50 | [Parallelism & background](./50-parallelism-background.md) | L3 | **ready-for-impl** (**G4**) |
 | 60 | Subagents (+ worker cache law) | L3 under L2 | TODO (needs **G5**) |
 | 70 | [Skills as structured context](./70-skills.md) | L1 | **ready-for-impl** (min; **G6b**) |
 | 80 | [MCP](./80-mcp.md) | L1 | **ready-for-impl** (**G6c**) |

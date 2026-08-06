@@ -19,10 +19,10 @@ Behavioral contracts for what DeepSeek Build **must** do when implemented.
 | 50 | Parallelism & background | L3 | TODO (needs **G4**) |
 | 60 | Subagents (+ worker cache law) | L3 under L2 | TODO (needs **G5**) |
 | 70 | [Skills as structured context](./70-skills.md) | L1 | **ready-for-impl** (min; **G6b**) |
-| 80 | MCP | L1 | TODO (**G6c**) |
+| 80 | [MCP](./80-mcp.md) | L1 | **ready-for-impl** (**G6c**) |
 | 90 | [Side-effect permissions](./90-permissions.md) | L1 | **ready-for-impl (minimum)** |
 | 100 | [Sessions](./100-sessions.md) | L1 | **ready-for-impl** (min; **G6a**) |
-| 110 | Plan mode (light) | L1 | TODO (**G6d**) |
+| 110 | [Plan mode (light)](./110-plan-mode.md) | L1 | **ready-for-impl** (**G6d**) |
 | 120 | Project config | All → config owner | TODO |
 
 ## MVP cut

@@ -13,6 +13,7 @@ use crate::permissions::{
     classify_bash, decide, effective_scopes, resolve_workspace_path, scopes_for_path, Decision,
     PathOp, PermissionPolicy, Scope,
 };
+use crate::plan::PlanStore;
 use crate::snippets::{EditError, SnippetStore, WriteError};
 
 /// Interactive ask callback (CLI wires TTY prompt). `Arc` so agent config can clone.
@@ -21,7 +22,11 @@ pub type AskCallback = std::sync::Arc<dyn Fn(&[Scope]) -> AskChoice + Send + Syn
 /// Canonical built-in tool names in **stable prefix order** (spec 40 §3.3).
 ///
 /// Do not reorder without starting a new cache epoch (spec 10).
+/// `plan` is appended when plan product is enabled (spec 110 / G6d).
 pub const CORE_TOOL_NAMES: &[&str] = &["read", "edit", "write", "grep", "skill", "bash"];
+/// Built-ins including light plan tool (Wave B 0.11.0+).
+pub const CORE_TOOL_NAMES_WITH_PLAN: &[&str] =
+    &["read", "edit", "write", "grep", "skill", "bash", "plan"];
 
 /// Returns [`CORE_TOOL_NAMES`] (stable order).
 pub fn core_tool_names() -> &'static [&'static str] {
@@ -37,6 +42,8 @@ pub enum ToolName {
     /// On-demand skill body load (not in stable prefix).
     Skill,
     Bash,
+    /// Light non-blocking plan (spec 110).
+    Plan,
 }
 
 impl ToolName {
@@ -48,6 +55,7 @@ impl ToolName {
             Self::Grep => "grep",
             Self::Skill => "skill",
             Self::Bash => "bash",
+            Self::Plan => "plan",
         }
     }
 
@@ -60,6 +68,7 @@ impl ToolName {
             "grep" | "search" => Some(Self::Grep),
             "skill" | "load_skill" => Some(Self::Skill),
             "bash" => Some(Self::Bash),
+            "plan" => Some(Self::Plan),
             _ => None,
         }
     }
@@ -103,6 +112,10 @@ pub struct ToolExecutor {
     pub grants: PermissionGrants,
     /// When set and policy returns Ask, invoke for allow-once / always / deny.
     pub ask_callback: Option<AskCallback>,
+    /// Session-local light plan (spec 110).
+    pub plan: PlanStore,
+    /// MCP wire-name → catalog entry for dispatch (spec 80).
+    pub mcp_catalog: crate::mcp::McpCatalog,
 }
 
 impl ToolExecutor {
@@ -115,6 +128,8 @@ impl ToolExecutor {
             user_skills_root: None,
             grants: PermissionGrants::new(),
             ask_callback: None,
+            plan: PlanStore::new(),
+            mcp_catalog: crate::mcp::McpCatalog::default(),
         }
     }
 
@@ -191,6 +206,48 @@ impl ToolExecutor {
             ToolName::Grep => self.grep(&req.arguments),
             ToolName::Skill => self.skill(&req.arguments),
             ToolName::Bash => self.bash(&req.arguments),
+            ToolName::Plan => self.plan_tool(&req.arguments),
+        }
+    }
+
+    /// Dispatch MCP wire tools (`mcp__server__tool`) — v1 returns catalog echo / not-connected.
+    pub fn execute_mcp(&mut self, wire_name: &str, args: &Value) -> Result<ToolResponse, ToolError> {
+        let entry = self
+            .mcp_catalog
+            .entries
+            .iter()
+            .find(|e| e.wire_name == wire_name)
+            .cloned()
+            .ok_or_else(|| ToolError::UnknownTool(wire_name.into()))?;
+        // Permission: treat MCP as unknown scope → ask/deny unless granted.
+        self.check(&[Scope::Unknown])?;
+        Ok(ToolResponse {
+            ok: true,
+            content: json!({
+                "ok": true,
+                "mcp": true,
+                "server": entry.server,
+                "tool": entry.remote_name,
+                "note": "stdio live dispatch not required for catalog epoch; static/mock path acknowledges call",
+                "arguments": args,
+            })
+            .to_string(),
+            mutated: false,
+        })
+    }
+
+    fn plan_tool(&mut self, args: &Value) -> Result<ToolResponse, ToolError> {
+        match self.plan.apply(args) {
+            Ok(v) => Ok(ToolResponse {
+                ok: true,
+                content: v.to_string(),
+                mutated: false,
+            }),
+            Err(e) => Ok(ToolResponse {
+                ok: false,
+                content: json!({"error": e.to_string()}).to_string(),
+                mutated: false,
+            }),
         }
     }
 
@@ -537,12 +594,17 @@ fn path_display(workspace: &Path, full: &Path) -> String {
         .unwrap_or_else(|_| full.display().to_string())
 }
 
-/// OpenAI-style tool definitions for the model (spec 40).
+/// OpenAI-style tool definitions for the model (spec 40 + optional plan).
 ///
-/// Order matches [`CORE_TOOL_NAMES`] and is part of the stable prefix (spec 10).
+/// Order matches [`CORE_TOOL_NAMES`] / [`CORE_TOOL_NAMES_WITH_PLAN`] and is part of the stable prefix (spec 10).
 /// Schemas use canonical names only; aliases are parse-only ([`ToolName::parse`]).
 pub fn tool_definitions() -> Vec<ToolDefinition> {
-    let defs = vec![
+    tool_definitions_with_plan(true)
+}
+
+/// When `include_plan` is false, omit the light plan tool (pre-G6d builds).
+pub fn tool_definitions_with_plan(include_plan: bool) -> Vec<ToolDefinition> {
+    let mut defs = vec![
         ToolDefinition {
             type_: "function".into(),
             function: ToolFunction {
@@ -661,11 +723,37 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
             },
         },
     ];
+    if include_plan {
+        defs.push(ToolDefinition {
+            type_: "function".into(),
+            function: ToolFunction {
+                name: "plan".into(),
+                description: Some(
+                    "Light non-blocking checklist (spec 110). action=get|set|add|complete|clear. Does not block other tools.".into(),
+                ),
+                parameters: Some(json!({
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "description": "get|set|add|complete|clear"},
+                        "items": {"type": "array", "items": {"type": "string"}},
+                        "index": {"type": "integer", "description": "0-based for complete"}
+                    },
+                    "required": ["action"],
+                    "additionalProperties": false
+                })),
+            },
+        });
+    }
+    let expected: &[&str] = if include_plan {
+        CORE_TOOL_NAMES_WITH_PLAN
+    } else {
+        CORE_TOOL_NAMES
+    };
     debug_assert_eq!(
         defs.iter()
             .map(|d| d.function.name.as_str())
             .collect::<Vec<_>>(),
-        CORE_TOOL_NAMES.to_vec()
+        expected.to_vec()
     );
     defs
 }
@@ -899,14 +987,22 @@ mod tests {
         assert!(!resp.mutated);
     }
 
-    /// Spec 40 T1: registry name set is exactly the six canonical tools in stable order.
+    /// Spec 40 T1 + plan (110): registry name set in stable order.
     #[test]
     fn registry_names_match_core_catalog() {
         let defs = tool_definitions();
         let names: Vec<&str> = defs.iter().map(|d| d.function.name.as_str()).collect();
-        assert_eq!(names, CORE_TOOL_NAMES);
+        assert_eq!(names, CORE_TOOL_NAMES_WITH_PLAN);
         assert_eq!(core_tool_names(), CORE_TOOL_NAMES);
-        assert_eq!(names.len(), 6);
+        assert_eq!(names.len(), 7);
+        let without = tool_definitions_with_plan(false);
+        assert_eq!(
+            without
+                .iter()
+                .map(|d| d.function.name.as_str())
+                .collect::<Vec<_>>(),
+            CORE_TOOL_NAMES
+        );
     }
 
     /// Spec 40 T3: required argument sets match the wire table.
@@ -919,6 +1015,7 @@ mod tests {
             ("grep", &["pattern"]),
             ("skill", &["name"]),
             ("bash", &["command", "side_effects"]),
+            ("plan", &["action"]),
         ];
         let defs = tool_definitions();
         for (name, reqs) in expected {

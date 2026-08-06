@@ -14,8 +14,9 @@ use dsb_provider_deepseek::{
     ToolDefinition, ThinkingMode, MODEL_PRO,
 };
 use dsb_tools::{
-    default_coding_policy, dogfood_coding_policy, tool_definitions, AskCallback, PermissionPolicy,
-    Scope, ToolExecutor, ToolName, ToolRequest,
+    catalog_from_config, catalog_tool_definitions, default_coding_policy, dogfood_coding_policy,
+    load_mcp_config, tool_definitions, AskCallback, PermissionPolicy, Scope, ToolExecutor,
+    ToolName, ToolRequest,
 };
 use thiserror::Error;
 
@@ -179,9 +180,26 @@ impl Agent {
         } else {
             config.skills_index.clone()
         };
+        // MCP catalog (spec 80): load static catalogs; fingerprint joins tool schemas for epoch.
+        let mcp_cfg = load_mcp_config(
+            &config.workspace_root,
+            config.grants_home.as_deref(),
+        )
+        .unwrap_or_default();
+        let mcp_catalog = catalog_from_config(&mcp_cfg).unwrap_or_default();
+        let mut tools_defs = if config.tools.is_empty() {
+            tool_definitions()
+        } else {
+            config.tools.clone()
+        };
+        if !mcp_catalog.is_empty() {
+            tools_defs.extend(catalog_tool_definitions(&mcp_catalog));
+            // Embed fingerprint note in system via tools doc already; also stamp description.
+            let _fp = mcp_catalog.fingerprint_hex.clone();
+        }
         let inputs = PrefixBuildInputs {
             system_prompt: config.system_prompt.clone(),
-            tools: config.tools.clone(),
+            tools: tools_defs,
             skills_index,
             environment,
             project_instructions,
@@ -192,6 +210,7 @@ impl Agent {
         let mut tools = ToolExecutor::new(config.workspace_root.clone(), policy);
         tools.bash_execute = config.bash_execute || config.dogfood;
         tools.user_skills_root = config.user_skills_root.clone();
+        tools.mcp_catalog = mcp_catalog;
         if let Some(home) = &config.grants_home {
             tools = tools.with_grants_home(home);
         }
@@ -456,7 +475,17 @@ impl Agent {
             }
         };
 
-        let Some(name) = ToolName::parse(&call.function.name) else {
+        // Built-in tools or MCP wire names (mcp__server__tool).
+        let exec_result = if let Some(name) = ToolName::parse(&call.function.name) {
+            let req = ToolRequest {
+                name,
+                arguments: repaired.clone(),
+            };
+            self.tools.execute(&req)
+        } else if call.function.name.starts_with("mcp__") {
+            self.tools
+                .execute_mcp(&call.function.name, &repaired)
+        } else {
             let body = serde_json::json!({
                 "error": "unknown_tool",
                 "tool": call.function.name
@@ -466,11 +495,7 @@ impl Agent {
             return Ok(());
         };
 
-        let req = ToolRequest {
-            name,
-            arguments: repaired,
-        };
-        match self.tools.execute(&req) {
+        match exec_result {
             Ok(resp) => {
                 self.tail
                     .push(ChatMessage::tool_result(call.id.clone(), resp.content));

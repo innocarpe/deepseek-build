@@ -38,3 +38,11 @@ Routing: spec `20` / effort: spec `30`. UX: `/model` / `/preset` (Deep Code + Re
 - Long sessions stay affordable via cache hit rates users can see
 - Thinking/effort knobs are first-class, not hidden env hacks
 - Plan mode helps without trapping the agent in endless planning
+
+## Roadmap board
+
+Execution waves, SemVer bands, and ultragoal chain: **[MASTER_PLAN.md](./MASTER_PLAN.md)**.
+
+## Design
+
+Default UI must be **readable** (DeepSeek blue family), not Grok-style low-contrast black.

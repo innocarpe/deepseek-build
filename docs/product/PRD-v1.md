@@ -5,7 +5,7 @@
 | Status | Draft → active for M0–M6 |
 | Owner | @innocarpe |
 | Last updated | 2026-08-06 |
-| Related | [VISION](./VISION.md) · [SOURCES](./SOURCES.md) · [NON_GOALS](./NON_GOALS.md) · [MILESTONES](./MILESTONES.md) |
+| Related | [MASTER_PLAN](./MASTER_PLAN.md) · [VISION](./VISION.md) · [SOURCES](./SOURCES.md) · [NON_GOALS](./NON_GOALS.md) · [MILESTONES](./MILESTONES.md) · [staged PRDs](./prd/) |
 
 ---
 

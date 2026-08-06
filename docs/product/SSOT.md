@@ -5,29 +5,39 @@ When documents disagree, **higher wins**. Agents must not invent a third story.
 | Priority | Artifact | Owns |
 |----------|----------|------|
 | 1 | **Git `main` code + `Cargo.toml` version** | What actually ships |
-| 2 | **[REPLAN_2.0.md](./REPLAN_2.0.md)** | **Product direction from 2026-08-06:** Grok base, 2.0.0 DoD, 1.x scaffold honesty |
-| 3 | **[WAVE_2x_PR_DAG.md](./WAVE_2x_PR_DAG.md)** | Fixed product PR units (W0–W4) — no overnight invention |
-| 4 | **Ultragoal `goals.json` story status** (local `.omc/…/goals.json`) | Which story is next *in this machine’s ledger* (must not contradict REPLAN) |
-| 5 | **[MASTER_PLAN.md](./MASTER_PLAN.md)** | Historical A–D scaffold + pointer to replan |
-| 6 | **Wave PRD** `prd/PRD-wave-*.md` | Scaffold-era exit criteria (historical) |
-| 7 | **Fixed PR DAG** `WAVE_A_PR_DAG.md` / `WAVE_B_PR_DAG.md` | Scaffold unit splits (historical) |
-| 8 | **RELEASE_TRAIN_0x.md** | Wave A narrative only |
-| 9 | Cold-start prompts | Session bootstrap — prefer `ULTRAGOAL_PROMPT_COLD_START_2.0.md` for product work |
+| 2 | **[versions/README.md](./versions/README.md)** + active major **PRD-vN** | **Which major line is product target** and its DoD |
+| 3 | **[PRD-v2.md](./PRD-v2.md)** (while 2.x is current ship line) / **[PRD-v3.md](./PRD-v3.md)** (when heart train starts) | Line-specific problem, goals, honesty |
+| 4 | **[HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.md)** | L1/L2/L3 layer ownership (never silent override) |
+| 5 | **[REPLAN_2.0.md](./REPLAN_2.0.md)** | Historical replan that defined 2.0.0 cut intent |
+| 6 | **WAVE / ultragoal boards** (`WAVE_2x_*`, `GROKBASE_2X_*`, future `WAVE_3x_*`) | Fixed PR units for the **active** train |
+| 7 | **Ultragoal `goals.json` story status** (local `.omc/…`) | Next story *on this machine* (must not contradict PRD-vN) |
+| 8 | **[MASTER_PLAN.md](./MASTER_PLAN.md)** | Historical A–D scaffold + pointers |
+| 9 | **Wave PRDs** `prd/PRD-wave-*.md` | Scaffold-era exit criteria (historical only) |
+| 10 | Cold-start prompts | Session bootstrap — must name the **major PRD** they serve |
 
 ## Gate ledger
 
 [GATES.md](../GATES.md) wins for **whether a runtime feature may land**.  
 Subgates: **G6a** sessions(100), **G6b** skills(70), **G6c** MCP(80), **G6d** plan(110).
 
-## Version display fields to update on every minor release
+## Version display fields to update on every release
 
 One release PR should touch (as applicable):
 
 1. `Cargo.toml` workspace version  
 2. `package.json` version (if present)  
-3. `MASTER_PLAN.md` §2 / §4 checklists / §8 log  
-4. `RELEASE_TRAIN_0x.md` §2 / §7 (Wave A only)  
-5. user-guide version lines  
-6. README status blurb if it hardcodes SemVer  
+3. Active **PRD-vN** release log (if minor notes needed)  
+4. [CHANGELOG.md](../../CHANGELOG.md)  
+5. [KNOWN_LIMITS.md](./KNOWN_LIMITS.md) if behavior honesty changes  
+6. user-guide / README if they hardcode SemVer  
 
 Run: `./scripts/check-semver.sh` and `npm run version-check` when npm exists.
+
+## Major-line cheat sheet
+
+| Line | PRD | Meaning |
+|------|-----|---------|
+| 1.x | [PRD-v1.md](./PRD-v1.md) | Scaffold / legacy |
+| 2.x | [PRD-v2.md](./PRD-v2.md) | Grok base + DeepSeek shell (**current ship**) |
+| 3.x | [PRD-v3.md](./PRD-v3.md) | Heart fusion L1+L2 (**next major**) |
+| 4.x | [PRD-v4.md](./PRD-v4.md) | L3 productization (later) |

@@ -33,6 +33,18 @@ is not.
 
 ---
 
+## 1b. Major product lines (PRD map)
+
+| Line | Meaning | PRD |
+|------|---------|-----|
+| **1.x** | Scaffold / legacy thin agent | [PRD-v1.md](../product/PRD-v1.md) |
+| **2.x** | Grok base + DeepSeek product shell (current ship) | [PRD-v2.md](../product/PRD-v2.md) |
+| **3.x** | Heart fusion L1+L2 under Grok shell (next major) | [PRD-v3.md](../product/PRD-v3.md) |
+| **4.x** | L3 productization (later) | [PRD-v4.md](../product/PRD-v4.md) |
+
+Index: [docs/product/versions/README.md](../product/versions/README.md).  
+New majors require a **PRD-vN** + versions index update **before** coding the train.
+
 ## 2. Where the version lives
 
 | Surface | Source of truth |

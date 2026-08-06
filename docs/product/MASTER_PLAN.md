@@ -6,26 +6,30 @@
 **SemVer rule:** Always full `MAJOR.MINOR.PATCH` — never bare `1.0`  
 **CLI:** `deepseek-build` (primary) · `dsb` (alias)
 
-> ## Product replan (2026-08-06)
+> ## Product version lines (2026-08-07)
 >
-> **Owner intent:** `dsb` opens a **Grok Build–class** coding agent (CLI/TUI),  
-> based on **open-source Grok Build**, with Deep Code + Reasonix overlays.
+> | Line | PRD | Status |
+> |------|-----|--------|
+> | **1.x** | [PRD-v1.md](./PRD-v1.md) | Scaffold / legacy |
+> | **2.x** | [PRD-v2.md](./PRD-v2.md) | **Shipped** Grok base + DeepSeek shell (`2.0.0`+) |
+> | **3.x** | [PRD-v3.md](./PRD-v3.md) | **Next major** — L1/L2 heart fusion under Grok shell |
+> | **4.x** | [PRD-v4.md](./PRD-v4.md) | Later — L3 productization |
 >
-> **1.x (including published 1.0.0 / 1.1.0) is a scaffold line**, not that product.  
-> **Target product cut: `2.0.0`.** Full plan: **[REPLAN_2.0.md](./REPLAN_2.0.md)** ·  
-> Cold start: **[ULTRAGOAL_PROMPT_COLD_START_2.0.md](./ULTRAGOAL_PROMPT_COLD_START_2.0.md)**
+> Index: **[versions/README.md](./versions/README.md)** · SSOT: **[SSOT.md](./SSOT.md)**  
+> Historical replan that defined 2.0.0: **[REPLAN_2.0.md](./REPLAN_2.0.md)**  
 >
 > Waves A–D below remain **historical scaffold chronology**. Do not treat their
-> “complete” checkboxes as “Grok-base product done.”
+> “complete” checkboxes as “heart fusion done.”
 
-This board still holds scaffold history. **Product SSOT for direction is REPLAN_2.0.**
+This board still holds scaffold history. **Product SSOT for major targets is versions/ + PRD-vN.**
 
 | Doc | Role |
 |-----|------|
 | **This file** | Final goal + staged goals + SemVer waves + ultragoal chain |
 | [VISION.md](./VISION.md) | One-liner and pillars |
-| [PRD-v1.md](./PRD-v1.md) | Problem / goals (overall) |
-| [prd/](./prd/) | **Staged PRDs** per maturity wave |
+| [versions/README.md](./versions/README.md) | **Major line index** |
+| [PRD-v1.md](./PRD-v1.md) · [PRD-v2.md](./PRD-v2.md) · [PRD-v3.md](./PRD-v3.md) · [PRD-v4.md](./PRD-v4.md) | Per-major PRDs |
+| [prd/](./prd/) | Scaffold-era **wave** PRDs (historical) |
 | [RELEASE_TRAIN_0x.md](./RELEASE_TRAIN_0x.md) | Wave A detail (`0.2.0`–`0.7.0` dogfood) |
 | [MILESTONES.md](./MILESTONES.md) | M0–M6 feature themes |
 | [GATES.md](../GATES.md) | Spec readiness gates G0–G6 |

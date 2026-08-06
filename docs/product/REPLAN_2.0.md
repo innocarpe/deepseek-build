@@ -1,8 +1,12 @@
 # Replan — DeepSeek Build **2.0.0** (Grok Build base)
 
-**Status:** Normative product replan (2026-08-06)  
-**Supersedes for product direction:** prior overnight interpretation of Waves A–D as “done 1.0.0 product”  
+**Status:** Historical replan that defined the **2.0.0** cut (2026-08-06)  
+**Current major PRDs:** [versions/README.md](./versions/README.md) · [PRD-v2.md](./PRD-v2.md) (shipped base) · [PRD-v3.md](./PRD-v3.md) (next: heart fusion)  
+**Supersedes for product direction (at the time):** prior overnight interpretation of Waves A–D as “done 1.0.0 product”  
 **Does not delete:** 1.x code, specs, tests, or published packages (historical scaffold)
+
+> **Post-ship note (2026-08-07):** 2.0.0–2.0.3 shipped Grok base + DeepSeek shell/UI/npm.  
+> REPLAN §2 P0 items **4–5 (L1/L2 under real shell)** remain **partial** — tracked as **3.0.0** in [PRD-v3.md](./PRD-v3.md), not as “silently done in 2.x.”
 
 **Related**
 

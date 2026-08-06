@@ -1,12 +1,24 @@
 # Master plan — final goal to overnight execution
 
-**Status:** Normative product roadmap (living)  
+**Status:** Normative product roadmap (living) — **see replan**  
 **Audience:** Humans + autonomous agents running multi-day ultragoal trains  
 **Last updated:** 2026-08-06  
 **SemVer rule:** Always full `MAJOR.MINOR.PATCH` — never bare `1.0`  
 **CLI:** `deepseek-build` (primary) · `dsb` (alias)
 
-This is the **one board**. Other docs plug into it; they do not replace it.
+> ## Product replan (2026-08-06)
+>
+> **Owner intent:** `dsb` opens a **Grok Build–class** coding agent (CLI/TUI),  
+> based on **open-source Grok Build**, with Deep Code + Reasonix overlays.
+>
+> **1.x (including published 1.0.0 / 1.1.0) is a scaffold line**, not that product.  
+> **Target product cut: `2.0.0`.** Full plan: **[REPLAN_2.0.md](./REPLAN_2.0.md)** ·  
+> Cold start: **[ULTRAGOAL_PROMPT_COLD_START_2.0.md](./ULTRAGOAL_PROMPT_COLD_START_2.0.md)**
+>
+> Waves A–D below remain **historical scaffold chronology**. Do not treat their
+> “complete” checkboxes as “Grok-base product done.”
+
+This board still holds scaffold history. **Product SSOT for direction is REPLAN_2.0.**
 
 | Doc | Role |
 |-----|------|
@@ -22,7 +34,8 @@ This is the **one board**. Other docs plug into it; they do not replace it.
 | [ULTRAGOAL_CHAIN.md](./ULTRAGOAL_CHAIN.md) | How to chain plans overnight |
 | [ULTRAGOAL_PR_PLANNING.md](./ULTRAGOAL_PR_PLANNING.md) | **Mandatory:** PR units, parallel/sequential DAG, atomic commits, stacking |
 | [SSOT.md](./SSOT.md) | Conflict priority when docs disagree |
-| [WAVE_A_PR_DAG.md](./WAVE_A_PR_DAG.md) / [WAVE_B_PR_DAG.md](./WAVE_B_PR_DAG.md) | Fixed unit DAGs (no overnight invention) |
+| [WAVE_2x_PR_DAG.md](./WAVE_2x_PR_DAG.md) | **Product** fixed units W0–W4 (Grok base) |
+| [WAVE_A_PR_DAG.md](./WAVE_A_PR_DAG.md) / [WAVE_B_PR_DAG.md](./WAVE_B_PR_DAG.md) | Historical scaffold unit DAGs |
 | [stack-merge-runbook.md](../contributing/stack-merge-runbook.md) | Squash-stack repair + failure ladder |
 
 ---
@@ -36,9 +49,10 @@ Build **DeepSeek Build**: a terminal coding agent that is simultaneously:
 3. **Grok-class throughput (Grok / L3)** — parallel tools, background shell, subagents, optional worktrees — **without** breaking L1/L2 (worker cache law).  
 4. **Readable by default (product design)** — **DeepSeek blue** accent theme; default UI must **not** be Grok-style near-black monochrome low contrast.
 
-**Success feeling:** *I type `deepseek-build` (or `dsb`), work on a real repo for hours, progress is fast, cost is sane, edits are safe, and the screen is easy to read.*
+**Success feeling:** *I type `deepseek-build` (or `dsb`), a Grok-class agent opens, I work on a real repo for hours, progress is fast, cost is sane, edits are safe, and the screen is easy to read.*
 
-**`1.0.0` meaning (only when earned):** install is boring, dogfood is sustained, L1+L2+L3+theme defaults are shippable, known limits documented. Until then: stay on **`0.y.z`**.
+**Product SemVer (replan):** that success feeling is earned at **`2.0.0`** on a **Grok Build base** — see [REPLAN_2.0.md](./REPLAN_2.0.md).  
+Published **`1.0.0` / `1.x`** = scaffold only (do not re-tag history).
 
 ```mermaid
 mindmap
@@ -71,12 +85,14 @@ mindmap
 
 | Item | Value |
 |------|--------|
-| Version on `main` | Read `Cargo.toml` (expect **`1.0.0`**) |
-| Active ultragoal | **`rc-1.0.0` complete** (chain A–D ledgers complete) |
-| Gates green | **G0–G5**, **G6a–G6d** (see `docs/GATES.md` — *ledger green ≠ product depth complete*) |
-| Honesty note | **`1.0.0` is tagged**; several L3/MCP/subagent paths are **MVP / thin** — see KNOWN_LIMITS + goal audit |
+| Version on `main` | Read `Cargo.toml` / npm — **`1.x` scaffold line** |
+| Product direction | **[REPLAN_2.0.md](./REPLAN_2.0.md)** — target **`2.0.0`** Grok base |
+| Active ultragoal | **`grokbase-2x`** (after replan merge) — not A–D |
+| Scaffold A–D | Ledgers complete **as scaffold history**; not product DoD |
+| Gates green | Scaffold gates G0–G5 / G6a–d may be green — *ledger green ≠ Grok-base product* |
+| Honesty note | **`1.0.0` tagged early**; thin REPL ≠ Grok TUI — see KNOWN_LIMITS + REPLAN |
 
-Do **not** assume chat memory. Re-read `Cargo.toml` version and `omc ultragoal status --plan-id dogfood-0x`.
+Do **not** assume chat memory. Re-read `Cargo.toml` version and [REPLAN_2.0.md](./REPLAN_2.0.md) / [WAVE_2x_PR_DAG.md](./WAVE_2x_PR_DAG.md).
 
 ---
 

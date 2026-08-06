@@ -55,13 +55,13 @@ footer / changelog note. Prefer not to; if you must, document migration.
 
 | Range | Meaning for this project |
 |-------|---------------------------|
-| `0.y.z` | **Active product line for a long time** — development, install, dogfood; API/CLI may change between minors with changelog notes |
-| `1.0.0` | **Later** — only after sustained dogfood + boring packaging (see [RELEASE_TRAIN_0x.md](../product/RELEASE_TRAIN_0x.md)); not the near goal |
-| `1.x.y` | Compatible evolution of the 1.x CLI/user contract (after `1.0.0` exists) |
-| `2.0.0` | Intentional break of that contract |
+| `0.y.z` | Historical pre-1.x development (Wave A–D scaffold train) |
+| **`1.0.0` – `1.x.y`** | **Legacy scaffold line** (already published). Thin agent + contracts. **Not** the Grok Build–class product. See [REPLAN_2.0.md](../product/REPLAN_2.0.md). |
+| **`2.0.0`** | **First real product**: `dsb` opens Grok Build–class coding agent; Grok open source as base; DeepSeek-native. |
+| `2.0.0-alpha.*` / `2.0.0-beta.*` | Optional previews while integrating Grok base |
+| `2.x.y` (after 2.0.0) | Compatible evolution of the real product line |
 
-**Near north star:** ship the **`0.x` train** until [dogfood-usable](../product/RELEASE_TRAIN_0x.md) (section 3).  
-Do **not** market or tag **`1.0.0`** during that train.
+**Important:** Tags **`1.0.0` / `1.1.0` already shipped on npm.** Do not rewrite history. Product success is measured by **`2.0.0` DoD**, not by prior 1.x claims.
 
 ---
 

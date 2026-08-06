@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Documentation
+
+- **Product replan for 2.0.0** — [REPLAN_2.0.md](docs/product/REPLAN_2.0.md): 1.x repositioned as **scaffold**; real product DoD is **`dsb` opens a Grok Build–class coding agent** on open-source Grok Build + DeepSeek/Deep Code/Reasonix overlays
+- Fixed PR units: [WAVE_2x_PR_DAG.md](docs/product/WAVE_2x_PR_DAG.md); cold-start [ULTRAGOAL_PROMPT_COLD_START_2.0.md](docs/product/ULTRAGOAL_PROMPT_COLD_START_2.0.md)
+- README / SSOT / versioning / MASTER_PLAN / KNOWN_LIMITS honesty banners
+
 ## 1.1.0 — 2026-08-06
 
 ### Added
@@ -9,24 +17,22 @@
 - Bare `deepseek-build` with no key starts setup on TTY
 - User guide `00-setup.md`
 
-## Unreleased
+### Notes
 
-### CI
-
-- Split product CI into path-gated parallel workflows (`rust-fmt`, `rust-clippy`, `rust-test`, `smoke-dogfood`, `semver`) with shared Cargo cache (`workspace-v1`); docs-only PRs skip Rust jobs
+- Still the **1.x scaffold line** (thin agent UX). Product target is **2.0.0** — see REPLAN_2.0.
 
 ## 1.0.0 — 2026-08-06
 
 ### Release
 
-- First **1.0.0** after Waves A–D: dogfood core, DeepSeek-native surface, Grok-class throughput, RC harden/docs
+- First **1.0.0** after Waves A–D **scaffold train**: dogfood core, DeepSeek-native surface, throughput **MVP**, RC harden/docs
 - Product CI (later refined into split path-gated workflows)
 - Full user-guide + known limits
 - Dual CLI `deepseek-build` / `dsb`; npm package `@innocarpe/deepseek-build` (registry publish remains owner-gated)
 
 ### Notes
 
-- See `docs/product/KNOWN_LIMITS.md` for honest limits (MCP thin, in-process subagents, no prebuilt multi-arch CDN)
+- **Repositioned (2026-08-06):** this release is a **contract/scaffold line**, not a Grok Build–class full agent product. See [REPLAN_2.0.md](docs/product/REPLAN_2.0.md) and [KNOWN_LIMITS.md](docs/product/KNOWN_LIMITS.md).
 
 All notable product versions use full SemVer `MAJOR.MINOR.PATCH`.
 

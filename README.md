@@ -3,20 +3,29 @@
 **DeepSeek-native terminal coding agent.**
 
 **Commands:** `deepseek-build` (primary) · `dsb` (alias) — same program ([ADR 0006](docs/adr/0006-cli-names-and-semver.md)).  
-**Versions:** always full SemVer `MAJOR.MINOR.PATCH` (e.g. `0.2.0`, never bare `0.2`) — [versioning.md](docs/contributing/versioning.md).
+**Versions:** always full SemVer `MAJOR.MINOR.PATCH` — [versioning.md](docs/contributing/versioning.md).
+
+> ## Version honesty (read this)
+>
+> | Line | Meaning |
+> |------|---------|
+> | **npm / git `1.x` (now)** | **Scaffold** — contracts, thin agent, setup. Useful, **not** the final product. |
+> | **Target `2.0.0`** | **`dsb` opens a Grok Build–class coding agent** (full agent/TUI), based on **open-source Grok Build**, DeepSeek-native, with Deep Code + Reasonix strengths. |
+>
+> Full replan: **[docs/product/REPLAN_2.0.md](docs/product/REPLAN_2.0.md)**.
 
 Combines three first-class references:
 
 | Source | What we take |
 |--------|----------------|
-| **Grok Build** | Wall-clock speed: parallel tools, subagents, background tasks, worktree isolation, native runtime patterns |
+| **[Grok Build](https://github.com/xai-org/grok-build)** | **Base runtime + TUI/agent** (2.0 plan) — not only “ideas” |
 | **[Reasonix](https://github.com/esengine/DeepSeek-Reasonix)** | Prefix-cache-first loop, Flash/Pro cost control, tool-call repair |
-| **[Deep Code CLI](https://github.com/lessweb/deepcode-cli)** | Official DeepSeek-oriented surface: thinking, reasoning effort, Skills, MCP, permissions, plan mode |
+| **[Deep Code CLI](https://github.com/lessweb/deepcode-cli)** | Snippet edit, skills, permissions, thinking/effort, DeepSeek-native surface |
 
-**Not in v1 scope:** Gajae-code multi-stage planning/team harness (too slow for our north star).
+**Not in scope:** Gajae-code multi-stage planning/team harness as identity.
 
-> Status: see `Cargo.toml` SemVer. **Master plan (final goal + waves):** [docs/product/MASTER_PLAN.md](docs/product/MASTER_PLAN.md).  
-> Wave A: [RELEASE_TRAIN_0x.md](docs/product/RELEASE_TRAIN_0x.md) · Chain: [ULTRAGOAL_CHAIN.md](docs/product/ULTRAGOAL_CHAIN.md) · Architecture: [SYSTEM_ARCHITECTURE.md](docs/architecture/SYSTEM_ARCHITECTURE.md).
+> Scaffold chronology: [MASTER_PLAN.md](docs/product/MASTER_PLAN.md) (Waves A–D historical).  
+> Architecture: [SYSTEM_ARCHITECTURE.md](docs/architecture/SYSTEM_ARCHITECTURE.md).
 
 ## Install (PATH)
 

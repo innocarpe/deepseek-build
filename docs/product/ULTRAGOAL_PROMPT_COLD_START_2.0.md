@@ -16,20 +16,28 @@ DeepSeek by default, first-run setup works, L1/L2 invariants hold.
 - Extending the 1.x thin clap REPL as if it were the product
 - Claiming 2.0.0 from checklist alone without Grok base entry
 - Multi-vendor identity, Gajae multi-stage core loop
+- Deleting or unpublishing 1.x history
 
 # WHERE WE ARE
-- 1.x published (scaffold). Read REPLAN_2.0.md §0–§1.
-- Product work = grokbase waves, not dogfood-0x/native-0x closure.
+- 1.x published (scaffold). Read REPLAN_2.0.md §0–§2.
+- Product work = grokbase waves in WAVE_2x_PR_DAG.md
+- Historical A–D chain is closed scaffold only — do not restart as product SSOT
 
 # START
 1. Read docs/product/REPLAN_2.0.md fully
-2. Read local ../grok-build README + build xai-grok-pager-bin if possible
-3. ADR: base strategy (fork vs subtree)
-4. Ultragoal plan-id grokbase-2x (create if missing)
-5. W0 research PR only — map plug points; no fake 2.0.0 tag
+2. Read docs/product/WAVE_2x_PR_DAG.md — pick next incomplete unit
+3. Read local ../grok-build README + LICENSE + SOURCE_REV; cargo check -p xai-grok-pager-bin if possible
+4. If no ADR yet: write docs/adr/0008-grok-build-base.md (fork vs subtree)
+5. Ultragoal plan-id grokbase-2x (create if missing); complete next unit only
+6. Never tag 2.0.0 until REPLAN §2 P0 green
 
 # VERSIONING
-- 1.x = legacy scaffold
+- 1.x = legacy scaffold (freeze product features)
 - 2.0.0-alpha/beta for integration
 - 2.0.0 only when REPLAN §2 P0 green
+
+# PR CULTURE
+- ULTRAGOAL_PR_PLANNING.md + stack-merge-runbook.md
+- Small PRs; path-gated CI; English on GitHub public text
+- Parent runtime family only (Grok → grok children)
 ```

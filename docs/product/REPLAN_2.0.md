@@ -4,19 +4,28 @@
 **Supersedes for product direction:** prior overnight interpretation of Waves A–D as “done 1.0.0 product”  
 **Does not delete:** 1.x code, specs, tests, or published packages (historical scaffold)
 
+**Related**
+
+| Doc | Role |
+|-----|------|
+| [ULTRAGOAL_PROMPT_COLD_START_2.0.md](./ULTRAGOAL_PROMPT_COLD_START_2.0.md) | Session bootstrap for product work |
+| [WAVE_2x_PR_DAG.md](./WAVE_2x_PR_DAG.md) | Fixed PR units (W0–W4) — no overnight invention |
+| [ULTRAGOAL_CHAIN.md](./ULTRAGOAL_CHAIN.md) | Active plan order (2.x supersedes A–D for product) |
+| [versioning.md](../contributing/versioning.md) | SemVer bands after replan |
+
 ---
 
 ## 0. Why this document exists
 
 ### Owner intent (restated, fail-close)
 
-1. **Product category** = Claude Code / Codex CLI / **Grok Build** 급  
-   → 터미널 **코딩 에이전트** (업계에서 “CLI”라고 부르지만, Grok은 **full-screen TUI + agent runtime**).
-2. **Base** = 오픈소스 **Grok Build** (`grok` / `xai-grok-pager` 트리).  
-   가장 빠르고 좋았고, 오픈소스라 DeepSeek 용으로 파생 가능하다고 판단.
-3. **Overlay** = Deep Code (L1 계약) + Reasonix (L2 캐시/비용) 특장점.
-4. **`dsb` / `deepseek-build` 를 치면** 그 에이전트가 **바로** 떠야 한다.  
-   그게 **원래 1.0.0 의미**였다.
+1. **Product category** = Claude Code / Codex CLI / **Grok Build** class  
+   → terminal **coding agent** (marketed as “CLI”, but Grok is **full-screen TUI + agent runtime**).
+2. **Base** = open-source **Grok Build** (`grok` / `xai-grok-pager` tree).  
+   Owner judgment: best experience + OSS so DeepSeek can fork/adapt it.
+3. **Overlay** = Deep Code (L1 contracts) + Reasonix (L2 cache/cost) strengths.
+4. **Typing `dsb` / `deepseek-build`** must open **that agent immediately**.  
+   That was the **original meaning of 1.0.0**.
 
 ### What actually happened (1.x)
 
@@ -27,7 +36,8 @@
 | “dsb opens agent” | Subcommand clap → thin REPL; **not** Grok TUI |
 | Onboarding | Late (1.1.0); not the core product |
 
-**Judgment:** 1.x is a **useful research / contract scaffold**. It is **not** the product the owner ordered.
+**Judgment:** 1.x is a **useful research / contract scaffold**. It is **not** the product the owner ordered.  
+**Action:** keep 1.x code and npm history; **re-version product success to `2.0.0`**.
 
 ---
 
@@ -39,13 +49,15 @@ npm / git already have **`1.0.0`** and **`1.1.0`**. We **do not** unpublish or f
 |------|---------------------|
 | **`1.0.0` – `1.x.y`** | **Legacy scaffold line** — clap agent, contracts, tests, npm package that works as a thin agent. **Not** Grok-base product. |
 | **`2.0.0`** | **First real product** matching owner intent: Grok Build–class agent UX, Grok tree as base, DeepSeek native. |
-| **`2.0.0-alpha.*` / `2.0.0-beta.*`** | Previews while integrating Grok base (optional). |
+| **`2.0.0-alpha.*` / `2.0.0-beta.*`** | Previews while integrating Grok base. |
+| **`2.x.y` (after 2.0.0)** | Compatible evolution of the real product line. |
 
 ### SemVer honesty
 
 - **2.0.0 is a major** because the **user-facing product identity changes** (entry experience, runtime base), not because we “finished more checklists.”
 - 1.x remains installable for experiments; README must say **scaffold / not the Grok-base product**.
-- Tags: `v2.0.0` only when §3 DoD is green.
+- Tags: `v2.0.0` only when **§2 DoD P0** is green.
+- Optional 1.x patch releases only for critical bugs / install; **no new product features on thin REPL** (see §5 freeze).
 
 ### Messaging (npm / GitHub)
 
@@ -53,7 +65,8 @@ npm / git already have **`1.0.0`** and **`1.1.0`**. We **do not** unpublish or f
 |---------|------|
 | README badge / status | “**1.x = scaffold.** Target product is **2.0.0** (Grok Build base).” |
 | `package.json` description (at 2.0 cut) | DeepSeek-native agent on Grok Build runtime |
-| 1.x releases notes | “Legacy scaffold; prefer 2.x for product intent” |
+| 1.x release notes | “Legacy scaffold; prefer 2.x for product intent” |
+| GitHub About / topics | Prefer “coding agent” language; avoid “1.0 complete product” |
 
 ---
 
@@ -83,6 +96,7 @@ npm / git already have **`1.0.0`** and **`1.1.0`**. We **do not** unpublish or f
 - Gajae multi-stage planning harness as core loop  
 - Perfect 1:1 pixel clone of every Grok screen  
 - Deleting 1.x from npm history  
+- Extending the 1.x thin REPL as the “real product” path  
 
 ---
 
@@ -107,12 +121,35 @@ npm / git already have **`1.0.0`** and **`1.1.0`**. We **do not** unpublish or f
    ← port tests/contracts from 1.x dsb-tools / dsb-context
 ```
 
+### Grok Build reference map (local sibling `../grok-build`)
+
+Upstream is **Apache-2.0** (SpaceXAI). Pin via `SOURCE_REV` when vendoring/forking.
+
+| Area | Crates (examples) | 2.0 relevance |
+|------|-------------------|---------------|
+| **Entry / TUI** | `xai-grok-pager-bin`, `xai-grok-pager`, `xai-grok-pager-render` | Default `dsb` entry = this class of binary |
+| **Agent loop** | `xai-grok-agent`, `xai-agent-lifecycle`, `xai-chat-state` | Real agent runtime (replace thin REPL) |
+| **Auth / HTTP** | `xai-grok-auth`, `xai-grok-http`, `xai-grok-secrets` | Plug DeepSeek keys / base URL |
+| **Config / models** | `xai-grok-config`, `xai-grok-models`, `xai-grok-env` | Default model = DeepSeek |
+| **Tools / shell** | `xai-grok-tools`, `xai-grok-shell*`, `xai-grok-sandbox` | L1 overlay injection points |
+| **MCP / skills-ish** | `xai-grok-mcp`, hooks/plugins crates | Prefer Grok surfaces over static catalog |
+| **Subagent / worktree** | `xai-grok-subagent-resolution`, `xai-fast-worktree` | Real L3 (not 1.x in-process shims) |
+| **Upstream pin** | `SOURCE_REV`, `LICENSE`, `THIRD-PARTY-NOTICES` | ADR + NOTICE obligations |
+
+Build smoke (W0 must document pass/fail on agent machine):
+
+```sh
+# From ../grok-build (requires rustup + dotslash/protoc per their README)
+cargo check -p xai-grok-pager-bin
+# optional interactive: cargo run -p xai-grok-pager-bin
+```
+
 ### Reuse from 1.x (keep — do not throw away)
 
 | 1.x asset | Role in 2.0 |
 |-----------|-------------|
 | `dsb-provider-deepseek` | DeepSeek API client, SSE, models |
-| `dsb-config` credentials + setup | First-run key onboarding |
+| `dsb-config` credentials + setup | First-run key onboarding (`~/.deepseek-build/…`) |
 | Specs 10/15/20/30/40/45/90/… | Contract tests / acceptance |
 | `dsb-tools` snippet/permissions | Policy layer or port into Grok tool path |
 | `dsb-context` prefix/epoch | L2 tests / adapter |
@@ -133,26 +170,41 @@ npm / git already have **`1.0.0`** and **`1.1.0`**. We **do not** unpublish or f
 
 | Strategy | Pros | Cons | Recommendation |
 |----------|------|------|----------------|
-| **A. Fork grok-build → deepseek-build 2.x** | Cleanest “base” | License/sync cost; large tree | **Default preferred** if license OK |
-| **B. Git subtree/submodule of grok-build** | Clear upstream pin | Awkward dual-root | OK for research spike |
-| **C. Cargo path deps to sibling `../grok-build`** | Fast local | Bad for npm/release | **Spike only** |
+| **A. Fork grok-build → deepseek-build 2.x tree** | Cleanest “base is Grok” | License/sync cost; large tree; history rewrite of *this* repo | **Default preferred** if operationally OK |
+| **B. Git subtree/submodule of grok-build** | Clear upstream pin; keeps 1.x crates as overlay package | Dual-root / CI complexity | Strong alternative |
+| **C. Cargo path deps to sibling `../grok-build`** | Fast local | Bad for npm/release | **Spike only (W0)** |
 | **D. Continue greenfield** | — | **Fails owner intent** | **Rejected** for 2.0 |
 
-**First ADR for 2.0:** `docs/adr/00xx-grok-build-base.md` choosing A/B and license notes (Apache-2.0 compatibility, attribution, `SOURCE_REV` pin).
+**First ADR for 2.0:** `docs/adr/0008-grok-build-base.md` (number next free) choosing A/B, Apache-2.0 attribution, `SOURCE_REV` pin, and how `dsb` binary is produced.
 
 ---
 
 ## 5. Execution waves (2.x train)
 
-Plan id suggestion: **`grokbase-2x`** (ultragoal).
+Plan id: **`grokbase-2x`** (ultragoal).  
+Fixed PR units: **[WAVE_2x_PR_DAG.md](./WAVE_2x_PR_DAG.md)**.
 
 | Wave | SemVer band | Outcome |
 |------|-------------|---------|
-| **W0 Research** | docs only / `2.0.0-alpha.0` optional | Map grok crates; auth; provider plug points; license; minimal `cargo run` TUI |
-| **W1 Shell** | `2.0.0-alpha.N` | `dsb` launches Grok TUI composition root; branding DeepSeek Build; setup/auth works |
+| **W0 Research** | docs / optional `2.0.0-alpha.0` | Map crates; auth/provider plug points; license; `cargo check` TUI bin; ADR draft |
+| **W1 Shell** | `2.0.0-alpha.N` | `dsb` launches Grok TUI composition root; branding DeepSeek Build; setup/auth path exists |
 | **W2 DeepSeek wire** | `2.0.0-beta.N` | Default models DeepSeek; chat/edit loop live dogfood |
 | **W3 L1/L2 overlay** | `2.0.0-beta.N` | Snippet + permissions + prefix discipline under real shell |
 | **W4 Product cut** | **`2.0.0`** | §2 P0 green; README/npm point here; 1.x marked legacy |
+
+### 1.x freeze policy (fail-close)
+
+**Allowed on 1.x** after replan merges:
+
+- Critical install/auth bugs  
+- Security fixes  
+- Docs honesty (this replan family)
+
+**Not allowed on 1.x** as “product progress”:
+
+- New REPL UX features (banner/theme polish is optional vanity — do not block 2.0)  
+- New MVP L3 shims presented as Grok-class  
+- Tagging another “1.0 complete” narrative  
 
 ### PR unit principles (unchanged culture)
 
@@ -160,15 +212,17 @@ Plan id suggestion: **`grokbase-2x`** (ultragoal).
 - Small mergeable PRs; path-gated CI  
 - No claiming gate green without evidence  
 - **Do not** bump to `2.0.0` until W4 DoD  
+- Parent runtime = parent family only (Grok session → `grok` children)
 
 ---
 
-## 6. Ultragoal chain (replace overnight A–D closure as product SSOT)
+## 6. Ultragoal chain (product SSOT)
 
-Previous chain closed **scaffold** work. New chain for product:
+Previous chain closed **scaffold** work (historical). New chain for product:
 
 ```text
-replan-2.0 (this doc, ADR)
+replan-2.0 (this doc + wiring)          ← current docs PR
+  → ADR-0008 grok-build-base
   → grokbase-w0-research
   → grokbase-w1-shell
   → grokbase-w2-deepseek
@@ -176,7 +230,8 @@ replan-2.0 (this doc, ADR)
   → grokbase-w4-cut-2.0.0
 ```
 
-Cold-start prompt: `docs/product/ULTRAGOAL_PROMPT_COLD_START_2.0.md` (to be added with first research PR).
+Cold-start: [ULTRAGOAL_PROMPT_COLD_START_2.0.md](./ULTRAGOAL_PROMPT_COLD_START_2.0.md).  
+Do **not** restart `dogfood-0x` / `native-0x` / `throughput-0x` / `rc-1.0.0` as product SSOT.
 
 ---
 
@@ -188,7 +243,7 @@ Cold-start prompt: `docs/product/ULTRAGOAL_PROMPT_COLD_START_2.0.md` (to be adde
 | npm users of 1.x | Scaffold remains; breaking UX comes at 2.0.0 |
 | Contributors | Stop extending thin REPL as if it were Grok; invest in base integration |
 
-README top status (required after this replan merges):
+README top status (required — already wired in this replan PR):
 
 > **Current npm `1.x` is a contract/scaffold line.**  
 > **Product target: `2.0.0` — Grok Build–class agent (`dsb` opens full agent), DeepSeek-native, Deep Code + Reasonix overlays.**  
@@ -198,11 +253,11 @@ README top status (required after this replan merges):
 
 ## 8. Immediate next actions (ordered)
 
-1. **Merge this replan** (docs + versioning honesty).  
-2. **ADR: Grok Build base strategy** (A vs B) + license/attribution.  
-3. **W0 spike PR:** build `xai-grok-pager-bin` from local `../grok-build`; document run path; list provider/auth injection points.  
+1. **Merge this replan** (docs + versioning honesty + WAVE_2x DAG).  
+2. **ADR-0008: Grok Build base strategy** (A vs B) + license/attribution + `SOURCE_REV`.  
+3. **W0 spike:** build/check `xai-grok-pager-bin` from local `../grok-build`; document run path; list provider/auth injection points in a research note under `docs/architecture/`.  
 4. **Freeze feature creep on 1.x REPL** unless it unblocks 2.0 spike.  
-5. **Ultragoal `grokbase-2x` create-goals** after ADR.
+5. **Ultragoal `grokbase-2x` create-goals** after ADR (or with W0).  
 
 ---
 

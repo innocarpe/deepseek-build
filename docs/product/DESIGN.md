@@ -1,28 +1,34 @@
 # Design — DeepSeek Build terminal theme
 
-**Status:** Normative product design (theme v1)  
-**SemVer:** ships with **0.9.0**  
+**Status:** Normative product design (theme v1 + banner v2)  
+**SemVer:** theme tokens from **0.9.0**; whale welcome banner from **1.2.0**  
 **Audience:** agents + humans styling CLI output
 
 ## 1. Goals
 
 1. **Readable by default** for long coding sessions (contrast + hierarchy).  
 2. Brand accent in the **DeepSeek blue** family (not Grok near-black monochrome).  
-3. Distinguish **roles**: content, reasoning, tool, model meta, error.  
-4. Respect `NO_COLOR` and non-TTY (plain text, no ANSI).
+3. Distinguish **roles**: content, reasoning, tool, model, error.  
+4. Respect `NO_COLOR` and non-TTY (plain text, no ANSI).  
+5. **Welcome chrome** that reads as DeepSeek (whale mark + brand blue), at peer-CLI quality without a full TUI.
 
 ## 2. Tokens (theme v1)
 
-| Token | RGB | Role |
-|-------|-----|------|
-| `deepseek.blue` | `77, 107, 254` (`#4D6BFE`) | Accent, tool lines |
-| `model.blue` | `99, 140, 255` | Model / epoch meta lines |
-| `reasoning.slate` | `148, 163, 184` | Reasoning deltas (secondary) |
-| `content` | *terminal default* | Assistant content (unstyled for max readability) |
-| `error` | `248, 113, 113` | Tool / hard errors |
-| `warn` | `251, 191, 36` | Warnings |
+Official brand accent matches DeepSeek product chrome (`#4D6BFE` / RGB 77,107,254 — same family as deepseek.com wordmark fill and public brand listings).
 
-Implementation: `crates/dsb-cli/src/theme.rs` (`Theme`, `Role`, truecolor ANSI `38;2;r;g;b`).
+| Token | RGB | Hex | Role |
+|-------|-----|-----|------|
+| `deepseek.blue` | `77, 107, 254` | `#4D6BFE` | Accent, tool lines, whale mark, box chrome, REPL prompt |
+| `model.blue` | `99, 140, 255` | `#638CFF` | Model / epoch / meta lines inside the card |
+| `reasoning.slate` | `148, 163, 184` | `#94A3B8` | Reasoning deltas (secondary) |
+| `content` | *terminal default* | — | Assistant content (unstyled for max readability) |
+| `error` | `248, 113, 113` | `#F87171` | Tool / hard errors |
+| `warn` | `251, 191, 36` | `#FBBF24` | Warnings |
+
+Implementation:
+
+- `crates/dsb-cli/src/theme.rs` — `Theme`, `Role`, truecolor ANSI `38;2;r;g;b`
+- `crates/dsb-cli/src/banner.rs` — whale mark + welcome card
 
 ## 3. Default vs optional dark
 
@@ -44,9 +50,33 @@ Default is **not** “Grok black glass”. Agents must not reintroduce monochrom
 | `[model=…]` / prefix epoch / session | Model |
 | `[tool-error]` | Error |
 | `[warn]` | Warn |
-| Chat banner | Accent |
+| Whale mark / card border / product title / `❯` prompt | Accent |
+| Card meta (cwd, profile, tips) | Model |
 
-## 5. Permission prompt chrome
+## 5. Welcome banner (v2)
+
+Chat / bare interactive start prints a **boxed card**:
+
+```text
+╭──────────────────────────────────────────────╮
+│      ⣠⣾⣿⣿⣷⣄                              │
+│    ⣰⣿⠋ ⠈⠙⣿⣆   DeepSeek Build  vX.Y.Z    │
+│   ⢸⣿⣇⣀  ⣀⣸⣿  DeepSeek-native coding agent│
+│   ⠈⣿⣿⣿⣿⣿⣿⡿⠁  cmd / cwd / profile / epoch │
+│      ⠈⠉⠁       /help · /pro · /flash · /quit│
+╰──────────────────────────────────────────────╯
+❯
+```
+
+Rules:
+
+1. **Whale mark** — original terminal rendering (braille silhouette) inspired by the official DeepSeek whale mascot; not an embedded PNG/SVG of the trademarked logo file.  
+2. **Brand blue only** for the mark, box edges, title, and prompt — no second “hero” color.  
+3. **Narrow terminals** (`COLUMNS` < 64) use `WHALE_MARK_COMPACT`.  
+4. **`NO_COLOR=1`** keeps the box + mark structure, strips ANSI.  
+5. Still **line-oriented** — no ratatui frame, no forced background fill (see non-goals).
+
+## 6. Permission prompt chrome
 
 Permission asks use stderr labels `[permission]` (readable, high priority). Color may match `Warn` / `Accent` in later polish; v1 prioritizes clear text choices:
 
@@ -55,22 +85,26 @@ Permission asks use stderr labels `[permission]` (readable, high priority). Colo
   [a] allow once   [A] allow always   [d] deny
 ```
 
-## 6. Evidence checklist (PR / release)
+## 7. Evidence checklist (PR / release)
 
-- [ ] TTY chat banner uses DeepSeek blue accent  
+- [ ] TTY chat banner shows whale mark + DeepSeek blue box  
+- [ ] Product title uses `#4D6BFE` truecolor when color is on  
 - [ ] Tool lines distinguishable from content  
-- [ ] `NO_COLOR=1` produces no ANSI escapes  
-- [ ] Non-TTY `run` remains plain  
+- [ ] `NO_COLOR=1` produces no ANSI escapes (structure remains)  
+- [ ] Non-TTY `run` remains plain (no forced banner)  
+- [ ] REPL prompt `❯` uses Accent when color is on  
 
-## 7. Non-goals (v1)
+## 8. Non-goals (v1 / banner v2)
 
 - Full TUI framework  
-- Custom background painting  
+- Custom background painting / alternate screen  
 - Theme file format / user CSS  
+- Shipping the official SVG/PNG logo binary inside the crate  
 - Windows console legacy code-page workarounds beyond ANSI when supported  
 
-## 8. Related
+## 9. Related
 
 - [MASTER_PLAN.md](./MASTER_PLAN.md) §5 Design track  
-- [PRD-wave-B-native.md](./prd/PRD-wave-B-native.md) design acceptance  
-- Specs 40 / 90 (behavior; not colors)
+- [prd/PRD-wave-B-native.md](./prd/PRD-wave-B-native.md) design acceptance  
+- Specs 40 / 90 (behavior; not colors)  
+- User guide: [09-theme.md](../user-guide/09-theme.md)

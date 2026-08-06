@@ -37,6 +37,8 @@ impl Theme {
         }
     }
 
+    /// Force no ANSI (tests / forced plain dumps).
+    #[allow(dead_code)] // used from unit tests
     pub fn plain() -> Self {
         Self { enabled: false }
     }

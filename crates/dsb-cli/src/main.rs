@@ -1,29 +1,39 @@
-//! DeepSeek Build CLI (`dsb`).
+//! DeepSeek Build CLI.
 //!
-//! M1: `dsb run "…"`, multi-turn REPL, `--pro` / model visibility.
+//! Binaries (ADR 0006): **`deepseek-build`** (primary) and **`dsb`** (alias).
+//! Version is always full SemVer from the workspace (`MAJOR.MINOR.PATCH`).
 
 use std::io::{self, BufRead, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use dsb_agent::{Agent, AgentConfig, Preset, TurnEvent};
 use dsb_config::{BuildHome, Credentials};
 use dsb_provider_deepseek::{Client, ClientConfig};
 
+/// Resolve invocation name for help/version (`deepseek-build` or `dsb`).
+fn invocation_name() -> &'static str {
+    let arg0 = std::env::args().next().unwrap_or_default();
+    let base = Path::new(&arg0)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("deepseek-build");
+    if base == "dsb" || base.starts_with("dsb-") {
+        "dsb"
+    } else {
+        "deepseek-build"
+    }
+}
+
 /// DeepSeek Build — DeepSeek-native terminal coding agent.
 #[derive(Debug, Parser)]
 #[command(
-    name = "dsb",
+    name = "deepseek-build",
     version,
     about = "DeepSeek Build — DeepSeek-native terminal coding agent",
-    long_about = "Headless DeepSeek coding agent (M1).\n\n\
-Set DEEPSEEK_API_KEY or ~/.deepseek-build/credentials.json.\n\
-Examples:\n  \
-  dsb run \"explain this repo\"\n  \
-  dsb run --pro \"design the architecture\"\n  \
-  dsb chat"
+    long_about = None
 )]
 struct Cli {
     /// Workspace root for project instructions / cwd summary (default: cwd).
@@ -46,7 +56,7 @@ struct Cli {
     #[arg(long, global = true, default_value_t = false)]
     show_reasoning: bool,
 
-    /// Allow workspace write/delete without interactive ask (headless M2).
+    /// Allow workspace write/delete without interactive ask (headless).
     /// Still denies write/delete outside the workspace.
     #[arg(long, global = true, default_value_t = false)]
     allow_workspace_write: bool,
@@ -75,19 +85,42 @@ enum Commands {
     Repl,
 }
 
+fn parse_cli() -> Cli {
+    let name = invocation_name();
+    let long_about = format!(
+        "DeepSeek Build — DeepSeek-native terminal coding agent.\n\n\
+Set DEEPSEEK_API_KEY or ~/.deepseek-build/credentials.json.\n\
+Commands: `deepseek-build` (primary) and `dsb` (alias) are the same program.\n\
+Version is always full SemVer (MAJOR.MINOR.PATCH), e.g. 0.1.0 — never bare \"1.0\".\n\n\
+Examples:\n  \
+  {name} run \"explain this repo\"\n  \
+  {name} run --pro \"design the architecture\"\n  \
+  dsb chat"
+    );
+    let cmd = Cli::command()
+        .name(name)
+        .bin_name(name)
+        .long_about(long_about);
+    let matches = cmd.try_get_matches().unwrap_or_else(|e| e.exit());
+    Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(e) = real_main().await {
-        eprintln!("dsb error: {e:#}");
+        eprintln!("error: {e:#}");
         std::process::exit(1);
     }
 }
 
 async fn real_main() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = parse_cli();
+    let inv = invocation_name();
     match cli.command {
         None => {
-            eprintln!("dsb: no subcommand. Try `dsb --help`, `dsb run \"…\"`, or `dsb chat`.");
+            eprintln!(
+                "{inv}: no subcommand. Try `{inv} --help`, `{inv} run \"…\"`, or `{inv} chat`."
+            );
             std::process::exit(2);
         }
         Some(Commands::Run { ref message, pro }) => {
@@ -157,9 +190,7 @@ async fn run_once(cli: &Cli, message: &str, pro: bool) -> Result<()> {
         .run_turn(&input, |ev| render_event(ev, show_reasoning))
         .await?;
 
-    // Ensure final newline after streamed content.
     println!();
-    // Always print a clear model-used footer (Pro path must be user-visible).
     eprintln!(
         "[model_used={} {}]",
         outcome.model_used,
@@ -170,7 +201,8 @@ async fn run_once(cli: &Cli, message: &str, pro: bool) -> Result<()> {
 
 async fn run_repl(cli: &Cli) -> Result<()> {
     let mut agent = build_agent(cli).await?;
-    println!("dsb chat — DeepSeek Build M1 (Flash default). /pro /preset max|flash /quit");
+    let inv = invocation_name();
+    println!("{inv} chat — DeepSeek Build (Flash default). /pro /preset max|flash /quit");
     eprintln!("[prefix_epoch={}]", agent.prefix_epoch_short());
 
     let stdin = io::stdin();
@@ -198,11 +230,6 @@ async fn run_repl(cli: &Cli) -> Result<()> {
         {
             Ok(outcome) => {
                 println!();
-                if outcome.assistant_text.is_empty() && outcome.tool_rounds == 0 {
-                    // command-only
-                    eprintln!("[{}]", outcome.route.visibility_line());
-                    continue;
-                }
                 eprintln!("[{}]", outcome.route.visibility_line());
             }
             Err(e) => {
@@ -238,7 +265,7 @@ fn render_event(ev: TurnEvent, show_reasoning: bool) {
             eprintln!("[warn] {w}");
         }
         TurnEvent::ToolCallProposed { name, .. } => {
-            eprintln!("[tool] {name} (M1 stub — not executed)");
+            eprintln!("[tool] {name}");
         }
         TurnEvent::ToolRepairApplied { name } => {
             eprintln!("[repair] {name}");
@@ -260,9 +287,9 @@ mod tests {
     }
 
     #[test]
-    fn binary_name_is_dsb() {
+    fn default_clap_name_is_deepseek_build() {
         let cmd = Cli::command();
-        assert_eq!(cmd.get_name(), "dsb");
+        assert_eq!(cmd.get_name(), "deepseek-build");
     }
 
     #[test]
@@ -271,5 +298,20 @@ mod tests {
         let subs: Vec<_> = cmd.get_subcommands().map(|c| c.get_name()).collect();
         assert!(subs.contains(&"run"));
         assert!(subs.contains(&"chat"));
+    }
+
+    #[test]
+    fn package_version_is_full_semver() {
+        let v = env!("CARGO_PKG_VERSION");
+        let re = regex_lite_semver(v);
+        assert!(re, "CARGO_PKG_VERSION must be MAJOR.MINOR.PATCH, got {v}");
+    }
+
+    fn regex_lite_semver(v: &str) -> bool {
+        let parts: Vec<_> = v.split('-').next().unwrap_or(v).split('+').next().unwrap_or(v).split('.').collect();
+        if parts.len() != 3 {
+            return false;
+        }
+        parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
     }
 }

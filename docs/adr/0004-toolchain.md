@@ -17,7 +17,7 @@ M1 needs a real package layout. Options considered:
 ## Decision
 
 1. **Language:** **Rust** (edition 2024 toolchain pinned later in `rust-toolchain.toml` at first workspace commit).  
-2. **Binary / CLI name:** **`dsb`** (DeepSeek Build). Package crate names use `dsb-*` / workspace `deepseek-build`.  
+2. **Binary / CLI names:** **`deepseek-build`** (primary) and **`dsb`** (alias) — see **[ADR 0006](./0006-cli-names-and-semver.md)** (supersedes the earlier “dsb-only” wording). Package crate names still use `dsb-*` / workspace `deepseek-build`. Product version is always full **SemVer** `MAJOR.MINOR.PATCH` ([versioning.md](../contributing/versioning.md)).  
 3. **Layout:** Cargo workspace under `crates/` (Grok-inspired modularity; **not** a Grok hard-fork).  
 4. **User config root:**  
    - Unix: `~/.deepseek-build/` (override: `DEEPSEEK_BUILD_HOME`)  
@@ -42,7 +42,7 @@ Illustrative crate map (names may refine without new ADR if boundaries hold):
 
 - First runtime PR may introduce `Cargo.toml` workspace + empty/minimal crates **only after this ADR is merged** (G1 green).  
 - Node/Go ports are non-goals for v1.  
-- Binary rename later needs a new ADR.
+- Dual CLI names and SemVer rules: ADR 0006 (not a free rename without ADR).
 
 ## References
 

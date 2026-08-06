@@ -38,6 +38,8 @@ This skill is the **agent harness** for change delivery. It is not CI.
 8. Spec-before-large-feat for agent behavior; cite `docs/specs/…`.
 9. Cache-impact honest for prompts / tools / skills / memory / routing.
 10. After `gh pr create`, verify labels: `gh pr view --json title,labels,url`.
+11. **SemVer only:** version mentions must be full `MAJOR.MINOR.PATCH` (e.g. `1.0.0`), never bare `1.0`. See `docs/contributing/versioning.md`.
+12. **CLI names:** public docs prefer `deepseek-build`; `dsb` is the supported alias (ADR 0006).
 
 ## Optional local helper (not required)
 

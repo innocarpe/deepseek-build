@@ -6,9 +6,15 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 rust-version.workspace = true
-description = "DeepSeek Build CLI entrypoint (binary: dsb)"
+description = "DeepSeek Build CLI (binaries: deepseek-build, dsb)"
 publish = false
 
+# Primary public command (ADR 0006).
+[[bin]]
+name = "deepseek-build"
+path = "src/main.rs"
+
+# Short alias — same entrypoint and SemVer.
 [[bin]]
 name = "dsb"
 path = "src/main.rs"

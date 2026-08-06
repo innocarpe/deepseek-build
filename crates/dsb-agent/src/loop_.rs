@@ -1,4 +1,4 @@
-//! Multi-turn agent loop (M1: no real tools dispatch; repair + routing + stream).
+//! Multi-turn agent loop: routing, repair, tools (spec 45/90).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -10,6 +10,10 @@ use dsb_context::{
 use dsb_provider_deepseek::{
     ChatMessage, ChatRequestBuilder, Client, ModelId, ProviderError, StreamEvent, ToolCall,
     ToolDefinition, MODEL_PRO,
+};
+use dsb_tools::{
+    default_coding_policy, tool_definitions, PermissionPolicy, Scope, ToolExecutor, ToolName,
+    ToolRequest,
 };
 use thiserror::Error;
 
@@ -39,6 +43,12 @@ pub struct AgentConfig {
     pub max_tool_rounds: u32,
     /// When true, print model visibility lines via TurnEvent.
     pub show_model: bool,
+    /// Headless permission policy (ask → deny).
+    pub headless: bool,
+    /// Allow workspace writes without interactive ask (still denies out-of-cwd).
+    pub allow_workspace_write: bool,
+    /// Actually execute bash (default false: classify + permission only).
+    pub bash_execute: bool,
 }
 
 impl Default for AgentConfig {
@@ -46,13 +56,27 @@ impl Default for AgentConfig {
         Self {
             workspace_root: PathBuf::from("."),
             system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
-            tools: Vec::new(),
+            tools: tool_definitions(),
             skills_index: Vec::new(),
             preset: Preset::Flash,
-            max_tool_rounds: 4,
+            max_tool_rounds: 8,
             show_model: true,
+            headless: true,
+            allow_workspace_write: false,
+            bash_execute: false,
         }
     }
+}
+
+fn build_policy(cfg: &AgentConfig) -> PermissionPolicy {
+    let mut p = default_coding_policy(cfg.headless);
+    if cfg.allow_workspace_write {
+        p.allow.insert(Scope::WriteInCwd);
+        p.allow.insert(Scope::DeleteInCwd);
+        p.ask.remove(&Scope::WriteInCwd);
+        p.ask.remove(&Scope::DeleteInCwd);
+    }
+    p
 }
 
 /// Events emitted during a turn (for CLI rendering).
@@ -86,6 +110,7 @@ pub struct Agent {
     stable: StablePrefix,
     /// Volatile transcript (user/assistant/tool after stable prefix).
     tail: VolatileTail,
+    tools: ToolExecutor,
 }
 
 impl Agent {
@@ -101,12 +126,16 @@ impl Agent {
         };
         let stable = PrefixBuilder::new().build(&inputs)?;
         let router = ModelRouter::new(config.preset);
+        let policy = build_policy(&config);
+        let mut tools = ToolExecutor::new(config.workspace_root.clone(), policy);
+        tools.bash_execute = config.bash_execute;
         Ok(Self {
             client,
             config,
             router,
             stable,
             tail: VolatileTail::new(),
+            tools,
         })
     }
 
@@ -258,9 +287,8 @@ impl Agent {
                 break;
             }
 
-            // M1: no real tool runtime — repair args and return structured stub error to model.
             for call in &tool_calls {
-                self.handle_tool_stub(call, &mut on_event)?;
+                self.handle_tool_call(call, &mut on_event)?;
             }
             // continue loop for model to consume tool results
         }
@@ -274,7 +302,7 @@ impl Agent {
         })
     }
 
-    fn handle_tool_stub<F>(&mut self, call: &ToolCall, on_event: &mut F) -> Result<(), AgentError>
+    fn handle_tool_call<F>(&mut self, call: &ToolCall, on_event: &mut F) -> Result<(), AgentError>
     where
         F: FnMut(TurnEvent),
     {
@@ -290,24 +318,14 @@ impl Agent {
             .find(|t| t.function.name == call.function.name)
             .and_then(|t| t.function.parameters.clone());
 
-        match repair_tool_arguments(&call.function.arguments, schema.as_ref()) {
+        let repaired = match repair_tool_arguments(&call.function.arguments, schema.as_ref()) {
             Ok(outcome) => {
                 if outcome.repair_applied {
                     on_event(TurnEvent::ToolRepairApplied {
                         name: call.function.name.clone(),
                     });
                 }
-                // M1: do not execute tools.
-                let body = serde_json::json!({
-                    "error": "tool_not_available_in_m1",
-                    "tool": call.function.name,
-                    "repaired_arguments": outcome.arguments,
-                    "message": "Tools ship in M2. Arguments were validated/repaired only."
-                });
-                self.tail.push(ChatMessage::tool_result(
-                    call.id.clone(),
-                    body.to_string(),
-                ));
+                outcome.arguments
             }
             Err(e) => {
                 on_event(TurnEvent::ToolError {
@@ -316,6 +334,41 @@ impl Agent {
                 });
                 let body = serde_json::json!({
                     "error": "invalid_tool_arguments",
+                    "tool": call.function.name,
+                    "message": e.to_string()
+                });
+                self.tail
+                    .push(ChatMessage::tool_result(call.id.clone(), body.to_string()));
+                return Ok(());
+            }
+        };
+
+        let Some(name) = ToolName::parse(&call.function.name) else {
+            let body = serde_json::json!({
+                "error": "unknown_tool",
+                "tool": call.function.name
+            });
+            self.tail
+                .push(ChatMessage::tool_result(call.id.clone(), body.to_string()));
+            return Ok(());
+        };
+
+        let req = ToolRequest {
+            name,
+            arguments: repaired,
+        };
+        match self.tools.execute(&req) {
+            Ok(resp) => {
+                self.tail
+                    .push(ChatMessage::tool_result(call.id.clone(), resp.content));
+            }
+            Err(e) => {
+                on_event(TurnEvent::ToolError {
+                    name: call.function.name.clone(),
+                    error: e.to_string(),
+                });
+                let body = serde_json::json!({
+                    "error": "tool_failed",
                     "tool": call.function.name,
                     "message": e.to_string()
                 });

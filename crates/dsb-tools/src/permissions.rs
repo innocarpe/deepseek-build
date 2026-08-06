@@ -92,8 +92,10 @@ pub struct PermissionPolicy {
     pub ask: BTreeSet<Scope>,
     pub deny: BTreeSet<Scope>,
     pub default: Decision,
-    /// When true, Ask is treated as Deny (headless).
+    /// When true, Ask is treated as Deny (headless / non-TTY).
     pub headless: bool,
+    /// Session + persistent grants treated as allow (never overrides deny).
+    pub granted: BTreeSet<Scope>,
 }
 
 impl PermissionPolicy {
@@ -101,11 +103,16 @@ impl PermissionPolicy {
         if scopes.is_empty() {
             return self.default;
         }
-        if scopes.iter().any(|s| self.deny.contains(s) || *s == Scope::Unknown && self.deny.contains(&Scope::Unknown)) {
-            // unknown handled below too
-        }
         if scopes.iter().any(|s| self.deny.contains(s)) {
             return Decision::Deny;
+        }
+        // Grants cover ask scopes (fail-closed: deny still wins above).
+        if !scopes.is_empty()
+            && scopes
+                .iter()
+                .all(|s| self.allow.contains(s) || self.granted.contains(s))
+        {
+            return Decision::Allow;
         }
         // unknown always ask unless denied above
         if scopes.iter().any(|s| *s == Scope::Unknown) {
@@ -126,6 +133,15 @@ impl PermissionPolicy {
         } else {
             d
         }
+    }
+
+    /// Merge grant sets into the policy (call after load / after allow-always).
+    pub fn apply_grants(&mut self, granted: &BTreeSet<Scope>) {
+        self.granted = granted
+            .iter()
+            .copied()
+            .filter(|s| !self.deny.contains(s))
+            .collect();
     }
 }
 
@@ -152,6 +168,7 @@ pub fn default_coding_policy(headless: bool) -> PermissionPolicy {
         deny,
         default: Decision::Ask,
         headless,
+        granted: BTreeSet::new(),
     }
 }
 
@@ -203,17 +220,44 @@ pub enum PathOp {
 pub fn is_under_workspace(workspace: &Path, path: &Path) -> Result<bool, std::io::Error> {
     let root = workspace
         .canonicalize()
-        .unwrap_or_else(|_| workspace.to_path_buf());
-    // Prefer canonicalize when the path exists; otherwise join + normalize `..` without requiring existence.
-    let abs = if path.is_absolute() {
-        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+        .unwrap_or_else(|_| normalize_logical(workspace));
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
     } else {
-        let joined = root.join(path);
-        joined
-            .canonicalize()
-            .unwrap_or_else(|_| normalize_logical(&joined))
+        root.join(path)
     };
+    let abs = canonicalize_existing_prefix(&candidate);
     Ok(abs.starts_with(&root))
+}
+
+/// Canonicalize as much of the path as exists (so `/var` → `/private/var` on macOS)
+/// then re-append the missing suffix. Avoids false out-of-cwd for create-new paths.
+fn canonicalize_existing_prefix(path: &Path) -> PathBuf {
+    if let Ok(c) = path.canonicalize() {
+        return c;
+    }
+    let mut suffix: Vec<std::ffi::OsString> = Vec::new();
+    let mut cur = path.to_path_buf();
+    loop {
+        if let Ok(c) = cur.canonicalize() {
+            let mut out = c;
+            for part in suffix.iter().rev() {
+                out.push(part);
+            }
+            return out;
+        }
+        match cur.file_name() {
+            Some(name) => {
+                suffix.push(name.to_os_string());
+                match cur.parent() {
+                    Some(p) if p != cur.as_path() => cur = p.to_path_buf(),
+                    _ => break,
+                }
+            }
+            None => break,
+        }
+    }
+    normalize_logical(path)
 }
 
 fn normalize_logical(path: &Path) -> PathBuf {

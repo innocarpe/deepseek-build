@@ -6,16 +6,18 @@
 //! - Spec **70**: on-demand `skill` body load
 //! - Daily coding: `grep` + dogfood profile (`dogfood_coding_policy`)
 
+mod grants;
 mod permissions;
 mod snippets;
 mod tools;
 
+pub use grants::{AskChoice, PermissionGrants, GRANTS_FILE};
 pub use permissions::{
     classify_bash, decide, default_coding_policy, dogfood_coding_policy, Decision, PermissionError,
     PermissionPolicy, Scope,
 };
 pub use snippets::{EditError, Snippet, SnippetStore, WriteError};
 pub use tools::{
-    core_tool_names, tool_definitions, ToolError, ToolExecutor, ToolName, ToolRequest,
+    core_tool_names, tool_definitions, AskCallback, ToolError, ToolExecutor, ToolName, ToolRequest,
     ToolResponse, CORE_TOOL_NAMES,
 };

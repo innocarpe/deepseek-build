@@ -8,14 +8,19 @@
 deepseek-build/
 ├── README.md
 ├── AGENTS.md                 # Standing instructions for agents
-├── LICENSE                   # When chosen
+├── LICENSE
 ├── docs/                     # Product + engineering truth (see docs/README.md)
-├── crates/                   # Implementation packages (Grok Build–style)
-├── skills/                   # Bundled Skills shipped with the product
+│   └── architecture/
+│       ├── HARNESS_PHILOSOPHY.md   # Normative design spine (Deep Code/Reasonix/Grok layers)
+│       └── REPO_LAYOUT.md          # This file
+├── crates/                   # Implementation packages (layout inspired by Grok; contracts by L1/L2)
+├── skills/                   # Bundled Skills + agent harness skills (e.g. pr-authoring)
 ├── .deepseek-build/          # Project-local runtime surface (examples, not secrets)
 ├── scripts/                  # Dev/release automation
 └── third_party/              # Notices + vendored ports
 ```
+
+**Important:** `crates/` layout may follow Grok-style modularity, but **tool/session semantics** follow [HARNESS_PHILOSOPHY.md](./HARNESS_PHILOSOPHY.md), not Grok tool shapes by default.
 
 ## Why this shape
 

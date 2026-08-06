@@ -17,14 +17,13 @@ Folder structure mirrors product truth. **Write the product here before the bina
 
 ## Reading order (onboarding)
 
-1. [product/PRD-v1.md](product/PRD-v1.md) — full product requirements
-2. [product/MILESTONES.md](product/MILESTONES.md) — M0–M6 plan
-3. [product/VISION.md](product/VISION.md)
-4. [product/SOURCES.md](product/SOURCES.md)
-5. [product/NON_GOALS.md](product/NON_GOALS.md)
-6. [architecture/REPO_LAYOUT.md](architecture/REPO_LAYOUT.md)
-7. [specs/00-overview.md](specs/00-overview.md)
-8. ADRs under [adr/](adr/)
+1. [architecture/HARNESS_PHILOSOPHY.md](architecture/HARNESS_PHILOSOPHY.md) — **design spine** (Deep Code / Reasonix / Grok layers)
+2. [product/VISION.md](product/VISION.md) · [product/SOURCES.md](product/SOURCES.md) · [product/NON_GOALS.md](product/NON_GOALS.md)
+3. [product/PRD-v1.md](product/PRD-v1.md) · [product/MILESTONES.md](product/MILESTONES.md)
+4. [specs/00-overview.md](specs/00-overview.md)
+5. [architecture/REPO_LAYOUT.md](architecture/REPO_LAYOUT.md)
+6. ADRs under [adr/](adr/)
+7. [contributing/](contributing/) before opening PRs
 
 ## Naming conventions
 

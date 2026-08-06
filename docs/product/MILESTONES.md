@@ -34,15 +34,18 @@ North star for every milestone: **wall-clock progress on real coding tasks**.
 |--|--|
 | **Goal** | Minimal DeepSeek-native loop that is already cheaper/faster to leave running than a naive client |
 | **Exit criteria** | Headless or TUI-thin loop: user message → model → (optional tools stub) → response; Flash default; Pro escalate; cache contract documented **and** implemented for system/tools prefix stability; API key config without committing secrets |
-| **Specs** | `10-cache-contract`, `20-model-routing`, `30-thinking-effort` (draft→ready), provider bits of `40` |
-| **Sources** | Reasonix (cache, Flash/Pro), Deep Code (thinking/effort knobs), Grok (loop shape only) |
+| **Specs** | `10` cache, `15` tool-call repair, `20` routing, `30` thinking/effort (+ provider slice of `40`) |
+| **Sources** | L1/L2 first (Deep Code session + Reasonix cache/routing); Grok only for loop shape |
+| **Gate** | [HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.md) accepted; toolchain ADR |
 
 **Work items (examples)**
 
+- [x] Harness philosophy doc (Deep Code four pillars + Reasonix + Grok L3)  
 - [ ] Toolchain ADR (language, package name)  
-- [ ] Specs 10 / 20 / 30 ready  
+- [ ] Specs 10 / 15 / 20 / 30 ready  
 - [ ] DeepSeek provider client (streaming)  
 - [ ] Stable prefix builder + tests (“byte-stable across turns”)  
+- [ ] Tool-call repair on provider path  
 - [ ] Flash/Pro switch + effort flags  
 - [ ] Smoke: one multi-turn session with measurable prefix reuse intent  
 
@@ -54,13 +57,14 @@ North star for every milestone: **wall-clock progress on real coding tasks**.
 |--|--|
 | **Goal** | Agent can complete small–medium repo tasks without subagents |
 | **Exit criteria** | Tools: read, search/grep, edit, shell; parallel independent tool calls in one turn; background shell + collect output; project instructions (`AGENTS.md` or equivalent) loaded into **cache-safe** slots |
-| **Specs** | `40-tools`, `50-parallelism` |
-| **Sources** | Grok Build (parallel + bg), Deep Code (tool set pragmatism) |
+| **Specs** | **`45` snippet-edit first**, then `40` tools, `50` parallelism |
+| **Sources** | Deep Code pillar A (edit) + small tool set; Grok L3 for parallel/bg only |
 
 **Work items (examples)**
 
+- [ ] Spec 45 snippet edit ready (before free-form edit)  
 - [ ] Specs 40 / 50 ready  
-- [ ] Tool runtime + permission hooks stub  
+- [ ] Tool runtime implementing snippet contract  
 - [ ] Parallel dispatch + ordering of results  
 - [ ] Background shell task IDs  
 - [ ] Dogfood: implement a small feature in this repo using the agent  

@@ -69,7 +69,16 @@ Out of scope for v1 messaging: enterprises needing SSO fleets, multi-tenant gate
 
 ## 5. Design sources (binding)
 
-Priority: **Grok Build → Reasonix → Deep Code**. Details: [SOURCES.md](./SOURCES.md). ADR: [0002](../adr/0002-source-priorities.md).
+**Layered ownership** (not a single global rank for every decision):
+
+| Layer | Owner | Owns |
+|-------|-------|------|
+| L1 | Deep Code (+ Reasonix cache) | Tool/edit (snippets), skills-as-context, permissions, DeepSeek-native surface |
+| L2 | Reasonix | Prefix cache invariant, Flash/Pro, tool-call repair |
+| L3 | Grok Build | Parallelism, subagents, bg shell — **cannot override L1/L2** |
+
+Normative spine: [HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.md).  
+Summary table: [SOURCES.md](./SOURCES.md). Historical ADR: [0002](../adr/0002-source-priorities.md) (amended by layered model in philosophy doc).
 
 ## 6. Scope — v1 capabilities
 

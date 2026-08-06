@@ -11,6 +11,12 @@
 
 ## Unreleased
 
+### Added
+
+- **Welcome banner v2** — DeepSeek whale mark + boxed product card on interactive chat (`banner.rs`)
+- REPL prompt `❯` uses DeepSeek blue accent when color is enabled
+- Theme/docs: official `#4D6BFE` tokens documented for mark, box chrome, and prompt
+
 ### CI
 
 - Split product CI into path-gated parallel workflows (`rust-fmt`, `rust-clippy`, `rust-test`, `smoke-dogfood`, `semver`) with shared Cargo cache (`workspace-v1`); docs-only PRs skip Rust jobs

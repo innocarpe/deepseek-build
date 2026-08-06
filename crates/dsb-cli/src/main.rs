@@ -15,6 +15,7 @@ use dsb_context::discover_skills_index;
 use dsb_provider_deepseek::{Client, ClientConfig, ReasoningEffort};
 use dsb_tools::{AskChoice, Scope};
 
+mod agent_launch;
 mod banner;
 mod onboard;
 mod theme;
@@ -117,10 +118,20 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         pro: bool,
     },
-    /// Multi-turn REPL (Flash default). Commands: /pro /flash /preset /quit
+    /// Multi-turn thin REPL (1.x scaffold). Prefer no-args TTY for Grok-class agent.
     Chat,
-    /// Alias for `chat`.
+    /// Alias for `chat` (legacy thin REPL).
     Repl,
+    /// Explicit 1.x thin REPL (same as `chat`).
+    #[command(name = "repl-legacy")]
+    ReplLegacy,
+    /// Launch the Grok-class full-screen agent (same as no-args TTY).
+    /// Extra args are forwarded to the agent binary.
+    Agent {
+        /// Arguments forwarded to `deepseek-build-agent` / `xai-grok-pager`.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Manage persisted sessions (`~/.deepseek-build/sessions/*.jsonl`).
     #[command(subcommand)]
     Sessions(SessionsCmd),
@@ -179,14 +190,16 @@ fn parse_cli() -> Cli {
         }
     };
     let long_about = format!(
-        "DeepSeek Build — DeepSeek-native terminal coding agent.\n\n\
-First run: `{name} setup` (or just `{name} chat` — prompts for API key on TTY).\n\
-Key storage: ~/.deepseek-build/credentials.json (0600) or DEEPSEEK_API_KEY.\n\
+        "DeepSeek Build — DeepSeek-native Grok-class coding agent.\n\n\
+First run: `{name}` (TTY) or `{name} setup` — API key → ~/.deepseek-build (0600).\n\
+Default no-args TTY opens the **full-screen agent** (Grok Build runtime).\n\
+Thin 1.x REPL: `{name} repl-legacy` (or `chat`).\n\
 Commands: `deepseek-build` (primary) and `dsb` (alias) are the same program.\n\
 Version is always full SemVer (MAJOR.MINOR.PATCH), e.g. {ver} — never bare \"{bare}\".\n\n\
 Examples:\n  \
-  {name}                    # start interactive agent (default)\n  \
+  {name}                    # Grok-class full-screen agent (default TTY)\n  \
   {name} setup              # first-run API key\n  \
+  {name} repl-legacy        # thin 1.x scaffold REPL\n  \
   {name} --dogfood          # trusted local coding\n  \
   {name} run \"explain this repo\"\n  \
   dsb"
@@ -208,21 +221,35 @@ async fn main() {
 }
 
 async fn real_main() -> Result<()> {
-    let mut cli = parse_cli();
+    let cli = parse_cli();
     let inv = invocation_name();
     match cli.command {
-        // Grok-style default: bare `dsb` / `deepseek-build` enters interactive chat.
+        // Product 2.0: bare TTY → Grok-class full-screen agent (not thin REPL).
         None => {
             if !io::stdin().is_terminal() {
                 eprintln!(
-                    "{inv}: interactive agent (no args).\n\
-                     Pipe/CI: `{inv} run \"…\"` or `{inv} chat` on a TTY.\n\
+                    "{inv}: interactive Grok-class agent (no args, TTY).\n\
+                     Pipe/CI: `{inv} run \"…\"` · thin REPL: `{inv} repl-legacy`\n\
                      Setup: `{inv} setup` · help: `{inv} --help`"
                 );
                 std::process::exit(2);
             }
-            cli.command = Some(Commands::Chat);
-            run_repl(&cli).await?;
+            // First-run: ensure credentials when possible (TTY), then agent UI.
+            if !BuildHome::resolve().has_credentials() && onboard::can_prompt_setup() {
+                let home = BuildHome::resolve();
+                let _ = onboard::run_setup_wizard(&home);
+            }
+            agent_launch::exec_agent(&[])?;
+        }
+        Some(Commands::Agent { ref args }) => {
+            if !BuildHome::resolve().has_credentials()
+                && io::stdin().is_terminal()
+                && onboard::can_prompt_setup()
+            {
+                let home = BuildHome::resolve();
+                let _ = onboard::run_setup_wizard(&home);
+            }
+            agent_launch::exec_agent(args)?;
         }
         Some(Commands::Setup { ref api_key }) => {
             run_setup_cmd(api_key.as_deref())?;
@@ -244,7 +271,7 @@ async fn real_main() -> Result<()> {
             }
             run_once(&cli, text.as_str(), pro).await?;
         }
-        Some(Commands::Chat | Commands::Repl) => {
+        Some(Commands::Chat | Commands::Repl | Commands::ReplLegacy) => {
             run_repl(&cli).await?;
         }
         Some(Commands::Sessions(ref cmd)) => {
@@ -408,7 +435,13 @@ async fn build_agent(cli: &Cli) -> Result<Agent> {
     // Chat (including bare CLI default) and TTY run: offer setup wizard if needed.
     let interactive = matches!(
         &cli.command,
-        None | Some(Commands::Chat | Commands::Repl | Commands::Run { .. })
+        None | Some(
+            Commands::Chat
+                | Commands::Repl
+                | Commands::ReplLegacy
+                | Commands::Agent { .. }
+                | Commands::Run { .. },
+        )
     ) && onboard::can_prompt_setup();
     let creds = onboard::load_or_setup(interactive).context("credentials")?;
     let mut cfg = ClientConfig::new(creds.api_key());
@@ -469,7 +502,10 @@ fn wants_interactive_permissions(cli: &Cli) -> bool {
         return io::stdin().is_terminal();
     }
     match &cli.command {
-        None | Some(Commands::Chat | Commands::Repl) => io::stdin().is_terminal(),
+        None
+        | Some(Commands::Chat | Commands::Repl | Commands::ReplLegacy | Commands::Agent { .. }) => {
+            io::stdin().is_terminal()
+        }
         _ => false,
     }
 }
@@ -734,6 +770,8 @@ mod tests {
         let subs: Vec<_> = cmd.get_subcommands().map(|c| c.get_name()).collect();
         assert!(subs.contains(&"run"));
         assert!(subs.contains(&"chat"));
+        assert!(subs.contains(&"repl-legacy"));
+        assert!(subs.contains(&"agent"));
         assert!(subs.contains(&"sessions"));
     }
 

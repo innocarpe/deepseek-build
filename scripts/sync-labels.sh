@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Sync .github/labels.json to the GitHub repository via gh.
 # Usage: ./scripts/sync-labels.sh [--repo owner/name]
+# Compatible with macOS Bash 3.2 (no mapfile).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -27,18 +28,15 @@ fi
 count="$(jq 'length' "${LABELS_JSON}")"
 echo "syncing ${count} labels…"
 
-# Snapshot existing names once (paginate)
-mapfile -t existing < <("${GH[@]}" label list --limit 200 --json name --jq '.[].name')
+# Snapshot existing names (paginate via gh --limit)
+existing="$("${GH[@]}" label list --limit 200 --json name --jq '.[].name' | tr '\n' '\t')"
 
 has_label() {
-  local want="$1" e
-  for e in "${existing[@]+"${existing[@]}"}"; do
-    [[ "${e}" == "${want}" ]] && return 0
-  done
-  return 1
+  local want="$1"
+  printf '%s' "${existing}" | tr '\t' '\n' | grep -Fxq -- "${want}"
 }
 
-jq -c '.[]' "${LABELS_JSON}" | while read -r row; do
+while IFS= read -r row; do
   name="$(jq -r '.name' <<<"${row}")"
   color="$(jq -r '.color' <<<"${row}")"
   desc="$(jq -r '.description // ""' <<<"${row}")"
@@ -48,18 +46,17 @@ jq -c '.[]' "${LABELS_JSON}" | while read -r row; do
   else
     if "${GH[@]}" label create "${name}" --color "${color}" --description "${desc}" >/dev/null 2>/tmp/dsb-label-create.err; then
       echo "  created: ${name}"
-      existing+=("${name}")
+      existing="${existing}${name}	"
     else
-      # Race or default GitHub label with different listing — force-edit
       if "${GH[@]}" label edit "${name}" --color "${color}" --description "${desc}" >/dev/null 2>/dev/null; then
         echo "  updated(after create race): ${name}"
       else
-        cat /tmp/dsb-label-create.err >&2
+        cat /tmp/dsb-label-create.err >&2 || true
         echo "failed: ${name}" >&2
         exit 1
       fi
     fi
   fi
-done
+done < <(jq -c '.[]' "${LABELS_JSON}")
 
 echo "done."

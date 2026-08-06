@@ -1,7 +1,14 @@
 # Known limitations
 
-**Product version:** `0.16.0`+  
-Honest limits so **`1.0.0`** does not over-promise.
+**Product version:** `1.x` scaffold line  
+Honest limits. **`1.0.0` was tagged early** — see [REPLAN_2.0.md](./REPLAN_2.0.md).  
+**Product target is `2.0.0`** (Grok Build–class agent entry).
+
+## Product-identity gap (1.x)
+
+- **`dsb` does not open a Grok Build–class full-screen coding agent.** 1.x is a thin REPL/scaffold.
+- **Not built on the Grok Build open-source runtime** as the execution base (greenfield `dsb-*`).
+- Claiming “Grok-class throughput” at 1.x overstates MVP parallel/bg/subagent shims.
 
 ## Install / packaging
 

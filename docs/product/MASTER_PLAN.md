@@ -1,12 +1,24 @@
 # Master plan — final goal to overnight execution
 
-**Status:** Normative product roadmap (living)  
+**Status:** Normative product roadmap (living) — **see replan**  
 **Audience:** Humans + autonomous agents running multi-day ultragoal trains  
 **Last updated:** 2026-08-06  
 **SemVer rule:** Always full `MAJOR.MINOR.PATCH` — never bare `1.0`  
 **CLI:** `deepseek-build` (primary) · `dsb` (alias)
 
-This is the **one board**. Other docs plug into it; they do not replace it.
+> ## Product replan (2026-08-06)
+>
+> **Owner intent:** `dsb` opens a **Grok Build–class** coding agent (CLI/TUI),  
+> based on **open-source Grok Build**, with Deep Code + Reasonix overlays.
+>
+> **1.x (including published 1.0.0 / 1.1.0) is a scaffold line**, not that product.  
+> **Target product cut: `2.0.0`.** Full plan: **[REPLAN_2.0.md](./REPLAN_2.0.md)** ·  
+> Cold start: **[ULTRAGOAL_PROMPT_COLD_START_2.0.md](./ULTRAGOAL_PROMPT_COLD_START_2.0.md)**
+>
+> Waves A–D below remain **historical scaffold chronology**. Do not treat their
+> “complete” checkboxes as “Grok-base product done.”
+
+This board still holds scaffold history. **Product SSOT for direction is REPLAN_2.0.**
 
 | Doc | Role |
 |-----|------|

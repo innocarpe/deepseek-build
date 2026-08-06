@@ -25,13 +25,8 @@ pub const WHALE_MARK: &[&str] = &[
 ];
 
 /// Compact raster for narrow terminals (`COLUMNS` < 64).
-pub const WHALE_MARK_COMPACT: &[&str] = &[
-    "⢀⣤⣶⣶⣇⠀⣧⣀⣠",
-    "⣾⢿⣿⣿⣿⣧⣹⡿⠋",
-    "⣧⠀⠈⢻⣿⣙⣿⡇",
-    "⢻⣆⠀⣀⢻⣿⡿",
-    "⠀⠻⢷⣿⣶⠟⠛",
-];
+pub const WHALE_MARK_COMPACT: &[&str] =
+    &["⢀⣤⣶⣶⣇⠀⣧⣀⣠", "⣾⢿⣿⣿⣿⣧⣹⡿⠋", "⣧⠀⠈⢻⣿⣙⣿⡇", "⢻⣆⠀⣀⢻⣿⡿", "⠀⠻⢷⣿⣶⠟⠛"];
 
 /// Horizontal rule character used inside the card.
 const HR: &str = "─";

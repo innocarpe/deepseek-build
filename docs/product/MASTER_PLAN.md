@@ -71,7 +71,7 @@ mindmap
 
 | Item | Value |
 |------|--------|
-| Version on `main` | Read `Cargo.toml` (expect **`0.8.0`** after Spec 40 ship) |
+| Version on `main` | Read `Cargo.toml` (expect **`0.9.0`** after permissions + theme) |
 | Active ultragoal | **`native-0x`** in progress (Wave B); `dogfood-0x` complete |
 | Gates green | **G0–G3**, **G6a** (sessions), **G6b** (skills) |
 | Gates red | **G4**, **G5**, **G6c** (MCP), **G6d** (plan) |
@@ -148,8 +148,8 @@ Detail for Wave A minors: [RELEASE_TRAIN_0x.md](./RELEASE_TRAIN_0x.md).
 ### Wave B — DeepSeek-native (`native-0x`)
 
 - [x] Spec **40** ready-for-impl (tool surface) + ship **`0.8.0`**  
-- [ ] Interactive permission ask + saved allow  
-- [ ] **Theme v1: DeepSeek blue**, readable default (not Grok-black)  
+- [x] Interactive permission ask + saved allow  
+- [x] **Theme v1: DeepSeek blue**, readable default (not Grok-black)  
 - [ ] Spec **70** skills product  
 - [ ] Spec **80** MCP with cache epoch rules  
 - [ ] Spec **110** light plan (non-blocking)  
@@ -244,6 +244,7 @@ From [NON_GOALS.md](./NON_GOALS.md): Gajae multi-stage team harness as identity;
 | `0.4.0`–`0.7.0` | A | 2026-08-06 | Dogfood proof, sessions, surface, npm package (#23–#26) |
 | `0.7.1` | A | 2026-08-06 | Help SemVer example + npm install docs (#30) |
 | `0.8.0` | B | 2026-08-06 | Spec 40 core tools surface + registry align (#31–#33) |
+| `0.9.0` | B | 2026-08-06 | Permissions TTY grants + DeepSeek blue theme v1 (#34–#36) |
 | … | B–D | — | Update on each minor release PR |
 
 ---

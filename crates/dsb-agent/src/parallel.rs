@@ -19,6 +19,7 @@ pub fn is_mutating_tool(name: &str, arguments: &Value) -> bool {
         Some(ToolName::Edit)
         | Some(ToolName::Write)
         | Some(ToolName::Bash)
+        | Some(ToolName::Subagent)
         | None => true,
     }
 }

@@ -39,6 +39,18 @@ pub const CORE_TOOL_NAMES_WITH_BG: &[&str] = &[
     "plan",
     "bash_collect",
 ];
+/// Full product built-ins including subagent (Wave C 0.14.0+).
+pub const CORE_TOOL_NAMES_FULL: &[&str] = &[
+    "read",
+    "edit",
+    "write",
+    "grep",
+    "skill",
+    "bash",
+    "plan",
+    "bash_collect",
+    "subagent",
+];
 
 /// Returns [`CORE_TOOL_NAMES`] (stable order).
 pub fn core_tool_names() -> &'static [&'static str] {
@@ -58,6 +70,8 @@ pub enum ToolName {
     Plan,
     /// Collect background bash job by id (spec 50 §1.4).
     BashCollect,
+    /// In-process subagent worker (spec 60 / G5).
+    Subagent,
 }
 
 impl ToolName {
@@ -71,6 +85,7 @@ impl ToolName {
             Self::Bash => "bash",
             Self::Plan => "plan",
             Self::BashCollect => "bash_collect",
+            Self::Subagent => "subagent",
         }
     }
 
@@ -85,6 +100,7 @@ impl ToolName {
             "bash" => Some(Self::Bash),
             "plan" => Some(Self::Plan),
             "bash_collect" | "collect_bash" => Some(Self::BashCollect),
+            "subagent" | "worker" => Some(Self::Subagent),
             _ => None,
         }
     }
@@ -227,6 +243,9 @@ impl ToolExecutor {
             ToolName::Bash => self.bash(&req.arguments),
             ToolName::Plan => self.plan_tool(&req.arguments),
             ToolName::BashCollect => self.bash_collect(&req.arguments),
+            ToolName::Subagent => Err(ToolError::Other(
+                "subagent must be dispatched by the agent runtime (spec 60)".into(),
+            )),
         }
     }
 
@@ -663,15 +682,19 @@ fn path_display(workspace: &Path, full: &Path) -> String {
 /// Order matches [`CORE_TOOL_NAMES`] / [`CORE_TOOL_NAMES_WITH_PLAN`] and is part of the stable prefix (spec 10).
 /// Schemas use canonical names only; aliases are parse-only ([`ToolName::parse`]).
 pub fn tool_definitions() -> Vec<ToolDefinition> {
-    tool_definitions_with_options(true, true)
+    tool_definitions_with_options(true, true, true)
 }
 
 /// When `include_plan` is false, omit the light plan tool (pre-G6d builds).
 pub fn tool_definitions_with_plan(include_plan: bool) -> Vec<ToolDefinition> {
-    tool_definitions_with_options(include_plan, include_plan)
+    tool_definitions_with_options(include_plan, include_plan, false)
 }
 
-pub fn tool_definitions_with_options(include_plan: bool, include_bg_collect: bool) -> Vec<ToolDefinition> {
+pub fn tool_definitions_with_options(
+    include_plan: bool,
+    include_bg_collect: bool,
+    include_subagent: bool,
+) -> Vec<ToolDefinition> {
     let mut defs = vec![
         ToolDefinition {
             type_: "function".into(),
@@ -836,7 +859,30 @@ pub fn tool_definitions_with_options(include_plan: bool, include_bg_collect: boo
             },
         });
     }
-    let expected: &[&str] = if include_bg_collect {
+    if include_subagent {
+        defs.push(ToolDefinition {
+            type_: "function".into(),
+            function: ToolFunction {
+                name: "subagent".into(),
+                description: Some(
+                    "Spawn an in-process worker (spec 60). kind=explore|implement; task is natural language. Workers share stable prefix (cache law).".into(),
+                ),
+                parameters: Some(json!({
+                    "type": "object",
+                    "properties": {
+                        "kind": {"type": "string", "description": "explore|implement"},
+                        "task": {"type": "string"},
+                        "max_rounds": {"type": "integer"}
+                    },
+                    "required": ["kind", "task"],
+                    "additionalProperties": false
+                })),
+            },
+        });
+    }
+    let expected: &[&str] = if include_subagent {
+        CORE_TOOL_NAMES_FULL
+    } else if include_bg_collect {
         CORE_TOOL_NAMES_WITH_BG
     } else if include_plan {
         CORE_TOOL_NAMES_WITH_PLAN
@@ -1086,10 +1132,10 @@ mod tests {
     fn registry_names_match_core_catalog() {
         let defs = tool_definitions();
         let names: Vec<&str> = defs.iter().map(|d| d.function.name.as_str()).collect();
-        assert_eq!(names, CORE_TOOL_NAMES_WITH_BG);
+        assert_eq!(names, CORE_TOOL_NAMES_FULL);
         assert_eq!(core_tool_names(), CORE_TOOL_NAMES);
-        assert_eq!(names.len(), 8);
-        let without = tool_definitions_with_options(false, false);
+        assert_eq!(names.len(), 9);
+        let without = tool_definitions_with_options(false, false, false);
         assert_eq!(
             without
                 .iter()
@@ -1111,6 +1157,7 @@ mod tests {
             ("bash", &["command", "side_effects"]),
             ("plan", &["action"]),
             ("bash_collect", &["job_id"]),
+            ("subagent", &["kind", "task"]),
         ];
         let defs = tool_definitions();
         for (name, reqs) in expected {

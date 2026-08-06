@@ -105,16 +105,15 @@ jobs:
           set -euo pipefail
           labels="$(gh api "repos/${REPO}/pulls/${PR}" --jq '[.labels[].name] | join(",")')"
           echo "labels: ${labels:-<none>}"
-          kinds='feat|fix|docs|spec|chore|refactor|test|ci'
-          count="$(printf '%s\n' "${labels}" | tr ',' '\n' | grep -Ecx "${kinds}" | wc -l | tr -d ' ')"
-          # grep -c returns 1 line with count when using -c on multiple? Using loop instead
           count=0
-          IFS=',' read -r -a arr <<< "${labels}"
-          for l in "${arr[@]}"; do
-            case "${l}" in
-              feat|fix|docs|spec|chore|refactor|test|ci) count=$((count + 1)) ;;
-            esac
-          done
+          if [[ -n "${labels}" ]]; then
+            IFS=',' read -r -a arr <<< "${labels}"
+            for l in "${arr[@]}"; do
+              case "${l}" in
+                feat|fix|docs|spec|chore|refactor|test|ci) count=$((count + 1)) ;;
+              esac
+            done
+          fi
           if [[ "${count}" -ne 1 ]]; then
             echo "::error::Ready PRs need exactly one kind label (feat|fix|docs|spec|chore|refactor|test|ci). found=${count}"
             exit 1

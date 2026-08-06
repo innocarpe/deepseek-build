@@ -1,7 +1,7 @@
 {
   "name": "@innocarpe/deepseek-build",
-  "version": "2.0.1",
-  "description": "DeepSeek Build 2.0.1 — Grok-class agent with DeepSeek UI (whale + #4D6BFE). CLI: deepseek-build, dsb.",
+  "version": "2.0.2",
+  "description": "DeepSeek Build 2.0.2 — type dsb for DeepSeek full-screen TUI (not Grok product UI).",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

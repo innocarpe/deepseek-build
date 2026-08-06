@@ -1,8 +1,8 @@
-//! Launch the vendored Grok Build pager as the product coding agent (2.0 entry).
+//! Launch the DeepSeek Build full-screen agent TUI (product entry).
 //!
-//! Product binaries `deepseek-build` / `dsb` remain this crate for setup/auth and
-//! legacy thin REPL. Interactive no-args TTY entry **exec**s the Grok pager
-//! composition root (`xai-grok-pager`) installed as `deepseek-build-agent`.
+//! `deepseek-build` / `dsb` with no args on a TTY **exec** the product agent
+//! binary (`deepseek-build-agent`), which is the DeepSeek-branded composition
+//! root built from the vendored agent tree (not a separate “Grok product” UI).
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -175,7 +175,7 @@ pub fn print_product_splash() {
     }
     let _ = writeln!(
         out,
-        "{BLUE}{BOLD}  DeepSeek Build{RESET}  ·  Grok-class agent  ·  #4D6BFE"
+        "{BLUE}{BOLD}  DeepSeek Build{RESET}  ·  coding agent TUI  ·  #4D6BFE"
     );
     let _ = writeln!(out);
     let _ = out.flush();

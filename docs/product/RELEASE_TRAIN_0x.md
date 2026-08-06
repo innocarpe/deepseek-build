@@ -27,11 +27,11 @@ Milestones **M0–M6** (feature themes) still apply. This file is the **SemVer r
 
 | Item | Value |
 |------|--------|
-| Current version | **`0.3.0`** |
-| What works | PATH install; provider; cache; routing; `run`/`chat`; tools: **read/edit/write/grep/bash**; **`--dogfood`** profile (workspace write + bash execute; out-of-cwd still denied) |
-| What does **not** | npm; sessions; skills; parallel/subagents; fully frictionless hour-long coding without reading flags once |
+| Current version | **`0.4.0`** |
+| What works | PATH install; auth via credentials file; Flash chat; tools read/edit/write/grep/bash; **`--dogfood`**; **owner live dogfood note** (`docs/dogfood/`) |
+| What does **not** | npm; sessions; skills; parallel/subagents; `login`/`auth status` polish; hour-long frictionless sessions |
 
-**Honest label for `0.3.0`:** installable + coding tools daily (`grep` + dogfood write/bash profile); dogfood-usable §3 still needs real-owner proof (**0.4.0**).
+**Honest label for `0.4.0`:** dogfood **proof** on this repo (live API + agent write). Full dogfood-usable §3 still gaps: sessions, search defaults comfort, npm, interactive ask.
 
 ---
 
@@ -114,9 +114,8 @@ After **DogfoodProof (`0.4.0`)** the owner re-evaluates: keep pushing `0.5.0+` o
 |--------|------|--------|
 | `0.1.0` | 2026-08-06 | Engine + dual CLI from source; tools core |
 | `0.2.0` | 2026-08-06 | PATH install for `deepseek-build` + `dsb` (#18) |
-| `0.3.0` | 2026-08-06 | grep + `--dogfood` write/bash profile |
-| `0.2.0` | 2026-08-06 | Install path: `scripts/install.sh` + documented `cargo install`; both `deepseek-build` and `dsb` on PATH; README clean-shell smoke |
-| `0.3.0` | 2026-08-06 | Tools daily: `grep` tool; bash execute under policy; `--dogfood` workspace-write+bash profile (out-of-cwd denied); tests green |
+| `0.3.0` | 2026-08-06 | Tools daily: `grep` + `--dogfood` write/bash profile (out-of-cwd denied) (#19) |
+| `0.4.0` | 2026-08-06 | Dogfood proof: live `run` pong + agent write of `docs/dogfood/2026-08-06-live-smoke.md`; auth via credentials.json |
 
 ---
 

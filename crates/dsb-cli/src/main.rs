@@ -126,11 +126,20 @@ enum SessionsCmd {
 
 fn parse_cli() -> Cli {
     let name = invocation_name();
+    let ver = env!("CARGO_PKG_VERSION");
+    // Forbidden bare form for the "never write 0.7" teaching example (MAJOR.MINOR only).
+    let bare = {
+        let mut parts = ver.split('.');
+        match (parts.next(), parts.next()) {
+            (Some(maj), Some(min)) => format!("{maj}.{min}"),
+            _ => "0.7".to_string(),
+        }
+    };
     let long_about = format!(
         "DeepSeek Build — DeepSeek-native terminal coding agent.\n\n\
 Set DEEPSEEK_API_KEY or ~/.deepseek-build/credentials.json.\n\
 Commands: `deepseek-build` (primary) and `dsb` (alias) are the same program.\n\
-Version is always full SemVer (MAJOR.MINOR.PATCH), e.g. 0.6.0 — never bare \"0.6\".\n\n\
+Version is always full SemVer (MAJOR.MINOR.PATCH), e.g. {ver} — never bare \"{bare}\".\n\n\
 Examples:\n  \
   {name} run \"explain this repo\"\n  \
   {name} --dogfood --session mywork --effort high chat\n  \

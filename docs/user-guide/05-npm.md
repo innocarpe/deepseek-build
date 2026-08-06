@@ -1,6 +1,6 @@
 # 05 — npm install
 
-**Product version:** `0.7.0`+  
+**Product version:** `0.7.1`+  
 
 | Surface | Value |
 |---------|--------|
@@ -36,7 +36,11 @@ One-shot:
 npx @innocarpe/deepseek-build --version
 ```
 
-Requires a one-time native build path today (Rust/cargo via postinstall, or `./scripts/install.sh` into `~/.deepseek-build/bin`).
+**Requirements / expectations**
+
+- **Rust/cargo** must be installed for `postinstall` (or run `./scripts/install.sh` yourself). Without cargo, npm package installs but CLI wrappers print how to build natives.
+- First install can take **tens of seconds** (native compile). Later installs reuse `~/.deepseek-build/bin` when present.
+- Node **≥ 18**.
 
 ## Install from git checkout (dev)
 

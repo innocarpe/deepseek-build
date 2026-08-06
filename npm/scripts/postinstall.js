@@ -33,15 +33,19 @@ function main() {
   }
   if (!hasCargo()) {
     console.log(
-      'deepseek-build postinstall: cargo not found. Install Rust (https://rustup.rs/) then:\n' +
-        '  ./scripts/install.sh\n' +
-        'or: cargo install --path crates/dsb-cli --locked --force --root ~/.deepseek-build'
+      'deepseek-build postinstall: cargo not found.\n' +
+        '  Native CLI needs Rust once (https://rustup.rs/), then either:\n' +
+        '    ./scripts/install.sh\n' +
+        '  or: cargo install --path crates/dsb-cli --locked --force --root ~/.deepseek-build\n' +
+        '  npm package is installed; deepseek-build/dsb wrappers will print this until natives exist.'
     );
     return;
   }
 
   const home = process.env.DEEPSEEK_BUILD_HOME || path.join(os.homedir(), '.deepseek-build');
-  console.log(`deepseek-build postinstall: cargo install → ${home}/bin …`);
+  console.log(
+    `deepseek-build postinstall: cargo install → ${home}/bin (first build may take tens of seconds)…`
+  );
   const r = spawnSync(
     'cargo',
     [

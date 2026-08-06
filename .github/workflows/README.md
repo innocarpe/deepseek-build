@@ -6,7 +6,7 @@ Product CI only — **no process-police**.
 
 | Workflow | File | Required check name |
 |----------|------|---------------------|
-| **product-ci** | [`product-ci.yml`](./product-ci.yml) | **`product-ci / gate`** |
+| **product-ci** | [`product-ci.yml`](./product-ci.yml) | **`gate`** (check run name) |
 
 ### Jobs (parallel when paths match)
 
@@ -73,10 +73,10 @@ Docs-only → detect + gate only (~seconds).
 Require **exactly**:
 
 ```text
-product-ci / gate
+gate
 ```
 
-Do **not** require individual fmt/clippy/test job names (path-skipped jobs break merges).
+(Do **not** require individual fmt/clippy/test job names — path-skipped jobs would break merges.)
 
 ## Local mirrors
 

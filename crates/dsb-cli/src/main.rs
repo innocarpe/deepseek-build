@@ -14,6 +14,9 @@ use dsb_config::{BuildHome, Credentials};
 use dsb_provider_deepseek::{Client, ClientConfig, ReasoningEffort};
 use dsb_tools::{AskChoice, Scope};
 
+mod theme;
+use theme::{Role, Theme};
+
 /// Resolve invocation name for help/version (`deepseek-build` or `dsb`).
 fn invocation_name() -> &'static str {
     let arg0 = std::env::args().next().unwrap_or_default();
@@ -375,10 +378,26 @@ fn tty_ask_callback() -> dsb_tools::AskCallback {
             .map(|s| s.as_str())
             .collect::<Vec<_>>()
             .join(", ");
+        let th = Theme::default_readable();
         eprintln!();
-        eprintln!("[permission] scopes need approval: {list}");
-        eprintln!("  [a] allow once   [A] allow always   [d] deny");
-        eprint!("[permission] choice [a/A/d]: ");
+        eprintln!(
+            "{}",
+            th.paint(
+                Role::Warn,
+                &format!("[permission] scopes need approval: {list}")
+            )
+        );
+        eprintln!(
+            "{}",
+            th.paint(
+                Role::Accent,
+                "  [a] allow once   [A] allow always   [d] deny"
+            )
+        );
+        eprint!(
+            "{}",
+            th.paint(Role::Accent, "[permission] choice [a/A/d]: ")
+        );
         let _ = io::stderr().flush();
         let mut line = String::new();
         if io::stdin().lock().read_line(&mut line).is_err() {
@@ -424,12 +443,26 @@ async fn run_repl(cli: &Cli) -> Result<()> {
     let mut agent = build_agent(cli).await?;
     let session_id = bind_session(&mut agent, cli)?;
     let inv = invocation_name();
+    let t = Theme::default_readable();
     println!(
-        "{inv} chat — DeepSeek Build (Flash default). /pro /flash /preset /model /quit"
+        "{}",
+        t.paint(
+            Role::Accent,
+            &format!("{inv} chat — DeepSeek Build (Flash default). /pro /flash /preset /model /quit")
+        )
     );
-    eprintln!("[prefix_epoch={}]", agent.prefix_epoch_short());
+    eprintln!(
+        "{}",
+        t.paint(
+            Role::Model,
+            &format!("[prefix_epoch={}]", agent.prefix_epoch_short())
+        )
+    );
     if let Some(id) = &session_id {
-        eprintln!("[session={id} — turns are persisted]");
+        eprintln!(
+            "{}",
+            t.paint(Role::Model, &format!("[session={id} — turns are persisted]"))
+        );
     }
     if cli.effort.is_some() || cli.no_thinking || cli.thinking {
         eprintln!(
@@ -483,37 +516,48 @@ async fn run_repl(cli: &Cli) -> Result<()> {
 }
 
 fn render_event(ev: TurnEvent, show_reasoning: bool) {
+    let t = theme::global();
     match ev {
         TurnEvent::ModelVisibility(s) => {
-            eprintln!("[{s}]");
+            eprintln!("{}", t.paint(Role::Model, &format!("[{s}]")));
         }
         TurnEvent::PrefixEpoch(s) => {
-            eprintln!("[{s}]");
+            eprintln!("{}", t.paint(Role::Model, &format!("[{s}]")));
         }
         TurnEvent::CacheEvidence(s) => {
-            eprintln!("[{s}]");
+            eprintln!("{}", t.paint(Role::Model, &format!("[{s}]")));
         }
         TurnEvent::ReasoningDelta(s) => {
             if show_reasoning {
-                eprint!("{s}");
+                eprint!("{}", t.paint(Role::Reasoning, &s));
                 let _ = io::stderr().flush();
             }
         }
         TurnEvent::ContentDelta(s) => {
+            // Content stays unstyled for maximum readability in light/dark terminals.
             print!("{s}");
             let _ = io::stdout().flush();
         }
         TurnEvent::Warning(w) => {
-            eprintln!("[warn] {w}");
+            eprintln!("{}", t.paint(Role::Warn, &format!("[warn] {w}")));
         }
         TurnEvent::ToolCallProposed { name, .. } => {
-            eprintln!("[tool] {name}");
+            eprintln!(
+                "{}",
+                t.paint(Role::Tool, &format!("[tool] {name}"))
+            );
         }
         TurnEvent::ToolRepairApplied { name } => {
-            eprintln!("[repair] {name}");
+            eprintln!(
+                "{}",
+                t.paint(Role::Accent, &format!("[repair] {name}"))
+            );
         }
         TurnEvent::ToolError { name, error } => {
-            eprintln!("[tool-error] {name}: {error}");
+            eprintln!(
+                "{}",
+                t.paint(Role::Error, &format!("[tool-error] {name}: {error}"))
+            );
         }
     }
 }
@@ -532,6 +576,13 @@ mod tests {
     fn default_clap_name_is_deepseek_build() {
         let cmd = Cli::command();
         assert_eq!(cmd.get_name(), "deepseek-build");
+    }
+
+    #[test]
+    fn theme_module_deepseek_blue() {
+        assert_eq!(theme::DEEPSEEK_BLUE_RGB, (77, 107, 254));
+        let plain = Theme::plain().paint(Role::Tool, "t");
+        assert_eq!(plain, "t");
     }
 
     #[test]

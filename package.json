@@ -1,0 +1,44 @@
+{
+  "name": "deepseek-build",
+  "version": "0.7.0",
+  "description": "DeepSeek-native terminal coding agent (binaries: deepseek-build, dsb)",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/innocarpe/deepseek-build.git"
+  },
+  "homepage": "https://github.com/innocarpe/deepseek-build#readme",
+  "bugs": {
+    "url": "https://github.com/innocarpe/deepseek-build/issues"
+  },
+  "keywords": [
+    "deepseek",
+    "cli",
+    "coding-agent",
+    "deepseek-build",
+    "dsb"
+  ],
+  "bin": {
+    "deepseek-build": "npm/bin/deepseek-build.js",
+    "dsb": "npm/bin/dsb.js"
+  },
+  "files": [
+    "npm/**",
+    "scripts/install.sh",
+    "scripts/check-semver.sh",
+    "crates/**",
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "postinstall": "node npm/scripts/postinstall.js",
+    "version-check": "node npm/scripts/check-version-match.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

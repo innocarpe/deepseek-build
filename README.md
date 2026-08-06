@@ -62,14 +62,34 @@ Open a **new** terminal (or source your shell config), then:
 
 ```bash
 deepseek-build --version
-# → deepseek-build 0.6.0
+# → deepseek-build 0.7.0
 dsb --version
-# → dsb 0.6.0
+# → dsb 0.7.0
 ./scripts/check-semver.sh
-# → check-semver: ok (0.6.0)
+# → check-semver: ok (0.7.0)
 ```
 
 Both commands must report the **same** full SemVer.
+
+### npm (both bins)
+
+`package.json` version **matches** Cargo workspace SemVer. Bins: **`deepseek-build`** and **`dsb`**.
+
+```bash
+# From a checkout (builds native bins via postinstall when cargo is available):
+npm install -g .
+# or one-shot:
+npx --yes . --version   # if linked; prefer after install:
+deepseek-build --version
+dsb --version
+
+# Version consistency:
+node npm/scripts/check-version-match.js
+./scripts/check-semver.sh
+```
+
+Publishing to the public registry is **owner-gated** (`npm publish`); the package layout is ready.  
+Native binary still needs Rust/cargo once (postinstall or `./scripts/install.sh`).
 
 Config directory (not a command name): `~/.deepseek-build/`.
 

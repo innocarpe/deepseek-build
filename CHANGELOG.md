@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- **Welcome banner v2** — DeepSeek braille whale mark + boxed product card on interactive chat (`banner.rs`)
+- REPL prompt `❯` uses DeepSeek blue accent when color is enabled
+- Theme/docs: official `#4D6BFE` tokens documented for mark, box chrome, and prompt
+
 ### Documentation
 
 - **Product replan for 2.0.0** — [REPLAN_2.0.md](docs/product/REPLAN_2.0.md): 1.x repositioned as **scaffold**; real product DoD is **`dsb` opens a Grok Build–class coding agent** on open-source Grok Build + DeepSeek/Deep Code/Reasonix overlays

@@ -15,8 +15,10 @@ use dsb_context::discover_skills_index;
 use dsb_provider_deepseek::{Client, ClientConfig, ReasoningEffort};
 use dsb_tools::{AskChoice, Scope};
 
+mod banner;
 mod onboard;
 mod theme;
+use banner::{BannerInfo, prompt as styled_prompt, render_welcome};
 use theme::{Role, Theme};
 
 /// Resolve invocation name for help/version (`deepseek-build` or `dsb`).
@@ -550,8 +552,9 @@ async fn run_repl(cli: &Cli) -> Result<()> {
 
     let stdin = io::stdin();
     let mut stdout = io::stdout();
+    let prompt = styled_prompt(&Theme::default_readable());
     loop {
-        print!("❯ ");
+        print!("{prompt}");
         stdout.flush()?;
         let mut line = String::new();
         let n = stdin.lock().read_line(&mut line)?;
@@ -608,50 +611,23 @@ fn print_welcome_banner(cli: &Cli, agent: &Agent, session_id: Option<&str>) {
         .clone()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let dog = if cli.dogfood { "dogfood" } else { "safe" };
-    println!();
-    println!(
-        "{}",
-        t.paint(Role::Accent, &format!("DeepSeek Build  v{ver}  ·  {inv}"))
-    );
-    println!(
-        "{}",
-        t.paint(
-            Role::Model,
-            "DeepSeek-native coding agent  ·  type to chat  ·  /help  ·  /quit"
-        )
-    );
-    println!(
-        "{}",
-        t.paint(
-            Role::Model,
-            &format!(
-                "cwd {}  ·  profile {}  ·  epoch {}",
-                cwd.display(),
-                dog,
-                agent.prefix_epoch_short()
-            )
-        )
-    );
-    if let Some(id) = session_id {
-        println!(
-            "{}",
-            t.paint(Role::Tool, &format!("session {id} (persisted)"))
-        );
-    }
+
+    let mut info = BannerInfo::default_product(ver, inv);
+    info.cwd = cwd.display().to_string();
+    info.profile = dog.into();
+    info.epoch = agent.prefix_epoch_short().to_string();
+    info.session = session_id.map(|s| s.to_string());
     if cli.effort.is_some() || cli.no_thinking || cli.thinking {
-        println!(
-            "{}",
-            t.paint(
-                Role::Model,
-                &format!(
-                    "effort={} thinking={}",
-                    cli.effort.as_deref().unwrap_or("default"),
-                    if cli.no_thinking { "off" } else { "on" }
-                )
-            )
-        );
+        info.effort = Some(cli.effort.clone().unwrap_or_else(|| "default".into()));
+        info.thinking = Some(if cli.no_thinking {
+            "off".into()
+        } else {
+            "on".into()
+        });
     }
-    println!();
+
+    print!("{}", render_welcome(&t, &info));
+    let _ = io::stdout().flush();
 }
 
 fn print_repl_help() {
@@ -734,6 +710,22 @@ mod tests {
         assert_eq!(theme::DEEPSEEK_BLUE_RGB, (77, 107, 254));
         let plain = Theme::plain().paint(Role::Tool, "t");
         assert_eq!(plain, "t");
+    }
+
+    #[test]
+    fn welcome_banner_contains_whale_and_version() {
+        let t = Theme::plain();
+        let mut info = BannerInfo::default_product(env!("CARGO_PKG_VERSION"), "deepseek-build");
+        info.cwd = "/tmp".into();
+        info.epoch = "deadbeef".into();
+        let s = render_welcome(&t, &info);
+        assert!(
+            s.chars().any(|c| ('\u{2800}'..='\u{28FF}').contains(&c)),
+            "whale braille mark"
+        );
+        assert!(s.contains("DeepSeek Build"));
+        assert!(s.contains(env!("CARGO_PKG_VERSION")));
+        assert!(s.contains("deadbeef"));
     }
 
     #[test]

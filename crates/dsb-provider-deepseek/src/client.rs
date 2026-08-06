@@ -9,7 +9,7 @@ use serde::Deserialize;
 use crate::error::ProviderError;
 use crate::models::AssistantMessage;
 use crate::request::ChatRequest;
-use crate::sse::{feed_sse_buffer, parse_sse_data, ParsedSse, ToolCallAccumulator};
+use crate::sse::{ParsedSse, ToolCallAccumulator, feed_sse_buffer, parse_sse_data};
 use crate::usage::{CacheEvidence, Usage, UsageRaw};
 
 /// Default DeepSeek OpenAI-compatible base URL (ADR 0005).
@@ -75,9 +75,7 @@ impl Client {
         if config.api_key.trim().is_empty() {
             return Err(ProviderError::MissingApiKey);
         }
-        let http = reqwest::Client::builder()
-            .timeout(config.timeout)
-            .build()?;
+        let http = reqwest::Client::builder().timeout(config.timeout).build()?;
         Ok(Self { http, config })
     }
 
@@ -234,21 +232,21 @@ impl Client {
         }
 
         // Flush remainder
-        if !buffer.trim().is_empty() {
-            if let Some(data) = buffer.trim().strip_prefix("data:") {
-                for ev in parse_sse_data(data.trim_start())? {
-                    apply_parsed(
-                        ev,
-                        &mut content,
-                        &mut reasoning,
-                        &mut tool_acc,
-                        &mut finish_reason,
-                        &mut model,
-                        &mut usage,
-                        &mut done,
-                        on_event,
-                    );
-                }
+        if !buffer.trim().is_empty()
+            && let Some(data) = buffer.trim().strip_prefix("data:")
+        {
+            for ev in parse_sse_data(data.trim_start())? {
+                apply_parsed(
+                    ev,
+                    &mut content,
+                    &mut reasoning,
+                    &mut tool_acc,
+                    &mut finish_reason,
+                    &mut model,
+                    &mut usage,
+                    &mut done,
+                    on_event,
+                );
             }
         }
 
@@ -418,7 +416,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = Client::new(ClientConfig::new("test-key").with_base_url(server.uri())).unwrap();
+        let client =
+            Client::new(ClientConfig::new("test-key").with_base_url(server.uri())).unwrap();
         let req = ChatRequestBuilder::new(ModelId::Flash)
             .messages(vec![ChatMessage::user("hi")])
             .build();
@@ -439,7 +438,10 @@ mod tests {
         assert_eq!(completed.model.as_deref(), Some("deepseek-v4-flash"));
         assert!(completed.cache_evidence.is_some());
         assert_eq!(reasoning_parts, vec!["r1".to_string()]);
-        assert_eq!(content_parts, vec!["hello".to_string(), " world".to_string()]);
+        assert_eq!(
+            content_parts,
+            vec!["hello".to_string(), " world".to_string()]
+        );
     }
 
     #[tokio::test]
@@ -491,9 +493,10 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
-            .respond_with(ResponseTemplate::new(400).set_body_string(
-                r#"{"error":{"message":"Missing reasoning_content"}}"#,
-            ))
+            .respond_with(
+                ResponseTemplate::new(400)
+                    .set_body_string(r#"{"error":{"message":"Missing reasoning_content"}}"#),
+            )
             .mount(&server)
             .await;
 

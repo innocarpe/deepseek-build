@@ -52,18 +52,15 @@ pub fn repair_tool_arguments(
         }
     }
 
-    match try_parse_object(&current) {
-        Ok(mut obj) => {
-            if let Some(schema) = schema {
-                apply_schema(&mut obj, schema, &mut repair_applied)?;
-            }
-            return Ok(RepairOutcome {
-                arguments: obj,
-                repair_applied,
-                original_snippet,
-            });
+    if let Ok(mut obj) = try_parse_object(&current) {
+        if let Some(schema) = schema {
+            apply_schema(&mut obj, schema, &mut repair_applied)?;
         }
-        Err(_) => {}
+        return Ok(RepairOutcome {
+            arguments: obj,
+            repair_applied,
+            original_snippet,
+        });
     }
 
     // One repair pass.
@@ -247,21 +244,17 @@ fn apply_schema(
     let required: Vec<&str> = schema
         .get("required")
         .and_then(|r| r.as_array())
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str())
-                .collect::<Vec<_>>()
-        })
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
         .unwrap_or_default();
 
     // Fill defaults for optional properties.
     if let Some(props) = properties {
         for (key, prop_schema) in props {
-            if !map.contains_key(key) {
-                if let Some(default) = prop_schema.get("default") {
-                    map.insert(key.clone(), default.clone());
-                    *repair_applied = true;
-                }
+            if !map.contains_key(key)
+                && let Some(default) = prop_schema.get("default")
+            {
+                map.insert(key.clone(), default.clone());
+                *repair_applied = true;
             }
         }
     }
@@ -271,17 +264,15 @@ fn apply_schema(
         .get("additionalProperties")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
-    if !additional {
-        if let Some(props) = properties {
-            let unknown: Vec<String> = map
-                .keys()
-                .filter(|k| !props.contains_key(k.as_str()))
-                .cloned()
-                .collect();
-            for k in unknown {
-                map.remove(&k);
-                *repair_applied = true;
-            }
+    if !additional && let Some(props) = properties {
+        let unknown: Vec<String> = map
+            .keys()
+            .filter(|k| !props.contains_key(k.as_str()))
+            .cloned()
+            .collect();
+        for k in unknown {
+            map.remove(&k);
+            *repair_applied = true;
         }
     }
 

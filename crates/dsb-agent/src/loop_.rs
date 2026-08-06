@@ -4,25 +4,25 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use dsb_context::{
-    assemble_messages, discover_project_instructions, discover_skills_index, EnvironmentSummary,
-    PrefixBuildInputs, PrefixBuilder, SkillIndexEntry, StablePrefix, VolatileTail,
-    DEFAULT_SYSTEM_PROMPT,
+    DEFAULT_SYSTEM_PROMPT, EnvironmentSummary, PrefixBuildInputs, PrefixBuilder, SkillIndexEntry,
+    StablePrefix, VolatileTail, assemble_messages, discover_project_instructions,
+    discover_skills_index,
 };
 use dsb_provider_deepseek::ReasoningEffort;
 use dsb_provider_deepseek::{
-    ChatMessage, ChatRequestBuilder, Client, ModelId, ProviderError, StreamEvent, ToolCall,
-    ToolDefinition, ThinkingMode, MODEL_PRO,
+    ChatMessage, ChatRequestBuilder, Client, MODEL_PRO, ModelId, ProviderError, StreamEvent,
+    ThinkingMode, ToolCall, ToolDefinition,
 };
 use dsb_tools::{
-    catalog_from_config, catalog_tool_definitions, default_coding_policy, dogfood_coding_policy,
-    load_mcp_config, tool_definitions, AskCallback, PermissionPolicy, Scope, ToolExecutor,
-    ToolName, ToolRequest,
+    AskCallback, PermissionPolicy, Scope, ToolExecutor, ToolName, ToolRequest, catalog_from_config,
+    catalog_tool_definitions, default_coding_policy, dogfood_coding_policy, load_mcp_config,
+    tool_definitions,
 };
 use thiserror::Error;
 
-use crate::pairing::{pair_tool_results, tools_in_play, InterruptedTool};
-use crate::repair::{repair_tool_arguments, RepairError};
-use crate::routing::{apply_routing_command, ModelRouter, Preset, RouteDecision};
+use crate::pairing::{InterruptedTool, pair_tool_results, tools_in_play};
+use crate::repair::{RepairError, repair_tool_arguments};
+use crate::routing::{ModelRouter, Preset, RouteDecision, apply_routing_command};
 use crate::session::{SessionError, SessionStore};
 
 #[derive(Debug, Error)]
@@ -172,20 +172,14 @@ impl Agent {
         let project_instructions = discover_project_instructions(&config.workspace_root)?;
         let environment = EnvironmentSummary::detect(&config.workspace_root);
         let skills_index = if config.discover_skills && config.skills_index.is_empty() {
-            discover_skills_index(
-                &config.workspace_root,
-                config.user_skills_root.as_deref(),
-            )
-            .unwrap_or_default()
+            discover_skills_index(&config.workspace_root, config.user_skills_root.as_deref())
+                .unwrap_or_default()
         } else {
             config.skills_index.clone()
         };
         // MCP catalog (spec 80): load static catalogs; fingerprint joins tool schemas for epoch.
-        let mcp_cfg = load_mcp_config(
-            &config.workspace_root,
-            config.grants_home.as_deref(),
-        )
-        .unwrap_or_default();
+        let mcp_cfg = load_mcp_config(&config.workspace_root, config.grants_home.as_deref())
+            .unwrap_or_default();
         let mcp_catalog = catalog_from_config(&mcp_cfg).unwrap_or_default();
         let mut tools_defs = if config.tools.is_empty() {
             tool_definitions()
@@ -241,10 +235,7 @@ impl Agent {
     }
 
     /// Replace volatile transcript (e.g. session load). Applies tool-pair repair (spec 15).
-    pub fn load_transcript(
-        &mut self,
-        messages: Vec<ChatMessage>,
-    ) -> (usize, Vec<InterruptedTool>) {
+    pub fn load_transcript(&mut self, messages: Vec<ChatMessage>) -> (usize, Vec<InterruptedTool>) {
         let (paired, holes) = pair_tool_results(&messages);
         let n = holes.len();
         self.tail.messages = paired;
@@ -252,22 +243,14 @@ impl Agent {
     }
 
     /// Load session from store; returns number of repaired interrupted tool holes.
-    pub fn resume_session(
-        &mut self,
-        store: &SessionStore,
-        id: &str,
-    ) -> Result<usize, AgentError> {
+    pub fn resume_session(&mut self, store: &SessionStore, id: &str) -> Result<usize, AgentError> {
         let (messages, holes, _) = store.load(id)?;
         self.tail.messages = messages;
         Ok(holes.len())
     }
 
     /// Persist current volatile transcript to the session store.
-    pub fn persist_session(
-        &self,
-        store: &SessionStore,
-        id: &str,
-    ) -> Result<(), AgentError> {
+    pub fn persist_session(&self, store: &SessionStore, id: &str) -> Result<(), AgentError> {
         let ws = self.config.workspace_root.to_string_lossy();
         store.save(id, &self.tail.messages, Some(ws.as_ref()))?;
         Ok(())
@@ -555,9 +538,7 @@ impl Agent {
                         self.tail.push(ChatMessage::tool_result(id, content));
                     }
                     Err(_) => {
-                        on_event(TurnEvent::Warning(
-                            "parallel tool worker panicked".into(),
-                        ));
+                        on_event(TurnEvent::Warning("parallel tool worker panicked".into()));
                     }
                 }
             }
@@ -658,10 +639,7 @@ impl Agent {
     where
         F: FnMut(TurnEvent),
     {
-        let kind_s = args
-            .get("kind")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let kind_s = args.get("kind").and_then(|v| v.as_str()).unwrap_or("");
         let task = args.get("task").and_then(|v| v.as_str()).unwrap_or("");
         let Some(kind) = crate::subagent::WorkerKind::parse(kind_s) else {
             let body = serde_json::json!({
@@ -797,9 +775,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = Arc::new(
-            Client::new(ClientConfig::new("k").with_base_url(server.uri())).unwrap(),
-        );
+        let client =
+            Arc::new(Client::new(ClientConfig::new("k").with_base_url(server.uri())).unwrap());
         let mut agent = Agent::new(
             client,
             AgentConfig {
@@ -840,9 +817,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = Arc::new(
-            Client::new(ClientConfig::new("k").with_base_url(server.uri())).unwrap(),
-        );
+        let client =
+            Arc::new(Client::new(ClientConfig::new("k").with_base_url(server.uri())).unwrap());
         let mut agent = Agent::new(
             client,
             AgentConfig {

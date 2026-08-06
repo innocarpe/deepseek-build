@@ -7,7 +7,7 @@ use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use dsb_agent::{Agent, AgentConfig, Preset, SessionStore, TurnEvent};
 use dsb_config::{BuildHome, Credentials};
@@ -137,13 +137,9 @@ enum SessionsCmd {
     /// List sessions (most recently updated first).
     List,
     /// Show message count / path for a session id.
-    Show {
-        id: String,
-    },
+    Show { id: String },
     /// Delete a session file.
-    Delete {
-        id: String,
-    },
+    Delete { id: String },
 }
 
 fn parse_cli() -> Cli {
@@ -231,26 +227,21 @@ fn run_skills_cmd(cli: &Cli, cmd: &SkillsCmd) -> Result<()> {
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
             let user_skills = {
                 let p = home.path().join("skills");
-                if p.is_dir() {
-                    Some(p)
-                } else {
-                    None
-                }
+                if p.is_dir() { Some(p) } else { None }
             };
             let idx = discover_skills_index(&workspace, user_skills.as_deref())
                 .context("discover skills")?;
             if idx.is_empty() {
-                println!("(no skills found under skills/, .deepseek-build/skills/, or ~/.deepseek-build/skills/)");
+                println!(
+                    "(no skills found under skills/, .deepseek-build/skills/, or ~/.deepseek-build/skills/)"
+                );
                 return Ok(());
             }
             let t = Theme::default_readable();
             for ent in idx {
                 println!(
                     "{}",
-                    t.paint(
-                        Role::Tool,
-                        &format!("{:<24} {}", ent.name, ent.description)
-                    )
+                    t.paint(Role::Tool, &format!("{:<24} {}", ent.name, ent.description))
                 );
             }
         }
@@ -283,7 +274,9 @@ fn run_sessions_cmd(cmd: &SessionsCmd) -> Result<()> {
             }
         }
         SessionsCmd::Show { id } => {
-            let (msgs, holes, _) = store.load(id).with_context(|| format!("load session {id}"))?;
+            let (msgs, holes, _) = store
+                .load(id)
+                .with_context(|| format!("load session {id}"))?;
             println!("id={id}");
             println!("messages={}", msgs.len());
             println!("repaired_tool_holes_on_load={}", holes.len());
@@ -373,11 +366,7 @@ async fn build_agent(cli: &Cli) -> Result<Agent> {
     };
     let user_skills_root = {
         let p = home.path().join("skills");
-        if p.is_dir() {
-            Some(p)
-        } else {
-            None
-        }
+        if p.is_dir() { Some(p) } else { None }
     };
     let interactive = wants_interactive_permissions(cli);
     let ask_callback = if interactive {
@@ -498,7 +487,9 @@ async fn run_repl(cli: &Cli) -> Result<()> {
         "{}",
         t.paint(
             Role::Accent,
-            &format!("{inv} chat — DeepSeek Build (Flash default). /pro /flash /preset /model /quit")
+            &format!(
+                "{inv} chat — DeepSeek Build (Flash default). /pro /flash /preset /model /quit"
+            )
         )
     );
     eprintln!(
@@ -511,18 +502,17 @@ async fn run_repl(cli: &Cli) -> Result<()> {
     if let Some(id) = &session_id {
         eprintln!(
             "{}",
-            t.paint(Role::Model, &format!("[session={id} — turns are persisted]"))
+            t.paint(
+                Role::Model,
+                &format!("[session={id} — turns are persisted]")
+            )
         );
     }
     if cli.effort.is_some() || cli.no_thinking || cli.thinking {
         eprintln!(
             "[surface effort={} thinking={}]",
             cli.effort.as_deref().unwrap_or("default"),
-            if cli.no_thinking {
-                "off"
-            } else {
-                "on"
-            }
+            if cli.no_thinking { "off" } else { "on" }
         );
     }
 
@@ -592,16 +582,10 @@ fn render_event(ev: TurnEvent, show_reasoning: bool) {
             eprintln!("{}", t.paint(Role::Warn, &format!("[warn] {w}")));
         }
         TurnEvent::ToolCallProposed { name, .. } => {
-            eprintln!(
-                "{}",
-                t.paint(Role::Tool, &format!("[tool] {name}"))
-            );
+            eprintln!("{}", t.paint(Role::Tool, &format!("[tool] {name}")));
         }
         TurnEvent::ToolRepairApplied { name } => {
-            eprintln!(
-                "{}",
-                t.paint(Role::Accent, &format!("[repair] {name}"))
-            );
+            eprintln!("{}", t.paint(Role::Accent, &format!("[repair] {name}")));
         }
         TurnEvent::ToolError { name, error } => {
             eprintln!(
@@ -652,10 +636,20 @@ mod tests {
     }
 
     fn regex_lite_semver(v: &str) -> bool {
-        let parts: Vec<_> = v.split('-').next().unwrap_or(v).split('+').next().unwrap_or(v).split('.').collect();
+        let parts: Vec<_> = v
+            .split('-')
+            .next()
+            .unwrap_or(v)
+            .split('+')
+            .next()
+            .unwrap_or(v)
+            .split('.')
+            .collect();
         if parts.len() != 3 {
             return false;
         }
-        parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+        parts
+            .iter()
+            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
     }
 }

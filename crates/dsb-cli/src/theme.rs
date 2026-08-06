@@ -11,6 +11,8 @@ pub const DEEPSEEK_BLUE_RGB: (u8, u8, u8) = (77, 107, 254);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
+    /// Reserved for optional content tinting (default path leaves content unstyled).
+    #[allow(dead_code)]
     Content,
     Reasoning,
     Tool,
@@ -47,6 +49,7 @@ impl Theme {
         format!("\x1b[38;2;{r};{g};{b}m{text}\x1b[0m")
     }
 
+    #[allow(dead_code)]
     pub fn paint_to(&self, out: &mut dyn Write, role: Role, text: &str) -> io::Result<()> {
         write!(out, "{}", self.paint(role, text))
     }
@@ -55,7 +58,7 @@ impl Theme {
 fn role_rgb(role: Role) -> (u8, u8, u8) {
     match role {
         // Readable light-terminal friendly defaults (not near-black monochrome).
-        Role::Content => (232, 236, 242),  // near-white body
+        Role::Content => (232, 236, 242),   // near-white body
         Role::Reasoning => (148, 163, 184), // slate secondary
         Role::Tool => DEEPSEEK_BLUE_RGB,    // brand accent
         Role::Model => (99, 140, 255),      // lighter blue

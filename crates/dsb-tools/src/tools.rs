@@ -5,14 +5,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use dsb_provider_deepseek::{ToolDefinition, ToolFunction};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use thiserror::Error;
 
 use crate::bg_shell::BgJobStore;
 use crate::grants::{AskChoice, PermissionGrants};
 use crate::permissions::{
-    classify_bash, decide, effective_scopes, resolve_workspace_path, scopes_for_path, Decision,
-    PathOp, PermissionPolicy, Scope,
+    Decision, PathOp, PermissionPolicy, Scope, classify_bash, decide, effective_scopes,
+    resolve_workspace_path, scopes_for_path,
 };
 use crate::plan::PlanStore;
 use crate::snippets::{EditError, SnippetStore, WriteError};
@@ -271,7 +271,11 @@ impl ToolExecutor {
     }
 
     /// Dispatch MCP wire tools (`mcp__server__tool`) — v1 returns catalog echo / not-connected.
-    pub fn execute_mcp(&mut self, wire_name: &str, args: &Value) -> Result<ToolResponse, ToolError> {
+    pub fn execute_mcp(
+        &mut self,
+        wire_name: &str,
+        args: &Value,
+    ) -> Result<ToolResponse, ToolError> {
         let entry = self
             .mcp_catalog
             .entries
@@ -314,11 +318,8 @@ impl ToolExecutor {
     fn skill(&mut self, args: &Value) -> Result<ToolResponse, ToolError> {
         let name = arg_str(args, "name")?;
         // skill body load is a read of trusted skill paths only (no out-of-cwd free path)
-        match dsb_context::load_skill_body(
-            &self.workspace,
-            self.user_skills_root.as_deref(),
-            name,
-        ) {
+        match dsb_context::load_skill_body(&self.workspace, self.user_skills_root.as_deref(), name)
+        {
             Ok(body) => Ok(ToolResponse {
                 ok: true,
                 content: json!({
@@ -340,8 +341,8 @@ impl ToolExecutor {
     fn read(&mut self, args: &Value) -> Result<ToolResponse, ToolError> {
         let path = arg_str(args, "path")?;
         let full = resolve_workspace_path(&self.workspace, path);
-        let scopes =
-            scopes_for_path(&self.workspace, &full, PathOp::Read).map_err(|e| ToolError::Other(e.to_string()))?;
+        let scopes = scopes_for_path(&self.workspace, &full, PathOp::Read)
+            .map_err(|e| ToolError::Other(e.to_string()))?;
         self.check(&scopes)?;
         let start = arg_usize_opt(args, "start_line");
         let end = arg_usize_opt(args, "end_line");
@@ -420,10 +421,7 @@ impl ToolExecutor {
         if pattern.is_empty() {
             return Err(ToolError::Args("pattern must be non-empty".into()));
         }
-        let path_arg = args
-            .get("path")
-            .and_then(|v| v.as_str())
-            .unwrap_or(".");
+        let path_arg = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
         let case_insensitive = args
             .get("case_insensitive")
             .and_then(|v| v.as_bool())
@@ -964,7 +962,11 @@ mod tests {
     fn grep_finds_literal_matches() {
         let dir = tempdir().unwrap();
         fs::create_dir_all(dir.path().join("src")).unwrap();
-        fs::write(dir.path().join("src/a.rs"), "fn hello() {}\nfn other() {}\n").unwrap();
+        fs::write(
+            dir.path().join("src/a.rs"),
+            "fn hello() {}\nfn other() {}\n",
+        )
+        .unwrap();
         fs::write(dir.path().join("src/b.txt"), "hello world\n").unwrap();
         let mut ex = ToolExecutor::new(dir.path().to_path_buf(), default_coding_policy(true));
         let req = ToolRequest {

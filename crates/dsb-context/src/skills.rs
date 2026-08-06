@@ -68,13 +68,7 @@ pub fn discover_skills_index(
                 continue;
             }
             let description = extract_description(&raw);
-            by_name.insert(
-                name.clone(),
-                SkillIndexEntry {
-                    name,
-                    description,
-                },
-            );
+            by_name.insert(name.clone(), SkillIndexEntry { name, description });
         }
     }
     Ok(by_name.into_values().collect())
@@ -101,7 +95,12 @@ fn skill_opts_out_of_index(raw: &str) -> bool {
         {
             let v = line
                 .split_once(':')
-                .map(|(_, v)| v.trim().trim_matches('"').trim_matches('\'').to_ascii_lowercase())
+                .map(|(_, v)| {
+                    v.trim()
+                        .trim_matches('"')
+                        .trim_matches('\'')
+                        .to_ascii_lowercase()
+                })
                 .unwrap_or_default();
             return matches!(v.as_str(), "true" | "yes" | "1");
         }
@@ -115,11 +114,7 @@ pub fn load_skill_body(
     user_skills_root: Option<&Path>,
     name: &str,
 ) -> Result<String, SkillError> {
-    if name.is_empty()
-        || name.contains("..")
-        || name.contains('/')
-        || name.contains('\\')
-    {
+    if name.is_empty() || name.contains("..") || name.contains('/') || name.contains('\\') {
         return Err(SkillError::NotFound(name.to_string()));
     }
     let mut candidates = vec![
@@ -145,18 +140,17 @@ pub fn load_skill_body(
 /// Short description for index: YAML frontmatter `description:` or first non-heading prose line.
 fn extract_description(raw: &str) -> String {
     let text = raw.trim();
-    if text.starts_with("---") {
-        if let Some(rest) = text.strip_prefix("---") {
-            if let Some(end) = rest.find("\n---") {
-                let fm = &rest[..end];
-                for line in fm.lines() {
-                    let line = line.trim();
-                    if let Some(v) = line.strip_prefix("description:") {
-                        let v = v.trim().trim_matches('"').trim_matches('\'');
-                        if !v.is_empty() {
-                            return truncate(v, 200);
-                        }
-                    }
+    if text.starts_with("---")
+        && let Some(rest) = text.strip_prefix("---")
+        && let Some(end) = rest.find("\n---")
+    {
+        let fm = &rest[..end];
+        for line in fm.lines() {
+            let line = line.trim();
+            if let Some(v) = line.strip_prefix("description:") {
+                let v = v.trim().trim_matches('"').trim_matches('\'');
+                if !v.is_empty() {
+                    return truncate(v, 200);
                 }
             }
         }
@@ -260,7 +254,11 @@ mod tests {
         for name in ["zeta", "alpha", "mid"] {
             let p = dir.path().join("skills").join(name);
             fs::create_dir_all(&p).unwrap();
-            fs::write(p.join("SKILL.md"), format!("---\ndescription: {name}\n---\n")).unwrap();
+            fs::write(
+                p.join("SKILL.md"),
+                format!("---\ndescription: {name}\n---\n"),
+            )
+            .unwrap();
         }
         let idx = discover_skills_index(dir.path(), None).unwrap();
         let names: Vec<_> = idx.iter().map(|e| e.name.as_str()).collect();

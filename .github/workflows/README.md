@@ -1,26 +1,32 @@
 # GitHub Actions
 
-**No product CI is defined yet.**
+## Product CI (Wave D `0.15.0`+)
 
-Early scaffolding accidentally used Actions to police PR titles/labels and
-markdown path inventories. That is **not** product development CI and was
-removed.
+| Workflow | File | What it verifies |
+|----------|------|------------------|
+| **ci** | [`ci.yml`](./ci.yml) | `cargo fmt`, `clippy -D warnings`, `cargo test --workspace`, `./scripts/smoke-dogfood.sh` (offline) |
 
-## When CI belongs here
+This is **product** CI: build, tests, dual-CLI smoke. It is **not** process-police (no PR title regex, no kind-label counters, no markdown path inventories).
 
-Add workflows only when they verify **shipped product behavior**, for example:
+### Local equivalent
 
-| Milestone-ish | Plausible jobs |
-|---------------|----------------|
-| M1+ | Build binary / package; provider client unit tests |
-| M2+ | Tool runtime tests; golden prefix-hash tests |
-| M3+ | Skills discovery tests |
-| M6 | Install smoke, release artifact checks |
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+./scripts/smoke-dogfood.sh
+```
 
-Process quality (PR narrative, kind labels, Orca-level body) is enforced by:
+### When to extend
 
-- `docs/contributing/*` (normative human process)
-- root `AGENTS.md` + `skills/pr-authoring/` (agent harness)
+| Goal | Plausible job |
+|------|----------------|
+| Release artifacts | Upload dual bins on tag |
+| npm package layout | `npm run version-check` only (publish stays human) |
+| Live API | Optional secret job; never block PR green on missing key |
+
+Process quality (PR narrative, kind labels, Orca-level body) remains:
+
+- `docs/contributing/*`
+- root `AGENTS.md` + `skills/pr-authoring/`
 - Review / self-merge checklist
-
-—not by green-check theater on empty product surface.

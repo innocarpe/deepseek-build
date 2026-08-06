@@ -54,12 +54,12 @@ impl PermissionGrants {
             path: Some(path.clone()),
             ..Self::default()
         };
-        if let Ok(raw) = fs::read_to_string(&path) {
-            if let Ok(file) = serde_json::from_str::<GrantsFile>(&raw) {
-                for s in file.allow_scopes {
-                    if let Some(scope) = Scope::parse(&s) {
-                        g.always.insert(scope);
-                    }
+        if let Ok(raw) = fs::read_to_string(&path)
+            && let Ok(file) = serde_json::from_str::<GrantsFile>(&raw)
+        {
+            for s in file.allow_scopes {
+                if let Some(scope) = Scope::parse(&s) {
+                    g.always.insert(scope);
                 }
             }
         }

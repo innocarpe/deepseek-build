@@ -14,10 +14,10 @@ mod skills;
 pub use canonicalize::{canonicalize_json, stable_prefix_bytes};
 pub use epoch::PrefixEpoch;
 pub use prefix::{
-    discover_project_instructions, EnvironmentSummary, PrefixBuilder, PrefixBuildInputs,
-    PrefixError, SkillIndexEntry, StablePrefix, VolatileTail, DEFAULT_SYSTEM_PROMPT,
+    DEFAULT_SYSTEM_PROMPT, EnvironmentSummary, PrefixBuildInputs, PrefixBuilder, PrefixError,
+    SkillIndexEntry, StablePrefix, VolatileTail, discover_project_instructions,
 };
-pub use skills::{discover_skills_index, load_skill_body, SkillError};
+pub use skills::{SkillError, discover_skills_index, load_skill_body};
 
 use dsb_provider_deepseek::ChatMessage;
 

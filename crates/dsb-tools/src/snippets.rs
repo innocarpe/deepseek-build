@@ -132,7 +132,8 @@ impl SnippetStore {
         if current_version != snippet.version {
             return Err(EditError::Stale);
         }
-        let content = fs::read_to_string(&snippet.path).map_err(|e| EditError::Io(e.to_string()))?;
+        let content =
+            fs::read_to_string(&snippet.path).map_err(|e| EditError::Io(e.to_string()))?;
         let (before, scope, after) = split_scope(&content, snippet.start_line, snippet.end_line);
         let count = scope.matches(old_string).count();
         match (count, expected_count) {
@@ -288,9 +289,7 @@ mod tests {
         let mut store = SnippetStore::new();
         // scope only line 1
         let (snip, _) = store.issue_for_file(&path, Some(1), Some(1)).unwrap();
-        store
-            .edit(&snip.snippet_id, "aaa", "XXX", None)
-            .unwrap();
+        store.edit(&snip.snippet_id, "aaa", "XXX", None).unwrap();
         let after = fs::read_to_string(&path).unwrap();
         assert!(after.starts_with("XXX\n"));
         assert!(after.contains("bbb"));
@@ -332,9 +331,7 @@ mod tests {
         write_file(&path, "xx\nxx\n");
         let mut store = SnippetStore::new();
         let (snip, _) = store.issue_for_file(&path, None, None).unwrap();
-        store
-            .edit(&snip.snippet_id, "xx", "yy", Some(2))
-            .unwrap();
+        store.edit(&snip.snippet_id, "xx", "yy", Some(2)).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "yy\nyy\n");
     }
 

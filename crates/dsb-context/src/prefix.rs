@@ -180,7 +180,9 @@ pub fn discover_project_instructions(workspace_root: &Path) -> Result<String, Pr
         parts.push(read_labeled(&agents)?);
     }
 
-    let nested = workspace_root.join(".deepseek-build").join("instructions.md");
+    let nested = workspace_root
+        .join(".deepseek-build")
+        .join("instructions.md");
     if nested.is_file() {
         parts.push(read_labeled(&nested)?);
     }
@@ -303,7 +305,13 @@ mod tests {
         assert!(!s.contains("Utc::now"));
         assert!(!s.to_ascii_lowercase().contains("timestamp"));
         assert_eq!(p.messages.len(), 1);
-        assert!(p.messages[0].content.as_ref().unwrap().starts_with("SYSTEM_FIXED"));
+        assert!(
+            p.messages[0]
+                .content
+                .as_ref()
+                .unwrap()
+                .starts_with("SYSTEM_FIXED")
+        );
     }
 
     #[test]
@@ -340,11 +348,7 @@ mod tests {
         fs::write(dir.path().join("DEEPSEEK.md"), "deep").unwrap();
         fs::write(dir.path().join("AGENTS.md"), "agents").unwrap();
         fs::create_dir_all(dir.path().join(".deepseek-build")).unwrap();
-        fs::write(
-            dir.path().join(".deepseek-build/instructions.md"),
-            "nested",
-        )
-        .unwrap();
+        fs::write(dir.path().join(".deepseek-build/instructions.md"), "nested").unwrap();
         let text = discover_project_instructions(dir.path()).unwrap();
         assert!(text.contains("### DEEPSEEK.md"));
         assert!(text.contains("deep"));

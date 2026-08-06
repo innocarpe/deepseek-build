@@ -24,32 +24,31 @@ pub fn pair_tool_results(messages: &[ChatMessage]) -> (Vec<ChatMessage>, Vec<Int
         let msg = &messages[i];
         out.push(msg.clone());
 
-        if msg.role == Role::Assistant {
-            if let Some(calls) = &msg.tool_calls {
-                if !calls.is_empty() {
-                    let mut pending: Vec<ToolCall> = calls.clone();
-                    let mut j = i + 1;
-                    while j < messages.len() && messages[j].role == Role::Tool {
-                        if let Some(id) = &messages[j].tool_call_id {
-                            pending.retain(|c| &c.id != id);
-                        }
-                        out.push(messages[j].clone());
-                        j += 1;
-                    }
-                    for call in pending {
-                        interrupted.push(InterruptedTool {
-                            tool_call_id: call.id.clone(),
-                            name: call.function.name.clone(),
-                        });
-                        out.push(ChatMessage::tool_result(
-                            call.id,
-                            PAIRING_INTERRUPTED_CONTENT,
-                        ));
-                    }
-                    i = j;
-                    continue;
+        if msg.role == Role::Assistant
+            && let Some(calls) = &msg.tool_calls
+            && !calls.is_empty()
+        {
+            let mut pending: Vec<ToolCall> = calls.clone();
+            let mut j = i + 1;
+            while j < messages.len() && messages[j].role == Role::Tool {
+                if let Some(id) = &messages[j].tool_call_id {
+                    pending.retain(|c| &c.id != id);
                 }
+                out.push(messages[j].clone());
+                j += 1;
             }
+            for call in pending {
+                interrupted.push(InterruptedTool {
+                    tool_call_id: call.id.clone(),
+                    name: call.function.name.clone(),
+                });
+                out.push(ChatMessage::tool_result(
+                    call.id,
+                    PAIRING_INTERRUPTED_CONTENT,
+                ));
+            }
+            i = j;
+            continue;
         }
         i += 1;
     }
@@ -111,11 +110,12 @@ mod tests {
             .iter()
             .find(|m| m.tool_call_id.as_deref() == Some("c2"))
             .unwrap();
-        assert!(c2
-            .content
-            .as_ref()
-            .unwrap()
-            .contains("tool_result_interrupted"));
+        assert!(
+            c2.content
+                .as_ref()
+                .unwrap()
+                .contains("tool_result_interrupted")
+        );
     }
 
     #[test]
@@ -133,9 +133,6 @@ mod tests {
     fn preserves_reasoning_on_assistant() {
         let msgs = vec![assistant_with_calls(vec![call("c1", "read")])];
         let (fixed, _) = pair_tool_results(&msgs);
-        assert_eq!(
-            fixed[0].reasoning_content.as_deref(),
-            Some("think")
-        );
+        assert_eq!(fixed[0].reasoning_content.as_deref(), Some("think"));
     }
 }

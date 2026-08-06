@@ -5,7 +5,7 @@ use std::fs;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -129,7 +129,10 @@ fn fingerprint_entries(entries: &[McpCatalogEntry]) -> String {
 }
 
 /// Load MCP config from workspace then user home (workspace wins on name collision).
-pub fn load_mcp_config(workspace: &Path, user_home: Option<&Path>) -> Result<McpConfigFile, McpError> {
+pub fn load_mcp_config(
+    workspace: &Path,
+    user_home: Option<&Path>,
+) -> Result<McpConfigFile, McpError> {
     let mut merged = McpConfigFile::default();
     let mut by_name: BTreeMap<String, McpServerConfig> = BTreeMap::new();
     let paths: Vec<std::path::PathBuf> = [

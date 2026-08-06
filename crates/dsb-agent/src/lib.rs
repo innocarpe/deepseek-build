@@ -12,11 +12,11 @@ mod session;
 mod subagent;
 
 pub use loop_::{Agent, AgentConfig, TurnEvent, TurnOutcome};
-pub use pairing::{pair_tool_results, InterruptedTool, PAIRING_INTERRUPTED_CONTENT};
-pub use parallel::{is_mutating_tool, partition_indices, MAX_PARALLEL_READONLY};
-pub use repair::{repair_tool_arguments, RepairError, RepairOutcome};
+pub use pairing::{InterruptedTool, PAIRING_INTERRUPTED_CONTENT, pair_tool_results};
+pub use parallel::{MAX_PARALLEL_READONLY, is_mutating_tool, partition_indices};
+pub use repair::{RepairError, RepairOutcome, repair_tool_arguments};
 pub use routing::{ModelRouter, Preset, RouteDecision, RouteSource, TurnModelOverride};
 pub use session::{SessionError, SessionRecord, SessionStore, SessionSummary};
 pub use subagent::{
-    parent_after_worker, run_worker, worker_stable_prefix, SubagentError, WorkerKind, WorkerOutcome,
+    SubagentError, WorkerKind, WorkerOutcome, parent_after_worker, run_worker, worker_stable_prefix,
 };

@@ -12,7 +12,7 @@ use dsb_provider_deepseek::ChatMessage;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::pairing::{pair_tool_results, InterruptedTool};
+use crate::pairing::{InterruptedTool, pair_tool_results};
 
 #[derive(Debug, Error)]
 pub enum SessionError {
@@ -87,7 +87,11 @@ impl SessionStore {
     }
 
     /// Create a new empty session file (meta line only). Returns the id.
-    pub fn create(&self, id: Option<&str>, workspace: Option<&str>) -> Result<String, SessionError> {
+    pub fn create(
+        &self,
+        id: Option<&str>,
+        workspace: Option<&str>,
+    ) -> Result<String, SessionError> {
         self.ensure_root()?;
         let id = match id {
             Some(s) => {
@@ -123,7 +127,14 @@ impl SessionStore {
     pub fn load(
         &self,
         id: &str,
-    ) -> Result<(Vec<ChatMessage>, Vec<InterruptedTool>, Option<SessionRecord>), SessionError> {
+    ) -> Result<
+        (
+            Vec<ChatMessage>,
+            Vec<InterruptedTool>,
+            Option<SessionRecord>,
+        ),
+        SessionError,
+    > {
         let path = self.path_for(id)?;
         if !path.exists() {
             return Err(SessionError::NotFound(id.to_string()));
@@ -144,13 +155,12 @@ impl SessionStore {
             if line.is_empty() {
                 continue;
             }
-            let rec: SessionRecord = serde_json::from_str(line).map_err(|source| {
-                SessionError::Json {
+            let rec: SessionRecord =
+                serde_json::from_str(line).map_err(|source| SessionError::Json {
                     path: path.clone(),
                     line: idx + 1,
                     source,
-                }
-            })?;
+                })?;
             match rec {
                 SessionRecord::Meta { .. } => meta = Some(rec),
                 SessionRecord::Message { message } => messages.push(message),
@@ -361,10 +371,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = SessionStore::new(dir.path());
         let id = store.create(Some("demo"), Some("/tmp/ws")).unwrap();
-        let msgs = vec![
-            ChatMessage::user("hi"),
-            ChatMessage::assistant("hello"),
-        ];
+        let msgs = vec![ChatMessage::user("hi"), ChatMessage::assistant("hello")];
         store.save(&id, &msgs, Some("/tmp/ws")).unwrap();
         let (loaded, holes, meta) = store.load(&id).unwrap();
         assert!(holes.is_empty());
@@ -403,9 +410,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = SessionStore::new(dir.path());
         store.create(Some("a"), None).unwrap();
-        store
-            .save("a", &[ChatMessage::user("x")], None)
-            .unwrap();
+        store.save("a", &[ChatMessage::user("x")], None).unwrap();
         let list = store.list().unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].id, "a");

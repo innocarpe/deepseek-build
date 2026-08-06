@@ -10,15 +10,20 @@ This file is standing instructions for any coding agent working in this repo.
 
 All meaningful work ships as a **PR**, not a direct push to `main`.
 
-Normative guide: [`docs/contributing/pull-requests.md`](docs/contributing/pull-requests.md)
+Normative guides:
+
+- [`docs/contributing/pull-requests.md`](docs/contributing/pull-requests.md) — full process
+- [`docs/contributing/examples.md`](docs/contributing/examples.md) — body quality bar
+- [`docs/contributing/review-checklist.md`](docs/contributing/review-checklist.md)
 
 Before claiming done:
 
 1. Branch: `<type>/<short-kebab>` (not `main`)
 2. Conventional title + matching **kind** label on `gh pr create --label …`
-3. Template: summary, test plan, milestone when known
-4. Verify: `gh pr view --json title,labels,milestone`
-5. CI green (`docs-hygiene`, and on PRs `pr-title` + `pr-kind-label`)
+3. Body meets examples.md quality for that kind (not empty checklist theater)
+4. Milestone when known; cache-impact honest for agent/prompt/tool changes
+5. Verify: `gh pr view --json title,labels,milestone`
+6. CI green (`docs-hygiene`, and on PRs `pr-title` + `pr-kind-label`)
 
 ## Source priorities (fail-close)
 

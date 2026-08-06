@@ -9,14 +9,17 @@ Thanks for your interest. This project is early: **docs and specs land before co
 3. For behavior changes, ensure a [spec](docs/specs/) exists or open a `spec` PR first.  
 4. Branch → PR → CI → squash-merge.  
 
-**Process guides (normative):**
+**Process guides (normative) — read these, not only the CI gates:**
 
 | Guide | Topic |
 |-------|--------|
-| [docs/contributing/pull-requests.md](docs/contributing/pull-requests.md) | PR size, titles, labels, review, merge |
+| [docs/contributing/pull-requests.md](docs/contributing/pull-requests.md) | Unit of work, titles, labels, body quality, merge, anti-patterns |
+| [docs/contributing/examples.md](docs/contributing/examples.md) | Filled PR body examples (`spec`/`feat`/`fix`/`docs`) |
+| [docs/contributing/review-checklist.md](docs/contributing/review-checklist.md) | Review / self-merge checklist |
 | [docs/contributing/commits.md](docs/contributing/commits.md) | Conventional Commits |
-| [docs/contributing/branches.md](docs/contributing/branches.md) | Branch naming |
+| [docs/contributing/branches.md](docs/contributing/branches.md) | Branch naming and lifecycle |
 | [docs/maintainers/github-labels.md](docs/maintainers/github-labels.md) | Labels |
+| [docs/adr/0003-pr-process.md](docs/adr/0003-pr-process.md) | Why this process |
 
 ## Development priorities (do not fight these)
 

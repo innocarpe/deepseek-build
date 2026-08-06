@@ -1,6 +1,9 @@
 ## Summary
 
-<!-- What changed, and why? Prefer 2–8 bullets. One coherent unit of work. -->
+<!--
+What changed AND why (not a file list).
+One coherent unit — see docs/contributing/pull-requests.md §3 and examples.md.
+-->
 
 -
 

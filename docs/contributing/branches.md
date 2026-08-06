@@ -1,8 +1,19 @@
 # Branch conventions
 
+---
+
 ## Default branch
 
-`main` — always releasable enough for the project’s current phase (docs-only today; later: buildable agent).
+`main` is the single integration branch.
+
+| Phase | What “healthy main” means |
+|-------|---------------------------|
+| Now (docs-first) | Docs/specs consistent; CI green; no secrets |
+| Later (runtime) | Buildable agent for the claimed milestone; no known broken defaults |
+
+There is **no long-lived `develop`** unless a future ADR introduces one.
+
+---
 
 ## Naming
 
@@ -10,48 +21,102 @@
 <type>/<short-kebab-description>
 ```
 
-| Prefix | Typical use |
-|--------|-------------|
-| `feat/` | User-visible work |
+| Prefix | Use |
+|--------|-----|
+| `feat/` | User/agent-visible behavior |
 | `fix/` | Bugfix |
-| `docs/` | Documentation / process |
-| `spec/` | Specs, PRD, ADR |
+| `docs/` | Documentation and process |
+| `spec/` | Specs, PRD/ADR behavior locks |
 | `chore/` | Tooling, labels, deps |
 | `ci/` | Workflows |
 | `refactor/` | Refactors |
 | `test/` | Tests |
 
-Optional: issue number for traceability:
+Optional issue number:
 
 ```text
-fix/123-shell-timeout
+fix/42-shell-timeout
 spec/10-cache-contract
+feat/17-provider-stream
 ```
 
-### Avoid
+### Good names
 
-- `update`, `stuff`, `innocarpe-patch-1` as the only name  
-- Long sentences in branch names  
-- Reusing a merged branch name for unrelated work (prefer a new name)
+```text
+spec/10-cache-contract
+feat/provider-stable-prefix
+docs/pr-conventions-depth
+fix/pr-title-scope-digits
+ci/docs-hygiene-required-paths
+```
+
+### Bad names
+
+```text
+update
+patch-1
+innocarpe-patch-2
+wip
+agent-stuff
+final-final-v2
+```
+
+---
 
 ## Lifecycle
 
 ```text
-main ──► branch ──► PR ──► CI ──► review ──► squash merge ──► delete branch
+main ──checkout -b──► branch ──push──► PR ──CI──► review ──squash merge──► delete branch
+         ▲                                         │
+         └──────── pull --rebase / merge main ─────┘  (keep branch current)
 ```
 
-1. `git fetch origin && git checkout main && git pull`  
-2. `git checkout -b docs/my-topic`  
-3. Commit; push; open PR  
-4. After merge: update local `main`, delete local branch  
+### Commands
 
-## Protected expectations (process)
+```bash
+git fetch origin
+git checkout main && git pull origin main
+git checkout -b docs/my-topic
+# … work …
+git push -u origin HEAD
+gh pr create …   # see pull-requests.md
+# after merge:
+git checkout main && git pull origin main
+git branch -d docs/my-topic
+git push origin --delete docs/my-topic   # if not auto-deleted
+```
 
-Even if GitHub branch protection is relaxed for early solo work:
+---
 
-- Do not force-push `main`  
-- Do not commit directly to `main` for multi-file work  
-- Rebase or merge `main` into your branch to resolve conflicts **on the branch**, not by rewriting `main`  
+## Keeping a branch current
+
+Prefer:
+
+```bash
+git fetch origin
+git rebase origin/main
+# or: git merge origin/main
+```
+
+Resolve conflicts **on the branch**. Never “fix history” by force-pushing `main`.
+
+If a PR is stacked on another PR’s branch, retarget base to `main` after the parent merges.
+
+---
+
+## Protection expectations
+
+Even when GitHub branch protection is light (solo early phase):
+
+| Rule | Level |
+|------|--------|
+| No force-push to `main` | Hard |
+| No multi-file direct commits to `main` | Hard (process) |
+| PR required for meaningful work | Hard (process + culture) |
+| Required status checks | Soft now / tighten later |
+| Required human review count | Not required early |
+
+---
 
 ## Remote
 
@@ -59,4 +124,4 @@ Even if GitHub branch protection is relaxed for early solo work:
 origin → nina.v@example.com:innocarpe/deepseek-build.git
 ```
 
-Forks: open PRs against `innocarpe/deepseek-build` `main`.
+External contributors: fork → PR against `innocarpe/deepseek-build` `main`.

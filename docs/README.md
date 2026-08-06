@@ -12,7 +12,7 @@ Folder structure mirrors product truth. **Write the product here before the bina
 | [adr/](adr/) | Architecture Decision Records | Future you |
 | [research/](research/) | Analysis of Grok / Reasonix / Deep Code | Context only |
 | [user-guide/](user-guide/) | End-user manuals (Grok-style, later) | Users |
-| [contributing/](contributing/) | PR / commit / branch process (normative) | Contributors |
+| [contributing/](contributing/) | PR process, examples, review checklist (normative) | Contributors |
 | [maintainers/](maintainers/) | Labels and maintainer ops | Maintainers |
 
 ## Reading order (onboarding)

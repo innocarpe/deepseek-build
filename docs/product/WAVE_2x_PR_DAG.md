@@ -1,7 +1,7 @@
 # Wave 2.x PR DAG — Grok base product train
 
 **Normative for product work after [REPLAN_2.0.md](./REPLAN_2.0.md).**  
-**Plan id:** `grokbase-2x`  
+**Plan id:** `grokbase-2x` — full story board: [GROKBASE_2X_GOALS.md](./GROKBASE_2X_GOALS.md)  
 **Do not invent overnight units** — extend this file in a docs PR if the DAG must change.
 
 Scaffold Waves A–D (`WAVE_A_PR_DAG.md`, `WAVE_B_PR_DAG.md`) are **historical**.

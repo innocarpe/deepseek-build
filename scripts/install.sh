@@ -102,13 +102,13 @@ if [[ ! -x "$BIN_DIR/deepseek-build" || ! -x "$BIN_DIR/dsb" ]]; then
   exit 1
 fi
 
-# Product 2.0: Grok-class agent composition root as deepseek-build-agent.
+# Product: DeepSeek full-screen agent TUI as deepseek-build-agent (required for bare `dsb`).
 AGENT_NAME="deepseek-build-agent"
 VENDOR_PAGER=""
 if [[ -d "$ROOT/third_party/grok-build" ]]; then
-  echo "install.sh: building vendored Grok pager (xai-grok-pager) — may take several minutes…"
+  echo "install.sh: building DeepSeek full-screen agent TUI — may take several minutes…"
   if ! "$ROOT/scripts/build-grok-pager.sh" release; then
-    echo "install.sh: WARNING: Grok pager build failed; wrapper installs but no-args TTY agent will error until agent bin exists." >&2
+    echo "install.sh: ERROR: agent build failed; bare \`dsb\` TUI will not work until this succeeds." >&2
   else
     for cand in \
       "$ROOT/third_party/grok-build/target/release/xai-grok-pager" \
@@ -120,17 +120,15 @@ if [[ -d "$ROOT/third_party/grok-build" ]]; then
     done
   fi
 else
-  echo "install.sh: WARNING: third_party/grok-build missing — skip agent binary" >&2
+  echo "install.sh: ERROR: third_party/grok-build missing — cannot install agent TUI" >&2
 fi
 
 if [[ -n "$VENDOR_PAGER" ]]; then
   install -m 755 "$VENDOR_PAGER" "$BIN_DIR/$AGENT_NAME"
-  # Also keep upstream name for debugging.
-  install -m 755 "$VENDOR_PAGER" "$BIN_DIR/xai-grok-pager"
   echo "install.sh: installed agent:"
-  echo "  $BIN_DIR/$AGENT_NAME  ←  $VENDOR_PAGER"
+  echo "  $BIN_DIR/$AGENT_NAME  ←  DeepSeek full-screen TUI"
 else
-  echo "install.sh: agent binary not installed (build failed or missing vendor tree)"
+  echo "install.sh: agent binary not installed (build failed or missing vendor tree)" >&2
 fi
 
 PRIMARY_VER="$("$BIN_DIR/deepseek-build" --version 2>&1 || true)"
@@ -140,7 +138,9 @@ echo "install.sh: installed:"
 echo "  $BIN_DIR/deepseek-build  →  $PRIMARY_VER"
 echo "  $BIN_DIR/dsb             →  $ALIAS_VER"
 if [[ -x "$BIN_DIR/$AGENT_NAME" ]]; then
-  echo "  $BIN_DIR/$AGENT_NAME  (Grok-class full-screen entry for no-args TTY)"
+  echo "  $BIN_DIR/$AGENT_NAME  (required for bare \`dsb\` → DeepSeek TUI)"
+  echo ""
+  echo "install.sh: product entry:  dsb"
 fi
 
 # PATH check (best-effort; do not fail install if shell config is nonstandard)

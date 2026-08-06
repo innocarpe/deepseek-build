@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 2.0.3 — 2026-08-07
+
+### Install (product contract)
+
+- **`npm install -g @innocarpe/deepseek-build` postinstall** now builds and installs:
+  1. wrapper `dsb` / `deepseek-build`
+  2. full-screen agent `deepseek-build-agent` (DeepSeek TUI)
+- After install + PATH: **`dsb`** alone opens DeepSeek full-screen TUI
+- Requires Rust + protoc (or dotslash). First agent build may take several minutes.
+- Skip agent only: `DEEPSEEK_BUILD_SKIP_AGENT_BUILD=1` (not recommended)
+
+
 ## 2.0.2 — 2026-08-07
 
 ### Product entry (DeepSeek TUI only)

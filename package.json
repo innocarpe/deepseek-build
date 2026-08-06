@@ -1,7 +1,7 @@
 {
   "name": "@innocarpe/deepseek-build",
-  "version": "2.0.2",
-  "description": "DeepSeek Build 2.0.2 — type dsb for DeepSeek full-screen TUI (not Grok product UI).",
+  "version": "2.0.3",
+  "description": "DeepSeek Build — npm i -g then type dsb for full-screen DeepSeek TUI",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

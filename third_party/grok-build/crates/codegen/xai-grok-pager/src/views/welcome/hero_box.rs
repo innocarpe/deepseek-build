@@ -28,7 +28,7 @@ const LOGO_H_PAD: u16 = 3;
 /// message never paints over the button.
 const UPGRADE_CTA_ROWS: u16 = 2;
 
-const HERO_SUBTITLE: &str = "Thanks for trying Grok Build, give feedback with /feedback!";
+const HERO_SUBTITLE: &str = "DeepSeek Build — Grok-class agent, DeepSeek native. Feedback: /feedback";
 
 use super::{PROMPT_HEIGHT, VERSION_GAP};
 

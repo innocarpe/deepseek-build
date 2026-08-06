@@ -145,7 +145,8 @@ pub fn highlight_line(
 /// theme based on OS/terminal polarity detection.
 pub fn get_syntect() -> &'static Syntect {
     match crate::theme::Theme::current_kind() {
-        ThemeKind::GrokNight
+        ThemeKind::DeepSeekNight
+        | ThemeKind::GrokNight
         | ThemeKind::RosePineMoon
         | ThemeKind::OscuraMidnight
         | ThemeKind::Auto => SYNTECT_GROKNIGHT

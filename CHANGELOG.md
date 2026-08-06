@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 2.0.1 — 2026-08-07
+
+### UI / UX (DeepSeek product chrome)
+
+- **DeepSeekNight** default TUI theme (`#4D6BFE` accents) in vendored Grok pager
+- Welcome hero: DeepSeek whale braille logo + **DeepSeek Build** product strings
+- Launcher splash: whale + DeepSeek Build before full-screen agent
+- Force `GROK_THEME=deepseeknight` from `dsb` entry (override with `DEEPSEEK_BUILD_THEME`)
+- Product config seed includes `theme = "deepseeknight"`
+
+
 ## 2.0.0 — 2026-08-06
 
 ### Product

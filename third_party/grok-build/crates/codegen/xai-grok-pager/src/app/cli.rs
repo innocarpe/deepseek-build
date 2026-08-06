@@ -400,7 +400,7 @@ pub struct LeaderArgs {
 #[command(
     name = "grok",
     version = env!("VERSION_WITH_COMMIT"),
-    about = "Grok Build TUI",
+    about = "DeepSeek Build TUI",
     disable_version_flag = true,
     next_display_order = None,
     help_template = "\

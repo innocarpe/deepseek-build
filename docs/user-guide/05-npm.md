@@ -1,6 +1,6 @@
 # 05 — npm install
 
-**Product version:** `0.10.0`+  
+**Product version:** `0.11.0`+  
 
 | Surface | Value |
 |---------|--------|

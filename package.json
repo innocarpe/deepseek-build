@@ -1,6 +1,6 @@
 {
   "name": "@innocarpe/deepseek-build",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "DeepSeek-native terminal coding agent (CLI: deepseek-build, dsb)",
   "license": "Apache-2.0",
   "repository": {

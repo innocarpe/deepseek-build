@@ -26,8 +26,16 @@ Combines three first-class references:
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). PRs need a **kind label** (`feat`/`fix`/`docs`/`spec`/`chore`/…).  
-Label catalog: [`.github/labels.json`](.github/labels.json).
+See [CONTRIBUTING.md](CONTRIBUTING.md). **All meaningful work lands via PR.**
+
+| Doc | Topic |
+|-----|--------|
+| [PR conventions](docs/contributing/pull-requests.md) | Size, titles, labels, review, squash-merge |
+| [Commits](docs/contributing/commits.md) | Conventional Commits |
+| [Branches](docs/contributing/branches.md) | Branch naming |
+| [Labels](docs/maintainers/github-labels.md) | Kind / area / size catalog |
+
+PR title must be Conventional Commits; ready PRs need exactly one kind label (CI enforced).
 
 ## Repository map
 

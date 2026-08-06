@@ -5,9 +5,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, edited, reopened, synchronize, ready_for_review]
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   docs-hygiene:
@@ -35,6 +37,9 @@ jobs:
             docs/product/MILESTONES.md
             docs/architecture/REPO_LAYOUT.md
             docs/specs/00-overview.md
+            docs/contributing/pull-requests.md
+            docs/contributing/commits.md
+            docs/contributing/branches.md
             .github/labels.json
             .github/PULL_REQUEST_TEMPLATE.md
           )
@@ -54,10 +59,63 @@ jobs:
       - name: No accidental secrets patterns in tracked files
         run: |
           set -euo pipefail
-          # Cheap guard: sk- live keys should not be committed
           if git grep -nE 'sk-[a-zA-Z0-9]{20,}' -- . \
             ':(exclude)*.md' ':(exclude).github/**' 2>/dev/null; then
             echo "possible API key material in non-doc files" >&2
             exit 1
           fi
           echo "ok no obvious key patterns in code paths"
+
+  pr-title:
+    name: pr-title
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate Conventional Commits PR title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          # type(scope)!: summary  — aligned with docs/contributing/pull-requests.md
+          pattern='^(feat|fix|docs|spec|chore|refactor|test|ci|perf|build)(\([a-z0-9][a-z0-9/_-]*\))?\!?: .+'
+          echo "title: ${TITLE}"
+          if ! printf '%s\n' "${TITLE}" | grep -Eq "${pattern}"; then
+            echo "::error::PR title must be Conventional Commits, e.g. 'docs(contributing): add PR guide'"
+            echo "allowed types: feat fix docs spec chore refactor test ci perf build"
+            exit 1
+          fi
+          # discourage trailing period / empty summary after colon
+          if printf '%s\n' "${TITLE}" | grep -Eq '\.$'; then
+            echo "::error::PR title should not end with a period"
+            exit 1
+          fi
+          echo "ok: conventional PR title"
+
+  pr-kind-label:
+    name: pr-kind-label
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require exactly one kind label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          labels="$(gh api "repos/${REPO}/pulls/${PR}" --jq '[.labels[].name] | join(",")')"
+          echo "labels: ${labels:-<none>}"
+          count=0
+          if [[ -n "${labels}" ]]; then
+            IFS=',' read -r -a arr <<< "${labels}"
+            for l in "${arr[@]}"; do
+              case "${l}" in
+                feat|fix|docs|spec|chore|refactor|test|ci) count=$((count + 1)) ;;
+              esac
+            done
+          fi
+          if [[ "${count}" -ne 1 ]]; then
+            echo "::error::Ready PRs need exactly one kind label (feat|fix|docs|spec|chore|refactor|test|ci). found=${count}"
+            exit 1
+          fi
+          echo "ok: kind label count=${count}"

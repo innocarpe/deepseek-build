@@ -11,6 +11,7 @@ publish = false
 
 [dependencies]
 dsb-provider-deepseek = { path = "../dsb-provider-deepseek" }
+dsb-context = { path = "../dsb-context" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

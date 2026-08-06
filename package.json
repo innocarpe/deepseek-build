@@ -1,7 +1,7 @@
 {
-  "name": "deepseek-build",
+  "name": "@innocarpe/deepseek-build",
   "version": "0.7.0",
-  "description": "DeepSeek-native terminal coding agent (binaries: deepseek-build, dsb)",
+  "description": "DeepSeek-native terminal coding agent (CLI: deepseek-build, dsb)",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -36,7 +36,11 @@
   ],
   "scripts": {
     "postinstall": "node npm/scripts/postinstall.js",
-    "version-check": "node npm/scripts/check-version-match.js"
+    "version-check": "node npm/scripts/check-version-match.js",
+    "prepublishOnly": "node npm/scripts/check-version-match.js && ./scripts/check-semver.sh"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "engines": {
     "node": ">=18"

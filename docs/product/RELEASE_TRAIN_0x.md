@@ -1,25 +1,20 @@
-# Release train — Wave A (`0.x.y` dogfood band)
+# Release train — Wave A only (`0.2.0`–`0.7.0`)
 
-**Status:** Active Wave A detail (see full vision board: [MASTER_PLAN.md](./MASTER_PLAN.md))  
-**SemVer rule:** Always full `MAJOR.MINOR.PATCH` — see [versioning.md](../contributing/versioning.md).  
-**CLI:** `deepseek-build` (primary) · `dsb` (alias) — [ADR 0006](../adr/0006-cli-names-and-semver.md).  
-**After this train:** continue [ULTRAGOAL_CHAIN.md](./ULTRAGOAL_CHAIN.md) → `native-0x` (not stop forever).
+**Status:** Wave A **complete on `main` at `0.7.0`** (re-check `Cargo.toml`).  
+**Full vision board:** [MASTER_PLAN.md](./MASTER_PLAN.md)  
+**SSOT priority:** [SSOT.md](./SSOT.md)  
+**PR units (historical fixed DAG):** [WAVE_A_PR_DAG.md](./WAVE_A_PR_DAG.md)  
+**After Wave A:** [ULTRAGOAL_CHAIN.md](./ULTRAGOAL_CHAIN.md) → **`native-0x`** (Wave B). Do **not** use this file for `0.8.0+`.
+
+**SemVer:** full `MAJOR.MINOR.PATCH` only.  
+**CLI:** `deepseek-build` · `dsb` (ADR 0006).
 
 ---
 
 ## 1. Intent
 
-We stay on the **`0.y.z` line for a long time.**
-
-| Do | Do not |
-|----|--------|
-| Ship frequent **`0.y.z`** slices that a human can install and try | Rush a fake **`1.0.0`** |
-| Define **dogfood-usable** as the near north star | Treat M6/`1.0.0` as the only meaningful finish line |
-| Map each `0.y.0` minor to a **user-visible capability** | Bump versions with no usable delta |
-
-**`1.0.0` is out of scope for this train.** It is only considered *after* dogfood-usable is true for weeks and packaging is boring. Until then every release is `0.y.z`.
-
-Milestones **M0–M6** (feature themes) still apply. This file is the **SemVer release train** that sequences them into installable versions.
+Ship user-visible **`0.y.0`** minors until **dogfood-usable** and npm **package** exists.  
+**`1.0.0` is out of Wave A.** Parallel tools / subagents are **Wave C**, not this file.
 
 ---
 
@@ -27,84 +22,68 @@ Milestones **M0–M6** (feature themes) still apply. This file is the **SemVer r
 
 | Item | Value |
 |------|--------|
-| Current version | **`0.7.0`** |
-| What works | PATH install; auth; chat; tools; dogfood; sessions; skills surface; **npm package** with bins `deepseek-build` + `dsb` (SemVer-matched) |
-| What does **not** | Parallel tools (needs G4); subagents; interactive ask; published npm registry push (owner-gated); full OAuth login |
-
-**Honest label for `0.7.0`:** first wave of dogfood-0x train complete (install → tools → proof → sessions → surface → npm).
-
----
-
-## 3. Dogfood-usable definition (train exit for “I can use this”)
-
-Owner (you) can do **all** of the following on a real repo without reading the Rust tree:
-
-1. **Install once** so `deepseek-build` and `dsb` are on `PATH` (script, `cargo install`, or npm — at least one supported path).  
-2. **Auth once** (`DEEPSEEK_API_KEY` or `~/.deepseek-build/credentials.json`).  
-3. From a project directory:  
-   `deepseek-build chat` or `dsb chat`  
-   multi-turn Flash chat works; `/pro` shows `deepseek-v4-pro`.  
-4. Agent can **read** project files, **edit** via snippet contract, **create** new files, run **search/grep**, and run **bash** under permissions (not permanently dry-run for trusted local use).  
-5. Default or one documented profile allows **workspace write** without remembering obscure flags every time (still fail-closed outside workspace).  
-6. Documented smoke in README reproduces the above.  
-7. Version string is full SemVer (e.g. `deepseek-build 0.4.0`).
-
-When this holds, we call the train **dogfood-usable** (still **`0.y.z`**, not `1.0.0`).
+| Version | Read `Cargo.toml` (expect **`0.7.0`**) |
+| Install | `./scripts/install.sh` + npm wrappers ([user-guide/01-install.md](../user-guide/01-install.md), [05-npm.md](../user-guide/05-npm.md)) |
+| Tools | read/edit/write/grep/bash; `--dogfood` |
+| Sessions | **0.5.0** JSONL persist/resume |
+| Surface | **0.6.0** skills index min + thinking/effort UX |
+| npm | **0.7.0** package dual bins; **registry publish = human** (ADR 0007) |
 
 ---
 
-## 4. Planned minors (`0.y.0` themes)
+## 3. Dogfood-usable (executable)
 
-Patch versions (`0.y.z`, z>0) are bugfixes/docs on the same theme. Minors below are **capability jumps**. Dates are not promised — order is.
+Human checklist **and** machine check:
 
-| Target SemVer | Theme | User can… | Maps roughly to |
-|---------------|--------|-----------|-----------------|
-| **`0.1.0`** | Engine preview | Build from source; API chat; tool core | M1 + tools start |
-| **`0.2.0`** | **Installable CLI** | Put `deepseek-build`/`dsb` on PATH without remembering cargo flags | packaging slice of M6 early |
-| **`0.3.0`** | **Coding tools daily** | grep/search; bash execute under policy; dogfood-friendly workspace write profile; agent loop hardened | M2 core (minus parallel) |
-| **`0.4.0`** | **Dogfood proof** | Owner completes a real small change in this repo *using* the agent; notes in docs | M2 dogfood exit |
-| **`0.5.0`** | **Sessions** | Resume a prior chat/session under `~/.deepseek-build/` | M5 partial |
-| **`0.6.0`** | **Surface** | Skills index + load; thinking/effort user flags; basic `/model` or flags | M3 partial |
-| **`0.7.0`** | **npm distribute** | `npm i -g …` exposes both bin names; version matches cargo | packaging |
-| **`0.8.0`+** | **Later waves** | Parallel / native surface / throughput — see [MASTER_PLAN.md](./MASTER_PLAN.md) Waves B–D (not all Wave A) | B–D |
+```bash
+./scripts/smoke-dogfood.sh
+# optional live:
+# DEEPSEEK_API_KEY=… ./scripts/smoke-dogfood.sh
+```
 
-Wave A **stops at dogfood-usable / `0.7.0` npm**. Parallel and `1.0.0` are **not** Wave A.
+| # | Criterion | How verified |
+|---|-----------|----------------|
+| 1 | Bins installable / buildable | smoke builds dual bins |
+| 2 | Auth possible | env `DEEPSEEK_API_KEY` or credentials file (live section) |
+| 3 | `run`/`chat` work | help + optional live run |
+| 4 | Tools: read/edit/write/search/bash under policy | `cargo test --workspace` |
+| 5 | Workspace write profile | `--dogfood` in CLI |
+| 6 | Documented smoke | README + user-guide |
+| 7 | Full SemVer on both bins | smoke version check |
 
-### Explicit non-goals of the `0.x` train (until scheduled)
-
-- Declaring **`1.0.0`**
-- Full subagent/worktree product (may start after dogfood; still `0.x` if needed)
-- Gajae multi-stage planning
-- Process-police CI
+**Sessions / npm package** are Wave A **delivery** goals (`0.5.0`/`0.7.0`) but dogfood-usable **coding** can hold once 1–7 pass even if registry publish is pending.
 
 ---
 
-## 5. Ultragoal mapping
+## 4. Minors (Wave A only)
 
-Durable ultragoal plan id: **`dogfood-0x`** (see `.omc/ultragoal/plans/dogfood-0x/` when created).
+| SemVer | Theme | Status |
+|--------|--------|--------|
+| `0.1.0` | Engine preview | shipped |
+| `0.2.0` | PATH install | shipped |
+| `0.3.0` | Tools daily + `--dogfood` | shipped |
+| `0.4.0` | Dogfood proof note | shipped |
+| `0.5.0` | Sessions | shipped |
+| `0.6.0` | Skills index + effort UX | shipped |
+| `0.7.0` | npm package dual bins | shipped (publish human) |
 
-| Story | SemVer target | Objective |
-|-------|---------------|-----------|
-| Install | **`0.2.0`** | Local install path + PATH + dual bin smoke |
-| ToolsDaily | **`0.3.0`** | Search + bash execute + dogfood write profile + tests |
-| DogfoodProof | **`0.4.0`** | Real task on this repo; document commands used |
-| Sessions | **`0.5.0`** | Persist/resume session JSONL |
-| Surface | **`0.6.0`** | Skills min + model/effort UX |
-| Npm | **`0.7.0`** | npm package both bins; matching SemVer |
-| Parallel | **`0.8.0`** | Spec 50 + G4 + parallel dispatch |
-| Harden | **`0.9.0`** | CI smoke + limits + changelog |
-
-After **DogfoodProof (`0.4.0`)** the owner re-evaluates: keep pushing `0.5.0+` or pause on daily use.
+**Not in this document:** `0.8.0+` — see MASTER_PLAN Waves B–D and [WAVE_B_PR_DAG.md](./WAVE_B_PR_DAG.md).
 
 ---
 
-## 6. Rules for agents
+## 5. Ultragoal
 
-1. Prefer **small vertical PRs** that can ship a `0.y.z` or progress one story.  
-2. Every release PR: bump workspace SemVer (`MAJOR.MINOR.PATCH` full form), run `./scripts/check-semver.sh`, mention both CLI names.  
-3. Do not mark **`1.0.0`** or “v1 done” in ultragoal evidence.  
-4. Update this table checkboxes when a minor ships (in the same PR as the version bump when possible).  
-5. GATES still gate features (G4 before parallel, etc.).
+Plan **`dogfood-0x`**: expect **7/7 complete** after `0.7.0`.  
+Next plan: **`native-0x`**.
+
+---
+
+## 6. Agent rules
+
+1. PR units first — [ULTRAGOAL_PR_PLANNING.md](./ULTRAGOAL_PR_PLANNING.md) + [stack-merge-runbook.md](../contributing/stack-merge-runbook.md).  
+2. SemVer full triples; dual CLI.  
+3. Do not re-open Wave A minors unless smoke fails.  
+4. npm **publish** never required for agent story complete (ADR 0007).  
 
 ---
 
@@ -112,18 +91,4 @@ After **DogfoodProof (`0.4.0`)** the owner re-evaluates: keep pushing `0.5.0+` o
 
 | SemVer | Date | Notes |
 |--------|------|--------|
-| `0.1.0` | 2026-08-06 | Engine + dual CLI from source; tools core |
-| `0.2.0` | 2026-08-06 | PATH install for `deepseek-build` + `dsb` (#18) |
-| `0.3.0` | 2026-08-06 | Tools daily: `grep` + `--dogfood` write/bash profile (out-of-cwd denied) (#19) |
-| `0.4.0` | 2026-08-06 | Dogfood proof: live `run` pong + agent write of `docs/dogfood/2026-08-06-live-smoke.md`; auth via credentials.json |
-| `0.5.0` | 2026-08-06 | Sessions: JSONL under `~/.deepseek-build/sessions/`; `--session` resume; `sessions list/show/delete`; spec 15 tool-pair repair on load |
-| `0.6.0` | 2026-08-06 | Surface: skills index in stable prefix; on-demand `skill` tool; `--effort` / `--thinking` / `--no-thinking`; model visibility includes thinking+effort |
-| `0.7.0` | 2026-08-06 | npm: `package.json` bin both names; version matches cargo; postinstall cargo install; wrapper + docs |
-
----
-
-## 8. Related
-
-- [MILESTONES.md](./MILESTONES.md) — feature themes M0–M6  
-- [versioning.md](../contributing/versioning.md) · [releases.md](../contributing/releases.md)  
-- [GATES.md](../GATES.md)  
+| `0.1.0`–`0.7.0` | 2026-08-06 | Wave A complete on main (#18–#26) |

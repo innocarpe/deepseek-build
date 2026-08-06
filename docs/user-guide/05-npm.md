@@ -1,27 +1,50 @@
 # 05 — npm install
 
 **Product version:** `0.7.0`+  
-**Bins:** `deepseek-build` (primary) · `dsb` (alias)
 
-## Package
+| Surface | Value |
+|---------|--------|
+| **npm package** | `@innocarpe/deepseek-build` |
+| **CLI commands** | `deepseek-build` (primary) · `dsb` (alias) — [ADR 0006](../adr/0006-cli-names-and-semver.md) |
+
+Package name and command names are **different on purpose** (same pattern as many scoped CLIs).
+
+## Package layout
 
 Root `package.json`:
 
 | Field | Value |
 |-------|--------|
-| `version` | Must equal workspace Cargo SemVer (**0.7.0**) |
+| `name` | `@innocarpe/deepseek-build` |
+| `version` | Must equal workspace Cargo SemVer |
 | `bin.deepseek-build` | `npm/bin/deepseek-build.js` |
 | `bin.dsb` | `npm/bin/dsb.js` |
+| `publishConfig.access` | `public` (scoped package is public) |
 
-## Install (local / global)
+## Install (after registry publish)
 
 ```bash
-# Global from git checkout
+npm install -g @innocarpe/deepseek-build
+
+deepseek-build --version
+dsb --version
+```
+
+One-shot:
+
+```bash
+npx @innocarpe/deepseek-build --version
+```
+
+Requires a one-time native build path today (Rust/cargo via postinstall, or `./scripts/install.sh` into `~/.deepseek-build/bin`).
+
+## Install from git checkout (dev)
+
+```bash
 git clone https://github.com/innocarpe/deepseek-build.git
 cd deepseek-build
 npm install -g .
 
-# Requires Rust/cargo for postinstall native build (or run ./scripts/install.sh first)
 deepseek-build --version
 dsb --version
 ```
@@ -35,7 +58,7 @@ DEEPSEEK_BUILD_SKIP_POSTINSTALL=1 npm install -g .
 
 ## How wrappers work
 
-Node shims resolve the native binary from:
+Node shims resolve the **native** binary from:
 
 1. `DEEPSEEK_BUILD_BIN` (absolute path override)
 2. `~/.deepseek-build/bin/{deepseek-build,dsb}`
@@ -44,9 +67,35 @@ Node shims resolve the native binary from:
 
 ## Publish (owner)
 
+Prerequisites:
+
+1. npm account with rights to the **`@innocarpe`** org (or create the org on npmjs.com)
+2. `npm login` / `npm whoami` succeeds
+
 ```bash
+cd /path/to/deepseek-build
+git checkout main && git pull
 ./scripts/check-semver.sh
-npm publish --access public   # when ready; not required for dogfood-0x complete
+node npm/scripts/check-version-match.js
+npm pack --dry-run          # review tarball contents
+npm publish --access public # publishConfig also sets access=public
+```
+
+Verify:
+
+```bash
+npm view @innocarpe/deepseek-build version
+npm install -g @innocarpe/deepseek-build
+deepseek-build --version
+dsb --version
 ```
 
 Never put API keys in the package.
+
+## Name policy
+
+| Kind | Name | Change often? |
+|------|------|----------------|
+| npm package | `@innocarpe/deepseek-build` | Rare (ownership / branding) |
+| CLI | `deepseek-build`, `dsb` | No — product identity (ADR 0006) |
+| Config dir | `~/.deepseek-build/` | No |

@@ -155,6 +155,14 @@ gitGraph
 
 **Tooling:** `gh pr create --base <branch>` for stacks; Graphite optional. Document stack order in each PR body (`Depends on #N`).
 
+**Exact squash-stack repair, merge predicates, failure ladder:**  
+[stack-merge-runbook.md](../contributing/stack-merge-runbook.md) — **follow it; do not invent rebase steps.**
+
+**Fixed unit lists (do not re-invent overnight):**
+
+- Wave A: [WAVE_A_PR_DAG.md](./WAVE_A_PR_DAG.md)  
+- Wave B: [WAVE_B_PR_DAG.md](./WAVE_B_PR_DAG.md)  
+
 ---
 
 ## 3. Ultragoal story template (append to story start)

@@ -73,23 +73,32 @@ Both commands must report the **same** full SemVer.
 
 ### npm (both bins)
 
-`package.json` version **matches** Cargo workspace SemVer. Bins: **`deepseek-build`** and **`dsb`**.
+| | |
+|--|--|
+| **Package name** | `@innocarpe/deepseek-build` |
+| **CLI commands** (unchanged) | `deepseek-build` · `dsb` |
+| **version** | matches Cargo workspace SemVer |
 
 ```bash
-# From a checkout (builds native bins via postinstall when cargo is available):
-npm install -g .
-# or one-shot:
-npx --yes . --version   # if linked; prefer after install:
+# After registry publish (owner):
+npm install -g @innocarpe/deepseek-build
+# or:
+npx @innocarpe/deepseek-build --version
+
+# Commands are still the product names (not the scoped package id):
 deepseek-build --version
 dsb --version
 
-# Version consistency:
+# From a git checkout (dev / pre-publish):
+npm install -g .
+# postinstall builds native bins when cargo is available
+
+# Version consistency (cargo ↔ npm):
 node npm/scripts/check-version-match.js
 ./scripts/check-semver.sh
 ```
 
-Publishing to the public registry is **owner-gated** (`npm publish`); the package layout is ready.  
-Native binary still needs Rust/cargo once (postinstall or `./scripts/install.sh`).
+Native binary still needs Rust/cargo once (postinstall or `./scripts/install.sh`) until prebuilt binaries land.
 
 Config directory (not a command name): `~/.deepseek-build/`.
 

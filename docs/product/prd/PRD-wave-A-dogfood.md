@@ -33,21 +33,17 @@ Reach **dogfood-usable**: install → auth → chat → read/edit/write/search/b
 
 ## Exit criteria (all required)
 
-- [ ] All `dogfood-0x` ultragoal stories complete  
-- [ ] Dogfood-usable checklist in [RELEASE_TRAIN_0x.md](../RELEASE_TRAIN_0x.md) §3  
-- [ ] Version ≥ **`0.7.0`** or documented residual gaps with owner accept  
-- [ ] Dual CLI + full SemVer on every release  
+- [x] All `dogfood-0x` ultragoal stories complete (ledger)  
+- [x] `./scripts/smoke-dogfood.sh` offline core passes  
+- [x] Version **`0.7.0`** package on `main`  
+- [x] Dual CLI + full SemVer  
+- [ ] Human `npm publish` optional (ADR 0007) — not required for wave exit  
 
 ## Minors
 
-| SemVer | Capability |
-|--------|------------|
-| `0.2.0` | Install / PATH (**shipped**) |
-| `0.3.0` | Tools daily (**shipped** if on main) |
-| `0.4.0` | Dogfood proof |
-| `0.5.0` | Sessions |
-| `0.6.0` | Surface min |
-| `0.7.0` | npm |
+| SemVer | Capability | Status |
+|--------|------------|--------|
+| `0.2.0`–`0.7.0` | Install → tools → dogfood → sessions → surface → npm package | **shipped** |
 
 ## Metrics (qualitative)
 

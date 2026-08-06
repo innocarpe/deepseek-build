@@ -21,6 +21,9 @@ This is the **one board**. Other docs plug into it; they do not replace it.
 | [HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.md) | L1/L2/L3 conflict rules |
 | [ULTRAGOAL_CHAIN.md](./ULTRAGOAL_CHAIN.md) | How to chain plans overnight |
 | [ULTRAGOAL_PR_PLANNING.md](./ULTRAGOAL_PR_PLANNING.md) | **Mandatory:** PR units, parallel/sequential DAG, atomic commits, stacking |
+| [SSOT.md](./SSOT.md) | Conflict priority when docs disagree |
+| [WAVE_A_PR_DAG.md](./WAVE_A_PR_DAG.md) / [WAVE_B_PR_DAG.md](./WAVE_B_PR_DAG.md) | Fixed unit DAGs (no overnight invention) |
+| [stack-merge-runbook.md](../contributing/stack-merge-runbook.md) | Squash-stack repair + failure ladder |
 
 ---
 
@@ -68,10 +71,10 @@ mindmap
 
 | Item | Value |
 |------|--------|
-| Version on `main` | Read `Cargo.toml` (expect **`0.3.0`+** while Wave A runs) |
-| Active ultragoal | **`dogfood-0x`** (Wave A) — then auto-chain to `native-0x` |
-| Gates green | **G0–G3** |
-| Gates red | **G4–G6** (parallel / subagents / skills-MCP-sessions specs readiness) |
+| Version on `main` | Read `Cargo.toml` (expect **`0.7.0`** after Wave A) |
+| Active ultragoal | **`dogfood-0x` complete** → start **`native-0x`** (Wave B) |
+| Gates green | **G0–G3**, **G6a** (sessions), **G6b** (skills) |
+| Gates red | **G4**, **G5**, **G6c** (MCP), **G6d** (plan) |
 
 Do **not** assume chat memory. Re-read `Cargo.toml` version and `omc ultragoal status --plan-id dogfood-0x`.
 
@@ -133,14 +136,14 @@ Detail for Wave A minors: [RELEASE_TRAIN_0x.md](./RELEASE_TRAIN_0x.md).
 
 ### Wave A — Dogfood core (`dogfood-0x`)
 
-- [x] **`0.2.0`** PATH install (`deepseek-build` + `dsb`)  
-- [x] **`0.3.0`** grep/search, bash execute under policy, workspace-write profile (`--dogfood`) — if on `main`  
-- [ ] **`0.4.0`** real dogfood on this repo  
-- [ ] **`0.5.0`** session persist/resume  
-- [ ] **`0.6.0`** skills index min + model/effort UX  
-- [ ] **`0.7.0`** npm both bins, SemVer match  
+- [x] **`0.2.0`** PATH install  
+- [x] **`0.3.0`** tools daily + `--dogfood`  
+- [x] **`0.4.0`** dogfood proof  
+- [x] **`0.5.0`** sessions (G6a)  
+- [x] **`0.6.0`** skills index min + effort UX (G6b)  
+- [x] **`0.7.0`** npm package dual bins (registry publish = human, ADR 0007)  
 
-**Exit:** dogfood-usable (§ RELEASE_TRAIN_0x §3). Still **`0.x`**.
+**Exit:** dogfood-usable via `./scripts/smoke-dogfood.sh`. Still **`0.x`**. **Next: Wave B.**
 
 ### Wave B — DeepSeek-native (`native-0x`)
 
@@ -238,7 +241,8 @@ From [NON_GOALS.md](./NON_GOALS.md): Gajae multi-stage team harness as identity;
 | `0.1.0` | — | 2026-08-06 | Engine + tools core source preview |
 | `0.2.0` | A | 2026-08-06 | PATH install dual CLI (#18) |
 | `0.3.0` | A | 2026-08-06 | Tools daily: grep + `--dogfood` |
-| … | A–D | — | Update on each minor release PR |
+| `0.4.0`–`0.7.0` | A | 2026-08-06 | Dogfood proof, sessions, surface, npm package (#23–#26) |
+| … | B–D | — | Update on each minor release PR |
 
 ---
 

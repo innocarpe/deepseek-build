@@ -16,38 +16,34 @@ Shipped commands (see [ADR 0006](../adr/0006-cli-names-and-semver.md)):
 
 Both must print the same `--version` string (workspace SemVer).
 
-## npm (planned)
+## npm (ADR 0007)
 
-When packaging lands:
+- Package name: **`deepseek-build`**  
+- `package.json` version = Cargo workspace SemVer  
+- Bins: both `deepseek-build` and `dsb`  
+- Agent complete: pack + local install smoke; **publish = human**  
+- See [ADR 0007](../adr/0007-npm-packaging.md) · [user-guide/05-npm.md](../user-guide/05-npm.md)
 
-- `package.json` `"version"` = workspace SemVer  
-- `bin` map exposes **both** `deepseek-build` and `dsb`  
-- Install smoke: `deepseek-build --version` and `dsb --version` equal  
+## `0.x.y` trains
 
-## `0.x.y` train (default)
-
-Normative schedule and dogfood definition:  
-[**RELEASE_TRAIN_0x.md**](../product/RELEASE_TRAIN_0x.md).
-
-Stay on **`0.y.z`** until dogfood-usable. Do not plan **`1.0.0`** in ultragoal stories for this phase.
+- Wave A: [RELEASE_TRAIN_0x.md](../product/RELEASE_TRAIN_0x.md)  
+- All waves: [MASTER_PLAN.md](../product/MASTER_PLAN.md)  
+- Do not plan **`1.0.0`** until Wave D checklist.
 
 ### Every `0.y.z` release checklist
 
-- [ ] Version fields consistent (`Cargo.toml` / npm if any / tag `vMAJOR.MINOR.PATCH`)  
-- [ ] `./scripts/check-semver.sh` passes  
-- [ ] `deepseek-build --version` and `dsb --version` show the **same** full SemVer  
-- [ ] README smoke commands updated for that minor’s theme  
-- [ ] CHANGELOG (when file exists) or PR body lists user-visible delta  
-- [ ] Progress log row in `RELEASE_TRAIN_0x.md`  
+- [ ] Files in [SSOT.md](../product/SSOT.md) version list updated  
+- [ ] `./scripts/check-semver.sh`  
+- [ ] `npm run version-check` if package.json exists  
+- [ ] Dual bins same SemVer  
+- [ ] `./scripts/smoke-dogfood.sh` (or document skip reason)  
+- [ ] Progress log MASTER_PLAN / RELEASE_TRAIN as applicable  
 
-### Dogfood-usable (see train §3) — not `1.0.0`
+### Dogfood-usable
 
-- [ ] PATH install works  
-- [ ] Auth works  
-- [ ] Chat + tools (read/edit/write/search/bash under policy) for real work  
-- [ ] Documented workspace write profile  
-- [ ] Owner dogfood note recorded  
+- [ ] `./scripts/smoke-dogfood.sh` exit 0  
+- [ ] Optional live key smoke  
 
-### Later: `1.0.0` (out of current train)
+### Later: `1.0.0`
 
-Only after sustained dogfood + boring npm/install; separate plan.
+Wave D PRD only.

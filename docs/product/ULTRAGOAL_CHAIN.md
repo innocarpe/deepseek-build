@@ -37,12 +37,13 @@ When `status` shows all complete for a plan, **do not stop**: create next plan i
 
 1. Final goal text is always [MASTER_PLAN.md](./MASTER_PLAN.md) §1 — do not renegotiate overnight.  
 2. SemVer only full triples; dual CLI always.  
-3. Do not flip G4/G5/G6 without specs.  
-4. Prefer small PRs; one SemVer minor theme per merge train when possible.  
+3. Subgates: G6a/b/c/d; G4 before parallel; G5 before subagents.  
+4. Prefer small PRs; use [WAVE_*_PR_DAG](./WAVE_A_PR_DAG.md) fixed units.  
 5. Parent runtime = parent family only.  
-6. **Before coding any story:** complete a [PR unit plan](./ULTRAGOAL_PR_PLANNING.md) (units + sequential/parallel + stacking + atomic commits).  
-7. **Atomic commits** on branches; squash to `main` per repo culture.  
-8. **Stack/chain PRs** for sequential slices; parallel agents only on disjoint units.
+6. **Before coding:** [ULTRAGOAL_PR_PLANNING.md](./ULTRAGOAL_PR_PLANNING.md) + [stack-merge-runbook.md](../contributing/stack-merge-runbook.md).  
+7. Default **serial merge**; stack only when needed; repair with `rebase --onto` after squash.  
+8. Failure ladder max 3 retries → `blocked` checkpoint.  
+9. npm **publish** never agent-forced complete (ADR 0007).
 
 ## Status snapshot template (for human)
 

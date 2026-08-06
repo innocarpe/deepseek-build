@@ -96,7 +96,7 @@ fn parse_cli() -> Cli {
         "DeepSeek Build — DeepSeek-native terminal coding agent.\n\n\
 Set DEEPSEEK_API_KEY or ~/.deepseek-build/credentials.json.\n\
 Commands: `deepseek-build` (primary) and `dsb` (alias) are the same program.\n\
-Version is always full SemVer (MAJOR.MINOR.PATCH), e.g. 0.3.0 — never bare \"0.3\".\n\n\
+Version is always full SemVer (MAJOR.MINOR.PATCH), e.g. 0.4.0 — never bare \"0.4\".\n\n\
 Examples:\n  \
   {name} run \"explain this repo\"\n  \
   {name} --dogfood chat\n  \

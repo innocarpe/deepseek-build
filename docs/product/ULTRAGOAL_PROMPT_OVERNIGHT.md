@@ -38,9 +38,11 @@ Read in order:
   AGENTS.md
 
 omc ultragoal status --plan-id dogfood-0x
+# Expected after 0.7.0: dogfood-0x 7/7 complete → go to native-0x immediately
 If not all complete → complete-goals dogfood-0x; use WAVE_A_PR_DAG.md units.
-If all complete → status native-0x; use WAVE_B_PR_DAG.md; create plan if missing.
+If all complete → status native-0x; use WAVE_B_PR_DAG.md + ULTRAGOAL_PROMPT_COLD_START_NATIVE.md detail; create plan if missing.
 Same for throughput-0x and rc-1.0.0.
+# Prefer Wave B paste file if you only want post-0.7.0: ULTRAGOAL_PROMPT_COLD_START_NATIVE.md
 
 # RULES
 

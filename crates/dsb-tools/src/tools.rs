@@ -8,11 +8,15 @@ use dsb_provider_deepseek::{ToolDefinition, ToolFunction};
 use serde_json::{json, Value};
 use thiserror::Error;
 
+use crate::grants::{AskChoice, PermissionGrants};
 use crate::permissions::{
     classify_bash, decide, effective_scopes, resolve_workspace_path, scopes_for_path, Decision,
     PathOp, PermissionPolicy, Scope,
 };
 use crate::snippets::{EditError, SnippetStore, WriteError};
+
+/// Interactive ask callback (CLI wires TTY prompt). `Arc` so agent config can clone.
+pub type AskCallback = std::sync::Arc<dyn Fn(&[Scope]) -> AskChoice + Send + Sync>;
 
 /// Canonical built-in tool names in **stable prefix order** (spec 40 §3.3).
 ///
@@ -95,6 +99,10 @@ pub struct ToolExecutor {
     pub bash_execute: bool,
     /// Optional user skills root (`~/.deepseek-build/skills`).
     pub user_skills_root: Option<PathBuf>,
+    /// Session + persistent grants.
+    pub grants: PermissionGrants,
+    /// When set and policy returns Ask, invoke for allow-once / always / deny.
+    pub ask_callback: Option<AskCallback>,
 }
 
 impl ToolExecutor {
@@ -105,20 +113,73 @@ impl ToolExecutor {
             snippets: SnippetStore::new(),
             bash_execute: false,
             user_skills_root: None,
+            grants: PermissionGrants::new(),
+            ask_callback: None,
         }
     }
 
-    pub fn check(&self, scopes: &[Scope]) -> Result<(), ToolError> {
+    /// Attach grants file under `home_dir` and merge into policy.
+    pub fn with_grants_home(mut self, home_dir: &Path) -> Self {
+        self.grants = PermissionGrants::load(home_dir);
+        self.sync_grants_into_policy();
+        self
+    }
+
+    pub fn set_ask_callback(&mut self, cb: impl Fn(&[Scope]) -> AskChoice + Send + Sync + 'static) {
+        self.ask_callback = Some(std::sync::Arc::new(cb));
+    }
+
+    pub fn set_ask_callback_arc(&mut self, cb: AskCallback) {
+        self.ask_callback = Some(cb);
+    }
+
+    fn sync_grants_into_policy(&mut self) {
+        let mut all = self.grants.always_scopes().clone();
+        all.extend(self.grants.session_scopes().iter().copied());
+        self.policy.apply_grants(&all);
+    }
+
+    pub fn check(&mut self, scopes: &[Scope]) -> Result<(), ToolError> {
         match decide(&self.policy, scopes) {
             Decision::Allow => Ok(()),
             Decision::Deny => Err(ToolError::Permission(format!(
                 "denied scopes={:?}",
                 scopes.iter().map(|s| s.as_str()).collect::<Vec<_>>()
             ))),
-            Decision::Ask => Err(ToolError::Permission(format!(
-                "needs confirmation scopes={:?}",
+            Decision::Ask => self.resolve_ask(scopes),
+        }
+    }
+
+    fn resolve_ask(&mut self, scopes: &[Scope]) -> Result<(), ToolError> {
+        // Re-check grants (session may have been updated mid-turn).
+        if self.grants.covers(scopes) {
+            self.sync_grants_into_policy();
+            return Ok(());
+        }
+        let Some(cb) = self.ask_callback.as_ref() else {
+            return Err(ToolError::Permission(format!(
+                "needs confirmation scopes={:?} (no TTY ask handler; use --dogfood or allow-always grants)",
+                scopes.iter().map(|s| s.as_str()).collect::<Vec<_>>()
+            )));
+        };
+        let choice = cb(scopes);
+        match choice {
+            AskChoice::Deny => Err(ToolError::Permission(format!(
+                "user denied scopes={:?}",
                 scopes.iter().map(|s| s.as_str()).collect::<Vec<_>>()
             ))),
+            AskChoice::AllowOnce => {
+                self.grants.grant_once(scopes);
+                self.sync_grants_into_policy();
+                Ok(())
+            }
+            AskChoice::AllowAlways => {
+                self.grants
+                    .grant_always(scopes, &self.policy.deny)
+                    .map_err(|e| ToolError::Other(e.to_string()))?;
+                self.sync_grants_into_policy();
+                Ok(())
+            }
         }
     }
 
@@ -338,16 +399,16 @@ impl ToolExecutor {
         let declared = parse_declared_scopes(args);
         let classified = classify_bash(command);
         let effective = effective_scopes(&declared, &classified);
-        // Denied bash must not expire snippets (spec 90 test).
-        match decide(&self.policy, &effective) {
-            Decision::Deny | Decision::Ask => {
-                return Err(ToolError::Permission(format!(
-                    "bash denied/ask classified={:?} declared={:?}",
+        // Denied bash must not expire snippets (spec 90 test). Interactive ask via check().
+        if let Err(e) = self.check(&effective) {
+            return Err(match e {
+                ToolError::Permission(msg) => ToolError::Permission(format!(
+                    "bash {msg} classified={:?} declared={:?}",
                     classified.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
                     declared.iter().map(|s| s.as_str()).collect::<Vec<_>>()
-                )));
-            }
-            Decision::Allow => {}
+                )),
+                other => other,
+            });
         }
 
         let may_mutate = effective.iter().any(|s| {
@@ -748,6 +809,64 @@ mod tests {
         let err = ex.execute(&req).unwrap_err();
         assert!(matches!(err, ToolError::Permission(_)));
         assert!(!outside_path.exists());
+    }
+
+    #[test]
+    fn interactive_allow_once_permits_write() {
+        let dir = tempdir().unwrap();
+        let mut policy = default_coding_policy(false);
+        let mut ex = ToolExecutor::new(dir.path().to_path_buf(), policy.clone());
+        ex.set_ask_callback(|_| AskChoice::AllowOnce);
+        let req = ToolRequest {
+            name: ToolName::Write,
+            arguments: json!({"path": "new.txt", "content": "hi\n"}),
+        };
+        let resp = ex.execute(&req).unwrap();
+        assert!(resp.ok);
+        assert!(dir.path().join("new.txt").exists());
+        // second write covered by session grant without another callback fire if scopes granted
+        policy.apply_grants(ex.grants.session_scopes());
+        assert_eq!(decide(&policy, &[Scope::WriteInCwd]), Decision::Allow);
+    }
+
+    #[test]
+    fn interactive_deny_blocks_write() {
+        let dir = tempdir().unwrap();
+        let mut ex = ToolExecutor::new(dir.path().to_path_buf(), default_coding_policy(false));
+        ex.set_ask_callback(|_| AskChoice::Deny);
+        let req = ToolRequest {
+            name: ToolName::Write,
+            arguments: json!({"path": "nope.txt", "content": "x"}),
+        };
+        let err = ex.execute(&req).unwrap_err();
+        assert!(matches!(err, ToolError::Permission(_)));
+        assert!(!dir.path().join("nope.txt").exists());
+    }
+
+    #[test]
+    fn allow_always_persists_and_skips_out_of_cwd() {
+        let home = tempdir().unwrap();
+        let dir = tempdir().unwrap();
+        let mut ex = ToolExecutor::new(dir.path().to_path_buf(), default_coding_policy(false))
+            .with_grants_home(home.path());
+        ex.set_ask_callback(|_| AskChoice::AllowAlways);
+        let req = ToolRequest {
+            name: ToolName::Write,
+            arguments: json!({"path": "ok.txt", "content": "y"}),
+        };
+        assert!(ex.execute(&req).unwrap().ok);
+        let reloaded = PermissionGrants::load(home.path());
+        assert!(reloaded.always_scopes().contains(&Scope::WriteInCwd));
+        // out-of-cwd still denied even with grants home
+        let outside = tempdir().unwrap();
+        let bad = ToolRequest {
+            name: ToolName::Write,
+            arguments: json!({
+                "path": outside.path().join("escape.txt").to_string_lossy(),
+                "content": "no"
+            }),
+        };
+        assert!(ex.execute(&bad).unwrap_err().to_string().contains("denied"));
     }
 
     #[test]

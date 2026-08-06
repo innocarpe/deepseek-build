@@ -319,6 +319,7 @@ dependencies = [
  "dsb-agent",
  "dsb-config",
  "dsb-provider-deepseek",
+ "dsb-tools",
  "tokio",
 ]
 

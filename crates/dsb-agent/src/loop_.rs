@@ -14,8 +14,8 @@ use dsb_provider_deepseek::{
     ToolDefinition, ThinkingMode, MODEL_PRO,
 };
 use dsb_tools::{
-    default_coding_policy, dogfood_coding_policy, tool_definitions, PermissionPolicy, Scope,
-    ToolExecutor, ToolName, ToolRequest,
+    default_coding_policy, dogfood_coding_policy, tool_definitions, AskCallback, PermissionPolicy,
+    Scope, ToolExecutor, ToolName, ToolRequest,
 };
 use thiserror::Error;
 
@@ -38,7 +38,7 @@ pub enum AgentError {
     Message(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AgentConfig {
     pub workspace_root: PathBuf,
     pub system_prompt: String,
@@ -48,7 +48,7 @@ pub struct AgentConfig {
     pub max_tool_rounds: u32,
     /// When true, print model visibility lines via TurnEvent.
     pub show_model: bool,
-    /// Headless permission policy (ask → deny).
+    /// Headless permission policy (ask → deny when no TTY / no ask callback).
     pub headless: bool,
     /// Allow workspace writes without interactive ask (still denies out-of-cwd).
     pub allow_workspace_write: bool,
@@ -59,12 +59,34 @@ pub struct AgentConfig {
     pub dogfood: bool,
     /// Optional user skills directory (`~/.deepseek-build/skills`).
     pub user_skills_root: Option<PathBuf>,
+    /// User config home for permission grants (`permission-grants.json`).
+    pub grants_home: Option<PathBuf>,
+    /// Interactive ask callback (allow once / always / deny). Requires `headless: false`.
+    pub ask_callback: Option<AskCallback>,
     /// When true, auto-discover skills into the stable index.
     pub discover_skills: bool,
     /// Override reasoning effort for all turns (CLI `--effort`).
     pub effort_override: Option<ReasoningEffort>,
     /// When Some(false), disable thinking for the session.
     pub thinking_enabled: Option<bool>,
+}
+
+impl std::fmt::Debug for AgentConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentConfig")
+            .field("workspace_root", &self.workspace_root)
+            .field("preset", &self.preset)
+            .field("headless", &self.headless)
+            .field("allow_workspace_write", &self.allow_workspace_write)
+            .field("bash_execute", &self.bash_execute)
+            .field("dogfood", &self.dogfood)
+            .field("grants_home", &self.grants_home)
+            .field("ask_callback", &self.ask_callback.as_ref().map(|_| "<fn>"))
+            .field("discover_skills", &self.discover_skills)
+            .field("effort_override", &self.effort_override)
+            .field("thinking_enabled", &self.thinking_enabled)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for AgentConfig {
@@ -82,6 +104,8 @@ impl Default for AgentConfig {
             bash_execute: false,
             dogfood: false,
             user_skills_root: None,
+            grants_home: None,
+            ask_callback: None,
             discover_skills: true,
             effort_override: None,
             thinking_enabled: None,
@@ -168,6 +192,13 @@ impl Agent {
         let mut tools = ToolExecutor::new(config.workspace_root.clone(), policy);
         tools.bash_execute = config.bash_execute || config.dogfood;
         tools.user_skills_root = config.user_skills_root.clone();
+        if let Some(home) = &config.grants_home {
+            tools = tools.with_grants_home(home);
+        }
+        let mut config = config;
+        if let Some(cb) = config.ask_callback.take() {
+            tools.set_ask_callback_arc(cb);
+        }
         Ok(Self {
             client,
             config,

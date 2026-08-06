@@ -3,15 +3,16 @@
 //! Binaries (ADR 0006): **`deepseek-build`** (primary) and **`dsb`** (alias).
 //! Version is always full SemVer from the workspace (`MAJOR.MINOR.PATCH`).
 
-use std::io::{self, BufRead, Read, Write};
+use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context, Result};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use dsb_agent::{Agent, AgentConfig, Preset, SessionStore, TurnEvent};
 use dsb_config::{BuildHome, Credentials};
 use dsb_provider_deepseek::{Client, ClientConfig, ReasoningEffort};
+use dsb_tools::{AskChoice, Scope};
 
 /// Resolve invocation name for help/version (`deepseek-build` or `dsb`).
 fn invocation_name() -> &'static str {
@@ -69,6 +70,14 @@ struct Cli {
     /// Still denies write/delete outside the workspace. Prefer this for daily local coding.
     #[arg(long, global = true, default_value_t = false)]
     dogfood: bool,
+
+    /// Force interactive permission prompts even for `run` (default: prompts on TTY chat only).
+    #[arg(long, global = true, default_value_t = false)]
+    ask_permissions: bool,
+
+    /// Never prompt; treat ask as deny (default for non-TTY and `run` without --ask-permissions).
+    #[arg(long, global = true, default_value_t = false)]
+    no_ask_permissions: bool,
 
     /// Persist/resume multi-turn session id (JSONL under ~/.deepseek-build/sessions/).
     /// Creates the session if missing; resumes and repairs tool pairs if present.
@@ -317,6 +326,12 @@ async fn build_agent(cli: &Cli) -> Result<Agent> {
             None
         }
     };
+    let interactive = wants_interactive_permissions(cli);
+    let ask_callback = if interactive {
+        Some(tty_ask_callback())
+    } else {
+        None
+    };
     let agent_cfg = AgentConfig {
         workspace_root: workspace,
         preset,
@@ -324,7 +339,9 @@ async fn build_agent(cli: &Cli) -> Result<Agent> {
         allow_workspace_write: cli.allow_workspace_write || cli.dogfood,
         bash_execute: cli.bash_execute || cli.dogfood,
         dogfood: cli.dogfood,
-        headless: true,
+        headless: !interactive,
+        grants_home: Some(home.path().to_path_buf()),
+        ask_callback,
         user_skills_root,
         discover_skills: true,
         effort_override,
@@ -332,6 +349,47 @@ async fn build_agent(cli: &Cli) -> Result<Agent> {
         ..AgentConfig::default()
     };
     Ok(Agent::new(client, agent_cfg)?)
+}
+
+/// Interactive prompts: TTY chat/repl by default; `run` stays headless unless --ask-permissions.
+fn wants_interactive_permissions(cli: &Cli) -> bool {
+    if cli.no_ask_permissions || cli.dogfood || cli.allow_workspace_write {
+        return false;
+    }
+    if cli.ask_permissions {
+        return io::stdin().is_terminal();
+    }
+    match &cli.command {
+        Some(Commands::Chat | Commands::Repl) => io::stdin().is_terminal(),
+        _ => false,
+    }
+}
+
+/// Stdin-backed allow once / always / deny prompt (mutex for Send+Sync callback).
+fn tty_ask_callback() -> dsb_tools::AskCallback {
+    let lock = Arc::new(Mutex::new(()));
+    Arc::new(move |scopes: &[Scope]| {
+        let _g = lock.lock().unwrap_or_else(|e| e.into_inner());
+        let list = scopes
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        eprintln!();
+        eprintln!("[permission] scopes need approval: {list}");
+        eprintln!("  [a] allow once   [A] allow always   [d] deny");
+        eprint!("[permission] choice [a/A/d]: ");
+        let _ = io::stderr().flush();
+        let mut line = String::new();
+        if io::stdin().lock().read_line(&mut line).is_err() {
+            return AskChoice::Deny;
+        }
+        match line.trim() {
+            "a" | "once" | "y" | "Y" => AskChoice::AllowOnce,
+            "A" | "always" => AskChoice::AllowAlways,
+            _ => AskChoice::Deny,
+        }
+    })
 }
 
 async fn run_once(cli: &Cli, message: &str, pro: bool) -> Result<()> {

@@ -25,6 +25,8 @@ omc ultragoal create-goals --plan-id native-0x \
 # START
 git pull origin main
 omc ultragoal complete-goals --plan-id native-0x
+# For EACH story: write PR unit plan (ULTRAGOAL_PR_PLANNING.md) first
+# sequential/parallel/stacking/atomic commits explicit
 # Read HARNESS, GATES, SYSTEM_ARCHITECTURE, PRD-wave-B-native
-# Ship vertical PRs; never G4 parallel in this wave
+# Ship vertical PRs; never G4 parallel tools in this wave
 ```

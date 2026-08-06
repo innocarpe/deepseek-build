@@ -22,4 +22,5 @@ omc ultragoal create-goals --plan-id throughput-0x \
 # START
 git pull origin main
 omc ultragoal complete-goals --plan-id throughput-0x
+# PR units first (ULTRAGOAL_PR_PLANNING.md); stack sequential; atomic commits
 ```

@@ -13,15 +13,17 @@ This skill is the **agent harness** for change delivery. It is not CI.
 
 ## Load these docs (in order)
 
-1. `docs/contributing/pr-body-standard.md` — narrative bar (Orca-aligned)
-2. `docs/contributing/examples.md` — filled bodies by kind
-3. `docs/contributing/pull-requests.md` — unit of work, title, labels, merge
-4. `docs/contributing/review-checklist.md` — self-merge gate
+1. `docs/product/ULTRAGOAL_PR_PLANNING.md` — **if ultragoal/overnight:** PR units, sequential/parallel, atomic commits, stacking (**before code**)
+2. `docs/contributing/pr-body-standard.md` — narrative bar (Orca-aligned)
+3. `docs/contributing/examples.md` — filled bodies by kind
+4. `docs/contributing/pull-requests.md` — unit of work, title, labels, merge
+5. `docs/contributing/review-checklist.md` — self-merge gate
 
 ## Hard rules
 
 1. **Never push product work straight to `main`.** Branch → PR → squash-merge.
 2. **One meaningful unit** per PR (one review lens). Prefer split over mega-PR.
+2b. **Ultragoal:** plan **all** PR units + sequential/parallel DAG **before** implementing; stack sequential PRs; atomic commits on the branch.
 3. **Title:** Conventional Commits  
    `feat|fix|docs|spec|chore|refactor|test|ci|perf|build(scope)?: summary`
 4. **Exactly one kind label** matching the title type (`gh pr create --label …`).

@@ -22,7 +22,7 @@ Folder structure mirrors product truth. **Write the product here before the bina
 3. [architecture/SYSTEM_ARCHITECTURE.md](architecture/SYSTEM_ARCHITECTURE.md) — runtime + mermaid
 4. [product/VISION.md](product/VISION.md) · [product/SOURCES.md](product/SOURCES.md) · [product/NON_GOALS.md](product/NON_GOALS.md)
 5. [product/PRD-v1.md](product/PRD-v1.md) · [product/prd/](product/prd/) staged PRDs · [product/MILESTONES.md](product/MILESTONES.md)
-6. [product/RELEASE_TRAIN_0x.md](product/RELEASE_TRAIN_0x.md) · [product/ULTRAGOAL_CHAIN.md](product/ULTRAGOAL_CHAIN.md)
+6. [product/RELEASE_TRAIN_0x.md](product/RELEASE_TRAIN_0x.md) · [product/ULTRAGOAL_CHAIN.md](product/ULTRAGOAL_CHAIN.md) · [product/ULTRAGOAL_PR_PLANNING.md](product/ULTRAGOAL_PR_PLANNING.md)
 7. [specs/00-overview.md](specs/00-overview.md)
 8. [architecture/REPO_LAYOUT.md](architecture/REPO_LAYOUT.md)
 9. ADRs under [adr/](adr/)

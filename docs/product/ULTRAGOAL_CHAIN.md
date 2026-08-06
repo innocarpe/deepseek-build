@@ -39,7 +39,10 @@ When `status` shows all complete for a plan, **do not stop**: create next plan i
 2. SemVer only full triples; dual CLI always.  
 3. Do not flip G4/G5/G6 without specs.  
 4. Prefer small PRs; one SemVer minor theme per merge train when possible.  
-5. Parent runtime = child runtime.
+5. Parent runtime = parent family only.  
+6. **Before coding any story:** complete a [PR unit plan](./ULTRAGOAL_PR_PLANNING.md) (units + sequential/parallel + stacking + atomic commits).  
+7. **Atomic commits** on branches; squash to `main` per repo culture.  
+8. **Stack/chain PRs** for sequential slices; parallel agents only on disjoint units.
 
 ## Status snapshot template (for human)
 

@@ -62,10 +62,11 @@ Cache-impact: low — sorted tool schema keys only
 
 | Location | Expectation |
 |----------|-------------|
-| Feature branch | Prefer conventional commits; small WIP commits OK if PR title is solid and final squash is clean |
+| Feature branch | **Atomic** Conventional Commits (one logical concern each). Compiles/tests when feasible. Ultragoal: see [ULTRAGOAL_PR_PLANNING.md](../product/ULTRAGOAL_PR_PLANNING.md) |
 | `main` after squash | **PR title** becomes the subject; should stand alone as a changelog line |
 
-Do **not** rely on squash to hide a PR that mixed three features—split the PR instead.
+Do **not** rely on squash to hide a PR that mixed three features—split the PR instead.  
+Do **not** use squash as an excuse for a single non-atomic dump commit on the branch during multi-step work.
 
 ---
 

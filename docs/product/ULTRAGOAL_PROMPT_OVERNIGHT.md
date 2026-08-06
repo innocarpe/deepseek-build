@@ -28,42 +28,44 @@ Follow docs/product/ULTRAGOAL_CHAIN.md strictly:
 
 git fetch origin && git checkout main && git pull origin main
 Read in order:
+  docs/product/SSOT.md
   docs/product/MASTER_PLAN.md
+  docs/product/ULTRAGOAL_PR_PLANNING.md
+  docs/contributing/stack-merge-runbook.md
   docs/architecture/SYSTEM_ARCHITECTURE.md
   docs/product/ULTRAGOAL_CHAIN.md
   docs/GATES.md
   AGENTS.md
 
 omc ultragoal status --plan-id dogfood-0x
-If not all complete → complete-goals dogfood-0x and work that plan.
-If all complete → status native-0x; create from ULTRAGOAL_PROMPT_COLD_START_NATIVE.md if missing; work it.
+If not all complete → complete-goals dogfood-0x; use WAVE_A_PR_DAG.md units.
+If all complete → status native-0x; use WAVE_B_PR_DAG.md; create plan if missing.
 Same for throughput-0x and rc-1.0.0.
 
 # RULES
 
-- Dual CLI deepseek-build + dsb (ADR 0006)
-- Full SemVer bumps on minors; scripts/check-semver.sh
-- **PR planning FIRST every story:** docs/product/ULTRAGOAL_PR_PLANNING.md
-  - List PR units before any implementation
-  - Explicit **sequential** vs **parallel** DAG
-  - **Atomic Conventional Commits** on the branch (one concern each)
-  - **Stack/chain PRs** for sequential work (base B on A); merge bottom-up
-  - Parallel agents only on disjoint paths; never dual SemVer bumps
-- Kind labels; squash-merge to main; pull main after each merge
-- Do not flip G4–G6 without specs
-- Child runtime = parent (no cross claude/codex/grok unless user ordered)
+- Dual CLI; full SemVer; ADR 0006/0007
+- **PR units from fixed DAG files** when present (WAVE_*_PR_DAG) — refine smaller, never larger mega-PR
+- Sequential vs parallel explicit; atomic commits; stack per stack-merge-runbook.md
+- Default overnight delivery: **serial merge** (unit→PR→merge→pull); stack only when needed
+- npm: agent DoD = package + version-check + pack smoke; **npm publish = human only**
+- Gates: G6a sessions, G6b skills, G6c MCP, G6d plan — runtime needs green subgate
+- Child runtime = parent
 - When a wave finishes, immediately start the next plan — do not idle
+- Failure ladder: max 3 retries then checkpoint blocked (stack-merge-runbook §5)
 
 # START EACH STORY
 
 1. omc ultragoal complete-goals
-2. Write PR unit plan (units / sequential / parallel / stack)
-3. Implement unit 1 only → PR → merge → pull main
-4. Next unit (stack if depends on unmerged base)
-5. Checkpoint story with evidence listing PRs + plan
+2. Copy units from WAVE_*_PR_DAG or write PR plan
+3. Implement unit 1 → PR → merge-ready predicate → merge → pull main
+4. Next unit
+5. Checkpoint with PR numbers + smoke commands
+6. Run ./scripts/smoke-dogfood.sh before claiming Wave A usability
 
 # STOP ONLY IF
 
-- Human-required secret/npm publish identity missing → document exact commands and continue other work
-- Hard product fork needs user decision (e.g. ship 1.0.0 without Wave C) → write ADR draft and pause that choice only
+- npm publish OTP → package DoD only; blocked-awaiting-human for publish
+- Hard product fork needs user ADR → pause that choice only
+- 3 retries exhausted on same failure class → blocked with evidence
 ```

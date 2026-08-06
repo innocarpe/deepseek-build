@@ -8,7 +8,7 @@
 - Rust **1.94+** via [rustup](https://rustup.rs/)
 - Git clone of [innocarpe/deepseek-build](https://github.com/innocarpe/deepseek-build)
 
-npm: package ships both bin names at **0.7.0+** (see [05-npm.md](./05-npm.md)); registry publish is owner-gated.
+npm package: **`@innocarpe/deepseek-build`** (CLI still `deepseek-build` / `dsb`) — see [05-npm.md](./05-npm.md).
 
 ## Install once
 

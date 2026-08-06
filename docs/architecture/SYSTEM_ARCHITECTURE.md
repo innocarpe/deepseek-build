@@ -261,7 +261,7 @@ Version: single SemVer in workspace (+ npm match when published).
 | Session store schema JSONL | Wave A `0.5.0` |
 | Parallel tool scheduler | Wave C / spec 50 |
 | Subagent IPC | Wave C / spec 60 |
-| npm binary download strategy | Wave A `0.7.0` / D |
+| Prebuilt multi-platform npm optionalDeps | post-`0.7.0` / ADR after 0007 source-assisted strategy |
 
 ---
 

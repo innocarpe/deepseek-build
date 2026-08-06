@@ -1,33 +1,39 @@
 # Implementation gates ledger
 
 **Purpose:** Make G0–G6 **auditable facts**, not self-attestation.  
-**Normative definitions:** [architecture/HARNESS_PHILOSOPHY.md](architecture/HARNESS_PHILOSOPHY.md) §11.
+**Normative definitions:** [architecture/HARNESS_PHILOSOPHY.md](architecture/HARNESS_PHILOSOPHY.md) §11.  
+**SSOT priority:** [product/SSOT.md](product/SSOT.md).
 
 | Gate | Requirement | Status | Evidence (PR / path) | Flipped by |
 |------|-------------|--------|----------------------|------------|
 | **G0** | HARNESS_PHILOSOPHY + layered SOURCES merged | **green** | PR #4 | innocarpe |
-| **G1** | Toolchain/config ADR | **green** | `docs/adr/0004-toolchain.md` (this preflight PR) | innocarpe |
+| **G1** | Toolchain/config ADR | **green** | `docs/adr/0004-toolchain.md` | innocarpe |
 | **G1b** | DeepSeek provider contract ADR (pinned ids) | **green** | `docs/adr/0005-deepseek-provider-contract.md` | innocarpe |
-| **G2** | Specs **10, 15, 20, 30** ready-for-impl | **green** | `docs/specs/10-cache-contract.md`, `15-tool-call-repair.md`, `20-model-routing.md`, `30-thinking-effort.md` | innocarpe |
-| **G3** | Specs **45** + **90 minimum** ready | **green** | `docs/specs/45-snippet-edit.md`, `docs/specs/90-permissions.md` | innocarpe |
+| **G2** | Specs **10, 15, 20, 30** ready-for-impl | **green** | specs 10/15/20/30 | innocarpe |
+| **G3** | Specs **45** + **90 minimum** ready | **green** | specs 45/90 | innocarpe |
 | **G4** | Spec **50** ready | **red** | — | — |
 | **G5** | Spec **60** ready | **red** | — | — |
-| **G6** | Specs **70, 80, 100, 110** ready | **red** | — | — |
+| **G6a** | Spec **100** sessions ready | **green** | `docs/specs/100-sessions.md` + runtime **0.5.0** (#24) | innocarpe |
+| **G6b** | Spec **70** skills ready | **green** | `docs/specs/70-skills.md` + runtime **0.6.0** (#25) | innocarpe |
+| **G6c** | Spec **80** MCP ready | **red** | — | — |
+| **G6d** | Spec **110** plan light ready | **red** | — | — |
+
+**Legacy label G6:** means “all of G6a–G6d green.” Partial progress is tracked per subgate.
 
 ## Rules
 
 1. **No runtime feature PR** may claim a gate is green without updating this table in the same PR (or a prior merged PR).  
-2. **ready-for-impl** for specs **10, 15, 45, 50, 90** requires **automated** golden/negative tests in the test plan (manual-only is not enough). UX-only specs (e.g. 30 display polish, 110 plan UX) may use manual checks.  
-3. `crates/` **directory placeholder** (README only) is **not** G1 violation. Adding real package code / Cargo workspace members **is** allowed only after G1 green (now).  
-4. **Process-police CI** stays forbidden. Artifact existence checks are allowed.  
-5. Who may flip a gate: maintainer on merge of the evidence PR; record login + PR number.
+2. **ready-for-impl** for specs **10, 15, 45, 50, 90, 100, 70** (and others marked automated) requires **automated** golden/negative tests in the test plan.  
+3. Adding package code is allowed after G1 green.  
+4. **Process-police CI** stays forbidden. Product CI (build/test/smoke) is allowed and encouraged.  
+5. Who may flip a gate: maintainer on merge of the evidence PR; record login + PR number.  
+6. **Sessions runtime requires G6a**; **skills runtime requires G6b**; **MCP requires G6c**; **plan product requires G6d**. Spec-only PRs may land while red; runtime must flip the subgate.
 
 ## Current product implication
 
-**M1 runtime** is unblocked (G0–G2) and **shipped** on `main` (provider, prefix, repair/routing, thin CLI).  
+- **Wave A dogfood** through **`0.7.0` npm package** shipped on `main` (install + tools + sessions + surface min + npm wrappers).  
+- **Registry `npm publish`** remains **human-gated** ([ADR 0007](adr/0007-npm-packaging.md)).  
+- **Wave B** (`native-0x`): theme, full permissions UX, expand skills, MCP/plan — needs G6c/G6d for those runtimes.  
+- **Wave C**: G4 then G5.  
 
-**M2 mutating tools / shell may start** only with **G3 green** (this ledger): implement against specs **45** + **90 minimum**, then tool surface **40**, then parallelism **50** (needs G4).  
-
-Still **blocked for M3+ product polish** and **G4–G6** features (parallel fan-out, subagents, skills/MCP/sessions as gated).  
-
-**Ultragoal recommendation:** M2 order = snippet store + permissions engine → `read`/`edit`/`write` → gated `bash` → only then parallel tools (spec 50 / G4).
+**Ultragoal:** after `dogfood-0x` complete → `native-0x` ([ULTRAGOAL_CHAIN.md](product/ULTRAGOAL_CHAIN.md)).

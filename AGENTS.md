@@ -8,7 +8,10 @@ This file is standing instructions for any coding agent working in this repo.
 **Overnight chain:** [`docs/product/ULTRAGOAL_CHAIN.md`](docs/product/ULTRAGOAL_CHAIN.md)  
 (`dogfood-0x` → `native-0x` → `throughput-0x` → `rc-1.0.0`).  
 **PR units / parallel vs sequential / atomic commits / stacking (mandatory):**  
-[`docs/product/ULTRAGOAL_PR_PLANNING.md`](docs/product/ULTRAGOAL_PR_PLANNING.md) — **plan PRs before code**.  
+[`docs/product/ULTRAGOAL_PR_PLANNING.md`](docs/product/ULTRAGOAL_PR_PLANNING.md) ·  
+[`docs/contributing/stack-merge-runbook.md`](docs/contributing/stack-merge-runbook.md) ·  
+[`docs/product/SSOT.md`](docs/product/SSOT.md).  
+**Fixed DAGs:** `WAVE_A_PR_DAG.md`, `WAVE_B_PR_DAG.md`. **plan PRs before code**.
 **Wave A detail:** [`docs/product/RELEASE_TRAIN_0x.md`](docs/product/RELEASE_TRAIN_0x.md).  
 **Architecture:** [`docs/architecture/SYSTEM_ARCHITECTURE.md`](docs/architecture/SYSTEM_ARCHITECTURE.md).  
 **SemVer on disk:** read root `Cargo.toml` (do not hardcode). Re-check ultragoal status each session.

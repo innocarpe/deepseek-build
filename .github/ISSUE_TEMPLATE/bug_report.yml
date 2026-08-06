@@ -1,0 +1,45 @@
+name: Bug report
+description: Something broken or incorrect behavior
+title: "[bug] "
+labels: ["bug", "needs-design"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Pre-release software may change quickly — include commit SHA if possible.
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      placeholder: main @ abc1234
+    validations:
+      required: false
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. …
+        2. …
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: Redact API keys and personal paths if needed.
+    validations:
+      required: false

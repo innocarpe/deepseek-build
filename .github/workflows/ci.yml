@@ -1,0 +1,57 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  docs-hygiene:
+    name: docs-hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Required paths exist
+        run: |
+          set -euo pipefail
+          required=(
+            README.md
+            LICENSE
+            NOTICE
+            CONTRIBUTING.md
+            SECURITY.md
+            CODE_OF_CONDUCT.md
+            AGENTS.md
+            docs/README.md
+            docs/product/VISION.md
+            docs/product/SOURCES.md
+            docs/product/NON_GOALS.md
+            docs/product/PRD-v1.md
+            docs/product/MILESTONES.md
+            docs/architecture/REPO_LAYOUT.md
+            docs/specs/00-overview.md
+            .github/labels.json
+            .github/PULL_REQUEST_TEMPLATE.md
+          )
+          for p in "${required[@]}"; do
+            test -e "$p" || { echo "missing: $p"; exit 1; }
+          done
+          echo "ok: required paths present"
+
+      - name: Labels JSON is valid
+        run: python3 -c "import json; json.load(open('.github/labels.json')); print('ok: labels.json')"
+
+      - name: No accidental secrets patterns in docs
+        run: |
+          set -euo pipefail
+          # Cheap guard: sk- live keys should not be committed
+          if git grep -nE 'sk-[a-zA-Z0-9]{20,}' -- ':!*.md' ':!.github/**' 2>/dev/null; then
+            echo "possible API key material in non-doc files" >&2
+            exit 1
+          fi
+          echo "ok: no obvious key patterns in code paths"

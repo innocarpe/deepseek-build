@@ -1,0 +1,56 @@
+name: Feature request
+description: Propose user-visible behavior or a product change
+title: "[feat] "
+labels: ["enhancement", "needs-design"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Align with [VISION](https://github.com/innocarpe/deepseek-build/blob/main/docs/product/VISION.md) and [NON_GOALS](https://github.com/innocarpe/deepseek-build/blob/main/docs/product/NON_GOALS.md).
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user pain does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Desired behavior (not implementation dump)
+    validations:
+      required: true
+  - type: dropdown
+    id: source
+    attributes:
+      label: Closest design source
+      options:
+        - Grok Build (speed / orchestration)
+        - Reasonix (cache / cost)
+        - Deep Code (DeepSeek CLI surface)
+        - New / none
+        - Multiple
+    validations:
+      required: true
+  - type: dropdown
+    id: milestone
+    attributes:
+      label: Suggested milestone
+      options:
+        - M0 — Product foundation
+        - M1 — Provider + cache + routing
+        - M2 — Core tools + parallelism
+        - M3 — DeepSeek surface (thinking, skills, permissions)
+        - M4 — Subagents + worktree
+        - M5 — Sessions + plan + MCP
+        - M6 — Preview polish
+        - Unsure
+    validations:
+      required: true
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: Explicit non-goals for this feature
+    validations:
+      required: false

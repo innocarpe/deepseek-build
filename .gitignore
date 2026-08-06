@@ -1,0 +1,31 @@
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Build / deps (reserved; stack not locked yet)
+/target/
+/node_modules/
+/dist/
+/build/
+.bun/
+
+# Local secrets & machine state
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Runtime / session debris
+.deepseek-build/sessions/
+.deepseek-build/cache/
+.deepseek-build/logs/
+*.log
+
+# Coverage / tooling
+coverage/
+.nyc_output/
+*.profraw

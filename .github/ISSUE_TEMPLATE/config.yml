@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation map
+    url: https://github.com/innocarpe/deepseek-build/blob/main/docs/README.md
+    about: Start here before filing a feature request.
+  - name: Product non-goals (v1)
+    url: https://github.com/innocarpe/deepseek-build/blob/main/docs/product/NON_GOALS.md
+    about: Check whether the idea is intentionally out of scope.

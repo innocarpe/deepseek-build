@@ -1,0 +1,35 @@
+name: Spec / design work
+description: Behavior contract, ADR, or PRD change (docs-first)
+title: "[spec] "
+labels: ["spec", "needs-design"]
+body:
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Which specs/ADRs/product docs should change?
+      placeholder: docs/specs/10-cache-contract.md, ADR 0003, …
+    validations:
+      required: true
+  - type: textarea
+    id: decision
+    attributes:
+      label: Decision needed
+      description: What must be true before implementation can start?
+    validations:
+      required: true
+  - type: dropdown
+    id: milestone
+    attributes:
+      label: Milestone
+      options:
+        - M0 — Product foundation
+        - M1 — Provider + cache + routing
+        - M2 — Core tools + parallelism
+        - M3 — DeepSeek surface (thinking, skills, permissions)
+        - M4 — Subagents + worktree
+        - M5 — Sessions + plan + MCP
+        - M6 — Preview polish
+        - Unsure
+    validations:
+      required: true

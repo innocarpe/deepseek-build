@@ -1,0 +1,17 @@
+DeepSeek Build
+Copyright 2026 DeepSeek Build contributors
+
+This product includes software developed by DeepSeek Build contributors.
+
+---
+
+Design and architecture are informed by (without implying endorsement):
+
+- Grok Build (SpaceXAI) — Apache License 2.0  
+  https://github.com/ (see local OpenSources/grok-build)  
+- Reasonix / DeepSeek-Reasonix — see upstream license  
+  https://github.com/esengine/DeepSeek-Reasonix  
+- Deep Code CLI — MIT  
+  https://github.com/lessweb/deepcode-cli  
+
+Ported or vendored source, if any, will be listed under `third_party/` with full license texts.

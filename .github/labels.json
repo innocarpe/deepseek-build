@@ -1,0 +1,41 @@
+[
+  { "name": "feat", "color": "0E8A16", "description": "Kind: new user-visible behavior" },
+  { "name": "fix", "color": "D73A4A", "description": "Kind: bug fix" },
+  { "name": "docs", "color": "0075CA", "description": "Kind: documentation only" },
+  { "name": "spec", "color": "5319E7", "description": "Kind: behavior contract / PRD / specs" },
+  { "name": "chore", "color": "FEF2C0", "description": "Kind: tooling, deps, housekeeping" },
+  { "name": "refactor", "color": "C5DEF5", "description": "Kind: refactor without behavior change" },
+  { "name": "test", "color": "BFDADC", "description": "Kind: tests only" },
+  { "name": "ci", "color": "E4E669", "description": "Kind: CI / workflows only" },
+
+  { "name": "bug", "color": "B60205", "description": "Confirmed or suspected bug" },
+  { "name": "enhancement", "color": "A2EEEF", "description": "Idea or improvement (triage)" },
+  { "name": "question", "color": "D876E3", "description": "Question / discussion" },
+  { "name": "good first issue", "color": "7057FF", "description": "Good for newcomers" },
+  { "name": "help wanted", "color": "008672", "description": "Extra attention needed" },
+  { "name": "duplicate", "color": "CFD3D7", "description": "Duplicate of another issue" },
+  { "name": "invalid", "color": "E4E669", "description": "Not actionable / invalid" },
+  { "name": "wontfix", "color": "FFFFFF", "description": "Will not work on" },
+  { "name": "blocked", "color": "B60205", "description": "Blocked on external dependency or decision" },
+  { "name": "needs-design", "color": "FBCA04", "description": "Needs ADR or spec before code" },
+  { "name": "ready", "color": "0E8A16", "description": "Ready for implementation" },
+
+  { "name": "area/agent", "color": "1D76DB", "description": "Agent loop / prompts" },
+  { "name": "area/provider", "color": "1D76DB", "description": "DeepSeek API / models / routing" },
+  { "name": "area/cache", "color": "1D76DB", "description": "Prefix / KV cache contract" },
+  { "name": "area/tools", "color": "1D76DB", "description": "Tool runtime" },
+  { "name": "area/orchestrator", "color": "1D76DB", "description": "Parallelism / subagents / workflows" },
+  { "name": "area/tui", "color": "1D76DB", "description": "Terminal UI" },
+  { "name": "area/skills", "color": "1D76DB", "description": "Agent Skills" },
+  { "name": "area/mcp", "color": "1D76DB", "description": "MCP integration" },
+  { "name": "area/permissions", "color": "1D76DB", "description": "Permissions / sandbox" },
+  { "name": "area/docs", "color": "1D76DB", "description": "Documentation tree" },
+  { "name": "area/infra", "color": "1D76DB", "description": "Repo / CI / release infra" },
+
+  { "name": "priority/p0", "color": "B60205", "description": "Ship-blocking" },
+  { "name": "priority/p1", "color": "D93F0B", "description": "High" },
+  { "name": "priority/p2", "color": "FBCA04", "description": "Normal" },
+  { "name": "priority/p3", "color": "C2E0C6", "description": "Low / later" },
+
+  { "name": "milestone-aligned", "color": "BFD4F2", "description": "Tracked against an active milestone" }
+]

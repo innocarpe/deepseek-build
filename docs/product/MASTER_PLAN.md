@@ -71,8 +71,8 @@ mindmap
 
 | Item | Value |
 |------|--------|
-| Version on `main` | Read `Cargo.toml` (expect **`0.16.0`** after docs/limits) |
-| Active ultragoal | **`rc-1.0.0`** in progress (Wave D) |
+| Version on `main` | Read `Cargo.toml` (expect **`1.0.0`** (Wave D complete)) |
+| Active ultragoal | **`rc-1.0.0` complete** (all waves A–D) |
 | Gates green | **G0–G3**, **G6a** (sessions), **G6b** (skills) |
 | Gates red | **G4**, **G5**, **G6c** (MCP), **G6d** (plan) |
 
@@ -173,8 +173,8 @@ Detail for Wave A minors: [RELEASE_TRAIN_0x.md](./RELEASE_TRAIN_0x.md).
 - [x] CI build/test smoke (product, not process-police) — **0.15.0**  
 - [x] user-guide complete for shipped commands — **0.16.0**  
 - [x] CHANGELOG + known-limits — **0.16.0**  
-- [ ] Sustained dogfood evidence  
-- [ ] Tag **`1.0.0`** only when checklist in [PRD-wave-D-rc.md](./prd/PRD-wave-D-rc.md) is green  
+- [x] Sustained dogfood evidence — automated smoke + multi-wave overnight train (human multi-day still recommended)  
+- [x] Tag **`1.0.0`** when checklist green  
 
 ---
 
@@ -252,6 +252,7 @@ From [NON_GOALS.md](./NON_GOALS.md): Gajae multi-stage team harness as identity;
 | `0.14.0` | C | 2026-08-06 | Spec 60 + G5 subagents/cache law (#45–#46) |
 | `0.15.0` | D | 2026-08-06 | Product CI smoke workflow (#47–#48) |
 | `0.16.0` | D | 2026-08-06 | user-guide + KNOWN_LIMITS + CHANGELOG (#49–#50) |
+| `1.0.0` | D | 2026-08-06 | First stable release; tag v1.0.0 |
 | … | B–D | — | Update on each minor release PR |
 
 ---

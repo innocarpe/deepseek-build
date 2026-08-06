@@ -29,5 +29,8 @@ dsb-tools = { path = "../dsb-tools" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util"] }
 anyhow = "1"
 
+[dev-dependencies]
+tempfile = "3"
+
 [lints]
 workspace = true

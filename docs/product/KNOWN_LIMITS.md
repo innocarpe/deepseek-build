@@ -1,51 +1,48 @@
 # Known limitations
 
-**Product version:** `1.x` scaffold line  
-Honest limits. **`1.0.0` was tagged early** — see [REPLAN_2.0.md](./REPLAN_2.0.md).  
-**Product target is `2.0.0`** (Grok Build–class agent entry).
+**Product version:** `2.0.0` (Grok Build base)  
+**Legacy:** `1.x` scaffold remains installable; see [REPLAN_2.0.md](./REPLAN_2.0.md).
 
-## Product-identity gap (1.x)
+## What 2.0.0 delivers
 
-- **`dsb` does not open a Grok Build–class full-screen coding agent.** 1.x is a thin REPL/scaffold.
-- **Not built on the Grok Build open-source runtime** as the execution base (greenfield `dsb-*`).
-- Claiming “Grok-class throughput” at 1.x overstates MVP parallel/bg/subagent shims.
+- No-args TTY `dsb` / `deepseek-build` → Grok-class full-screen agent (`deepseek-build-agent`)
+- Base runtime vendored at `third_party/grok-build/` (ADR-0008)
+- DeepSeek default models / API (`api.deepseek.com`, chat completions)
+- L1/L2 minimums tested on overlay tools + prefix epoch; mapped under Grok capability modes
 
-## Install / packaging
+## Remaining limits
 
-- **npm postinstall** builds from source when `cargo` is available; there is no multi-arch prebuilt binary CDN yet.
-- **Registry publish** of `@innocarpe/deepseek-build` is **owner-gated** (ADR 0007); agents never force publish.
-- Linux + macOS are primary; Windows is best-effort (paths/permissions may differ).
+### Install / packaging
 
-## Auth / network
+- **First agent release build is large/slow** (vendor tree + protoc/dotslash host tools).
+- **npm postinstall** builds product wrapper from source when `cargo` is available; agent binary requires `./scripts/install.sh` (or pre-built agent) for full TUI.
+- **Registry publish** remains **owner-gated** (ADR 0007) when 2FA/OTP required.
+- Linux + macOS primary; Windows best-effort.
 
-- Requires a valid DeepSeek API key for live chat/run.
-- No multi-vendor provider identity in v1.
+### Auth / network
 
-## Tools / safety
+- Requires DeepSeek API key for live turns (`DEEPSEEK_API_KEY` or credentials.json 0600).
+- Upstream Grok UI strings may still appear inside the pager chrome (product wrapper/docs say DeepSeek Build).
 
-- `write` is create-only; overwrite goes through `read` + `edit`.
-- Free-form whole-file edit without snippet is not the primary path.
-- MCP **stdio live process manager** is minimal: static/mock catalogs and fingerprint/epoch rules ship; full multi-server lifecycle is still thin.
-- Subagents are **in-process** heuristics (explore/implement); not full OS worktree fleets.
-- Background bash is process-local (lost on CLI exit).
+### Tools / safety
 
-## Permissions
+- Thin path (`run` / `repl-legacy`) uses `dsb-tools` snippet + permission policy.
+- Full-screen agent uses Grok native tools (SearchReplace/hashline/bash); capability modes apply.
+- Headless fail-closed: ask → deny unless TTY / explicit allow flags.
+- Subagents/worktrees: prefer Grok real mechanisms under agent; 1.x in-process shims are legacy.
 
-- Headless `run` maps ask → deny unless `--ask-permissions` on a TTY.
-- Out-of-cwd write/delete cannot be elevated via allow-always grants.
+### Cache / cost
 
-## Cache / cost
+- Thin path: stable prefix epoch via `dsb-context` (live `prefix_epoch=` line).
+- Mid-session tool/skills changes start a new epoch (expected).
 
-- Mid-session tool schema or skills index changes start a new cache epoch (expected).
-- Flash-first routing; Pro escalate is best-effort (404 falls back to Flash).
+### Dogfood
 
-## Dogfood
-
-- Automated offline smoke: `./scripts/smoke-dogfood.sh`.
-- **Multi-day human dogfood** remains the owner’s judgment for release confidence (PRD-wave-D).
+- Offline: `./scripts/smoke-dogfood.sh`
+- Evidence: `docs/product/evidence/`
 
 ## Not in product identity
 
-- Gajae multi-stage team harness as core loop
-- Process-police CI (title/label fashion)
-- Claiming **`1.0.0`** while Wave A/B incomplete (chain forbids)
+- Multi-vendor “works equally on Claude/GPT” as identity  
+- Gajae multi-stage planning harness as core loop  
+- Claiming 1.x thin REPL is the product DoD  

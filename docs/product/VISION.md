@@ -25,12 +25,12 @@ Normative detail: [HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.md)
 
 ## Default models
 
-Logical tiers (wire **model ids TBD** until provider contract ADR / G1b):
+Pinned wire IDs ([ADR 0005](../adr/0005-deepseek-provider-contract.md)):
 
-- **Flash tier** — default loop (explore, edit, tool churn)
-- **Pro tier** — escalated turns (hard design, review, tough bugs)
+- **`deepseek-v4-flash`** — default loop (explore, edit, tool churn)
+- **`deepseek-v4-pro`** — escalated turns (hard design, review, tough bugs)
 
-Exact routing rules: specs `20`/`30` + provider contract. UX: `/model` / `/preset` (Deep Code + Reasonix patterns).
+Routing: spec `20` / effort: spec `30`. UX: `/model` / `/preset` (Deep Code + Reasonix patterns).
 
 ## Success signals (qualitative, v0)
 

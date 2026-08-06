@@ -38,18 +38,18 @@ deepseek-build/
 
 Grok Build is the primary code-structure reference: many focused packages under a workspace-like tree. We reserve `crates/` even before the language is locked so the map stays stable.
 
-When implementation starts, expected seams (names TBD via ADR):
+Package seams (ADR 0004 — Rust / `dsb`):
 
-| Future package (illustrative) | Product concern |
-|-------------------------------|-----------------|
-| `…-cli` / binary | Entry / TUI composition root |
-| `…-agent` | Turn loop, prompts |
-| `…-provider-deepseek` | API, thinking, effort, cache headers |
-| `…-tools` | read/edit/bash/grep/… |
-| `…-orchestrator` | subagents, parallel wait, workflows |
-| `…-config` | settings, project rules |
+| Package | Product concern |
+|---------|-----------------|
+| `dsb` / `dsb-cli` | Entry / TUI composition root |
+| `dsb-agent` | Turn loop, prompts |
+| `dsb-provider-deepseek` | API, thinking, effort, usage/cache |
+| `dsb-context` | Prefix builder / epochs (spec 10) |
+| `dsb-tools` | Tool runtime (M2+) |
+| `dsb-config` | Config load |
 
-Language choice (Rust vs Go vs other) is **not** locked by this folder name; if we choose Go, an ADR may rename `crates/` → `internal/` + `cmd/`. Until then, `crates/` is the placeholder.
+Language is locked to **Rust** by ADR 0004. Renaming the workspace needs a new ADR.
 
 ### `skills/`
 

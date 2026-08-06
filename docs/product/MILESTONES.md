@@ -50,9 +50,9 @@ North star for every milestone: **wall-clock progress on real coding tasks**
 **Work items (examples)**
 
 - [x] Harness philosophy doc (Deep Code four pillars + Reasonix + Grok L3)  
-- [ ] Toolchain ADR (language, package name, state dir, secrets)  
-- [ ] Provider contract doc (models, stream, thinking/effort fields, cache usage)  
-- [ ] Specs 10 / 15 / 20 / 30 **ready-for-impl**  
+- [x] Toolchain ADR (0004)  
+- [x] Provider contract ADR (0005)  
+- [x] Specs 10 / 15 / 20 / 30 **ready-for-impl**  
 - [ ] DeepSeek provider client (streaming)  
 - [ ] Stable prefix builder + **golden byte tests**  
 - [ ] Tool-call repair on provider path (**M1 must**, not M6)  

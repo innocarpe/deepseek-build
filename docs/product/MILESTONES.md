@@ -21,8 +21,10 @@ North star for every milestone: **wall-clock progress on real coding tasks**.
 - [x] Scaffold `docs/`, `crates/`, skills surface  
 - [x] OSS kit + labels catalog  
 - [x] PRD-v1 + milestones  
-- [ ] Sync labels to GitHub  
-- [ ] Close any “missing foundation” issues  
+- [x] Sync labels to GitHub  
+- [x] GitHub Milestones M0–M6 created  
+- [ ] Optional: close M0 on GitHub when CI is green  
+
 
 ---
 

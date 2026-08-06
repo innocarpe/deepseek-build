@@ -6,8 +6,8 @@ Combines three first-class references:
 
 | Source | What we take |
 |--------|----------------|
-| **[Grok Build](../grok-build)** | Wall-clock speed: parallel tools, subagents, background tasks, worktree isolation, native runtime patterns |
-| **[Reasonix](../DeepSeek-Reasonix)** | Prefix-cache-first loop, Flash/Pro cost control, tool-call repair |
+| **Grok Build** | Wall-clock speed: parallel tools, subagents, background tasks, worktree isolation, native runtime patterns |
+| **[Reasonix](https://github.com/esengine/DeepSeek-Reasonix)** | Prefix-cache-first loop, Flash/Pro cost control, tool-call repair |
 | **[Deep Code CLI](https://github.com/lessweb/deepcode-cli)** | Official DeepSeek-oriented surface: thinking, reasoning effort, Skills, MCP, permissions, plan mode |
 
 **Not in v1 scope:** Gajae-code multi-stage planning/team harness (too slow for our north star).
@@ -49,13 +49,11 @@ deepseek-build/
 
 Start reading: **[docs/README.md](docs/README.md)**.
 
-## Sibling references (local)
+## References
 
-These live next to this repo under `OpenSources/`:
-
-- `../grok-build` — primary structural and orchestration reference
-- `../DeepSeek-Reasonix` — DeepSeek cache-native agent
-- Deep Code CLI — clone when needed: `https://github.com/lessweb/deepcode-cli`
+- Grok Build — primary structural and orchestration reference (local sibling `OpenSources/grok-build` when developing offline)
+- [Reasonix](https://github.com/esengine/DeepSeek-Reasonix) — DeepSeek cache-native agent
+- [Deep Code CLI](https://github.com/lessweb/deepcode-cli) — official DeepSeek-oriented CLI surface
 
 ## License
 

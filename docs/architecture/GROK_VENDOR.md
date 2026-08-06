@@ -60,7 +60,7 @@ Never silent-copy. Always a dedicated PR:
 
 ## CI plan
 
-### Default CI (`ci.yml`) (existing)
+### Default CI workflow (`ci.yml`)
 
 Path filter for **product** Rust jobs remains root `crates/**`, root `Cargo.toml`, etc.  
 **Does not** build the full Grok vendor on every docs or overlay-only PR (clone/build time).

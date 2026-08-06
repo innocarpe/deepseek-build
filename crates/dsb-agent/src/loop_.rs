@@ -1,0 +1,431 @@
+//! Multi-turn agent loop (M1: no real tools dispatch; repair + routing + stream).
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use dsb_context::{
+    assemble_messages, discover_project_instructions, EnvironmentSummary, PrefixBuildInputs,
+    PrefixBuilder, SkillIndexEntry, StablePrefix, VolatileTail, DEFAULT_SYSTEM_PROMPT,
+};
+use dsb_provider_deepseek::{
+    ChatMessage, ChatRequestBuilder, Client, ModelId, ProviderError, StreamEvent, ToolCall,
+    ToolDefinition, MODEL_PRO,
+};
+use thiserror::Error;
+
+use crate::pairing::{pair_tool_results, tools_in_play};
+use crate::repair::{repair_tool_arguments, RepairError};
+use crate::routing::{apply_routing_command, ModelRouter, Preset, RouteDecision};
+
+#[derive(Debug, Error)]
+pub enum AgentError {
+    #[error(transparent)]
+    Provider(#[from] ProviderError),
+    #[error(transparent)]
+    Context(#[from] dsb_context::PrefixError),
+    #[error("repair: {0}")]
+    Repair(#[from] RepairError),
+    #[error("{0}")]
+    Message(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentConfig {
+    pub workspace_root: PathBuf,
+    pub system_prompt: String,
+    pub tools: Vec<ToolDefinition>,
+    pub skills_index: Vec<SkillIndexEntry>,
+    pub preset: Preset,
+    pub max_tool_rounds: u32,
+    /// When true, print model visibility lines via TurnEvent.
+    pub show_model: bool,
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            workspace_root: PathBuf::from("."),
+            system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
+            tools: Vec::new(),
+            skills_index: Vec::new(),
+            preset: Preset::Flash,
+            max_tool_rounds: 4,
+            show_model: true,
+        }
+    }
+}
+
+/// Events emitted during a turn (for CLI rendering).
+#[derive(Debug, Clone)]
+pub enum TurnEvent {
+    ModelVisibility(String),
+    ReasoningDelta(String),
+    ContentDelta(String),
+    ToolCallProposed { name: String, arguments: String },
+    ToolRepairApplied { name: String },
+    ToolError { name: String, error: String },
+    Warning(String),
+    PrefixEpoch(String),
+    CacheEvidence(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct TurnOutcome {
+    pub assistant_text: String,
+    pub reasoning_text: String,
+    pub route: RouteDecision,
+    pub model_used: String,
+    pub tool_rounds: u32,
+}
+
+/// Session agent holding stable prefix + volatile transcript.
+pub struct Agent {
+    client: Arc<Client>,
+    config: AgentConfig,
+    router: ModelRouter,
+    stable: StablePrefix,
+    /// Volatile transcript (user/assistant/tool after stable prefix).
+    tail: VolatileTail,
+}
+
+impl Agent {
+    pub fn new(client: Arc<Client>, config: AgentConfig) -> Result<Self, AgentError> {
+        let project_instructions = discover_project_instructions(&config.workspace_root)?;
+        let environment = EnvironmentSummary::detect(&config.workspace_root);
+        let inputs = PrefixBuildInputs {
+            system_prompt: config.system_prompt.clone(),
+            tools: config.tools.clone(),
+            skills_index: config.skills_index.clone(),
+            environment,
+            project_instructions,
+        };
+        let stable = PrefixBuilder::new().build(&inputs)?;
+        let router = ModelRouter::new(config.preset);
+        Ok(Self {
+            client,
+            config,
+            router,
+            stable,
+            tail: VolatileTail::new(),
+        })
+    }
+
+    pub fn router_mut(&mut self) -> &mut ModelRouter {
+        &mut self.router
+    }
+
+    pub fn prefix_epoch_short(&self) -> &str {
+        self.stable.epoch.short()
+    }
+
+    pub fn transcript_tail(&self) -> &[ChatMessage] {
+        &self.tail.messages
+    }
+
+    /// Run one user turn (may include internal tool rounds; M1 tools return stub errors).
+    pub async fn run_turn<F>(
+        &mut self,
+        user_input: &str,
+        mut on_event: F,
+    ) -> Result<TurnOutcome, AgentError>
+    where
+        F: FnMut(TurnEvent),
+    {
+        let (user_text, _cmd) = apply_routing_command(&mut self.router, user_input);
+        if user_text.trim().is_empty() && _cmd.is_some() {
+            // command-only: still need a message for the model; use a short ack prompt
+            // Actually for /preset max with no text, just return empty outcome.
+            let route = self.router.route_turn_for_preset("");
+            return Ok(TurnOutcome {
+                assistant_text: String::new(),
+                reasoning_text: String::new(),
+                model_used: route.wire_model.clone(),
+                route,
+                tool_rounds: 0,
+            });
+        }
+
+        let route = self.router.route_turn_for_preset(&user_text);
+        if self.config.show_model {
+            on_event(TurnEvent::ModelVisibility(route.visibility_line()));
+        }
+        on_event(TurnEvent::PrefixEpoch(self.stable.epoch.log_label()));
+
+        self.tail.push_user(user_text);
+
+        let mut tool_rounds = 0u32;
+        let mut last_route = route.clone();
+        let mut last_content = String::new();
+        let mut last_reasoning = String::new();
+        let mut model_used = route.wire_model.clone();
+
+        loop {
+            // Repair pairing before send
+            let (paired, holes) = pair_tool_results(&self.tail.messages);
+            if !holes.is_empty() {
+                self.tail.messages = paired;
+                on_event(TurnEvent::Warning(format!(
+                    "repaired {} interrupted tool result(s)",
+                    holes.len()
+                )));
+            }
+
+            let messages = assemble_messages(&self.stable, &self.tail);
+            // When tools are in play, reasoning_content must be present on assistant msgs (provider types keep it).
+            let _ = tools_in_play(&messages);
+
+            let tools = if self.config.tools.is_empty() {
+                None
+            } else {
+                Some(self.config.tools.clone())
+            };
+
+            let request = ChatRequestBuilder::new(last_route.model.clone())
+                .messages(messages)
+                .stream(true)
+                .thinking(Some(last_route.thinking.clone()))
+                .reasoning_effort(Some(last_route.effort))
+                .tools(tools)
+                .build();
+
+            let completed = match self
+                .client
+                .chat_stream(request, |ev| match ev {
+                    StreamEvent::ReasoningDelta(s) => on_event(TurnEvent::ReasoningDelta(s)),
+                    StreamEvent::ContentDelta(s) => on_event(TurnEvent::ContentDelta(s)),
+                    StreamEvent::Model(m) => {
+                        model_used = m;
+                    }
+                    _ => {}
+                })
+                .await
+            {
+                Ok(c) => c,
+                Err(ProviderError::ApiStatus { status, body: _ })
+                    if status == 404 && last_route.model.as_wire() == MODEL_PRO =>
+                {
+                    let fb = ModelRouter::fallback_flash("pro unavailable (404)");
+                    on_event(TurnEvent::Warning(fb.warning.clone().unwrap_or_default()));
+                    on_event(TurnEvent::ModelVisibility(fb.visibility_line()));
+                    last_route = fb;
+                    continue;
+                }
+                Err(e) => return Err(e.into()),
+            };
+
+            if let Some(ev) = &completed.cache_evidence {
+                on_event(TurnEvent::CacheEvidence(ev.log_label().to_string()));
+            }
+
+            last_content = completed.message.content.clone();
+            last_reasoning = completed.message.reasoning_content.clone();
+            if let Some(m) = &completed.model {
+                model_used = m.clone();
+            }
+
+            // Push assistant with reasoning for tool replay
+            let tool_calls = completed.message.tool_calls.clone();
+            self.tail.push(ChatMessage::assistant_with_reasoning(
+                if last_content.is_empty() {
+                    None
+                } else {
+                    Some(last_content.clone())
+                },
+                if last_reasoning.is_empty() {
+                    None
+                } else {
+                    Some(last_reasoning.clone())
+                },
+                if tool_calls.is_empty() {
+                    None
+                } else {
+                    Some(tool_calls.clone())
+                },
+            ));
+
+            if tool_calls.is_empty() {
+                break;
+            }
+
+            tool_rounds += 1;
+            if tool_rounds > self.config.max_tool_rounds {
+                on_event(TurnEvent::Warning(
+                    "max tool rounds reached; stopping".into(),
+                ));
+                break;
+            }
+
+            // M1: no real tool runtime — repair args and return structured stub error to model.
+            for call in &tool_calls {
+                self.handle_tool_stub(call, &mut on_event)?;
+            }
+            // continue loop for model to consume tool results
+        }
+
+        Ok(TurnOutcome {
+            assistant_text: last_content,
+            reasoning_text: last_reasoning,
+            route: last_route,
+            model_used,
+            tool_rounds,
+        })
+    }
+
+    fn handle_tool_stub<F>(&mut self, call: &ToolCall, on_event: &mut F) -> Result<(), AgentError>
+    where
+        F: FnMut(TurnEvent),
+    {
+        on_event(TurnEvent::ToolCallProposed {
+            name: call.function.name.clone(),
+            arguments: call.function.arguments.clone(),
+        });
+
+        let schema = self
+            .config
+            .tools
+            .iter()
+            .find(|t| t.function.name == call.function.name)
+            .and_then(|t| t.function.parameters.clone());
+
+        match repair_tool_arguments(&call.function.arguments, schema.as_ref()) {
+            Ok(outcome) => {
+                if outcome.repair_applied {
+                    on_event(TurnEvent::ToolRepairApplied {
+                        name: call.function.name.clone(),
+                    });
+                }
+                // M1: do not execute tools.
+                let body = serde_json::json!({
+                    "error": "tool_not_available_in_m1",
+                    "tool": call.function.name,
+                    "repaired_arguments": outcome.arguments,
+                    "message": "Tools ship in M2. Arguments were validated/repaired only."
+                });
+                self.tail.push(ChatMessage::tool_result(
+                    call.id.clone(),
+                    body.to_string(),
+                ));
+            }
+            Err(e) => {
+                on_event(TurnEvent::ToolError {
+                    name: call.function.name.clone(),
+                    error: e.to_string(),
+                });
+                let body = serde_json::json!({
+                    "error": "invalid_tool_arguments",
+                    "tool": call.function.name,
+                    "message": e.to_string()
+                });
+                self.tail
+                    .push(ChatMessage::tool_result(call.id.clone(), body.to_string()));
+            }
+        }
+        Ok(())
+    }
+
+    /// Dual-call cache evidence helper (ADR 0005 substitute).
+    pub async fn cache_evidence_dual_call(&self) -> Result<String, AgentError> {
+        let messages = assemble_messages(&self.stable, &VolatileTail::new());
+        let req = ChatRequestBuilder::new(ModelId::Flash)
+            .messages(messages)
+            .stream(false)
+            .build();
+        let ev = self.client.cache_evidence_dual_call(req).await?;
+        Ok(ev.log_label().to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dsb_provider_deepseek::ClientConfig;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn multi_turn_keeps_stable_prefix_epoch() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(concat!(
+                        "data: {\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"content\":\"ok1\"}}]}\n\n",
+                        "data: [DONE]\n\n",
+                    )),
+            )
+            .mount(&server)
+            .await;
+
+        let client = Arc::new(
+            Client::new(ClientConfig::new("k").with_base_url(server.uri())).unwrap(),
+        );
+        let mut agent = Agent::new(
+            client,
+            AgentConfig {
+                workspace_root: std::env::temp_dir(),
+                show_model: true,
+                ..AgentConfig::default()
+            },
+        )
+        .unwrap();
+        let epoch1 = agent.prefix_epoch_short().to_string();
+        let mut models = Vec::new();
+        agent
+            .run_turn("hi", |ev| {
+                if let TurnEvent::ModelVisibility(m) = ev {
+                    models.push(m);
+                }
+            })
+            .await
+            .unwrap();
+        let epoch2 = agent.prefix_epoch_short().to_string();
+        assert_eq!(epoch1, epoch2);
+        assert!(models.iter().any(|m| m.contains("deepseek-v4-flash")));
+    }
+
+    #[tokio::test]
+    async fn pro_once_visible() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(concat!(
+                        "data: {\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"content\":\"pro-ans\"}}]}\n\n",
+                        "data: [DONE]\n\n",
+                    )),
+            )
+            .mount(&server)
+            .await;
+
+        let client = Arc::new(
+            Client::new(ClientConfig::new("k").with_base_url(server.uri())).unwrap(),
+        );
+        let mut agent = Agent::new(
+            client,
+            AgentConfig {
+                workspace_root: std::env::temp_dir(),
+                ..AgentConfig::default()
+            },
+        )
+        .unwrap();
+        agent.router_mut().set_auto_router(false);
+        let mut vis = Vec::new();
+        let out = agent
+            .run_turn("/pro hard problem", |ev| {
+                if let TurnEvent::ModelVisibility(m) = ev {
+                    vis.push(m);
+                }
+            })
+            .await
+            .unwrap();
+        assert!(vis.iter().any(|v| v.contains(MODEL_PRO)));
+        assert_eq!(out.route.wire_model, MODEL_PRO);
+        // next turn flash
+        let out2 = agent.run_turn("follow up", |_| {}).await.unwrap();
+        assert_eq!(out2.route.wire_model, "deepseek-v4-flash");
+    }
+}

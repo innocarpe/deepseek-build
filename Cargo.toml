@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/dsb-agent",
     "crates/dsb-cli",
     "crates/dsb-config",
     "crates/dsb-context",

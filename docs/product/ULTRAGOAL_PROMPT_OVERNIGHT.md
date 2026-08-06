@@ -43,10 +43,24 @@ Same for throughput-0x and rc-1.0.0.
 
 - Dual CLI deepseek-build + dsb (ADR 0006)
 - Full SemVer bumps on minors; scripts/check-semver.sh
-- One PR unit; kind labels; squash-merge; pull main after merge
+- **PR planning FIRST every story:** docs/product/ULTRAGOAL_PR_PLANNING.md
+  - List PR units before any implementation
+  - Explicit **sequential** vs **parallel** DAG
+  - **Atomic Conventional Commits** on the branch (one concern each)
+  - **Stack/chain PRs** for sequential work (base B on A); merge bottom-up
+  - Parallel agents only on disjoint paths; never dual SemVer bumps
+- Kind labels; squash-merge to main; pull main after each merge
 - Do not flip G4–G6 without specs
 - Child runtime = parent (no cross claude/codex/grok unless user ordered)
 - When a wave finishes, immediately start the next plan — do not idle
+
+# START EACH STORY
+
+1. omc ultragoal complete-goals
+2. Write PR unit plan (units / sequential / parallel / stack)
+3. Implement unit 1 only → PR → merge → pull main
+4. Next unit (stack if depends on unmerged base)
+5. Checkpoint story with evidence listing PRs + plan
 
 # STOP ONLY IF
 

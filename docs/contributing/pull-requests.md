@@ -2,7 +2,7 @@
 
 **Audience:** humans and coding agents.  
 **Normative:** yes — process contract unless a later ADR supersedes it.  
-**Companion docs:** [commits.md](./commits.md) · [branches.md](./branches.md) · [examples.md](./examples.md) · [review-checklist.md](./review-checklist.md)
+**Companion docs:** [commits.md](./commits.md) · [branches.md](./branches.md) · [examples.md](./examples.md) · [review-checklist.md](./review-checklist.md) · [ULTRAGOAL_PR_PLANNING.md](../product/ULTRAGOAL_PR_PLANNING.md) (ultragoal: units / parallel / stack)
 
 This is not a generic “please open a PR” blurb. It is the **operating system** for how DeepSeek Build changes land: what counts as one unit of work, how titles/labels encode intent, what a mergeable description looks like, and how that interacts with specs, milestones, and DeepSeek cache discipline.
 
@@ -75,6 +75,17 @@ Pick **one** kind before writing code. Kind drives title type, label, and body e
 | M6 | `docs`, `chore`, `ci` | user-guide pages, release notes, install script |
 
 **Rule of thumb:** if M1 has no `spec` PRs merged for cache/routing/thinking, do not open a giant `feat(provider)` that invents those rules in code comments.
+
+### Ultragoal / overnight (mandatory)
+
+Before implementing a story, produce a **PR unit plan**:
+
+- Explicit **PR units** (each = one PR)
+- **Sequential** vs **parallel** sets (DAG)
+- **Atomic commits** on each branch
+- **Stacked/chained PRs** for sequential work (`--base` previous branch; merge bottom-up)
+
+Full template: [ULTRAGOAL_PR_PLANNING.md](../product/ULTRAGOAL_PR_PLANNING.md).
 
 ---
 

@@ -20,6 +20,7 @@ This is the **one board**. Other docs plug into it; they do not replace it.
 | [SYSTEM_ARCHITECTURE.md](../architecture/SYSTEM_ARCHITECTURE.md) | Runtime design + mermaid |
 | [HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.md) | L1/L2/L3 conflict rules |
 | [ULTRAGOAL_CHAIN.md](./ULTRAGOAL_CHAIN.md) | How to chain plans overnight |
+| [ULTRAGOAL_PR_PLANNING.md](./ULTRAGOAL_PR_PLANNING.md) | **Mandatory:** PR units, parallel/sequential DAG, atomic commits, stacking |
 
 ---
 
@@ -197,7 +198,10 @@ Theme tokens live under `docs/product/DESIGN.md` (or theme section in architectu
 3. Same for `native-0x` → `throughput-0x` → `rc-1.0.0`.  
 4. Cold start: use wave-specific prompt under `docs/product/ULTRAGOAL_PROMPT_*.md`.  
 5. Never invent **`1.0.0`** mid-wave; never skip G4 before parallel runtime.  
-6. Child runtime = parent runtime (Grok→grok only unless user orders otherwise).
+6. Child runtime = parent runtime (Grok→grok only unless user orders otherwise).  
+7. **PR planning first (mandatory):** before code for any ultragoal story, write the **PR unit plan** — units, sequential vs parallel, atomic commits, stacking — per [ULTRAGOAL_PR_PLANNING.md](./ULTRAGOAL_PR_PLANNING.md). No plan → no implement.  
+8. **Atomic commits** on feature branches; **squash-merge** to `main` still allowed.  
+9. **Chaining/stacking PRs** for sequential work to minimize conflicts; parallel only on disjoint paths.
 
 ```mermaid
 sequenceDiagram

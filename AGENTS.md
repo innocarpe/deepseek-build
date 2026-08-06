@@ -7,6 +7,8 @@ This file is standing instructions for any coding agent working in this repo.
 **Final goal + all waves:** [`docs/product/MASTER_PLAN.md`](docs/product/MASTER_PLAN.md) (SSOT board).  
 **Overnight chain:** [`docs/product/ULTRAGOAL_CHAIN.md`](docs/product/ULTRAGOAL_CHAIN.md)  
 (`dogfood-0x` → `native-0x` → `throughput-0x` → `rc-1.0.0`).  
+**PR units / parallel vs sequential / atomic commits / stacking (mandatory):**  
+[`docs/product/ULTRAGOAL_PR_PLANNING.md`](docs/product/ULTRAGOAL_PR_PLANNING.md) — **plan PRs before code**.  
 **Wave A detail:** [`docs/product/RELEASE_TRAIN_0x.md`](docs/product/RELEASE_TRAIN_0x.md).  
 **Architecture:** [`docs/architecture/SYSTEM_ARCHITECTURE.md`](docs/architecture/SYSTEM_ARCHITECTURE.md).  
 **SemVer on disk:** read root `Cargo.toml` (do not hardcode). Re-check ultragoal status each session.
@@ -60,14 +62,21 @@ contract + the `pr-authoring` skill**, not by process-police GitHub Actions.
 | [`docs/contributing/pull-requests.md`](docs/contributing/pull-requests.md) | Units, titles, labels, merge |
 | [`docs/contributing/review-checklist.md`](docs/contributing/review-checklist.md) | Self-merge checklist |
 
+### Before coding (ultragoal stories)
+
+1. Write **PR unit plan** ([ULTRAGOAL_PR_PLANNING.md](docs/product/ULTRAGOAL_PR_PLANNING.md)): units, sequential/parallel, stack, atomic commits  
+2. Only then implement **unit 1**
+
 ### Before claiming done
 
 1. Branch: `<type>/<short-kebab>` (not `main`)
-2. Conventional title + matching **kind** label on `gh pr create --label …`
-3. Body meets **pr-body-standard.md** (Problem / What changed / Testing honesty / AI review / Security / Notes)
-4. Milestone when known; cache-impact honest for agent/prompt/tool changes
-5. Verify: `gh pr view --json title,labels,url`
-6. **Would accept this PR from an external contributor as-is**
+2. **Atomic** Conventional Commits on the branch (one concern each)
+3. Conventional title + matching **kind** label on `gh pr create --label …`
+4. Body meets **pr-body-standard.md** (Problem / What changed / Testing honesty / AI review / Security / Notes); include unit plan if multi-unit story
+5. Stacked PRs: `Depends on #N` + correct `--base`
+6. Milestone when known; cache-impact honest for agent/prompt/tool changes
+7. Verify: `gh pr view --json title,labels,url`
+8. **Would accept this PR from an external contributor as-is**
 
 ### Explicitly do **not**
 

@@ -22,5 +22,6 @@ omc ultragoal create-goals --plan-id rc-1.0.0 \
 # START
 git pull origin main
 omc ultragoal complete-goals --plan-id rc-1.0.0
+# PR units first (ULTRAGOAL_PR_PLANNING.md); stack release docs vs code if needed
 # Final story requires quality-gate-json for ultragoal
 ```

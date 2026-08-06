@@ -1,29 +1,37 @@
 //! Welcome banner: DeepSeek whale mark + DeepSeek-blue chrome.
 //!
-//! Visual intent matches peer coding CLIs (logo mark + product card),
-//! using the official brand accent `#4D6BFE` (see `theme::DEEPSEEK_BLUE_RGB`
-//! and `docs/product/DESIGN.md`).
+//! The whale mark is a **braille raster of the official DeepSeek logo
+//! silhouette** (rounded body, belly cutout, eye/smile, fluke, fin) at CLI
+//! scale — derived from the public brand mark shape used on deepseek.com /
+//! the DeepSeek GitHub org avatar. Accent color `#4D6BFE`.
 //!
 //! Not a full TUI — line-oriented ANSI only. Respects `NO_COLOR` / non-TTY.
 
 use crate::theme::{Role, Theme};
 
-/// Whale mark inspired by the official DeepSeek mascot (rounded body, face,
-/// water spout). Braille density for a premium dark-terminal look — same class
-/// of mark used by peer CLIs, not a raster of the trademarked logo asset.
+/// Official DeepSeek whale silhouette as braille (rasterized logo; ~14×8 cells).
+///
+/// Generated from the public solid-fill whale mark so the body curve, belly
+/// cutout, and fluke remain recognizable at terminal scale.
 pub const WHALE_MARK: &[&str] = &[
-    "          ⠄⠄",
-    "      ⣠⣾⣿⣿⣷⣄ ⠄",
-    "    ⣰⣿⠋ ⠈⠙⣿⣆⠄",
-    "   ⢸⣿⣇⣀  ⣀⣸⣿",
-    "   ⠈⣿⣿⣿⣿⣿⣿⡿⠁",
-    "    ⠈⠻⣿⣿⡿⠋",
-    "      ⠈⠉⠁",
+    "⠀⠀⣀⣤⣤⣤⣶⠂⠀⢸⣄⠀⠀⢀",
+    "⢀⣾⣿⣿⣿⣿⣿⣦⡀⢸⣿⣶⣾⡿",
+    "⣼⣿⣿⣿⣿⣿⣿⣿⣷⡄⢻⣿⠟⠁",
+    "⣿⠀⠀⠉⠻⣿⣿⣯⠹⣿⣿⡏",
+    "⣿⡆⠀⠀⠀⠙⣿⣿⣤⣿⣿⠇",
+    "⢸⣷⡀⠀⢀⠀⠸⣿⣿⣿⡟",
+    "⠀⠻⣷⣄⣸⣷⣄⠙⣿⣿⣄",
+    "⠀⠀⠙⠻⣿⣿⣿⠿⠋⠉⠉",
 ];
 
-/// Compact whale for narrow terminals (`COLUMNS` < 64).
-pub const WHALE_MARK_COMPACT: &[&str] =
-    &["     ⠄⠄", "  ⣠⣾⣿⣷ ⠄", " ⣾⠋ ⠙⣿⠄", " ⣿⣄ ⣠⣿", " ⠈⣿⣿⡿⠁", "  ⠈⠉"];
+/// Compact raster for narrow terminals (`COLUMNS` < 64).
+pub const WHALE_MARK_COMPACT: &[&str] = &[
+    "⢀⣤⣶⣶⣇⠀⣧⣀⣠",
+    "⣾⢿⣿⣿⣿⣧⣹⡿⠋",
+    "⣧⠀⠈⢻⣿⣙⣿⡇",
+    "⢻⣆⠀⣀⢻⣿⡿",
+    "⠀⠻⢷⣿⣶⠟⠛",
+];
 
 /// Horizontal rule character used inside the card.
 const HR: &str = "─";

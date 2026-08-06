@@ -4,7 +4,7 @@
 
 ### Added
 
-- **Welcome banner v2** — DeepSeek braille whale mark + boxed product card on interactive chat (`banner.rs`)
+- **Welcome banner v2** — DeepSeek braille whale mark (official logo silhouette raster) + boxed product card (`banner.rs`)
 - REPL prompt `❯` uses DeepSeek blue accent when color is enabled
 - Theme/docs: official `#4D6BFE` tokens documented for mark, box chrome, and prompt
 

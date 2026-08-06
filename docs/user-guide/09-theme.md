@@ -15,7 +15,7 @@ Default terminal styling optimizes **readability**, with brand accent **DeepSeek
 
 ## Welcome banner
 
-Interactive chat opens with a **whale mark + product card** (DeepSeek-blue borders). The mark is a terminal-native braille silhouette inspired by the official whale logo — no image assets required.
+Interactive chat opens with a **whale mark + product card** (DeepSeek-blue borders). The mark is a braille raster of the official DeepSeek whale silhouette — no image assets required.
 
 ```bash
 deepseek-build          # or: dsb / deepseek-build chat

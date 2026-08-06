@@ -5,7 +5,6 @@ use std::path::Path;
 
 use dsb_provider_deepseek::{ChatMessage, ToolDefinition};
 use serde::Serialize;
-use serde_json::Value;
 use thiserror::Error;
 
 use crate::canonicalize::stable_prefix_bytes;
@@ -230,7 +229,7 @@ fn path_to_unix(path: &Path) -> String {
 
 /// Helper for tests: fixture tools with intentionally shuffled keys when built from Value.
 #[cfg(test)]
-pub fn tool_from_params(name: &str, params: Value) -> ToolDefinition {
+pub fn tool_from_params(name: &str, params: serde_json::Value) -> ToolDefinition {
     ToolDefinition {
         type_: "function".into(),
         function: dsb_provider_deepseek::ToolFunction {

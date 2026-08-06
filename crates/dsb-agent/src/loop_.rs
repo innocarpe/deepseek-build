@@ -155,7 +155,10 @@ impl Agent {
 
         let mut tool_rounds = 0u32;
         let mut last_route = route.clone();
+        // Initialized before loop; always overwritten by the first successful stream.
+        #[allow(unused_assignments)]
         let mut last_content = String::new();
+        #[allow(unused_assignments)]
         let mut last_reasoning = String::new();
         let mut model_used = route.wire_model.clone();
 

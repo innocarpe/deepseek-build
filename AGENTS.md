@@ -4,17 +4,19 @@ This file is standing instructions for any coding agent working in this repo.
 
 ## Current phase
 
-**Final goal + all waves:** [`docs/product/MASTER_PLAN.md`](docs/product/MASTER_PLAN.md) (SSOT board).  
-**Overnight chain:** [`docs/product/ULTRAGOAL_CHAIN.md`](docs/product/ULTRAGOAL_CHAIN.md)  
-(`dogfood-0x` → `native-0x` → `throughput-0x` → `rc-1.0.0`).  
-**PR units / parallel vs sequential / atomic commits / stacking (mandatory):**  
-[`docs/product/ULTRAGOAL_PR_PLANNING.md`](docs/product/ULTRAGOAL_PR_PLANNING.md) ·  
-[`docs/contributing/stack-merge-runbook.md`](docs/contributing/stack-merge-runbook.md) ·  
-[`docs/product/SSOT.md`](docs/product/SSOT.md).  
-**Fixed DAGs:** `WAVE_A_PR_DAG.md`, `WAVE_B_PR_DAG.md`. **plan PRs before code**.
-**Wave A detail:** [`docs/product/RELEASE_TRAIN_0x.md`](docs/product/RELEASE_TRAIN_0x.md).  
-**Architecture:** [`docs/architecture/SYSTEM_ARCHITECTURE.md`](docs/architecture/SYSTEM_ARCHITECTURE.md).  
-**SemVer on disk:** read root `Cargo.toml` (do not hardcode). Re-check ultragoal status each session.
+**Major product lines (PRDs):** [`docs/product/versions/README.md`](docs/product/versions/README.md)  
+- **1.x** scaffold — [PRD-v1](docs/product/PRD-v1.md)  
+- **2.x shipped base** — [PRD-v2](docs/product/PRD-v2.md) (Grok shell + DeepSeek entry/UI)  
+- **3.x next** — [PRD-v3](docs/product/PRD-v3.md) (L1/L2 heart fusion)  
+- **4.x later** — [PRD-v4](docs/product/PRD-v4.md) (L3 productization)  
+
+**SSOT priority:** [`docs/product/SSOT.md`](docs/product/SSOT.md)  
+**Historical board:** [`docs/product/MASTER_PLAN.md`](docs/product/MASTER_PLAN.md) · replan [`REPLAN_2.0.md`](docs/product/REPLAN_2.0.md)  
+**PR planning:** [`docs/product/ULTRAGOAL_PR_PLANNING.md`](docs/product/ULTRAGOAL_PR_PLANNING.md) ·  
+[`docs/contributing/stack-merge-runbook.md`](docs/contributing/stack-merge-runbook.md)  
+**Architecture:** [`docs/architecture/HARNESS_PHILOSOPHY.md`](docs/architecture/HARNESS_PHILOSOPHY.md) ·  
+[`docs/architecture/SYSTEM_ARCHITECTURE.md`](docs/architecture/SYSTEM_ARCHITECTURE.md)  
+**SemVer on disk:** read root `Cargo.toml` (do not hardcode). Re-check ultragoal / major PRD each session.
 
 ## SemVer — fail-close (mandatory)
 

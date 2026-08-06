@@ -1,0 +1,20 @@
+[package]
+name = "dsb-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "DeepSeek Build CLI entrypoint (binary: dsb)"
+publish = false
+
+[[bin]]
+name = "dsb"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+
+[lints]
+workspace = true

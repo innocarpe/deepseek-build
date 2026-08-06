@@ -1,0 +1,5 @@
+# Pinned at first workspace commit (ADR 0004).
+[toolchain]
+channel = "1.94.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

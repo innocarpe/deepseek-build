@@ -1,7 +1,21 @@
 # crates/
 
-**Placeholder only** (this README). Not a G1 violation.
+Cargo workspace members for **DeepSeek Build** (`dsb`). Layout follows
+[`docs/adr/0004-toolchain.md`](../docs/adr/0004-toolchain.md).
 
-Real packages / workspace members ship only after **G1** (toolchain ADR) per
-[`docs/GATES.md`](../docs/GATES.md). Layout may echo Grok-style modularity, but
-tool/session **semantics** follow [`HARNESS_PHILOSOPHY.md`](../docs/architecture/HARNESS_PHILOSOPHY.md).
+| Crate | Role | Status |
+|-------|------|--------|
+| `dsb-cli` | Binary entry (`dsb`) | M1 scaffold |
+| `dsb-provider-deepseek` | DeepSeek Chat Completions client | planned |
+| `dsb-agent` | Turn / agent loop | planned |
+| `dsb-context` | Stable prefix / cache epochs (spec 10) | planned |
+| `dsb-config` | Config + credentials load | planned |
+| `dsb-tools` | Tool runtime | M2+ |
+
+Build / run from repo root:
+
+```bash
+cargo build -p dsb-cli
+cargo run -p dsb-cli -- --version
+cargo test
+```

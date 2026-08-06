@@ -17,10 +17,13 @@ Thanks for your interest. This project is early: **docs and specs land before co
 | [docs/contributing/pr-body-standard.md](docs/contributing/pr-body-standard.md) | Orca-level PR narrative bar |
 | [docs/contributing/examples.md](docs/contributing/examples.md) | Filled PR body examples (`spec`/`feat`/`fix`/`docs`) |
 | [docs/contributing/review-checklist.md](docs/contributing/review-checklist.md) | Review / self-merge checklist |
+| [skills/pr-authoring/SKILL.md](skills/pr-authoring/SKILL.md) | **Agent skill** for writing/opening PRs |
 | [docs/contributing/commits.md](docs/contributing/commits.md) | Conventional Commits |
 | [docs/contributing/branches.md](docs/contributing/branches.md) | Branch naming and lifecycle |
 | [docs/maintainers/github-labels.md](docs/maintainers/github-labels.md) | Labels |
-| [docs/adr/0003-pr-process.md](docs/adr/0003-pr-process.md) | Why this process |
+| [docs/adr/0003-pr-process.md](docs/adr/0003-pr-process.md) | Why this process (harness, not process-CI) |
+
+Process quality is a **harness** (`AGENTS.md` + skill + review). There is **no** GitHub Actions job that polices PR titles/labels/docs paths. Product CI appears only when there is something real to build/test (see [`.github/workflows/README.md`](.github/workflows/README.md)).
 
 ## Development priorities (do not fight these)
 

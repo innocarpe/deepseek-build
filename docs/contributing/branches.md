@@ -8,7 +8,7 @@
 
 | Phase | What “healthy main” means |
 |-------|---------------------------|
-| Now (docs-first) | Docs/specs consistent; CI green; no secrets |
+| Now (docs-first) | Docs/specs consistent; process harness followed; no secrets |
 | Later (runtime) | Buildable agent for the claimed milestone; no known broken defaults |
 
 There is **no long-lived `develop`** unless a future ADR introduces one.
@@ -46,8 +46,7 @@ feat/17-provider-stream
 spec/10-cache-contract
 feat/provider-stable-prefix
 docs/pr-conventions-depth
-fix/pr-title-scope-digits
-ci/docs-hygiene-required-paths
+fix/check-pr-title-scope-digits
 ```
 
 ### Bad names

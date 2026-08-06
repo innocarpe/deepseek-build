@@ -12,7 +12,7 @@ North star for every milestone: **wall-clock progress on real coding tasks**.
 | | |
 |--|--|
 | **Goal** | Repo is a credible open-source project; product truth is written |
-| **Exit criteria** | Public `main`; LICENSE/NOTICE/CONTRIBUTING/SECURITY/CoC; labels; issue/PR templates; CI docs-hygiene; PRD-v1 + this file; docs tree live |
+| **Exit criteria** | Public `main`; LICENSE/NOTICE/CONTRIBUTING/SECURITY/CoC; labels; issue/PR templates; PR process harness; PRD-v1 + this file; docs tree live |
 | **Primary docs** | `docs/product/*`, `docs/architecture/REPO_LAYOUT.md`, ADR 0001–0002 |
 | **Not in M0** | Runnable agent binary |
 

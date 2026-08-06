@@ -200,14 +200,14 @@ No TUI yet. Evidence is test output:
 
 ### Problem
 
-Titles like `spec(10-cache): define rules` fail `pr-title` CI. Our spec index
-uses numeric prefixes (`10-cache-contract`); the scope regex only allowed
+Titles like `spec(10-cache): define rules` fail the local title helper and
+confuse agents following Conventional Commits with numeric scopes. Our spec
+index uses numeric prefixes (`10-cache-contract`); the scope regex only allowed
 `[a-z]`, so legitimate titles were rejected.
 
 ### What changed
 
-- Extend scope pattern to `[a-z0-9][a-z0-9/_-]*` in workflow +
-  `scripts/check-pr-title.sh`.
+- Extend scope pattern to `[a-z0-9][a-z0-9/_-]*` in `scripts/check-pr-title.sh`.
 - Add positive/negative examples to contributing docs.
 
 ### Out of scope
@@ -227,8 +227,7 @@ No visual change.
 
 - [x] `./scripts/check-pr-title.sh "spec(10-cache): define rules"` → ok
 - [x] `./scripts/check-pr-title.sh "bad title"` → fails
-- [x] `actionlint .github/workflows/ci.yml`
-- [ ] Full GitHub Actions — validated by this PR’s own `pr-title` job
+- [ ] Product CI — N/A (no product test surface for this change)
 
 ## Kind
 

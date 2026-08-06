@@ -111,7 +111,7 @@ Is >~600 LOC of non-generated code or >~12 code files?
 |------|-----|
 | Draft `docs/specs/10-cache-contract.md` only | Cache spec + Flash/Pro routing + thinking + half a Rust crate |
 | Implement prefix builder **against** merged spec 10 | “Start crates/” with empty modules and no behavior |
-| Fix `pr-title` regex false negative | Fix CI + reword entire PRD + add skills |
+| Fix title helper false negative | Fix script + reword entire PRD + add skills |
 | Add `/model` UX for effort flags | `/model` + MCP + permissions in one PR |
 
 See [examples.md](./examples.md) for full filled PR bodies.
@@ -137,7 +137,7 @@ Size labels are **signals**, not CI hard-fails. Prefer splitting an `L` feature 
 See [branches.md](./branches.md). Pattern: `<type>/<short-kebab>`  
 Examples: `spec/10-cache-contract`, `feat/provider-stream`, `docs/pr-conventions-depth`.
 
-### Title (required; CI-enforced)
+### Title (required)
 
 ```text
 <type>(optional-scope): <imperative summary>
@@ -166,7 +166,7 @@ Local check:
 
 Catalog: [`.github/labels.json`](../../.github/labels.json).
 
-**Draft PRs** may omit kind temporarily; converting to **Ready** without kind fails CI (`pr-kind-label`).
+**Draft PRs** may omit kind temporarily; **Ready** PRs must have exactly one kind label before merge (process/harness — not a GitHub Actions job).
 
 ---
 
@@ -318,10 +318,10 @@ Deep checklist: [review-checklist.md](./review-checklist.md).
 
 Allowed when:
 
-1. CI green (`docs-hygiene`, and on PRs `pr-title` + `pr-kind-label`)  
-2. Exactly one kind label  
-3. Body meets the quality bar for that kind (not checkbox theater)  
-4. You would accept this PR from a stranger without embarrassment  
+1. Exactly one kind label  
+2. Body meets the quality bar for that kind (not checkbox theater)  
+3. You would accept this PR from a stranger without embarrassment  
+4. Product CI green **when product CI exists** (build/tests) — not process linters  
 
 No mandatory 24h wait in early milestones; still sleep on **high cache-impact** or security-sensitive changes if unsure.
 
@@ -377,13 +377,15 @@ Coding agents **must not** mark work complete unless:
 3. `--label` includes exactly one kind  
 4. Body has non-empty Summary + Test plan appropriate to kind  
 5. `gh pr view --json labels` shows the kind label  
-6. CI not failing required jobs  
+6. Narrative body meets `pr-body-standard.md` (not empty checkboxes)  
+7. Load `skills/pr-authoring/SKILL.md` when authoring the PR  
 
 Agents **must not**:
 
 - Open a “foundation” PR that only restates generic OSS advice without project-specific rules (the failure mode of a thin first process PR)  
 - Mix M1 provider work with M4 subagents “because it’s related to agents”  
 - Claim cache-impact `none` on prompt/tool schema edits  
+- Add process-police CI (title/label/path linters) as a substitute for product tests or harness quality
 
 ---
 
@@ -397,19 +399,24 @@ Agents **must not**:
 | Rewriting CONTRIBUTING in every feature PR | Process thrash; put process changes in `docs` PRs |
 | Force-pushing `main` | Breaks the only shared history |
 | Using `chore` for user-visible behavior | Breaks release/changelog intent |
-| Label spam (3 kind labels) | CI fails; intent unclear |
+| Label spam (3 kind labels) | Intent unclear; kind must be exactly one |
+| Process CI theater | Burns focus; not product development CI |
 
 ---
 
-## 13. CI jobs that encode this doc
+## 13. How this is enforced (harness, not process CI)
 
-| Job | When | Enforces |
-|-----|------|----------|
-| `docs-hygiene` | push/PR | Required paths exist; labels.json valid |
-| `pr-title` | PR | Conventional title regex |
-| `pr-kind-label` | non-draft PR | Exactly one kind label |
+| Mechanism | Role |
+|-----------|------|
+| `skills/pr-authoring/SKILL.md` | Agent skill loaded when opening/writing PRs |
+| `AGENTS.md` | Standing agent contract |
+| `docs/contributing/*` | Normative human + agent process |
+| Review / self-merge checklist | Social gate before squash-merge |
+| Optional `./scripts/check-pr-title.sh` | Local helper only |
 
-CI is the **floor**, not the ceiling. A green PR can still be rejected for empty Summary or wrong unit of work.
+**Do not** add GitHub Actions that only police titles, labels, or markdown path inventories. That is not product CI. Product CI appears when there is a real build/test surface (see `.github/workflows/README.md`).
+
+A carefully filled PR can still be rejected for wrong unit of work or empty narrative — the bar is review quality, not a green check.
 
 ---
 

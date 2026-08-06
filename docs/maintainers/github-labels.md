@@ -13,7 +13,7 @@ Exactly **one**:
 `feat` · `fix` · `docs` · `spec` · `chore` · `refactor` · `test` · `ci`
 
 Must match the Conventional Commits **type** in the PR title.  
-CI job `pr-kind-label` enforces this on ready (non-draft) PRs.
+Ready PRs must carry exactly one kind label (process / review harness — not CI).
 
 ## Size (optional)
 

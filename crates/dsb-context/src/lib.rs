@@ -14,7 +14,7 @@ pub use canonicalize::{canonicalize_json, stable_prefix_bytes};
 pub use epoch::PrefixEpoch;
 pub use prefix::{
     discover_project_instructions, EnvironmentSummary, PrefixBuilder, PrefixBuildInputs,
-    SkillIndexEntry, StablePrefix, VolatileTail,
+    PrefixError, SkillIndexEntry, StablePrefix, VolatileTail, DEFAULT_SYSTEM_PROMPT,
 };
 
 use dsb_provider_deepseek::ChatMessage;

@@ -1,0 +1,26 @@
+[package]
+name = "dsb-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Agent turn loop, tool-call repair, model routing"
+publish = false
+
+[dependencies]
+dsb-provider-deepseek = { path = "../dsb-provider-deepseek" }
+dsb-context = { path = "../dsb-context" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+async-trait = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+wiremock = "0.6"
+
+[lints]
+workspace = true

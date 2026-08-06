@@ -229,6 +229,7 @@ fn path_to_unix(path: &Path) -> String {
 }
 
 /// Helper for tests: fixture tools with intentionally shuffled keys when built from Value.
+#[cfg(test)]
 pub fn tool_from_params(name: &str, params: Value) -> ToolDefinition {
     ToolDefinition {
         type_: "function".into(),

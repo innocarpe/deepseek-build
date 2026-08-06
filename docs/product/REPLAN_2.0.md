@@ -155,7 +155,7 @@ cargo check -p xai-grok-pager-bin
 | Specs 10/15/20/30/40/45/90/… | Contract tests / acceptance |
 | `dsb-tools` snippet/permissions | Policy layer or port into Grok tool path |
 | `dsb-context` prefix/epoch | L2 tests / adapter |
-| CI product-ci gate | Keep product CI culture |
+| CI required check | Keep product CI culture |
 | Docs user-guide structure | Rewrite against real TUI |
 
 ### Likely deprecate as *product entry* (keep as lib/tests)

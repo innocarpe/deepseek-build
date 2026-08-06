@@ -62,11 +62,11 @@ Open a **new** terminal (or source your shell config), then:
 
 ```bash
 deepseek-build --version
-# → deepseek-build 0.4.0
+# → deepseek-build 0.5.0
 dsb --version
-# → dsb 0.4.0
+# → dsb 0.5.0
 ./scripts/check-semver.sh
-# → check-semver: ok (0.4.0)
+# → check-semver: ok (0.5.0)
 ```
 
 Both commands must report the **same** full SemVer.
@@ -97,6 +97,21 @@ One-shot (default model: **`deepseek-v4-flash`**):
 deepseek-build run "Say hello in one short sentence."
 # alias:
 dsb run "Say hello in one short sentence."
+```
+
+### Sessions (persist / resume)
+
+Transcripts live under `~/.deepseek-build/sessions/<id>.jsonl`. On resume, unpaired tool calls are repaired (spec 15).
+
+```bash
+# New or resume named session
+deepseek-build --session my-work --dogfood chat
+dsb --session my-work run "continue from last turn"
+
+# Manage
+deepseek-build sessions list
+deepseek-build sessions show my-work
+deepseek-build sessions delete my-work
 ```
 
 One-shot **Pro** (user-visible model line):

@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
-use dsb_agent::{Agent, AgentConfig, Preset, TurnEvent};
+use dsb_agent::{Agent, AgentConfig, Preset, SessionStore, TurnEvent};
 use dsb_config::{BuildHome, Credentials};
 use dsb_provider_deepseek::{Client, ClientConfig};
 
@@ -70,6 +70,11 @@ struct Cli {
     #[arg(long, global = true, default_value_t = false)]
     dogfood: bool,
 
+    /// Persist/resume multi-turn session id (JSONL under ~/.deepseek-build/sessions/).
+    /// Creates the session if missing; resumes and repairs tool pairs if present.
+    #[arg(long, global = true)]
+    session: Option<String>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -88,6 +93,23 @@ enum Commands {
     Chat,
     /// Alias for `chat`.
     Repl,
+    /// Manage persisted sessions (`~/.deepseek-build/sessions/*.jsonl`).
+    #[command(subcommand)]
+    Sessions(SessionsCmd),
+}
+
+#[derive(Debug, Subcommand)]
+enum SessionsCmd {
+    /// List sessions (most recently updated first).
+    List,
+    /// Show message count / path for a session id.
+    Show {
+        id: String,
+    },
+    /// Delete a session file.
+    Delete {
+        id: String,
+    },
 }
 
 fn parse_cli() -> Cli {
@@ -96,11 +118,11 @@ fn parse_cli() -> Cli {
         "DeepSeek Build — DeepSeek-native terminal coding agent.\n\n\
 Set DEEPSEEK_API_KEY or ~/.deepseek-build/credentials.json.\n\
 Commands: `deepseek-build` (primary) and `dsb` (alias) are the same program.\n\
-Version is always full SemVer (MAJOR.MINOR.PATCH), e.g. 0.4.0 — never bare \"0.4\".\n\n\
+Version is always full SemVer (MAJOR.MINOR.PATCH), e.g. 0.5.0 — never bare \"0.5\".\n\n\
 Examples:\n  \
   {name} run \"explain this repo\"\n  \
-  {name} --dogfood chat\n  \
-  {name} run --pro \"design the architecture\"\n  \
+  {name} --dogfood --session mywork chat\n  \
+  {name} sessions list\n  \
   dsb chat"
     );
     let cmd = Cli::command()
@@ -146,7 +168,98 @@ async fn real_main() -> Result<()> {
         Some(Commands::Chat | Commands::Repl) => {
             run_repl(&cli).await?;
         }
+        Some(Commands::Sessions(ref cmd)) => {
+            run_sessions_cmd(cmd)?;
+        }
     }
+    Ok(())
+}
+
+fn session_store() -> SessionStore {
+    let home = BuildHome::resolve();
+    SessionStore::new(home.sessions_dir())
+}
+
+fn run_sessions_cmd(cmd: &SessionsCmd) -> Result<()> {
+    let store = session_store();
+    match cmd {
+        SessionsCmd::List => {
+            let list = store.list().context("list sessions")?;
+            if list.is_empty() {
+                println!("(no sessions under {})", store.root().display());
+                return Ok(());
+            }
+            for s in list {
+                println!(
+                    "{}\tmessages={}\tupdated={}\t{}",
+                    s.id,
+                    s.message_count,
+                    s.updated_at_unix,
+                    s.path.display()
+                );
+            }
+        }
+        SessionsCmd::Show { id } => {
+            let (msgs, holes, _) = store.load(id).with_context(|| format!("load session {id}"))?;
+            println!("id={id}");
+            println!("messages={}", msgs.len());
+            println!("repaired_tool_holes_on_load={}", holes.len());
+            println!("path={}", store.path_for(id)?.display());
+        }
+        SessionsCmd::Delete { id } => {
+            store
+                .delete(id)
+                .with_context(|| format!("delete session {id}"))?;
+            println!("deleted session {id}");
+        }
+    }
+    Ok(())
+}
+
+/// Bind session id: create if missing, resume if present. Returns Some(id) when active.
+fn bind_session(agent: &mut Agent, cli: &Cli) -> Result<Option<String>> {
+    let Some(raw) = cli.session.as_deref() else {
+        return Ok(None);
+    };
+    let store = session_store();
+    let id = store
+        .create(Some(raw), Some(&agent_workspace(cli)))
+        .context("create/open session")?;
+    let path = store.path_for(&id)?;
+    // load only if file has messages beyond meta
+    match store.load(&id) {
+        Ok((msgs, holes, _)) if !msgs.is_empty() => {
+            agent.load_transcript(msgs);
+            eprintln!(
+                "[session={id} resume messages; repaired_holes={} path={}]",
+                holes.len(),
+                path.display()
+            );
+        }
+        Ok(_) => {
+            eprintln!("[session={id} new path={}]", path.display());
+        }
+        Err(e) => return Err(e.into()),
+    }
+    Ok(Some(id))
+}
+
+fn agent_workspace(cli: &Cli) -> String {
+    cli.cwd
+        .clone()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+        .display()
+        .to_string()
+}
+
+fn persist_if_needed(agent: &Agent, session_id: Option<&str>) -> Result<()> {
+    let Some(id) = session_id else {
+        return Ok(());
+    };
+    let store = session_store();
+    agent
+        .persist_session(&store, id)
+        .with_context(|| format!("persist session {id}"))?;
     Ok(())
 }
 
@@ -182,6 +295,7 @@ async fn build_agent(cli: &Cli) -> Result<Agent> {
 
 async fn run_once(cli: &Cli, message: &str, pro: bool) -> Result<()> {
     let mut agent = build_agent(cli).await?;
+    let session_id = bind_session(&mut agent, cli)?;
     let input = if pro {
         if message.trim_start().starts_with("/pro") {
             message.to_string()
@@ -196,6 +310,7 @@ async fn run_once(cli: &Cli, message: &str, pro: bool) -> Result<()> {
     let outcome = agent
         .run_turn(&input, |ev| render_event(ev, show_reasoning))
         .await?;
+    persist_if_needed(&agent, session_id.as_deref())?;
 
     println!();
     eprintln!(
@@ -208,9 +323,13 @@ async fn run_once(cli: &Cli, message: &str, pro: bool) -> Result<()> {
 
 async fn run_repl(cli: &Cli) -> Result<()> {
     let mut agent = build_agent(cli).await?;
+    let session_id = bind_session(&mut agent, cli)?;
     let inv = invocation_name();
     println!("{inv} chat — DeepSeek Build (Flash default). /pro /preset max|flash /quit");
     eprintln!("[prefix_epoch={}]", agent.prefix_epoch_short());
+    if let Some(id) = &session_id {
+        eprintln!("[session={id} — turns are persisted]");
+    }
 
     let stdin = io::stdin();
     let mut stdout = io::stdout();
@@ -227,6 +346,7 @@ async fn run_repl(cli: &Cli) -> Result<()> {
             continue;
         }
         if line == "/quit" || line == "/exit" || line == ":q" {
+            persist_if_needed(&agent, session_id.as_deref())?;
             break;
         }
 
@@ -238,6 +358,9 @@ async fn run_repl(cli: &Cli) -> Result<()> {
             Ok(outcome) => {
                 println!();
                 eprintln!("[{}]", outcome.route.visibility_line());
+                if let Err(e) = persist_if_needed(&agent, session_id.as_deref()) {
+                    eprintln!("[warn] session persist failed: {e:#}");
+                }
             }
             Err(e) => {
                 eprintln!("error: {e}");
@@ -305,6 +428,7 @@ mod tests {
         let subs: Vec<_> = cmd.get_subcommands().map(|c| c.get_name()).collect();
         assert!(subs.contains(&"run"));
         assert!(subs.contains(&"chat"));
+        assert!(subs.contains(&"sessions"));
     }
 
     #[test]

@@ -1,6 +1,9 @@
 # DeepSeek Build
 
-**DeepSeek-native terminal coding agent** (`dsb`).
+**DeepSeek-native terminal coding agent.**
+
+**Commands:** `deepseek-build` (primary) · `dsb` (alias) — same program ([ADR 0006](docs/adr/0006-cli-names-and-semver.md)).  
+**Versions:** always full SemVer `MAJOR.MINOR.PATCH` (e.g. `0.1.0`, never bare `1.0`) — [versioning.md](docs/contributing/versioning.md).
 
 Combines three first-class references:
 
@@ -25,15 +28,20 @@ Combines three first-class references:
 
 ```bash
 cargo build -p dsb-cli
-cargo run -p dsb-cli -- --version
+# Both binaries (same SemVer):
+cargo run -p dsb-cli --bin deepseek-build -- --version
+# → deepseek-build 0.1.0
+cargo run -p dsb-cli --bin dsb -- --version
 # → dsb 0.1.0
+./scripts/check-semver.sh
 ```
 
-Release binary:
+Release binaries:
 
 ```bash
 cargo build --release -p dsb-cli
-./target/release/dsb --help
+./target/release/deepseek-build --help
+./target/release/dsb --help   # alias
 ```
 
 ### Set API key
@@ -57,20 +65,22 @@ Or create `~/.deepseek-build/credentials.json` (mode `0600` recommended):
 One-shot (default model: **`deepseek-v4-flash`**):
 
 ```bash
-cargo run -p dsb-cli -- run "Say hello in one short sentence."
+cargo run -p dsb-cli --bin deepseek-build -- run "Say hello in one short sentence."
+# alias:
+cargo run -p dsb-cli --bin dsb -- run "Say hello in one short sentence."
 ```
 
 One-shot **Pro** (user-visible model line):
 
 ```bash
-cargo run -p dsb-cli -- run --pro "Outline a high-level architecture for a CLI agent in 3 bullets."
+cargo run -p dsb-cli --bin deepseek-build -- run --pro "Outline a high-level architecture for a CLI agent in 3 bullets."
 # stderr includes: [model=deepseek-v4-pro …] and [model_used=…]
 ```
 
 Multi-turn REPL:
 
 ```bash
-cargo run -p dsb-cli -- chat
+cargo run -p dsb-cli --bin deepseek-build -- chat
 # > hello
 # > /pro design the system briefly
 # > /preset flash
@@ -89,11 +99,11 @@ Covers specs **10** (prefix goldens), **15** (repair + pairing), **20** (routing
 
 ```bash
 # Multi-turn on flash
-cargo run -p dsb-cli -- run "Reply with exactly: pong"
-cargo run -p dsb-cli -- chat   # type two turns, then /quit
+cargo run -p dsb-cli --bin deepseek-build -- run "Reply with exactly: pong"
+cargo run -p dsb-cli --bin dsb -- chat   # type two turns, then /quit
 
 # Pro escalate is visible
-cargo run -p dsb-cli -- run --pro "Reply with exactly: pro-ok"
+cargo run -p dsb-cli --bin deepseek-build -- run --pro "Reply with exactly: pro-ok"
 # Expect model=deepseek-v4-pro in stderr
 ```
 
@@ -115,7 +125,7 @@ Cache evidence: when the API returns cache hit/miss usage fields they are logged
 
 | Crate | Role |
 |-------|------|
-| `dsb-cli` | Binary `dsb` |
+| `dsb-cli` | Binaries `deepseek-build` + `dsb` |
 | `dsb-config` | Credentials / home |
 | `dsb-provider-deepseek` | Chat Completions client (ADR 0005) |
 | `dsb-context` | Stable prefix / epochs (spec 10) |

@@ -5,7 +5,7 @@ Cargo workspace members for **DeepSeek Build** (`dsb`). Layout follows
 
 | Crate | Role | Status |
 |-------|------|--------|
-| `dsb-cli` | Binary entry (`dsb`) | M1 scaffold |
+| `dsb-cli` | Binaries `deepseek-build` + `dsb` (ADR 0006) | M1+ |
 | `dsb-config` | Config + credentials load | M1 |
 | `dsb-provider-deepseek` | DeepSeek Chat Completions client | M1 |
 | `dsb-agent` | Turn / agent loop, repair, routing | M1+ |
@@ -16,6 +16,8 @@ Build / run from repo root:
 
 ```bash
 cargo build -p dsb-cli
-cargo run -p dsb-cli -- --version
-cargo test
+cargo run -p dsb-cli --bin deepseek-build -- --version
+cargo run -p dsb-cli --bin dsb -- --version
+cargo test --workspace
+./scripts/check-semver.sh
 ```

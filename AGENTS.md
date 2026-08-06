@@ -4,8 +4,31 @@ This file is standing instructions for any coding agent working in this repo.
 
 ## Current phase
 
-**Docs-first product definition + process harness.** Prefer editing `docs/` and
-shipping via PRs until the toolchain ADR and MVP specs unlock runtime work.
+**Runtime + docs harness.** M1 engine and G3 specs are on `main`; M2 tools started.
+Ship via PRs. Product packaging (npm / global install) is not done yet.
+
+## SemVer — fail-close (mandatory)
+
+**Always** use full Semantic Version form **`MAJOR.MINOR.PATCH`** (e.g. `0.1.0`, `1.0.0`).
+
+| Forbidden | Required |
+|-----------|----------|
+| `1.0`, `v1`, `0.2`, “ship one-point-oh” as a version id | `1.0.0`, `0.2.0`, tag `v1.0.0` |
+
+Normative: [`docs/contributing/versioning.md`](docs/contributing/versioning.md) · ADR [0006](docs/adr/0006-cli-names-and-semver.md).  
+Check: `./scripts/check-semver.sh`
+
+Do **not** claim a release is ready as “1.0”; say **`1.0.0`** only when install + smoke criteria are met.
+
+## CLI names — dual command (mandatory)
+
+| Command | Role |
+|---------|------|
+| **`deepseek-build`** | Primary public command |
+| **`dsb`** | Short alias (same binary behavior) |
+
+Both are built from `dsb-cli`. Prefer documenting **`deepseek-build`** first; always mention the alias.  
+Config dir remains `~/.deepseek-build/` (product path ≠ command name).
 
 ## Source priorities (fail-close) — layered
 
@@ -48,7 +71,8 @@ contract + the `pr-authoring` skill**, not by process-police GitHub Actions.
 - Mark work done when Summary is a file list
 - Mix multiple milestone exit criteria into one PR without a split plan
 - Claim a gate is green without updating [`docs/GATES.md`](docs/GATES.md)
-- Start runtime code while G1/G1b/G2 are red
+- Write incomplete versions (`1.0` instead of `1.0.0`) in PR bodies, tags, or ultragoal evidence
+- Drop either CLI name (`deepseek-build` / `dsb`) from install packaging without an ADR
 
 ## Product CI (future)
 

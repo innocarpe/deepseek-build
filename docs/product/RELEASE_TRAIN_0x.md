@@ -1,6 +1,6 @@
 # Release train — Wave A only (`0.2.0`–`0.7.0`)
 
-**Status:** Wave A **complete on `main` at `0.7.0`** (re-check `Cargo.toml`).  
+**Status:** Wave A **complete on `main`** (re-check `Cargo.toml`; patch line **`0.7.1`**).  
 **Full vision board:** [MASTER_PLAN.md](./MASTER_PLAN.md)  
 **SSOT priority:** [SSOT.md](./SSOT.md)  
 **PR units (historical fixed DAG):** [WAVE_A_PR_DAG.md](./WAVE_A_PR_DAG.md)  
@@ -22,12 +22,12 @@ Ship user-visible **`0.y.0`** minors until **dogfood-usable** and npm **package*
 
 | Item | Value |
 |------|--------|
-| Version | Read `Cargo.toml` (expect **`0.7.0`**) |
-| Install | `./scripts/install.sh` + npm wrappers ([user-guide/01-install.md](../user-guide/01-install.md), [05-npm.md](../user-guide/05-npm.md)) |
+| Version | Read `Cargo.toml` (expect **`0.7.1`**) |
+| Install | `./scripts/install.sh` + npm `@innocarpe/deepseek-build` ([01-install](../user-guide/01-install.md), [05-npm](../user-guide/05-npm.md)) |
 | Tools | read/edit/write/grep/bash; `--dogfood` |
 | Sessions | **0.5.0** JSONL persist/resume |
 | Surface | **0.6.0** skills index min + thinking/effort UX |
-| npm | **0.7.0** package dual bins; **registry publish = human** (ADR 0007) |
+| npm | **0.7.1** `@innocarpe/deepseek-build` published; dual bins; Rust needed for postinstall |
 
 ---
 
@@ -65,7 +65,8 @@ Human checklist **and** machine check:
 | `0.4.0` | Dogfood proof note | shipped |
 | `0.5.0` | Sessions | shipped |
 | `0.6.0` | Skills index + effort UX | shipped |
-| `0.7.0` | npm package dual bins | shipped (publish human) |
+| `0.7.0` | npm package dual bins | shipped |
+| `0.7.1` | help SemVer example + npm install docs nits | shipped |
 
 **Not in this document:** `0.8.0+` — see MASTER_PLAN Waves B–D and [WAVE_B_PR_DAG.md](./WAVE_B_PR_DAG.md).
 
@@ -92,3 +93,4 @@ Next plan: **`native-0x`**.
 | SemVer | Date | Notes |
 |--------|------|--------|
 | `0.1.0`–`0.7.0` | 2026-08-06 | Wave A complete on main (#18–#26) |
+| `0.7.1` | 2026-08-06 | CLI `--help` SemVer example tracks `CARGO_PKG_VERSION`; npm install docs (Rust + first-build time); registry `@innocarpe/deepseek-build@0.7.1` |

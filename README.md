@@ -3,7 +3,7 @@
 **DeepSeek-native terminal coding agent.**
 
 **Commands:** `deepseek-build` (primary) · `dsb` (alias) — same program ([ADR 0006](docs/adr/0006-cli-names-and-semver.md)).  
-**Versions:** always full SemVer `MAJOR.MINOR.PATCH` (e.g. `0.1.0`, never bare `1.0`) — [versioning.md](docs/contributing/versioning.md).
+**Versions:** always full SemVer `MAJOR.MINOR.PATCH` (e.g. `0.2.0`, never bare `0.2`) — [versioning.md](docs/contributing/versioning.md).
 
 Combines three first-class references:
 
@@ -15,37 +15,65 @@ Combines three first-class references:
 
 **Not in v1 scope:** Gajae-code multi-stage planning/team harness (too slow for our north star).
 
-> Status: **`0.1.0`** source preview — provider, cache, routing, thin CLI, tools core.  
+> Status: **`0.2.0`** — installable CLI (both bins on PATH). Still early dogfood; tools defaults and npm come later.  
 > Release train: stay on **`0.x.y`** until dogfood-usable → [RELEASE_TRAIN_0x.md](docs/product/RELEASE_TRAIN_0x.md). **`1.0.0` is not the near goal.**
 
-## Quickstart (M1)
+## Install (PATH)
 
-### Requirements
+Requirements: **Rust 1.94+** (`rustup`), and a checkout of this repo.
 
-- Rust **1.94+** (see `rust-toolchain.toml`)
-- A DeepSeek API key
+### Recommended: install script
 
-### Build
+From the repo root (default prefix `~/.deepseek-build/bin`):
 
 ```bash
-cargo build -p dsb-cli
-# Both binaries (same SemVer):
-cargo run -p dsb-cli --bin deepseek-build -- --version
-# → deepseek-build 0.1.0
-cargo run -p dsb-cli --bin dsb -- --version
-# → dsb 0.1.0
+git clone https://github.com/innocarpe/deepseek-build.git
+cd deepseek-build
+./scripts/install.sh
+# If PATH note printed:
+export PATH="$HOME/.deepseek-build/bin:$PATH"
+```
+
+Alternative — install into Cargo’s bin dir (often already on PATH):
+
+```bash
+./scripts/install.sh --cargo
+# → ~/.cargo/bin/deepseek-build and ~/.cargo/bin/dsb
+```
+
+Custom prefix:
+
+```bash
+./scripts/install.sh --prefix "$HOME/.local"
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+### Equivalent: `cargo install`
+
+```bash
+# From repo root after clone
+cargo install --path crates/dsb-cli --locked --force
+# bins: $CARGO_HOME/bin/deepseek-build and …/dsb (default CARGO_HOME=~/.cargo)
+```
+
+### Smoke (clean shell)
+
+Open a **new** terminal (or source your shell config), then:
+
+```bash
+deepseek-build --version
+# → deepseek-build 0.2.0
+dsb --version
+# → dsb 0.2.0
 ./scripts/check-semver.sh
+# → check-semver: ok (0.2.0)
 ```
 
-Release binaries:
+Both commands must report the **same** full SemVer.
 
-```bash
-cargo build --release -p dsb-cli
-./target/release/deepseek-build --help
-./target/release/dsb --help   # alias
-```
+Config directory (not a command name): `~/.deepseek-build/`.
 
-### Set API key
+## Auth
 
 Either:
 
@@ -61,31 +89,56 @@ Or create `~/.deepseek-build/credentials.json` (mode `0600` recommended):
 
 **Never commit secrets.** Override home with `DEEPSEEK_BUILD_HOME` if needed.
 
-### Run chat
+## Run
 
 One-shot (default model: **`deepseek-v4-flash`**):
 
 ```bash
-cargo run -p dsb-cli --bin deepseek-build -- run "Say hello in one short sentence."
+deepseek-build run "Say hello in one short sentence."
 # alias:
-cargo run -p dsb-cli --bin dsb -- run "Say hello in one short sentence."
+dsb run "Say hello in one short sentence."
 ```
 
 One-shot **Pro** (user-visible model line):
 
 ```bash
-cargo run -p dsb-cli --bin deepseek-build -- run --pro "Outline a high-level architecture for a CLI agent in 3 bullets."
+deepseek-build run --pro "Outline a high-level architecture for a CLI agent in 3 bullets."
 # stderr includes: [model=deepseek-v4-pro …] and [model_used=…]
 ```
 
 Multi-turn REPL:
 
 ```bash
-cargo run -p dsb-cli --bin deepseek-build -- chat
+deepseek-build chat
 # > hello
 # > /pro design the system briefly
 # > /preset flash
 # > /quit
+```
+
+### Agent tool flags (still early)
+
+Mutating tools are fail-closed by default:
+
+```bash
+# Allow write/edit/create inside the workspace (still denies out-of-cwd)
+deepseek-build --allow-workspace-write chat
+
+# Actually run bash (default: classify / permission only)
+deepseek-build --bash-execute chat
+```
+
+## Develop from source
+
+If you are hacking on the crates (not needed for normal use):
+
+```bash
+cargo build -p dsb-cli
+cargo run -p dsb-cli --bin deepseek-build -- --version
+cargo run -p dsb-cli --bin dsb -- --version
+cargo build --release -p dsb-cli
+./target/release/deepseek-build --help
+./target/release/dsb --help
 ```
 
 ### Offline tests
@@ -94,17 +147,15 @@ cargo run -p dsb-cli --bin deepseek-build -- chat
 cargo test --workspace
 ```
 
-Covers specs **10** (prefix goldens), **15** (repair + pairing), **20** (routing), **30** (thinking request shape), plus mock HTTP SSE.
+Covers specs **10** (prefix goldens), **15** (repair + pairing), **20** (routing), **30** (thinking request shape), **45/90** tools core, plus mock HTTP SSE.
 
 ### Live smoke (when `DEEPSEEK_API_KEY` is set)
 
 ```bash
-# Multi-turn on flash
-cargo run -p dsb-cli --bin deepseek-build -- run "Reply with exactly: pong"
-cargo run -p dsb-cli --bin dsb -- chat   # type two turns, then /quit
+deepseek-build run "Reply with exactly: pong"
+dsb chat   # type two turns, then /quit
 
-# Pro escalate is visible
-cargo run -p dsb-cli --bin deepseek-build -- run --pro "Reply with exactly: pro-ok"
+deepseek-build run --pro "Reply with exactly: pro-ok"
 # Expect model=deepseek-v4-pro in stderr
 ```
 
@@ -114,8 +165,9 @@ Cache evidence: when the API returns cache hit/miss usage fields they are logged
 
 | Doc | Description |
 |-----|-------------|
+| [**Release train 0.x**](docs/product/RELEASE_TRAIN_0x.md) | SemVer train + dogfood-usable definition |
 | [**Harness philosophy**](docs/architecture/HARNESS_PHILOSOPHY.md) | **Design spine** — Deep Code / Reasonix / Grok layers & conflict rules |
-| [Gates](docs/GATES.md) | G0–G6 ledger (G0–G2 green; G3+ red until specs 45/90…) |
+| [Gates](docs/GATES.md) | G0–G6 ledger (G0–G3 green; G4–G6 red until specs) |
 | [PRD v1](docs/product/PRD-v1.md) | Problem, goals, scope, journeys, success |
 | [Milestones](docs/product/MILESTONES.md) | M0–M6 development plan |
 | [Vision](docs/product/VISION.md) | North star and pillars |
@@ -131,6 +183,7 @@ Cache evidence: when the API returns cache hit/miss usage fields they are logged
 | `dsb-provider-deepseek` | Chat Completions client (ADR 0005) |
 | `dsb-context` | Stable prefix / epochs (spec 10) |
 | `dsb-agent` | Repair, routing, turn loop (specs 15/20/30) |
+| `dsb-tools` | Snippets, permissions, read/edit/write/bash (45/90) |
 
 See [`crates/README.md`](crates/README.md).
 
@@ -144,6 +197,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). **All meaningful work lands via PR.**
 | [PR body standard](docs/contributing/pr-body-standard.md) | Orca-level narrative bar |
 | [PR examples](docs/contributing/examples.md) | Filled bodies for spec/feat/fix/docs |
 | [Review checklist](docs/contributing/review-checklist.md) | Self-merge / reviewer gates |
+| [Versioning](docs/contributing/versioning.md) | Full SemVer only |
 
 PR title must be Conventional Commits; ready PRs need exactly one kind label.  
 Enforced by **agent skill + review harness**, not by process-police CI.
@@ -156,7 +210,7 @@ deepseek-build/
 ├── crates/               # Rust workspace (dsb-*)
 ├── skills/               # Bundled Agent Skills (SKILL.md)
 ├── .deepseek-build/      # Project-local agent config surface
-├── scripts/              # Dev / release helpers
+├── scripts/              # install.sh, check-semver, helpers
 └── third_party/          # Vendored / ported code notices
 ```
 

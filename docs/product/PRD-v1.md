@@ -147,7 +147,7 @@ Summary table: [SOURCES.md](./SOURCES.md). Historical ADR: [0002](../adr/0002-so
 ### J3 — Long session cost
 
 1. Multi-hour session with stable tools/skills/memory prefix.  
-2. Cache remains effective; user can see cost or hit proxy.  
+2. Cache remains effective; user can see cost / cache evidence (not proxy-only).  
 3. Compaction (when added) does not thrash the stable prefix.
 
 ### J4 — Parallel investigation

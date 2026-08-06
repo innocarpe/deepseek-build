@@ -4,7 +4,9 @@
 **Audience:** Anyone writing specs, ADRs, or runtime code for DeepSeek Build  
 **Last updated:** 2026-08-06
 
-This document is the **design spine**. Feature specs (`docs/specs/`) refine it; they must not contradict it without an ADR that supersedes a named section here.
+This document is the **design spine**. Feature specs (`docs/specs/`) refine it.
+
+**Amendment path:** An **ADR may supersede a named section** of this file when accepted; the ADR must list the section IDs it overrides. Until then, this file outranks informal notes and research. (Resolves SOURCES vs ADR priority: ADR wins only via explicit supersession, not silent drift.)
 
 ---
 
@@ -59,9 +61,10 @@ Sources are **not** a single ranked list for every decision. They own different 
 | Conflict | Winner | Example |
 |----------|--------|---------|
 | Edit/tool schema vs “faster Grok-like edit” | **L1 Deep Code** | Snippet-scoped edit over free-form whole-file guess |
+| **Snippet store consistency** under parallel tools / subagents / worktrees | **L1 Deep Code** | Session-owned snippet table; workers invalidate parent snippets on path touch (spec 45/60) |
 | Cache-stable prefix vs “inject everything every turn” | **L1/L2** | Dynamic tree walks stay on turn **tail** |
 | Subagent fan-out vs cold uncached prefixes | **L2 constraints on L3** | Workers share stable template; Flash-default workers |
-| Parallel speed vs permission honesty | **L1 permissions** | Side-effect declaration still required |
+| Parallel speed vs permission honesty | **L1 permissions** | Side-effect policy still enforced (static classifier + declarations) |
 | UX knobs (thinking/effort/skills paths) | **L1 Deep Code surface** | Match official DeepSeek-oriented CLI habits |
 | Orchestration topology | **L3 Grok** | Subagents, bg tasks, multi-wait |
 
@@ -96,8 +99,8 @@ These are first-class design pillars for DeepSeek Build. Spec IDs are where they
 | Tool | Rule |
 |------|------|
 | `edit` | **Must** use valid `snippet_id` (spec 45). |
-| `write` | **Create-new only** by default, or overwrite only with explicit flag **and** same version/safety policy as edit for existing paths (spec 45/40). Must not become “edit without snippet.” |
-| `bash` | File mutation via shell is a **high side-effect** class (spec 90). Default policy: **ask** (or deny) for write/delete outside an allowlist; never a silent full bypass of snippet safety for routine edits. |
+| `write` | **Create-new only** by default. Overwrite of an existing path requires the **same version/safety checks as edit** (snippet or equivalent). Any “force overwrite” capability is **user/policy-controlled**, **not** a free model tool argument that skips safety. |
+| `bash` | File mutation via shell is a **high side-effect** class (spec 90). Default policy: **ask** for workspace writes/deletes (deny outside workspace). After any bash that may touch the tree, **revalidate and expire** outstanding snippets for touched paths (spec 45) — otherwise version checks lie. |
 
 **Spec:** `45-snippet-edit` (and parts of `40-tools`, `90-permissions`).
 
@@ -168,9 +171,9 @@ Permissions are **agent quality**, not only compliance.
 
 1. Concrete scopes: read/write/delete in/out of workspace; git query/mutate; network; MCP; etc.  
 2. File tools classify by **path**.  
-3. `bash` (and similar) requires the model to **declare side effects** of the operation; policy decides allow / ask / deny.  
+3. `bash` (and similar): the model **may declare** intended side effects (advisory). An **independent static/command classifier** is **authoritative**. On mismatch, **fail-close to the more dangerous class** (ask/deny).  
 4. Low-risk work stays fast; high-risk stops for confirmation.  
-5. Auditable: command = text + declared effects + decision.
+5. Auditable: command = text + declared effects + **classifier result** + decision.
 
 **Spec:** `90-permissions`.
 
@@ -215,11 +218,13 @@ Reasonix desktop/plugin surface is **out of scope** for v1 CLI; the **loop econo
 
 ## 7. Model routing philosophy
 
-| Mode | Model | Effort | Use |
-|------|-------|--------|-----|
-| Default loop | V4-Flash | medium/low | explore, edit, tool churn |
-| Escalation | V4-Pro | high/max | hard design, tough bugs, final review |
+| Mode | Model (logical tier) | Effort | Use |
+|------|----------------------|--------|-----|
+| Default loop | Flash tier | medium/low | explore, edit, tool churn |
+| Escalation | Pro tier | high/max | hard design, tough bugs, final review |
 | Presets | flash / balanced / max | maps effort+model | session-level UX (Deep Code `/model`, Reasonix presets) |
+
+**API model id strings are TBD** until the provider contract ADR pins them from live `/models` (or equivalent) evidence. Do not treat marketing names as wire IDs in code until G1b is green. See [GATES.md](../GATES.md).
 
 Router heuristics live in `20-model-routing`. Product must never silently run **max effort Pro on every turn** as the only path.
 
@@ -274,16 +279,23 @@ These gates exist so L3 work cannot ship on prose-only L1/L2.
 | Gate | Required before |
 |------|-----------------|
 | **G0** HARNESS_PHILOSOPHY + SOURCES layered model merged | Any runtime PR |
-| **G1** Toolchain/config ADR (language, binary name, state dir, secrets) | Any `crates/` / package scaffolding |
+| **G1** Toolchain/config ADR (language, binary name, state dir, secrets) | Real package code (not empty `crates/README` placeholder) |
+| **G1b** Provider contract ADR (pinned model ids, stream, thinking/effort, cache usage fields) | Specs 10/15/20/30 claiming ready-for-impl |
 | **G2** Specs **10, 15, 20, 30** status = ready-for-impl | M1 provider loop code |
 | **G3** Specs **45 + minimum 90** (or shell denied until 90) ready | M2 mutating tools / shell |
 | **G4** Spec **50** ready | Parallel tool dispatch |
 | **G5** Spec **60** ready (worker cache law measurable) | Subagent fan-out |
 | **G6** Specs **70, 80, 100, 110** ready | Skills/MCP/sessions/plan product surface |
 
-**Definition of ready-for-impl:** acceptance criteria + failure modes + non-goals + test plan (golden or manual) + philosophy section citations. Index row must not say `TODO`.
+**Definition of ready-for-impl:**
 
-**Launch definition (PRD):** “M1 implementation started” is **invalid** until G1+G2 pass. Starting code with empty specs is a process bug.
+- Always: acceptance criteria + failure modes + non-goals + philosophy citations; index row ≠ `TODO`.  
+- Specs **10, 15, 45, 50, 90**: test plan **must** include **automated** golden and/or negative tests. Manual-only is **not** enough.  
+- UX-heavy specs (30 display polish, 110 plan UX): manual checks allowed.
+
+**Ledger:** [GATES.md](../GATES.md) — status is only green when that file says so with evidence PR.
+
+**Launch definition (PRD):** M1 code is **invalid** until **G1 + G1b + G2** are green.
 
 ---
 

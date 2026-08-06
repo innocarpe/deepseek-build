@@ -8,10 +8,10 @@ North star for every milestone: **wall-clock progress on real coding tasks**
 
 **Invariant gates (every L3-heavy milestone must restate):**
 
-- Snippet edit safety (when edit exists)  
-- Cache byte-stability / epoch rules  
-- Side-effect permissions for shell/file/network  
-- Worker cache law for subagents  
+- Snippet edit safety **before any edit tool ships** (no conditional dodge)  
+- Cache byte-stability / epoch rules **before M1 claims cache success**  
+- Side-effect permissions **before shell mutates the tree**  
+- Worker cache law **before subagent fan-out**  
 
 ---
 
@@ -44,8 +44,8 @@ North star for every milestone: **wall-clock progress on real coding tasks**
 | **Exit criteria** | Headless or TUI-thin loop: user message → model → (optional tools stub) → response; Flash default; Pro escalate; cache contract documented **and** implemented for system/tools prefix stability; API key config without committing secrets |
 | **Specs** | `10` cache, `15` tool-call repair, `20` routing, `30` thinking/effort API (+ provider slice of `40` **read-only tools only**) |
 | **Sources** | L1/L2 first; Grok only for loop shape |
-| **Gate** | **G0+G1+G2** — philosophy merged; toolchain ADR; specs 10/15/20/30 ready-for-impl |
-| **Failure if** | Implementation PRs land with TODO specs; no golden prefix bytes; repair deferred to “later” |
+| **Gate** | **G0+G1+G1b+G2** — philosophy; toolchain ADR; **provider contract ADR**; specs 10/15/20/30 ready-for-impl ([GATES.md](../GATES.md)) |
+| **Failure if** | Implementation PRs land with TODO specs; golden prefix **without** cache evidence protocol; repair deferred to “later” |
 
 **Work items (examples)**
 
@@ -57,7 +57,7 @@ North star for every milestone: **wall-clock progress on real coding tasks**
 - [ ] Stable prefix builder + **golden byte tests**  
 - [ ] Tool-call repair on provider path (**M1 must**, not M6)  
 - [ ] Flash/Pro + effort **flags** (API); polished `/model` UX can wait for M3  
-- [ ] Smoke: multi-turn session with cache hit telemetry **or** golden prefix equality  
+- [ ] Smoke: multi-turn session with **golden prefix equality and** cache evidence protocol (per provider ADR; not golden-only)  
 
 **Not in M1:** full snippet edit, parallel fan-out, subagents, MCP, full TUI polish.
 

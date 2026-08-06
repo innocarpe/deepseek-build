@@ -11,7 +11,7 @@ Things we **will not** optimize for or design into the first product shape.
 | Full Grok Build hard-fork on day one | Months of auth/sampler/branding work before value |
 | Desktop app MVP | CLI/TUI first |
 | VS Code extension MVP | Optional later; Deep Code already has one |
-| YOLO-only permissions | Deep Code-style ask/allow/deny is in scope; default-all-open is not a goal |
+| YOLO / full-auto as default or sole mode | Side-effect permissions are required product quality (Deep Code D). A power-user “yolo” profile, if ever added, is **opt-in**, never default, and still audited |
 | Matching star counts or marketing vs Reasonix/Deep Code | Ship speed + cost + quality |
 
 ## Out of repo process scope (for now)

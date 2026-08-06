@@ -34,7 +34,7 @@ Ship a **DeepSeek-first terminal coding agent** whose default experience optimiz
 | ID | Goal | Measure (v1) |
 |----|------|----------------|
 | G1 | Flash/Pro routing is first-class | Documented presets; `/model` (or equivalent) works |
-| G2 | Prefix/KV cache stays warm by design | Spec + telemetry of cache hit (or proxy) on multi-turn sessions |
+| G2 | Prefix/KV cache stays warm by design | Spec 10 golden prefix bytes **and** provider cache evidence when API exposes it (else documented substitute: dual-call cost/latency protocol in provider ADR) |
 | G3 | Parallel tool use without blocking the loop | Concurrent independent tools; background shell + wait |
 | G4 | Official-surface parity (Deep Code class) | Thinking, effort, Skills, permissions, light plan, sessions |
 | G5 | Docs-first open source | Specs before features; milestones; labeled PRs |
@@ -90,7 +90,7 @@ Summary table: [SOURCES.md](./SOURCES.md). Historical ADR: [0002](../adr/0002-so
 | Cache-stable prefix + golden bytes | Reasonix + Deep Code B | 10 | M1 |
 | Tool-call / tool-result repair | Reasonix | 15 | **M1 (must)** |
 | Flash default + Pro escalate (provider + flags) | Reasonix + Deep Code | 20 | M1 |
-| Thinking + effort **API wiring** | Deep Code + API | 30 | M1 |
+| Thinking + effort **API wiring** | Deep Code + API | 30 | M1 (after G1b) |
 | Thinking + effort **UX** (`/model`, presets polish) | Deep Code | 30 UX | M3 |
 | Snippet-scoped edit (+ safe write) | Deep Code A | 45 | M2 |
 | Core tools: read, write, edit, shell, search | Deep Code set + L3 speed | 40 | M2 |
@@ -107,7 +107,7 @@ Summary table: [SOURCES.md](./SOURCES.md). Historical ADR: [0002](../adr/0002-so
 
 ### 6.2 Should have (M6 preview)
 
-- User-visible cache hit / cost indicators in TUI (M1 still requires **provider** cache telemetry when API reports it)  
+- User-visible cache hit / cost indicators in TUI (M1 still requires provider-side evidence per G2 — not “proxy only”)  
 - `/preset flash|balanced|max` polish  
 - Notify hook after turn  
 - Worktree isolation for subagents  
@@ -147,7 +147,7 @@ Summary table: [SOURCES.md](./SOURCES.md). Historical ADR: [0002](../adr/0002-so
 ### J3 — Long session cost
 
 1. Multi-hour session with stable tools/skills/memory prefix.  
-2. Cache remains effective; user can see cost or hit proxy.  
+2. Cache remains effective; user can see cost / cache evidence (not proxy-only).  
 3. Compaction (when added) does not thrash the stable prefix.
 
 ### J4 — Parallel investigation
@@ -177,7 +177,7 @@ Exact names may differ; behavior is what ships against specs.
 | Constraint | Note |
 |------------|------|
 | API | `https://api.deepseek.com` (OpenAI-compatible where applicable) |
-| Models (v1 focus) | `deepseek-v4-flash`, `deepseek-v4-pro` |
+| Models (v1 focus) | Flash tier + Pro tier; **wire ids TBD in provider contract ADR (G1b)** |
 | Layout | See [REPO_LAYOUT.md](../architecture/REPO_LAYOUT.md) |
 | Language | **Not locked** — ADR required before `crates/` fills |
 | License | Apache-2.0 |
@@ -237,13 +237,13 @@ See also [HARNESS_PHILOSOPHY §11](../architecture/HARNESS_PHILOSOPHY.md).
 - [x] This PRD + milestones published  
 - [x] Harness philosophy (L1/L2/L3 + Deep Code four pillars)  
 
-**M1 code may start only when:**
+**M1 code may start only when ([GATES.md](../GATES.md)):**
 
 - [ ] **G1** Toolchain/config ADR accepted  
-- [ ] **G2** Specs **10, 15, 20, 30** status = ready-for-impl (not TODO)  
-- [ ] Provider contract documented (models, streaming, thinking/effort fields, cache usage, errors)  
+- [ ] **G1b** Provider contract ADR accepted (pinned model ids + stream/thinking/effort/cache fields)  
+- [ ] **G2** Specs **10, 15, 20, 30** status = ready-for-impl (not TODO; automated tests for 10/15)  
 
-**Forbidden:** opening a large `feat(provider)` PR while specs 10/15/20/30 remain empty stubs.
+**Forbidden:** opening a large `feat(provider)` PR while G1/G1b/G2 are red.
 
 ---
 

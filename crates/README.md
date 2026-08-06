@@ -1,12 +1,7 @@
 # crates/
 
-Reserved for implementation packages.
+**Placeholder only** (this README). Not a G1 violation.
 
-Layout intentionally echoes **Grok Build** (`OpenSources/grok-build/crates/…`): small focused packages instead of a single application blob.
-
-Nothing is built here until:
-
-1. Language / toolchain ADR is accepted  
-2. At least one behavior spec in `docs/specs/` is marked ready  
-
-See `docs/architecture/REPO_LAYOUT.md`.
+Real packages / workspace members ship only after **G1** (toolchain ADR) per
+[`docs/GATES.md`](../docs/GATES.md). Layout may echo Grok-style modularity, but
+tool/session **semantics** follow [`HARNESS_PHILOSOPHY.md`](../docs/architecture/HARNESS_PHILOSOPHY.md).

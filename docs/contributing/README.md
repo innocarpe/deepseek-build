@@ -5,6 +5,7 @@ Deep, **normative** process docs. Skim the root [CONTRIBUTING.md](../../CONTRIBU
 | Guide | What it answers |
 |-------|-----------------|
 | [pull-requests.md](./pull-requests.md) | What is one unit of work? Titles, labels, body quality, merge, agent rules, anti-patterns |
+| [pr-body-standard.md](./pr-body-standard.md) | **Orca-level narrative bar** (Summary/Testing/AI review/Security/Notes) |
 | [examples.md](./examples.md) | Filled PR bodies for `spec` / `feat` / `fix` / `docs` (+ counterexamples) |
 | [review-checklist.md](./review-checklist.md) | Author/reviewer/self-merge checklist |
 | [commits.md](./commits.md) | Conventional Commits on branches vs squash on `main` |

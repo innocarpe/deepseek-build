@@ -1,6 +1,10 @@
 # Worked PR examples
 
-Copy structure, not prose. Each example is the **body quality bar** for that kind.
+Bodies below are the **quality bar**. They intentionally resemble detailed product-repo PRs (Orca-style narrative: problem, evidence, testing honesty, AI review, security, notes)—scaled to DeepSeek Build.
+
+Copy structure and density, not the fake commands if your tree differs.
+
+Full rules: [pr-body-standard.md](./pr-body-standard.md).
 
 ---
 
@@ -14,12 +18,46 @@ Copy structure, not prose. Each example is the **body quality bar** for that kin
 ```markdown
 ## Summary
 
-- Add `docs/specs/10-cache-contract.md` as the normative rules for what must
-  stay byte-stable across turns (system prompt, tool schemas, skills index,
-  standing project memory) versus what may live on the turn tail.
-- Explicitly lock non-goals: mid-session tool schema rewriting, per-turn
-  injection of full workspace trees into the stable prefix.
-- Align with Reasonix cache-first lessons and PRD v1 G2 (cache discipline).
+### Problem
+
+DeepSeek long sessions only stay cheap if the **prefix** (system + tools + skills
+index + standing memory) is byte-stable across turns. Without a written contract,
+implementation PRs will each invent different “helpful” dynamic injections
+(timestamps, full tree listings, reordered tool JSON) and silently destroy
+prefix-cache hit rates—the opposite of the Reasonix lesson in SOURCES.md.
+
+### What changed
+
+- Add `docs/specs/10-cache-contract.md` as the normative split:
+  - **Stable:** system prompt body, tool schemas (canonical JSON), skills index
+    lines, standing project memory files loaded at session start
+  - **Tail / unstable:** user turn, dynamic reminders, volatile absolute paths
+    that must be normalized or excluded
+- Acceptance criteria are falsifiable (hash equality across two turns with
+  identical stable inputs; schema key sort order pinned).
+- Explicit non-goals: mid-session tool schema rewrite, stuffing the full
+  workspace walk into the stable prefix every turn.
+
+### Out of scope
+
+- Implementing `PrefixBuilder` in code (follow-up `feat` PR against this spec)
+- Flash/Pro routing rules (spec 20)
+- Compaction algorithm details beyond “must not thrash stable prefix”
+
+## Screenshots / evidence
+
+No visual change. Reviewer should read end-to-end:
+
+1. `docs/specs/10-cache-contract.md`
+2. Cross-check `docs/product/SOURCES.md` (Reasonix row)
+3. Cross-check `docs/product/PRD-v1.md` goal G2
+
+## Testing
+
+- [x] Spec-only: no runtime entrypoints changed (`git diff --stat` shows docs only)
+- [x] Acceptance criteria each map to a future unit-test name listed in the spec
+- [x] Consistency walkthrough: SOURCES + PRD + NON_GOALS — no contradiction found
+- [ ] Runtime tests — N/A (no code)
 
 ## Kind
 
@@ -29,29 +67,36 @@ Copy structure, not prose. Each example is the **body quality bar** for that kin
 
 - **Milestone:** M1 — Provider + cache + routing
 - **Spec / ADR:** docs/specs/10-cache-contract.md (this PR)
-- **Issues:** Refs #N (if a tracking issue exists)
-
-## Test plan
-
-- [ ] Read §Acceptance criteria in the new spec; each item is falsifiable
-- [ ] Cross-check SOURCES.md (Reasonix row) — no contradiction
-- [ ] Cross-check PRD §6.1 cache row — language matches
-- [ ] Confirm no runtime code claims to implement this yet (spec-only PR)
+- **Issues:** n/a
 
 ## Cache impact
 
 `high` — this document *is* the cache contract; later feats must not violate it
 
-## Checklist
+## AI review report
 
-- [x] Conventional title
-- [x] Kind label `spec` only
-- [x] One unit (contract only)
-- [x] NON_GOALS respected
-- [x] No secrets
+Self-review + agent pass focused on:
+
+- **Falsifiability** — rejected two earlier criteria that only said “should be
+  cache friendly” without a measurable check; replaced with hash/sort rules.
+- **Over-constraint** — allowed volatile paths on the *tail* so we do not force
+  impossible absolute-path stability across machines.
+- **Source priority** — confirmed Reasonix-aligned; did not import Gajae planning
+  language into the contract.
+
+## Security audit
+
+No runtime surface. Spec forbids embedding secrets into the stable prefix and
+requires redaction guidance for memory files that might contain keys (called out
+in §Secrets of the spec).
+
+## Notes
+
+- Follow-up PR should implement `PrefixBuilder` with golden tests that fail on
+  `main` without the sort/hash rules.
+- If DeepSeek API documents additional cache headers later, extend this spec
+  rather than inventing headers only in code.
 ```
-
-**Why this is a good unit:** reviewer only judges the contract, not an incomplete client.
 
 ---
 
@@ -59,17 +104,53 @@ Copy structure, not prose. Each example is the **body quality bar** for that kin
 
 **Title:** `feat(provider): build cache-stable system prefix`  
 **Labels:** `feat`, `area/provider`, `area/cache`, `size/M`  
-**Milestone:** M1  
-**Branch:** `feat/provider-stable-prefix`
+**Milestone:** M1
 
 ```markdown
 ## Summary
 
-- Implement `PrefixBuilder` that assembles the stable prefix per
-  docs/specs/10-cache-contract.md §Stable sections.
-- Snapshot tool schema JSON with sorted keys so field order cannot drift.
-- Unit tests: two consecutive builds with identical inputs produce identical
-  bytes; adding a turn-tail reminder does not change the stable hash.
+### Problem
+
+Spec 10 is merged, but nothing constructs the stable prefix yet. Without a
+single builder, every call site will assemble prompts differently and break the
+byte-stability rules on day one.
+
+### What changed
+
+- Add `PrefixBuilder` that assembles stable sections per
+  `docs/specs/10-cache-contract.md` §Stable sections.
+- Canonicalize tool schema JSON with sorted object keys before hashing/shipping.
+- Unit tests: identical inputs → identical bytes across two builds; turn-tail
+  reminder must not change the stable hash.
+
+### Why one PR
+
+Builder + its golden tests are one review lens (“does this implement §Stable?”).
+Routing (Flash/Pro) stays out so this PR cannot be blocked on model policy.
+
+### Out of scope
+
+- Streaming HTTP client
+- Tool execution loop
+- Compaction
+
+## Screenshots / evidence
+
+No TUI yet. Evidence is test output:
+
+| Check | Result |
+| --- | --- |
+| `prefix_stable_across_turns` | pass |
+| `schema_key_order_canonical` | pass |
+| Intentional mutation: drop key sort | test fails (verified once) |
+
+## Testing
+
+- [x] `cargo test -p dsb-provider-deepseek prefix::` (example name)
+- [x] Mutation check: removed key sort → golden test failed
+- [ ] Full workspace test suite — not run; package-local only (reason: no other
+      packages depend on this yet)
+- [x] Spec §Acceptance criteria each have a named test
 
 ## Kind
 
@@ -81,38 +162,73 @@ Copy structure, not prose. Each example is the **body quality bar** for that kin
 - **Spec / ADR:** docs/specs/10-cache-contract.md (merged)
 - **Issues:** Closes #N
 
-## Test plan
-
-- [ ] `cargo test -p dsb-provider-deepseek prefix::` (or project equivalent)
-- [ ] Manual: run two-turn smoke; log stable prefix hash equal across turns
-- [ ] Grep: no `format!(..., chrono::Utc::now())` inside stable sections
-
 ## Cache impact
 
-`high` — constructs the cached prefix; bug here multiplies cost for every session
+`high` — constructs the cached prefix; bugs here multiply cost every session
 
-## Checklist
+## AI review report
 
-- [x] Implements named spec sections (list them in review notes if helpful)
-- [x] No scope creep into Flash/Pro routing (separate spec/feat)
+- **False stability** — flagged wall-clock timestamps in a draft debug header;
+  removed from stable section.
+- **Hash algorithm** — review asked for an explicit documented hash (blake3 vs
+  sha256); chose sha256 for zero extra dep in MVP, noted in Notes.
+- **Permissions** — builder only reads configured memory paths; no shell.
+
+## Security audit
+
+- Memory file reads are path-confined to project + user config roots (list in
+  code constants); no user-controlled path join from model output in this PR.
+- Stable prefix must not include env vars that hold `API_KEY` (test asserts
+  redaction hook is invoked).
+- No new network surface.
+
+## Notes
+
+- Hash choice may move to blake3 later if we want faster large schemas; not a
+  user-visible break if we version the hash label in logs only.
 ```
-
-**Why this is a good unit:** one implementable surface of one merged contract.
 
 ---
 
-## Example C — `fix` PR
+## Example C — `fix` PR (CI title regex)
 
-**Title:** `fix(ci): allow scoped PR titles with digits in scope`  
-**Labels:** `fix`, `area/infra`, `ci` is wrong if kind is fix — use **`fix` only as kind**; area ok  
-**Branch:** `fix/pr-title-scope-digits`
+**Title:** `fix(ci): allow digits in conventional title scopes`  
+**Labels:** `fix`, `area/infra`, `size/S`
 
 ```markdown
 ## Summary
 
-- PR titles like `spec(10-cache): …` were rejected because the scope regex
-  disallowed digits.
-- Spec index numbers are intentional in this repo; update regex + script.
+### Problem
+
+Titles like `spec(10-cache): define rules` fail `pr-title` CI. Our spec index
+uses numeric prefixes (`10-cache-contract`); the scope regex only allowed
+`[a-z]`, so legitimate titles were rejected.
+
+### What changed
+
+- Extend scope pattern to `[a-z0-9][a-z0-9/_-]*` in workflow +
+  `scripts/check-pr-title.sh`.
+- Add positive/negative examples to contributing docs.
+
+### Out of scope
+
+- Changing allowed types list
+
+## Screenshots / evidence
+
+No visual change.
+
+| Title | Before | After |
+| --- | --- | --- |
+| `spec(10-cache): define rules` | fail | pass |
+| `bad title` | fail | fail |
+
+## Testing
+
+- [x] `./scripts/check-pr-title.sh "spec(10-cache): define rules"` → ok
+- [x] `./scripts/check-pr-title.sh "bad title"` → fails
+- [x] `actionlint .github/workflows/ci.yml`
+- [ ] Full GitHub Actions — validated by this PR’s own `pr-title` job
 
 ## Kind
 
@@ -122,34 +238,75 @@ Copy structure, not prose. Each example is the **body quality bar** for that kin
 
 - **Milestone:** n/a
 - **Spec / ADR:** docs/contributing/pull-requests.md §Title
-- **Issues:** Closes #N
-
-## Test plan
-
-- [ ] `./scripts/check-pr-title.sh "spec(10-cache): define rules"` → ok
-- [ ] `./scripts/check-pr-title.sh "bad"` → fails
-- [ ] CI `pr-title` green on this PR
+- **Issues:** n/a
 
 ## Cache impact
 
 `none`
+
+## AI review report
+
+Self-review: confirmed `feat(provider): …` still matches; empty scope still
+works; trailing period rule unchanged.
+
+## Security audit
+
+No security-sensitive surface — CI string match only; no shell interpolation of
+the title beyond `grep`.
+
+## Notes
+
+If we adopt scopes like `area/cache`, `/` is already allowed.
 ```
 
 ---
 
-## Example D — `docs` process PR (this depth pass)
+## Example D — `docs` process PR (depth + Orca bar)
 
-**Title:** `docs(contributing): deepen PR conventions with examples`  
+**Title:** `docs(contributing): adopt Orca-level PR body standard`  
 **Labels:** `docs`, `area/docs`, `area/infra`, `size/M`
 
 ```markdown
 ## Summary
 
-- Expand pull-requests.md from generic OSS boilerplate into a project-specific
-  operating guide (decisions, taxonomy, unit definition, workflows, anti-patterns).
-- Add worked examples and a reviewer checklist.
-- Expand ADR 0003 with alternatives considered.
-- Does not change CI policy except where docs mention existing jobs.
+### Problem
+
+DeepSeek Build PR #1 shipped process *gates* and short rule lists. Compared to
+Orca PRs (multi-thousand-character Summaries with assumption tables, honest
+Testing, AI Review Report, Security Audit, Notes), our template and examples
+were still checklist-thin. CI could pass while the PR body remained review-useless.
+
+### What changed
+
+- Align `.github/PULL_REQUEST_TEMPLATE.md` with Orca’s section set (Summary with
+  Problem / What changed / Out of scope, Screenshots/evidence, Testing, AI
+  review report, Security audit, Notes) plus our kind/milestone/cache fields.
+- Add `docs/contributing/pr-body-standard.md` explaining the narrative bar and
+  Orca → DeepSeek Build mapping.
+- Replace thin examples with full Orca-density worked bodies.
+- Expand review checklist to grade narrative sections, not only labels.
+
+### Out of scope
+
+- Product feature specs
+- Runtime implementation
+- Enforcing body length in CI (human/agent standard; not a regex)
+
+## Screenshots / evidence
+
+No visual change. Compare:
+
+- Orca template: `OpenSources/orca/.github/pull_request_template.md`
+- Orca example density: stablyai/orca PRs such as #12860 / #12848 (Summary
+  narrative + Testing honesty + AI Review + Security)
+- This PR’s template + `pr-body-standard.md` + `examples.md`
+
+## Testing
+
+- [x] Links from CONTRIBUTING / docs/README / contributing/README resolve
+- [x] CI required paths include new standard doc
+- [x] `actionlint` on workflow if touched
+- [ ] Runtime tests — N/A
 
 ## Kind
 
@@ -159,40 +316,48 @@ Copy structure, not prose. Each example is the **body quality bar** for that kin
 
 - **Milestone:** n/a
 - **Spec / ADR:** docs/adr/0003-pr-process.md
-- **Issues:** follow-up to thin PR #1 substance
-
-## Test plan
-
-- [ ] Read docs/contributing/pull-requests.md end-to-end — no TODOs left as “write later”
-- [ ] examples.md contains at least one filled body per primary kind we use early (spec/feat/fix/docs)
-- [ ] Links from CONTRIBUTING.md and docs/README.md resolve
-- [ ] CI docs-hygiene still green (required paths)
+- **Issues:** feedback that PR #1 / early conventions were too thin vs Orca
 
 ## Cache impact
 
 `none`
+
+## AI review report
+
+- Checked that we did **not** cargo-cult Electron/IPC wording into a CLI repo.
+- Checked that Security/AI sections are required in spirit for non-trivial PRs
+  but allow a short escape hatch for pure typos.
+- Verified examples still teach one-unit-of-work (no mega-MVP example as “good”).
+
+## Security audit
+
+No security-sensitive surface — documentation and PR template only. Template
+reminds authors to redact secrets in evidence.
+
+## Notes
+
+- Body quality is intentionally **not** fully enforceable by CI (like Orca);
+  the bar is social + review checklist + agent instructions in AGENTS.md.
+- Follow-up: when runtime exists, replace Testing placeholders with real
+  workspace commands in the template comments.
 ```
 
 ---
 
-## Example E — bad PR (do not merge)
+## Example E — intentionally bad (reject)
 
-**Title:** `update`  
-**Labels:** (none)  
-**Body:** “misc improvements”
+```markdown
+## Summary
+- misc improvements
 
-Problems:
+## Testing
+- [ ] tests
 
-- Non-conventional title → `pr-title` fails  
-- No kind label → `pr-kind-label` fails  
-- No unit of work, no test plan, no milestone  
-- Cannot tell if cache/routing/product rules changed  
+## AI Review Report
+LGTM
 
----
+## Security Audit
+N/A
+```
 
-## Example F — bad mega-unit (split required)
-
-**Title:** `feat: implement deepseek build mvp`  
-**Diff:** specs 10–110 stubs + empty crates + half TUI + README rewrite  
-
-Split into the milestone graph instead (see MILESTONES.md). Even if one person could force it through, it destroys review and agent coordination.
+**Why reject:** no problem, no evidence, no commands, no kind, no cache thinking, AI/security theater.

@@ -13,7 +13,8 @@ Thanks for your interest. This project is early: **docs and specs land before co
 
 | Guide | Topic |
 |-------|--------|
-| [docs/contributing/pull-requests.md](docs/contributing/pull-requests.md) | Unit of work, titles, labels, body quality, merge, anti-patterns |
+| [docs/contributing/pull-requests.md](docs/contributing/pull-requests.md) | Unit of work, titles, labels, merge, anti-patterns |
+| [docs/contributing/pr-body-standard.md](docs/contributing/pr-body-standard.md) | Orca-level PR narrative bar |
 | [docs/contributing/examples.md](docs/contributing/examples.md) | Filled PR body examples (`spec`/`feat`/`fix`/`docs`) |
 | [docs/contributing/review-checklist.md](docs/contributing/review-checklist.md) | Review / self-merge checklist |
 | [docs/contributing/commits.md](docs/contributing/commits.md) | Conventional Commits |

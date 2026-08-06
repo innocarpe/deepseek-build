@@ -41,6 +41,7 @@ jobs:
             docs/contributing/commits.md
             docs/contributing/branches.md
             docs/contributing/examples.md
+            docs/contributing/pr-body-standard.md
             docs/contributing/review-checklist.md
             docs/adr/0003-pr-process.md
             .github/labels.json

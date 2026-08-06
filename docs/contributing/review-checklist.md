@@ -10,11 +10,17 @@ Use this when reviewing someone else’s PR **or** self-merging.
 - [ ] Exactly one **kind** label; matches title type
 - [ ] CI green: `docs-hygiene`, `pr-title`, `pr-kind-label` (and future jobs)
 - [ ] Milestone set when the work maps to M1–M6
-- [ ] PR body Summary is not a file list only — states **what and why**
-- [ ] Test plan is falsifiable
+- [ ] **Summary is an Orca-level narrative**: Problem + What changed + Out of scope (not a file list)
+- [ ] **Screenshots/evidence** present or explicit “No visual change” with review paths
+- [ ] **Testing** lists real commands or honest N/A reasons (not all empty checkboxes)
+- [ ] **AI review report** is substantive (or justified self-review one-liner if trivial)
+- [ ] **Security audit** is substantive (or “no sensitive surface” with reason)
+- [ ] **Notes** capture limits/follow-ups when non-obvious
 - [ ] Cache-impact filled honestly for agent/prompt/tool changes
 
 If any fail → request changes; do not “merge and fix later” on process gates.
+
+Reference: [pr-body-standard.md](./pr-body-standard.md), Orca template at `OpenSources/orca/.github/pull_request_template.md`.
 
 ---
 

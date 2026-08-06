@@ -170,33 +170,47 @@ Catalog: [`.github/labels.json`](../../.github/labels.json).
 
 ---
 
-## 6. PR body quality bar
+## 6. PR body quality bar (Orca-level narrative)
 
-The template (`.github/PULL_REQUEST_TEMPLATE.md`) is the skeleton. **Passing the skeleton with empty bullets is not enough.**
+The template (`.github/PULL_REQUEST_TEMPLATE.md`) is aligned with **Orca-style** product PRs:
+
+`Summary (problem / what changed / out of scope)` → `Screenshots/evidence` → `Testing` → `Kind/Related/Cache` → `AI review report` → `Security audit` → `Notes` → `Checklist`
+
+**Passing the skeleton with empty bullets is a failed PR**, even if CI is green.
+
+Full narrative standard: **[pr-body-standard.md](./pr-body-standard.md)**  
+Filled bodies: **[examples.md](./examples.md)**
+
+### What “detailed like Orca” means here
+
+Study real Orca PR descriptions (e.g. stablyai/orca `#12860`, `#12848`): multi-paragraph Summary with **assumption vs reality** tables, **before/after** evidence, grouped “what changed”, honest Testing (what ran / what didn’t / why), **AI Review Report** with focus areas, **Security Audit** with real surface analysis, **Notes** for limits and follow-ups.
+
+DeepSeek Build requires the same *density of thought*, adapted to CLI/specs (terminal evidence and doc walkthroughs instead of Electron screenshots).
 
 ### Minimum substance by kind
 
-| Kind | Summary must answer | Test plan must include |
-|------|---------------------|------------------------|
-| `spec` | What behavior is locked? What is explicitly out of scope? | “Reviewer reads §X and checks consistency with PRD/SOURCES” |
-| `docs` | Who is the audience? Normative or advisory? | Link walkthrough; broken-link check if applicable |
-| `feat` | User/agent-visible change; which spec paragraph | Command(s) or scenario that fails before / passes after |
-| `fix` | Root cause hypothesis; blast radius | Repro steps; regression test if feasible |
-| `ci` | What policy is now enforced or relaxed | Example title/label that would fail/pass |
-| `chore` | Why this housekeeping unblocks others | Sync/script dry-run output |
+| Kind | Summary must answer | Testing must include |
+|------|---------------------|----------------------|
+| `spec` | Problem the contract solves; stable vs tail rules; non-goals | Sections to read; falsifiable acceptance criteria |
+| `docs` | Why the previous docs failed readers; what standard changed | Link walkthrough; comparison to prior thin version if relevant |
+| `feat` | User/agent-visible change; which spec §; why one PR | Commands + fail-on-main story; mutation/regression if feasible |
+| `fix` | Wrong assumption vs reality; blast radius | Repro; regression test or explicit gap |
+| `ci` | What policy changed; false positive/negative examples | Local script + this PR’s CI jobs |
+| `chore` | Why housekeeping unblocks others | Dry-run / sync output |
 
 ### Always fill
 
-1. **Summary** — what *and why* (not only file list).  
-2. **Related** — milestone, spec/ADR paths, `Closes`/`Refs`.  
-3. **Test plan** — falsifiable. “Looks good” is not a plan.  
-4. **Cache-impact** — for anything that can touch prompts, tool schemas, skills index, system memory:
+1. **Summary narrative** — Problem + What changed + Out of scope (not a file list).  
+2. **Evidence** — table, capture, or “No visual change” + doc paths.  
+3. **Testing** — real commands or honest N/A with reason.  
+4. **AI review report** + **Security audit** — required in spirit for non-trivial work.  
+5. **Cache-impact** — for prompts/tools/skills/memory/routing:
 
 ```text
 Cache-impact: none | low | medium | high — <reason>
 ```
 
-If you are unsure, pick **medium** and explain—not `none` by default on agent work.
+If unsure on agent work, pick **medium** and explain—not default `none`.
 
 ### Product alignment gates
 

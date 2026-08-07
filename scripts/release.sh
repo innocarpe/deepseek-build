@@ -58,6 +58,32 @@ if [[ "$SKIP_BUMP" -eq 0 ]]; then
   ./scripts/bump-version.sh "$VERSION" "${B_ARGS[@]}"
 fi
 
+# --- 1b. MAJOR bump: README product-status gate ------------------------------
+# A MAJOR release must already be announced in README's product-status banner
+# (e.g. "**5.0.0** (active train)" row). This forces docs/product + README to
+# be updated before the cut, so a tag never ships ahead of the documented story.
+OLD_VER="$(git show HEAD:Cargo.toml | python3 -c "
+import re, sys
+s = sys.stdin.read()
+try:
+    i = s.index('[workspace.package]')
+except ValueError:
+    sys.exit(0)
+m = re.search(r'(?m)^version = \"([^\"]+)\"', s[i:])
+print(m.group(1) if m else '')
+")"
+NEW_MAJOR="${VERSION%%.*}"
+OLD_MAJOR="${OLD_VER%%.*}"
+if [[ -n "$OLD_VER" && "$NEW_MAJOR" != "$OLD_MAJOR" ]]; then
+  if ! rg -q "\*\*${NEW_MAJOR}\." README.md; then
+    echo "error: MAJOR bump ${OLD_VER} -> ${VERSION} requires README.md product-status" >&2
+    echo "  banner to already reference **${NEW_MAJOR}.** (e.g. a \"**${NEW_MAJOR}.0.0** ...\" row)." >&2
+    echo "  Update docs/product/ + README before cutting a new major." >&2
+    exit 1
+  fi
+  echo "== README product-status banner already announces major ${NEW_MAJOR}: ok =="
+fi
+
 # --- 2. verify ---------------------------------------------------------------
 echo "== verify =="
 node npm/scripts/check-version-match.js

@@ -1,0 +1,61 @@
+id	status	reason
+S1	PASS	G011 dual CLI SemVer
+S2	PASS	G002 public entry agent path
+S3	PASS	G011 product home stamps
+S4	PASS	G009/G011 base_url seed
+S5	PASS	G011 deepseeknight theme
+S6	PASS	G012 SemVer process check-semver
+S7	PASS	G011 clean-prefix install
+S8	PASS	G006 yolo false default
+L1-45-0	PASS	G004 liveness R0A
+L1-45-1	PASS	G004 Standard snippet_safe
+L1-45-2	PASS	G003 mint file_version
+L1-45-3	PASS	G004 negative missing token
+L1-45-4	PASS	G004 negative stale token
+L1-45-5	PASS	G004 negative ambiguous
+L1-45-6	PASS	G004 empty-old guard
+L1-45-7	PASS	G005 write-deny
+L1-45-8	PASS	G005 bash-stale invalidate
+L1-90-1	PASS	G006 perms matrix
+L1-90-2	PASS	G006 headless Ask deny
+L1-90-3	PASS	G006 yolo false product
+L1-90-4	PASS	G006 workspace boundary
+L1-90-5	PASS	G010 explore cannot skip perms
+L1-70	PASS	G008 skills index wire+unit
+L1-30	PASS	G009 effort CLI+router residual wire field
+L1-100	PASS	G008 resume surface SessionStore
+L2-10-1	PASS	G008 stable_prefix volatile_tail
+L2-10-2	PASS	G008 Spec 10 order unit
+L2-10-3	PASS	G008 multi-turn wire stable
+L2-10-4	PASS	G008 no wall-clock in system/prefix
+L2-10-5	PASS	G008 resume+session repair
+L2-10-6	PASS	G008 assemble_path_a production stamp
+L2-15-1	PASS	G007 one-pass repair
+L2-15-2	PASS	G007 no invent/rename
+L2-15-3	PASS	G007/G008 session pairing repair
+L2-15-4	PASS	G007 Grok tool_calls dispatch
+L2-20-1	PASS	G009 Flash default wire
+L2-20-2	PASS	G009 Pro once stamp+wire
+L2-20-3	PASS	G009 visibility_line
+L2-20-4	PASS	G009 routing precedence units
+L2-20-5	PASS	G009 both models base_url
+L3-50-1	PASS	G010 partition RO/MU
+L3-50-2	PASS	G010 fail-closed classify
+L3-50-3	PASS	G010 bg surface residual live key
+L3-50-4	PASS	G010 docs no secret flags
+L3-60-1	PASS	G010 subagents default on
+L3-60-2	PASS	G010 explore+implement
+L3-60-3	PASS	G010 worker cache law
+L3-60-4	PASS	G010 parent_after_worker invalidate
+L3-WT-1	PASS	G010 worktree help L3.0/L3.4
+L3-WT-2	PASS	G010 opt-in honesty KNOWN_LIMITS
+L3-ID-1	PASS	G012 claims match L3 evidence
+F1	PASS	G008-G010 production heart call sites on Path A launch
+F2	PASS	G004 Standard tool_configs always applied
+F3	PASS	G001 honesty demotion 3.x/4.x
+F4	PASS	G012 CUT Path A R0A only
+F5	PASS	G012 dual adversarial reviews
+OB-1	PASS	G011 public entry no override
+OB-2	PASS	G012 STATUS covers all ledger rows
+OB-3	PASS	G012 PASS on cut SHA+manifest
+OB-4	PASS	G001 gate selftest substrate

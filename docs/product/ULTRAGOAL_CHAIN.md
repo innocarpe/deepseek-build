@@ -8,12 +8,11 @@
 
 ## Active product chain
 
-**One ultragoal plate through product `5.0.0` — plan id `owner-bar-5x`.**  
-On-disk / npm may still report `4.0.x` until the owner-bar cut — that is **not** owner-bar complete.
+**No active product ultragoal.** Cut complete: plan id **`owner-bar-5x`** → tag **`v5.0.0`**.
 
 | Order | Plan / stage | Role | Prompt / board |
 |-------|--------------|------|----------------|
-| **1** | **`owner-bar-5x`** | **Active** owner-bar complete product → tag **`5.0.0`** | [ULTRAGOAL_PROMPT_COLD_START_5.0.md](./ULTRAGOAL_PROMPT_COLD_START_5.0.md) · [OWNER_BAR_5X_GOALS.md](./OWNER_BAR_5X_GOALS.md) · [WAVE_5x_PR_DAG.md](./WAVE_5x_PR_DAG.md) · [PRD-v5.md](./PRD-v5.md) · [OWNER_BAR_P0_LEDGER.md](./OWNER_BAR_P0_LEDGER.md) |
+| — | **`owner-bar-5x`** | **Complete** owner-bar product cut **`5.0.0`** | [CUT_5_0_0_2026-08-07.md](./evidence/CUT_5_0_0_2026-08-07.md) · [OWNER_BAR_5X_GOALS.md](./OWNER_BAR_5X_GOALS.md) · [PRD-v5.md](./PRD-v5.md) |
 
 ```text
 G001 TruthHarness (RED gate)

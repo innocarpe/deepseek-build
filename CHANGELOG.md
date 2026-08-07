@@ -12,6 +12,14 @@
 
 ## Unreleased
 
+## 4.0.2 — 2026-08-07
+
+### UX
+
+- `dsb setup` next steps: bare **`dsb`** (full-screen agent TUI), not legacy `dsb chat`
+- `chat` documented as line-mode only
+
+
 ## 4.0.1 — 2026-08-07
 
 ### Install DX (critical)

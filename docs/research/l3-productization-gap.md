@@ -47,10 +47,13 @@ Do **not** change product defaults in this prep track (Lane B). Default flips wa
 |------|----------------------------------------|
 | Agent composition root | `crates/codegen/xai-grok-pager-bin` |
 | Headless | `crates/codegen/xai-grok-pager/src/headless*.rs` |
+| Worktree CLI | `xai-grok-pager-bin/src/main.rs` → `Command::Worktree` → `xai_grok_pager::worktree_cmd` |
 | Tools (bash/edit/…) | `crates/codegen/xai-grok-tools/src/implementations/grok_build/` |
+| Subagent / task spawn | `…/grok_build/task/mod.rs` (`run_in_background`, background spawn) |
+| Tool name registry | `xai-grok-telemetry/.../schema.rs` includes `"spawn_subagent"` |
 | Subagent resolution | `crates/codegen/xai-grok-subagent-resolution/` |
 | Shell / session | `crates/codegen/xai-grok-shell/` |
-| Upstream user guides | `crates/codegen/xai-grok-pager/docs/user-guide/16-subagents.md`, `20-background-tasks.md` |
+| Upstream user guides | `…/docs/user-guide/16-subagents.md`, `20-background-tasks.md` |
 
 Product install name: `~/.deepseek-build/bin/deepseek-build-agent` (GROK_HOME = product home).
 

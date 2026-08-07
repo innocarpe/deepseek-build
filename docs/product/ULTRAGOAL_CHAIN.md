@@ -26,13 +26,15 @@ G001 PrepOnMain (base_url + pre-3x harness)
 **Do not** restart A–D or `grokbase-2x` as product SSOT for new work.  
 **Do not** invent a second product plan-id mid-train; extend [HEART_3X_GOALS.md](./HEART_3X_GOALS.md) only via docs PR if the board must change.  
 
-### Parallel prep (not a second ultragoal)
+### Parallel prep ultragoal (not fleet-4x)
 
-While `heart-3x` runs, **Lane B** may land **docs/research only** for 4.0 prep on `main`:
+While `heart-3x` runs, **Lane B** may use plan id **`l3-prep-lane-b`** in a **separate worktree**:
 
-- Ops plan: [PARALLEL_3X_4X_PLAN.md](./PARALLEL_3X_4X_PLAN.md)  
+- Board: [LANE_B_L3_PREP_GOALS.md](./LANE_B_L3_PREP_GOALS.md)  
+- Cold start: [ULTRAGOAL_PROMPT_LANE_B_L3.md](./ULTRAGOAL_PROMPT_LANE_B_L3.md)  
+- Ops: [PARALLEL_3X_4X_PLAN.md](./PARALLEL_3X_4X_PLAN.md)  
 - DAG draft: [WAVE_4x_PR_DAG.md](./WAVE_4x_PR_DAG.md)  
-- Future board: [FLEET_4X_GOALS.md](./FLEET_4X_GOALS.md)  
+- Future cut train: [FLEET_4X_GOALS.md](./FLEET_4X_GOALS.md)  
 
 **Do not** `omc ultragoal create-goals --plan-id fleet-4x` until **`v3.0.0`** and WAVE_4x is ready-for-impl.
 

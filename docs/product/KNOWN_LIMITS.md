@@ -20,7 +20,7 @@
 | L1 permissions fail-closed on agent path | Partial / Grok capability modes | 3.0.0 |
 | L2 prefix/epoch under **agent context stack** | Thin-path `dsb-context` proven; Grok stack not fully fused | 3.0.0 |
 | Flash/Pro / repair as controlling loop | Thin path / partial | 3.0.0 |
-| L3 worktree/subagent as product identity | Machine present; not fully productized | [PRD-v4.md](./PRD-v4.md) |
+| L3 worktree/subagent as product identity | Machine present; **docs + smoke prep landed** (Lane B); not productized defaults | [PRD-v4.md](./PRD-v4.md) · [14-l3-throughput](../user-guide/14-l3-throughput.md) |
 
 ## Remaining limits (2.x ops)
 
@@ -59,6 +59,8 @@
 - Quick offline: `./scripts/smoke-dogfood.sh`
 - **Pre-3.0.0 baseline:** `./scripts/test-pre3x-baseline.sh` (`--vendor` / `--live` / `--all`)
 - Matrix SSOT: [PRE_3X_TEST_MATRIX.md](./PRE_3X_TEST_MATRIX.md)
+- **L3 prep smoke (4.0 Lane B):** `./scripts/test-l3-smoke.sh` (`--offline-only` without key; full when `DEEPSEEK_API_KEY` set)
+- Parallel ops: [PARALLEL_3X_4X_PLAN.md](./PARALLEL_3X_4X_PLAN.md) · prep board [LANE_B_L3_PREP_GOALS.md](./LANE_B_L3_PREP_GOALS.md)
 - Evidence: `docs/product/evidence/`
 
 ## Not in product identity

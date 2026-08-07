@@ -1243,6 +1243,186 @@ def make_handler(state: ScriptedState):
                             if stream
                             else _json_text(model, "implement-subagent-ok")
                         )
+            elif state.scenario == "parent-worker-snippet-stale":
+                # VC015 / V3-60-3: parent mints snippet_id for path P; implement-class
+                # worker mutates P; parent reuses pre-mutation snippet_id → fail closed
+                # (snippet_stale / snippet_not_found). Public Path A sole residual close.
+                child_token = "VC015_PARENT_WORKER_CHILD"
+                tool_results = _tool_results_after_user_query(msgs)
+                tool_contents = _tool_contents_after_user_query(msgs)
+
+                def emit_tool_pw(tname: str, targs: dict[str, Any]) -> bytes:
+                    return (
+                        _sse_tool_then_text(
+                            model,
+                            0,
+                            state.final_text,
+                            tool_name=tname,
+                            tool_args=json.dumps(targs),
+                        )
+                        if stream
+                        else _json_text(model, state.final_text)
+                    )
+
+                if _is_child_session(msgs, child_token):
+                    child_tools = sum(
+                        1
+                        for m in msgs
+                        if isinstance(m, dict) and m.get("role") in ("tool", "function")
+                    )
+                    if child_tools == 0:
+                        payload = emit_tool_pw(
+                            "run_terminal_command",
+                            {
+                                "command": (
+                                    "printf 'worker-mutated-parent\\n' > parent_seed.txt"
+                                ),
+                                "description": "VC015 implement child mutates parent path",
+                            },
+                        )
+                    else:
+                        payload = (
+                            _sse_text(model, "parent-worker-child-mutated")
+                            if stream
+                            else _json_text(model, "parent-worker-child-mutated")
+                        )
+                else:
+                    # Parent turns
+                    if tool_results == 0:
+                        payload = emit_tool_pw(
+                            "read_file", {"target_file": "parent_seed.txt"}
+                        )
+                    elif tool_results == 1:
+                        sid = (
+                            _extract_snippet_id(tool_contents[0])
+                            if tool_contents
+                            else None
+                        )
+                        if not sid:
+                            payload = (
+                                _sse_text(
+                                    model, "parent-worker-snippet-stale-FAIL-no-snippet-id"
+                                )
+                                if stream
+                                else _json_text(
+                                    model, "parent-worker-snippet-stale-FAIL-no-snippet-id"
+                                )
+                            )
+                        else:
+                            state._parent_worker_snippet_id = sid  # type: ignore[attr-defined]
+                            payload = emit_tool_pw(
+                                "spawn_subagent",
+                                {
+                                    "subagent_type": "general-purpose",
+                                    "description": "VC015 V3-60-3 implement dogfood",
+                                    "prompt": (
+                                        f"{child_token}: Overwrite parent_seed.txt so it "
+                                        "contains exactly the line worker-mutated-parent "
+                                        "using run_terminal_command. Do not spawn further "
+                                        "subagents. Reply when the file is updated."
+                                    ),
+                                    "run_in_background": False,
+                                },
+                            )
+                    elif tool_results == 2:
+                        sid = _latest_subagent_id(msgs) or _latest_task_id(msgs)
+                        contents = "\n".join(tool_contents)
+                        if (
+                            sid
+                            and "parent-worker-child" not in contents
+                            and "worker-mutated-parent" not in contents
+                        ):
+                            payload = emit_tool_pw(
+                                "get_command_or_subagent_output",
+                                {
+                                    "task_ids": [sid],
+                                    "timeout_ms": 60000,
+                                },
+                            )
+                        else:
+                            # Subagent already finished in spawn result — proceed to stale edit
+                            stale = getattr(state, "_parent_worker_snippet_id", None)
+                            if not stale and tool_contents:
+                                stale = _extract_snippet_id(tool_contents[0])
+                            if not stale:
+                                payload = (
+                                    _sse_text(
+                                        model,
+                                        "parent-worker-snippet-stale-FAIL-no-stale-id",
+                                    )
+                                    if stream
+                                    else _json_text(
+                                        model,
+                                        "parent-worker-snippet-stale-FAIL-no-stale-id",
+                                    )
+                                )
+                            else:
+                                targs = {
+                                    "file_path": "parent_seed.txt",
+                                    "old_string": "parent-seed-original",
+                                    "new_string": "should-not-apply-after-worker",
+                                    "snippet_id": stale,
+                                }
+                                payload = emit_tool_pw("search_replace", targs)
+                    elif tool_results == 3:
+                        # After await (or if previous step was await), attempt stale edit
+                        # if not already done; else final token.
+                        contents = "\n".join(tool_contents)
+                        last = tool_contents[-1] if tool_contents else ""
+                        already_stale_attempt = any(
+                            "should-not-apply-after-worker" in (c or "")
+                            for c in tool_contents
+                        )
+                        # Detect prior parent search_replace attempt via request wire is hard;
+                        # use tool_results path: if last tool looks like spawn/await success,
+                        # emit stale edit once.
+                        if (
+                            "snippet_stale" in last
+                            or "snippet_not_found" in last
+                            or "should-not-apply" in last
+                            or already_stale_attempt
+                        ):
+                            # If we already attempted and got fail-closed text, finish;
+                            # if last was successful write somehow, still finish.
+                            payload = (
+                                _sse_text(model, "parent-worker-snippet-stale-ok")
+                                if stream
+                                else _json_text(model, "parent-worker-snippet-stale-ok")
+                            )
+                        else:
+                            stale = getattr(state, "_parent_worker_snippet_id", None)
+                            if not stale:
+                                for c in tool_contents:
+                                    sid = _extract_snippet_id(c)
+                                    if sid:
+                                        stale = sid
+                                        break
+                            if not stale:
+                                payload = (
+                                    _sse_text(
+                                        model,
+                                        "parent-worker-snippet-stale-FAIL-no-stale-id",
+                                    )
+                                    if stream
+                                    else _json_text(
+                                        model,
+                                        "parent-worker-snippet-stale-FAIL-no-stale-id",
+                                    )
+                                )
+                            else:
+                                targs = {
+                                    "file_path": "parent_seed.txt",
+                                    "old_string": "parent-seed-original",
+                                    "new_string": "should-not-apply-after-worker",
+                                    "snippet_id": stale,
+                                }
+                                payload = emit_tool_pw("search_replace", targs)
+                    else:
+                        payload = (
+                            _sse_text(model, "parent-worker-snippet-stale-ok")
+                            if stream
+                            else _json_text(model, "parent-worker-snippet-stale-ok")
+                        )
             elif state.scenario == "worker-cache-stamp":
                 # VC011: public-entry only needs a short Path A turn so agent_launch
                 # writes path_a_l3 worker_epochs_match (no spawn required).
@@ -1393,6 +1573,8 @@ def main() -> int:
             "explore-subagent",
             "implement-subagent-mutate",
             "worker-cache-stamp",
+            # VC015 / V3-60-3 parent snippet after implement worker mutates same path
+            "parent-worker-snippet-stale",
         ),
         default="text-pong",
     )

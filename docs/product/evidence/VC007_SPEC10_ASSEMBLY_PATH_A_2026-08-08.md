@@ -5,7 +5,7 @@
 | **Story** | **VC007** — Grok Path A message assembly uses Spec 10 stable prefix layout on turns |
 | **Plan** | `vision-complete-5x` |
 | **Date** | 2026-08-08 |
-| **Status** | **READY-pending-adversarial-2** — wire mutation + gates re-green; fresh Grok review in progress; **unversioned** |
+| **Status** | **READY** — wire mutation + gates re-green; adversarial round 2 **READY** with residuals; **unversioned** |
 | **SemVer** | **none** (this story does **not** bump product version) |
 | **Depends on** | **VC006** Spec 45 Deep Code cut on stack (open PR **#138** `vc006-heart-r0a`) |
 | **Board** | [`VISION_COMPLETE_5X_GOALS.md`](../VISION_COMPLETE_5X_GOALS.md) · DAG [`WAVE_5x_VISION_PR_DAG.md`](../WAVE_5x_VISION_PR_DAG.md) |
@@ -110,7 +110,7 @@ Close the Reasonix L2 gap where **Grok Path A turn message assembly** still bypa
 | **VC007-A4** | Tool schema key permutation stable | **PASS** unit |
 | **VC007-A5** | No wall-clock in stable body | **PASS** unit (fixture); production hashes Grok base system as-is |
 | **VC007-A6** | Production turn call site mutates wire | **PASS** — see §7.1 wire-mutation proof |
-| **VC007-A7** | Multi-turn stability | **PASS (unit)** idempotent re-apply same epoch (`vc007_wire_rewrite_mutates_system_message` second apply); G008 historical multi-turn system stability reaffirm; **RESIDUAL**: post-VC007 live multi-turn JSONL with Spec 10 section markers requires rebuilt agent binary |
+| **VC007-A7** | Multi-turn stability | **RESIDUAL** — unit idempotent re-apply same epoch only; G008 historical multi-turn reaffirm is **not** post-VC007 Spec 10 section wire; live multi-turn JSONL needs rebuilt agent |
 | **VC007-A8** | Gates green | **PASS** re-run 2026-08-08 (this session): linkage + owner-bar 60/60 + heart regression; TSV restored |
 | **VC007-A9** | Unversioned | **PASS** product remains **5.3.0** from VC006; no version commits in this story |
 | **VC007-A10** | Stacked PR | **OPEN** #139 base `vc006-heart-r0a` — refresh only after READY; **do not merge** |
@@ -225,9 +225,9 @@ origin/main @ 5.2.2
 | Round | Verdict | Action |
 |-------|---------|--------|
 | 1 (critic) | **NOT READY** — stamp-only hollow path; empty skills/project; A7 over-claim on G008 wire | Fixed in `5199d6d` wire rewrite + discovery + honest residuals |
-| 2 (fresh, post wire-rewrite) | *(pending this session)* | Re-review rewritten `apply_spec10_to_conversation_request` + turn call site + evidence honesty |
+| 2 (fresh, post wire-rewrite) | **READY** | Confirms wire mutation + discovery; A7 must stay **RESIDUAL**; memory-in-base residual explicit |
 
-### Residual honesty (fail-close)
+### Residual honesty (fail-close) — round 2 required list
 
 | Residual | Honesty |
 |----------|---------|
@@ -235,8 +235,9 @@ origin/main @ 5.2.2
 | A7 live multi-turn JSONL | **Unit + G008 historical only** — not post-VC007 Spec 10 section wire capture |
 | Epoch domains | Launch `path_a_prefix_epoch` (`dsb-context` message JSON hash) ≠ turn `path_a_turn_prefix_epoch` (Grok stable body string hash) — **do not equate** |
 | Tools dual placement | Spec 10 tools **document** in system **and** API `tools[]` retained (hybrid) |
-| Chat-kind product REST skills | `discover_skills_index` is disk-path discovery (`skills/*/SKILL.md`); product REST skill index not fully mapped |
-| Grok base system content | Base template may still carry Grok product chrome; Spec 10 **sections** are appended after base; wall-clock negative is fixture-level |
+| Memory / Grok system injections | `build_request` may inject memory into System **before** Spec 10 apply; pure Spec 10 volatile isolation incomplete for memory |
+| Chat-kind product REST skills | Disk `skills/*/SKILL.md` discovery only; `user_skills_root` is `None` on turn path |
+| Grok base system content | Base template may still carry Grok product chrome; wall-clock negative is fixture-level |
 | VISION L2 | **Not complete** — VC008 + VC009 remain |
 | SemVer | **No bump**; stack stays **5.3.0** from VC006; Reasonix cut residual **5.4.0** |
 
@@ -249,9 +250,9 @@ origin/main @ 5.2.2
 - [x] Wire system rewritten (not stamp-only) — §7.1  
 - [x] Skills/project discovery on turn path  
 - [x] Three gates green (this session re-run); TSV side-effects not committed  
-- [ ] Fresh independent Grok adversarial review of rewritten implementation  
+- [x] Fresh independent Grok adversarial review of rewritten implementation (**READY**, round 2)  
 - [x] No SemVer bump  
-- [ ] Stacked PR body refreshed only after READY (**#139 already open** from prior session; do not open a second PR)  
+- [x] Stacked PR #139 already open — body refresh after READY (do not open a second PR)  
 - [x] **Do not merge**  
 
 ### Commits
@@ -263,4 +264,5 @@ origin/main @ 5.2.2
 | `2c7fe52` | test(scripts): soft-check VC007 Path A turn prefix epoch stamp |
 | `5199d6d` | feat(context): rewrite Path A wire system to Spec 10 layout |
 | `ec90a66` | docs(product): VC007 READY evidence and adversarial close-out |
-| *(pending)* | style/docs: fmt + wire-mutation evidence refresh + adversarial-2 |
+| `f4a5cfe` | docs(product): VC007 wire-mutation proof and residual honesty |
+| *(this)* | docs(product): VC007 adversarial-2 READY close-out |

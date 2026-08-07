@@ -514,7 +514,8 @@ fn stamp_path_a_routing(home: &BuildHome) {
 /// Spec 50/60 hearts are not test-only. Best-effort; never blocks launch.
 fn stamp_path_a_l3(home: &BuildHome) {
     use dsb_agent::{
-        MAX_PARALLEL_READONLY, WorkerKind, is_mutating_tool, partition_indices, worker_stable_prefix,
+        MAX_PARALLEL_READONLY, WorkerKind, is_mutating_tool, partition_indices,
+        worker_stable_prefix,
     };
     use serde_json::json;
     use std::path::PathBuf;
@@ -651,6 +652,16 @@ pub fn exec_agent(args: &[String]) -> Result<()> {
     // agent (the agent re-emits it on its own title ticks).
     emit_product_title();
 
+    // iTerm2 tab icon: install the DeepSeek logo mapping on first run so the
+    // tab shows the official whale right after `npm i -g` — no extra step.
+    // Best-effort, silent; `check`/`remove` via scripts/install-iterm-tab-icon.sh.
+    match crate::terminal_tab_icon::ensure_iterm2_tab_icon() {
+        crate::terminal_tab_icon::TabIconStatus::Installed => {
+            eprintln!("Installed DeepSeek Build tab icon for iTerm2.");
+        }
+        _ => {}
+    }
+
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -723,7 +734,10 @@ mod tests {
         // Second stamp with same cwd/tools → identical file (byte-stable).
         stamp_path_a_prefix_epoch(&home);
         let body2 = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(body, body2, "stamp must be byte-stable for identical inputs");
+        assert_eq!(
+            body, body2,
+            "stamp must be byte-stable for identical inputs"
+        );
         let hex = body
             .lines()
             .find_map(|l| l.strip_prefix("path_a_prefix_epoch="))
@@ -749,8 +763,14 @@ mod tests {
             body.contains("after_pro_visibility=model=deepseek-v4-flash"),
             "must return to Flash after /pro once: {body}"
         );
-        assert!(body.contains("effort="), "visibility must show effort: {body}");
-        assert!(body.contains("thinking="), "visibility must show thinking: {body}");
+        assert!(
+            body.contains("effort="),
+            "visibility must show effort: {body}"
+        );
+        assert!(
+            body.contains("thinking="),
+            "visibility must show thinking: {body}"
+        );
     }
 
     /// G010 / L3-50+60: production L3 stamp — fail-closed classify + worker cache law.

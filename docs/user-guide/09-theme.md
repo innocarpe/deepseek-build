@@ -33,10 +33,11 @@ Non-TTY output is plain by default. With `NO_COLOR`, the box and whale still pri
 
 Running `deepseek-build` / `dsb` sets the terminal tab title to **DeepSeek Build** (OSC 0),
 and on iTerm2 (macOS 15+ Tahoe tab style) the tab shows the **official DeepSeek whale
-logo** — no border or background, matching how Claude Code / Codex / Grok Build tabs are
-recognized.
+logo** — no border or background.
 
-The tab logo is an iTerm2 per-process icon mapping. To enable it once:
+The tab logo is an iTerm2 per-process icon mapping. It is **installed automatically** on
+the first TUI launch (the logo is embedded in the binary), so a fresh `npm i -g` works
+with no extra step. For verification or manual control, the repo script covers the rest:
 
 ```bash
 ./scripts/install-iterm-tab-icon.sh        # install (idempotent)
@@ -53,4 +54,4 @@ The title works in any terminal; the logo requires iTerm2.
 
 - `docs/product/DESIGN.md`
 - Implementation: `crates/dsb-cli/src/theme.rs`, `crates/dsb-cli/src/banner.rs`,
-  `scripts/install-iterm-tab-icon.sh`
+  `crates/dsb-cli/src/terminal_tab_icon.rs`, `scripts/install-iterm-tab-icon.sh`

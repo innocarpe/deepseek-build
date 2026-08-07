@@ -3128,6 +3128,7 @@ mod plan_mode_edit_gate_tests {
             old_string: "a".into(),
             new_string: "b".into(),
             replace_all: false,
+            file_version: None,
         })
     }
     fn write(path: &str) -> ToolInput {

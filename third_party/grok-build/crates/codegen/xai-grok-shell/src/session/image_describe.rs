@@ -339,7 +339,9 @@ pub(crate) fn render_image_files_block(paths: &[String]) -> Option<String> {
         let p = scrub_for_envelope(p);
         out.push_str(&format!("{}. {p}\n", i + 1));
     }
-    out.push_str("\nThese images can be copied for use in other locations.\n</image_files>");
+    out.push_str(
+        "\nThese images can be copied for use in other locations. If your backend cannot receive image data directly (text-only API), read or OCR these files with your tools to access their contents.\n</image_files>",
+    );
     Some(out)
 }
 /// Result of persisting one user-supplied image to the session's
@@ -525,6 +527,7 @@ pub(crate) fn persist_and_prepend_image_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine as _;
     use xai_grok_sampling_types::conversation::{ConversationItem, UserItem};
     #[test]
     fn persist_and_prepend_image_files_writes_assets_and_lists_paths() {
@@ -541,6 +544,8 @@ mod tests {
         assert!(msg.contains("<image_files>"));
         assert!(msg.contains("/assets/image-"));
         assert!(msg.ends_with("hello") || msg.contains("\n\nhello"));
+        // Text-only backends need to know they can read/OCR the saved files.
+        assert!(msg.contains("read or OCR these files with your tools"));
         let assets = std::fs::read_dir(dir.path().join("assets")).unwrap();
         assert_eq!(assets.count(), 1);
     }

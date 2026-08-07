@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 3.0.0-alpha.2 — 2026-08-07
+
+### L1 permissions (Path A)
+
+- Spec 90 spirit matrix for default agent: headless Ask→Deny, TTY Ask for writes, deny out-of-cwd
+- Product seed/repair: explicit `yolo = false` when missing (does not clobber user `yolo = true`)
+- `dsb-tools` `path_a_permissions` contract tests (H90.*)
+
+
 ## 3.0.0-alpha.1 — 2026-08-07
 
 ### L1 heart (Path A snippet-safe)

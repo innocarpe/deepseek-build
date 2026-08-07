@@ -140,7 +140,8 @@ xai_api_base_url = "{DEEPSEEK_API_BASE_URL}"
 
 [ui]
 theme = "{PRODUCT_THEME}"
-# Product default: do not enable YOLO.
+# Product default: Spec 90 — not YOLO-only (G005 / Path A).
+yolo = false
 "#
     );
 
@@ -161,6 +162,7 @@ theme = "{PRODUCT_THEME}"
 /// Idempotent. Does not rewrite unrelated user settings. Ensures:
 /// 1. DeepSeekNight theme when no `theme` key exists
 /// 2. `base_url` on DeepSeek model stanzas (or appends full model blocks)
+/// 3. Explicit `yolo = false` when the key is missing (Spec 90 product default)
 fn repair_product_agent_config(body: &str) -> String {
     let mut next = body.to_string();
     if !next.ends_with('\n') {
@@ -172,6 +174,18 @@ fn repair_product_agent_config(body: &str) -> String {
             next.push_str("\n[ui]\n");
         }
         next.push_str(&format!("theme = \"{PRODUCT_THEME}\"\n"));
+    }
+
+    // Product default is not YOLO. Only inject when the key is absent so we do
+    // not clobber an explicit user `yolo = true` (CLI `--yolo` / opt-in).
+    if !next.lines().any(|l| {
+        let t = l.trim();
+        !t.starts_with('#') && t.starts_with("yolo")
+    }) {
+        if !next.contains("[ui]") {
+            next.push_str("\n[ui]\n");
+        }
+        next.push_str("yolo = false\n");
     }
 
     next = ensure_deepseek_model_base_url(next, "deepseek-v4-flash", "DeepSeek V4 Flash");
@@ -382,6 +396,11 @@ fn product_config_seed_contains_deepseek_defaults() {
     assert!(body.contains("chat_completions"));
     assert!(body.contains("DEEPSEEK_API_KEY"));
     assert!(body.contains("deepseeknight"));
+    // Spec 90 / G005: product default is not YOLO.
+    assert!(
+        body.contains("yolo = false"),
+        "seed missing yolo = false: {body}"
+    );
     // Load-bearing: model-level base_url (not only endpoints.xai_api_base_url).
     assert!(
         body.contains(&format!("base_url = \"{DEEPSEEK_API_BASE_URL}\"")),
@@ -393,12 +412,24 @@ fn product_config_seed_contains_deepseek_defaults() {
     let body2 = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
     assert!(body2.contains("keep=1"));
     assert!(body2.contains("theme = \"deepseeknight\""));
+    assert!(body2.contains("yolo = false"));
     // Repair also adds DeepSeek model blocks with base_url.
     assert!(body2.contains("[model.deepseek-v4-flash]"));
     assert!(body2.contains("base_url = \"https://api.deepseek.com\""));
     ensure_product_agent_config(&home).unwrap();
     let body3 = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
     assert_eq!(body2, body3);
+}
+
+#[test]
+fn repair_injects_yolo_false_when_missing_but_preserves_true() {
+    let missing = "[ui]\ntheme = \"deepseeknight\"\n";
+    let fixed = repair_product_agent_config(missing);
+    assert!(fixed.contains("yolo = false"));
+    let user_yolo = "[ui]\ntheme = \"deepseeknight\"\nyolo = true\n";
+    let kept = repair_product_agent_config(user_yolo);
+    assert!(kept.contains("yolo = true"));
+    assert!(!kept.lines().any(|l| l.trim() == "yolo = false"));
 }
 
 #[test]

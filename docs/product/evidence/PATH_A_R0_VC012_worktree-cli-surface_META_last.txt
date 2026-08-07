@@ -1,0 +1,54 @@
+git_sha=1a8e13334e34253eeebe721473a3f1e8e825d9fc
+cli=/Users/WooseongKim/Projects/deepseek-build/vc012-worktree-dogfood/target/release/deepseek-build
+dsb=/Users/WooseongKim/Projects/deepseek-build/vc012-worktree-dogfood/target/release/dsb
+agent_resolved=/Users/WooseongKim/.deepseek-build/bin/xai-grok-pager
+DEEPSEEK_BUILD_AGENT_BIN_unset=yes
+DEEPSEEK_BUILD_HOME=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc012-r0a.qcZrcP/product-home
+scenario=worktree-cli-surface
+product_help_exit=0
+help_exit=0
+help_cmd=deepseek-build agent -- --help
+worktree_help_exit=0
+list_exit=0
+dsb_list_exit=0
+repo=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc012-r0a.qcZrcP/repo
+product_help_worktree_lines<<EOF
+78:  -w, --worktree [<WORKTREE>]
+79:          Opt-in: start the full-screen agent in a new git worktree (bare `dsb` / `dsb agent` only). Name optional. Headless `-p` still does not create a worktree from this flag (vendor honesty; see user-guide 13 / VC012)
+81:      --worktree-ref <WORKTREE_REF>
+82:          Branch, tag, or commit to base `--worktree` on (TUI path only)
+EOF
+agent_help_worktree_lines<<EOF
+7:          Initial prompt for the interactive session, e.g. `dsb "fix the bug"` or `dsb --worktree=feat "create this feature"`
+122:          Restore the original session's repository snapshot when resuming. Remote sessions require `--worktree` (never checks out into the current directory). Without this flag, resume restores conversation only
+147:  -w, --worktree [<WORKTREE>]
+148:          Start the session in a new git worktree, optionally named. With `--resume` of a remote session, pass `--restore-code` to apply the snapshot codebase (conversation is restored either way). Headless (`-p`) does not create a worktree from this flag
+150:      --worktree-ref <WORKTREE_REF>
+151:          Branch, tag, or commit to base the worktree on (with `--worktree`). Defaults to the current HEAD of the source checkout when omitted
+175:  worktree     Manage git worktrees
+EOF
+worktree_help_tail<<EOF
+Manage git worktrees
+
+Usage: dsb worktree [OPTIONS] <COMMAND>
+
+Commands:
+  list  List tracked worktrees [aliases: ls]
+  show  Show details for a specific worktree
+  rm    Remove worktrees
+  gc    Garbage-collect orphaned/stale worktrees
+  db    Database maintenance
+  help  Print this message or the help of the given subcommand(s)
+
+Options:
+      --debug                 Enable debug logging
+      --debug-file <FILE>     Write debug logs to FILE
+  -h, --help                  Print help
+      --leader-socket <PATH>  Use a custom leader socket path instead of the default `~/.grok/leader.sock`
+EOF
+list_out<<EOF
+[]
+EOF
+dsb_list_out<<EOF
+[]
+EOF

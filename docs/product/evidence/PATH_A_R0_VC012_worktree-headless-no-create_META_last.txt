@@ -1,0 +1,42 @@
+git_sha=1a8e13334e34253eeebe721473a3f1e8e825d9fc
+cli=/Users/WooseongKim/Projects/deepseek-build/vc012-worktree-dogfood/target/release/deepseek-build
+dsb=/Users/WooseongKim/Projects/deepseek-build/vc012-worktree-dogfood/target/release/dsb
+agent_resolved=/Users/WooseongKim/.deepseek-build/bin/xai-grok-pager
+DEEPSEEK_BUILD_AGENT_BIN_unset=yes
+DEEPSEEK_BUILD_HOME=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc012-r0a.vSXKBZ/product-home
+scenario=worktree-headless-no-create
+scripted_base_url=http://127.0.0.1:58368
+agent_exit=0
+wire=/Users/WooseongKim/Projects/deepseek-build/vc012-worktree-dogfood/docs/product/evidence/PATH_A_R0_VC012_worktree-headless-no-create_WIRE_last.jsonl
+worktree_flag_name=vc012-headless-dogfood
+fixture_scenario=worker-cache-stamp
+repo=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc012-r0a.vSXKBZ/repo
+wire_lines=6
+path_a_l3_stamp=present
+l3_max_parallel_readonly=8
+l3_ro_indices=[0, 4]
+l3_mu_indices=[1, 2, 3, 5]
+l3_bash_mutating=true
+l3_mcp_mutating=true
+l3_unknown_mutating=true
+l3_worker_kind_explore=explore
+l3_worker_kind_implement=implement
+l3_worker_epoch_a=c0767bd1a64eaa344316d063edeb1333dbe0680425611c26294736cbac4b6d41
+l3_worker_epoch_b=c0767bd1a64eaa344316d063edeb1333dbe0680425611c26294736cbac4b6d41
+l3_worker_epochs_match=true
+l3_subagents_enabled_in_config=true
+l3_worktree_product=opt_in
+l3_bare_dsb_session=single
+worktree_list_before<<EOF
+worktree /private/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T/dsb-vc012-r0a.vSXKBZ/repo
+HEAD b96d62d1ff7ac9e76aef03ce90daeec27f6b3a41
+branch refs/heads/main
+EOF
+worktree_list_after<<EOF
+worktree /private/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T/dsb-vc012-r0a.vSXKBZ/repo
+HEAD b96d62d1ff7ac9e76aef03ce90daeec27f6b3a41
+branch refs/heads/main
+EOF
+agent_out_tail<<EOF
+worker-cache-stamp-ok
+EOF

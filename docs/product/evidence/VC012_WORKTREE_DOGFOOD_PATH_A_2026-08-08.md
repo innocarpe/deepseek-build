@@ -243,17 +243,29 @@ Restore any generated TSV side-effects to HEAD if gates rewrite them. Clean vend
 
 **Status: READY** (implementation complete; independent review file sibling).
 
+### 6.0 Provenance (fail-close)
+
+| Field | Value |
+|-------|--------|
+| **Source/docs head under test** | `33552fb5bf465b4b909d22c00b07a2b3ab483ed3` |
+| **Includes** | plan §1.1 scope amendment + CLI forward `bffc047` + harness + user-guide syntax |
+| **R0A re-run** | `./scripts/test-path-a-vc012-r0a.sh --skip-build` after that head |
+| **META/WIRE `git_sha`** | **must equal** source head above (all four scenario META files) |
+
+Do **not** ship META that still cites plan-only `1a8e133` or a mid-stack READY tip without re-run.
+
 ### 6.1 Commands
 
 | Command | Result |
 |---------|--------|
-| `./scripts/test-path-a-vc012-r0a.sh --skip-build` | **PASS** (cli-surface, flag-forward, opt-in-stamp, headless-no-create) |
+| `./scripts/test-path-a-vc012-r0a.sh --skip-build` @ `33552fb` | **PASS** (cli-surface, flag-forward, opt-in-stamp, headless-no-create) |
 | `cargo test -p dsb-cli tui_forward_flags_worktree` | **PASS** (support) |
 | `cargo test -p dsb-cli reject_worktree_flags_on_line_mode` | **PASS** (support) |
 | `cargo test -p dsb-cli stamp_path_a_l3` | **PASS** (support) |
 | `./scripts/check-path-a-linkage.sh` | **PASS** |
 | `./scripts/test-owner-bar.sh` | **PASS** (60/60; TSV side-effect restored) |
 | `./scripts/test-heart-regression.sh` | **PASS** (PATH_A_E2E SKIP default; L3 offline PASS) |
+| `git diff --check vc011-subagent-worker-cache...HEAD` | **0** (after final evidence commit) |
 | SemVer on branch | **`5.3.0`** unchanged (no bump) |
 
 ### 6.2 Wire + stamp sample

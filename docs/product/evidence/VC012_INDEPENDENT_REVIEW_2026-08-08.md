@@ -4,7 +4,7 @@
 |-------|--------|
 | **Story** | **VC012** — public Path A worktree dogfood + bare `dsb` / `deepseek-build` honesty (vision **V3-WT**) |
 | **Branch / worktree** | `vc012-worktree-dogfood` @ `/Users/WooseongKim/Projects/deepseek-build/vc012-worktree-dogfood` |
-| **Reviewed code head** | Implementation tip prior to this review package (CLI forward + R0A harness + docs; READY docs co-land) |
+| **Reviewed / R0A source head** | `33552fb5bf465b4b909d22c00b07a2b3ab483ed3` (plan §1.1 scope amendment + CLI forward + harness + user-guide; **META `git_sha` must match**) |
 | **Base** | `vc011-subagent-worker-cache` @ `fd9b215` (open PR **#143**) |
 | **Reviewer** | Independent Grok review lane (static + re-ran R0A/gates on this worktree) |
 | **Date** | 2026-08-08 |
@@ -13,13 +13,15 @@
 
 ### Head honesty (fail-close)
 
-| Commit kind | Covered by this review |
-|-------------|------------------------|
-| Plan doc | Scope / non-claims / matrix |
-| CLI `--worktree` forward + unit tests | Product surface under review |
-| R0A harness + META/WIRE artifacts | Behavior under review |
-| User-guide 13 + KNOWN_LIMITS | Docs honesty under review |
-| READY evidence + this review | Gate claims |
+| Commit / artifact | Covered by this review |
+|-------------------|------------------------|
+| Plan + **§1.1 scope amendment** (`33552fb` tip under test) | Why product top-level `--worktree` is in scope; parser/line-mode acceptance |
+| CLI forward `bffc047` (ancestor of under-test head) | Product parse/forward/reject |
+| R0A harness + META/WIRE | All four scenarios; **`git_sha=33552fb5bf465b4b909d22c00b07a2b3ab483ed3`** |
+| User-guide 13 + KNOWN_LIMITS | Actual product + agent syntax |
+| READY evidence + this review | Gate claims + provenance table |
+
+**Provenance rule:** META/WIRE from a plan-only SHA (e.g. `1a8e133`) or any head that omits CLI `bffc047` is **invalid** for READY claims. Re-run R0A after final source/docs head.
 
 Docs-only tips after this file that only point at the review do **not** require a second code review.
 
@@ -42,14 +44,15 @@ Docs-only tips after this file that only point at the review do **not** require 
 
 ### 2.1 Verification method
 
-1. **Re-execution** of `./scripts/test-path-a-vc012-r0a.sh --skip-build` → all three scenarios **PASS**
-2. **Re-execution** of `./scripts/check-path-a-linkage.sh` → **PASS**
-3. **Re-execution** of `./scripts/test-heart-regression.sh` → **PASS**
-4. **Re-execution** of `./scripts/test-owner-bar.sh` → **PASS** 60/60
-5. **Re-execution** of `cargo test -p dsb-cli tui_forward_flags_worktree reject_worktree_flags_on_line_mode stamp_path_a_l3` → **PASS**
-6. Static inspection of plan, harness, CLI forward, docs, META/WIRE
+1. **Re-execution** of `./scripts/test-path-a-vc012-r0a.sh --skip-build` @ `33552fb` → all **four** scenarios **PASS**; META `git_sha` matches
+2. **Re-execution** of `cargo test -p dsb-cli tui_forward_flags_worktree reject_worktree_flags_on_line_mode` → **PASS**
+3. Static inspection of plan §1.1, harness product-top-level paths, docs, META/WIRE provenance
 
 ```text
+# Provenance
+source_head=33552fb5bf465b4b909d22c00b07a2b3ab483ed3
+META git_sha=33552fb5bf465b4b909d22c00b07a2b3ab483ed3  # all four scenarios
+
 # SemVer
 Cargo.toml [workspace.package] version = "5.3.0"
 package.json version = "5.3.0"

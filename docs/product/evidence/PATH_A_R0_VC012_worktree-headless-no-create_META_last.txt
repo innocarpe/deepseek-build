@@ -1,17 +1,17 @@
-git_sha=e5551f371e09eb79e46a10553e2e93e56dc7cc21
+git_sha=33552fb5bf465b4b909d22c00b07a2b3ab483ed3
 cli=/Users/WooseongKim/Projects/deepseek-build/vc012-worktree-dogfood/target/release/deepseek-build
 dsb=/Users/WooseongKim/Projects/deepseek-build/vc012-worktree-dogfood/target/release/dsb
 agent_resolved=/Users/WooseongKim/.deepseek-build/bin/xai-grok-pager
 DEEPSEEK_BUILD_AGENT_BIN_unset=yes
-DEEPSEEK_BUILD_HOME=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc012-r0a.lTgkzd/product-home
+DEEPSEEK_BUILD_HOME=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc012-r0a.7jKcCx/product-home
 scenario=worktree-headless-no-create
-scripted_base_url=http://127.0.0.1:59061
+scripted_base_url=http://127.0.0.1:59961
 agent_exit=0
 wire=/Users/WooseongKim/Projects/deepseek-build/vc012-worktree-dogfood/docs/product/evidence/PATH_A_R0_VC012_worktree-headless-no-create_WIRE_last.jsonl
 worktree_flag_name=vc012-headless-dogfood
 worktree_flag_source=product_top_level
 fixture_scenario=worker-cache-stamp
-repo=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc012-r0a.lTgkzd/repo
+repo=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc012-r0a.7jKcCx/repo
 claim_scope=headless_p_plus_product_worktree_no_git_worktree_create
 process_boundary_residual=interactive_tty_worktree_create_not_asserted
 wire_lines=6
@@ -31,13 +31,13 @@ l3_subagents_enabled_in_config=true
 l3_worktree_product=opt_in
 l3_bare_dsb_session=single
 worktree_list_before<<EOF
-worktree /private/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T/dsb-vc012-r0a.lTgkzd/repo
-HEAD c0282a267ef41b96a53e42c140b8585f6d5172ac
+worktree /private/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T/dsb-vc012-r0a.7jKcCx/repo
+HEAD 200c6df41f808fcb8321f9ad717c35b540166dd3
 branch refs/heads/main
 EOF
 worktree_list_after<<EOF
-worktree /private/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T/dsb-vc012-r0a.lTgkzd/repo
-HEAD c0282a267ef41b96a53e42c140b8585f6d5172ac
+worktree /private/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T/dsb-vc012-r0a.7jKcCx/repo
+HEAD 200c6df41f808fcb8321f9ad717c35b540166dd3
 branch refs/heads/main
 EOF
 agent_out_tail<<EOF

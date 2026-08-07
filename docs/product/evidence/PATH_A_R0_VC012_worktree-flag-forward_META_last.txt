@@ -1,9 +1,9 @@
-git_sha=e5551f371e09eb79e46a10553e2e93e56dc7cc21
+git_sha=33552fb5bf465b4b909d22c00b07a2b3ab483ed3
 cli=/Users/WooseongKim/Projects/deepseek-build/vc012-worktree-dogfood/target/release/deepseek-build
 dsb=/Users/WooseongKim/Projects/deepseek-build/vc012-worktree-dogfood/target/release/dsb
 agent_resolved=/Users/WooseongKim/.deepseek-build/bin/xai-grok-pager
 DEEPSEEK_BUILD_AGENT_BIN_unset=yes
-DEEPSEEK_BUILD_HOME=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc012-r0a.6fCusx/product-home
+DEEPSEEK_BUILD_HOME=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc012-r0a.Z0wElh/product-home
 scenario=worktree-flag-forward
 agent_exit=0
 worktree_flag_name=vc012-bound-forward

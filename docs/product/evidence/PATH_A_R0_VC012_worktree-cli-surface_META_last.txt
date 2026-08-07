@@ -1,9 +1,9 @@
-git_sha=e5551f371e09eb79e46a10553e2e93e56dc7cc21
+git_sha=33552fb5bf465b4b909d22c00b07a2b3ab483ed3
 cli=/Users/WooseongKim/Projects/deepseek-build/vc012-worktree-dogfood/target/release/deepseek-build
 dsb=/Users/WooseongKim/Projects/deepseek-build/vc012-worktree-dogfood/target/release/dsb
 agent_resolved=/Users/WooseongKim/.deepseek-build/bin/xai-grok-pager
 DEEPSEEK_BUILD_AGENT_BIN_unset=yes
-DEEPSEEK_BUILD_HOME=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc012-r0a.5E7oOm/product-home
+DEEPSEEK_BUILD_HOME=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc012-r0a.Y4cbZN/product-home
 scenario=worktree-cli-surface
 product_help_exit=0
 help_exit=0
@@ -11,7 +11,7 @@ help_cmd=deepseek-build agent -- --help
 worktree_help_exit=0
 list_exit=0
 dsb_list_exit=0
-repo=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc012-r0a.5E7oOm/repo
+repo=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc012-r0a.Y4cbZN/repo
 product_help_worktree_lines<<EOF
 78:  -w, --worktree [<WORKTREE>]
 79:          Opt-in: start the full-screen agent in a new git worktree (bare `dsb` / `dsb agent` only). Name optional. Headless `-p` still does not create a worktree from this flag (vendor honesty; see user-guide 13 / VC012)

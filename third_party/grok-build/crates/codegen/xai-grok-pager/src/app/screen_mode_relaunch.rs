@@ -204,13 +204,26 @@ pub(crate) fn screen_mode_env_value(want_minimal: bool) -> &'static str {
 
 /// Pasteable shell command when auto re-exec fails (env + flag + `--resume`).
 pub(crate) fn screen_mode_relaunch_resume_hint(session_id: &str, want_minimal: bool) -> String {
+    screen_mode_relaunch_resume_hint_with(
+        &super::invocation_name(),
+        session_id,
+        want_minimal,
+    )
+}
+
+/// Pure variant of [`screen_mode_relaunch_resume_hint`] (env-free, testable).
+pub(crate) fn screen_mode_relaunch_resume_hint_with(
+    cmd: &str,
+    session_id: &str,
+    want_minimal: bool,
+) -> String {
     let mode = screen_mode_env_value(want_minimal);
     let flag = if want_minimal {
         "--minimal"
     } else {
         "--fullscreen"
     };
-    format!("{GROK_SCREEN_MODE_ENV}={mode} grok {flag} --resume {session_id}")
+    format!("{GROK_SCREEN_MODE_ENV}={mode} {cmd} {flag} --resume {session_id}")
 }
 
 /// Replace the current process with a relaunch into the requested screen mode.
@@ -839,6 +852,18 @@ mod tests {
         assert_eq!(
             screen_mode_relaunch_resume_hint("abc-sid", true),
             "GROK_SCREEN_MODE=minimal grok --minimal --resume abc-sid"
+        );
+    }
+
+    #[test]
+    fn failed_relaunch_hint_brands_invocation_name() {
+        assert_eq!(
+            screen_mode_relaunch_resume_hint_with("dsb", "abc-sid", false),
+            "GROK_SCREEN_MODE=fullscreen dsb --fullscreen --resume abc-sid"
+        );
+        assert_eq!(
+            screen_mode_relaunch_resume_hint_with("deepseek-build", "abc-sid", true),
+            "GROK_SCREEN_MODE=minimal deepseek-build --minimal --resume abc-sid"
         );
     }
 

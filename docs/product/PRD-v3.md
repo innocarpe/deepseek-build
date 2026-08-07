@@ -71,6 +71,21 @@ Grok Build base (L3 machine)
 9. Deeper DeepSeek TUI polish beyond 2.x chrome.  
 10. MCP live process manager beyond minimal (if not blocking P0).
 
+### Precondition (before coding 3.0.0)
+
+Run and record the **pre-3.x test matrix** ([PRE_3X_TEST_MATRIX.md](./PRE_3X_TEST_MATRIX.md)):
+
+| Must be green | Script |
+|---------------|--------|
+| T0 product offline | `./scripts/test-product-offline.sh` |
+| T4 agent DeepSeek live core (when key available) | `./scripts/test-deepseek-live.sh` |
+| T1 vendor curated (before vendor edits) | `./scripts/test-grok-vendor-offline.sh` |
+
+Orchestrator: `./scripts/test-pre3x-baseline.sh --all`  
+Evidence: `docs/product/evidence/PRE3X_BASELINE_*.md`
+
+Do **not** start L1/L2 fusion while T4.0 (agent still on Grok proxy) is red.
+
 ### Non-goals for 3.0.0
 
 - Replacing Grok base with greenfield agent  

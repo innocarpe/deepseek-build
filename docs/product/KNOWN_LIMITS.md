@@ -34,21 +34,31 @@
 
 - Requires DeepSeek API key for live turns (`DEEPSEEK_API_KEY` or credentials.json 0600).
 - Some upstream strings may remain in deep code paths (product chrome is DeepSeek).
+- **Agent routing (fixed 2026-08-07):** each `[model.deepseek-*]` **must** set  
+  `base_url = "https://api.deepseek.com"`. Setting only `[endpoints].xai_api_base_url`  
+  still sent traffic to **`cli-chat-proxy.grok.com`** (401). Product seed +  
+  `ensure_product_agent_config` repair now inject model-level `base_url`.  
+  Re-launch `dsb` once so existing homes get repaired.
 
 ### Tools / safety
 
 - Thin path (`run` / `chat`) uses `dsb-tools` snippet + permission policy.
 - Full-screen agent uses Grok native tools; **L1 fusion is 3.x**.
 - Headless fail-closed on thin path: ask → deny unless TTY / explicit flags.
+- **Pre-3.x live matrix** verifies agent tools against DeepSeek (read/list/grep/shell/edit)  
+  when API key present — see [PRE_3X_TEST_MATRIX.md](./PRE_3X_TEST_MATRIX.md).  
+  That is **capability smoke**, not Spec 45 heart fusion.
 
 ### Cache / cost
 
 - Thin path: stable prefix epoch via `dsb-context`.
 - Agent-stack L2 fusion: **3.x**.
 
-### Dogfood
+### Dogfood / baseline
 
-- Offline: `./scripts/smoke-dogfood.sh`
+- Quick offline: `./scripts/smoke-dogfood.sh`
+- **Pre-3.0.0 baseline:** `./scripts/test-pre3x-baseline.sh` (`--vendor` / `--live` / `--all`)
+- Matrix SSOT: [PRE_3X_TEST_MATRIX.md](./PRE_3X_TEST_MATRIX.md)
 - Evidence: `docs/product/evidence/`
 
 ## Not in product identity

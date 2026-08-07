@@ -1,8 +1,8 @@
 # 11 — Subagents (full-screen agent)
 
-**Applies to:** `deepseek-build` / `dsb` → product agent (Grok-derived TUI)  
-**Not the same as:** thin `dsb-tools` in-process `subagent` helper  
-**Upstream detail:** vendored guide under `third_party/grok-build/`  
+**Applies to:** `deepseek-build` / `dsb` → product agent (Grok-derived TUI)
+**Not the same as:** thin `dsb-tools` in-process `subagent` helper
+**Upstream detail:** vendored guide under `third_party/grok-build/`
 **Evidence:** Path A hermetic R0A **VC011** · re-prove on L3 cut **VC013** (**5.4.0** on-branch)
 
 ## What it is
@@ -82,7 +82,7 @@ Evidence:
 
 ## Related
 
-- [12-background-tasks.md](./12-background-tasks.md)  
-- [13-worktrees.md](./13-worktrees.md)  
-- [10-tools.md](./10-tools.md) (thin-path tools; different surface)  
+- [12-background-tasks.md](./12-background-tasks.md)
+- [13-worktrees.md](./13-worktrees.md)
+- [10-tools.md](./10-tools.md) (thin-path tools; different surface)
 - [KNOWN_LIMITS.md](../product/KNOWN_LIMITS.md)

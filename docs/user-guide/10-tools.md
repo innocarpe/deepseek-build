@@ -1,7 +1,7 @@
 # 10 — Tools
 
-**Commands:** `deepseek-build` (primary) · `dsb` (alias)  
-**Primary path:** full-screen agent (**Path A**) — public CLI → product agent  
+**Commands:** `deepseek-build` (primary) · `dsb` (alias)
+**Primary path:** full-screen agent (**Path A**) — public CLI → product agent
 **Secondary path:** thin line-mode tools (`dsb run` / overlay `dsb-tools`) — different names and proofs
 
 ## Path A vs thin path (fail-close)
@@ -30,7 +30,7 @@ hearts docs; Path A vision stack closed **snippet_id** multi-edit R0A on the
 Deep Code cut (on-branch packaging **5.3.0** under live floor **5.2.2** — see
 [KNOWN_LIMITS](../product/KNOWN_LIMITS.md)).
 
-Evidence: [`docs/product/evidence/VC006_PATH_A_HEART_R0A_2026-08-08.md`](../product/evidence/VC006_PATH_A_HEART_R0A_2026-08-08.md)  
+Evidence: [`docs/product/evidence/VC006_PATH_A_HEART_R0A_2026-08-08.md`](../product/evidence/VC006_PATH_A_HEART_R0A_2026-08-08.md)
 (plus VC003 mint · VC004 require · VC005 write/bash invalidation)
 
 ## Built-in surfaces (illustrative)
@@ -81,7 +81,7 @@ dsb skills list
 
 ## Related
 
-- [11-subagents.md](./11-subagents.md)  
-- [12-background-tasks.md](./12-background-tasks.md)  
-- [14-l3-throughput.md](./14-l3-throughput.md)  
+- [11-subagents.md](./11-subagents.md)
+- [12-background-tasks.md](./12-background-tasks.md)
+- [14-l3-throughput.md](./14-l3-throughput.md)
 - [KNOWN_LIMITS.md](../product/KNOWN_LIMITS.md)

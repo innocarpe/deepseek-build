@@ -91,5 +91,5 @@ gates remain the product regression bar:
 
 ## Related
 
-- [KNOWN_LIMITS.md](../product/KNOWN_LIMITS.md)  
+- [KNOWN_LIMITS.md](../product/KNOWN_LIMITS.md)
 - Vision board: [VISION_COMPLETE_5X_GOALS.md](../product/VISION_COMPLETE_5X_GOALS.md)

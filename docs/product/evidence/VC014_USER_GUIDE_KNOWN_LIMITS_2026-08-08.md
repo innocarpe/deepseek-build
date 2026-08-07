@@ -12,7 +12,7 @@
 | **Normative** | V4-docs · dual CLI ADR 0006 · Spec 45 Path A · Spec 10/effort/cache honesty · L3 Path A R0A (VC010–VC013) · SSOT · `KNOWN_LIMITS` residual honesty |
 | **Prior** | VC013 READY cut evidence · VC006 Spec 45 **5.3.0** stack cut · VC007–VC009 Reasonix Path A · VC010–VC012 L3 dogfood |
 
-**This file is the mandatory ultragoal PR unit plan for VC014 plus (later) READY evidence.**  
+**This file is the mandatory ultragoal PR unit plan for VC014 plus (later) READY evidence.**
 It does **not** claim vision freeze **`5.5.0`**, npm publish, GitHub Release, or Path A residual closure without fresh proof. It does **not** edit VC013 or PR **#145**.
 
 ---
@@ -116,13 +116,13 @@ This story is **one PR** (exactly one unmerged stacked PR). Internally:
 ### PR unit 2 — `docs(user-guide): align Path A L1–L3 guides with 5.4.0 stack`
 
 - **Intent:** Rewrite/refresh user-facing guides so dual CLI, Spec 45, L2 scope, and L3 dogfood + opt-in/headless match on-branch Path A evidence.
-- **Touches (expected):**  
-  `docs/user-guide/README.md`  
-  `docs/user-guide/04-surface.md` (L2 effort/cache honesty)  
-  `docs/user-guide/10-tools.md`  
-  `docs/user-guide/11-subagents.md`  
-  `docs/user-guide/12-background-tasks.md`  
-  `docs/user-guide/13-worktrees.md`  
+- **Touches (expected):**
+  `docs/user-guide/README.md`
+  `docs/user-guide/04-surface.md` (L2 effort/cache honesty)
+  `docs/user-guide/10-tools.md`
+  `docs/user-guide/11-subagents.md`
+  `docs/user-guide/12-background-tasks.md`
+  `docs/user-guide/13-worktrees.md`
   `docs/user-guide/14-l3-throughput.md`
 - **Depends on:** unit 1
 - **SemVer:** none

@@ -1,10 +1,10 @@
 # Known limitations
 
-**On-disk SemVer:** read root `Cargo.toml` (do not hardcode).  
-**Major line PRDs:** [versions/README.md](./versions/README.md)  
-**Owner-bar (true complete product):** [OWNER_BAR_ACCEPTANCE.md](./OWNER_BAR_ACCEPTANCE.md) · train **[PRD-v5.md](./PRD-v5.md)** (`5.0.0` / `owner-bar-5x`)  
-**Tagged but not owner-bar green:** [PRD-v4.md](./PRD-v4.md) (`4.x`) · [PRD-v3.md](./PRD-v3.md) (`3.x`)  
-**Legacy:** `2.x` shell — [PRD-v2.md](./PRD-v2.md) · `1.x` scaffold — [PRD-v1.md](./PRD-v1.md)  
+**On-disk SemVer:** read root `Cargo.toml` (do not hardcode).
+**Major line PRDs:** [versions/README.md](./versions/README.md)
+**Owner-bar (true complete product):** [OWNER_BAR_ACCEPTANCE.md](./OWNER_BAR_ACCEPTANCE.md) · train **[PRD-v5.md](./PRD-v5.md)** (`5.0.0` / `owner-bar-5x`)
+**Tagged but not owner-bar green:** [PRD-v4.md](./PRD-v4.md) (`4.x`) · [PRD-v3.md](./PRD-v3.md) (`3.x`)
+**Legacy:** `2.x` shell — [PRD-v2.md](./PRD-v2.md) · `1.x` scaffold — [PRD-v1.md](./PRD-v1.md)
 **Active vision train:** [VISION_COMPLETE_5X_GOALS.md](./VISION_COMPLETE_5X_GOALS.md) · DAG [WAVE_5x_VISION_PR_DAG.md](./WAVE_5x_VISION_PR_DAG.md)
 
 ## Honesty: majors and live floor

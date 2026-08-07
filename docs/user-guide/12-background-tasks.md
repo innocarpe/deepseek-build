@@ -1,16 +1,16 @@
 # 12 — Background tasks (full-screen agent)
 
-**Applies to:** product agent tool loop (`deepseek-build` / `dsb` → agent)  
-**Upstream:** vendored background-task guide in `third_party/grok-build/`  
+**Applies to:** product agent tool loop (`deepseek-build` / `dsb` → agent)
+**Upstream:** vendored background-task guide in `third_party/grok-build/`
 **Evidence:** Path A hermetic R0A **VC010** · re-prove on L3 cut **VC013** (**5.4.0** on-branch)
 
 ## What it is
 
 Long shell (and related) work can run **without blocking** the agent turn:
 
-1. Model starts a terminal command with **background** enabled.  
-2. Agent receives a **task / job id**.  
-3. Later: collect / poll / wait by id.  
+1. Model starts a terminal command with **background** enabled.
+2. Agent receives a **task / job id**.
+3. Later: collect / poll / wait by id.
 4. Optional: kill the background task.
 
 Interactive TUI: **Ctrl+B** often backgrounds the current foreground command
@@ -58,7 +58,7 @@ Evidence:
 
 ## Related
 
-- [11-subagents.md](./11-subagents.md)  
-- [13-worktrees.md](./13-worktrees.md)  
-- [14-l3-throughput.md](./14-l3-throughput.md)  
+- [11-subagents.md](./11-subagents.md)
+- [13-worktrees.md](./13-worktrees.md)
+- [14-l3-throughput.md](./14-l3-throughput.md)
 - [KNOWN_LIMITS.md](../product/KNOWN_LIMITS.md)

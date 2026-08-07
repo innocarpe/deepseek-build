@@ -1,7 +1,7 @@
 # User guide
 
 Shipped and on-branch user-facing behavior is documented here. Intent for
-unshipped features stays in `docs/specs/`.  
+unshipped features stays in `docs/specs/`.
 **Known limits:** [../product/KNOWN_LIMITS.md](../product/KNOWN_LIMITS.md) ·
 **Changelog:** [../../CHANGELOG.md](../../CHANGELOG.md)
 

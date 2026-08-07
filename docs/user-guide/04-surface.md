@@ -1,6 +1,6 @@
 # 04 — Surface (skills + model UX + cache)
 
-**Commands:** `deepseek-build` (primary) · `dsb` (alias)  
+**Commands:** `deepseek-build` (primary) · `dsb` (alias)
 **Path:** default full-screen agent (**Path A**) unless noted
 
 ## Skills
@@ -92,6 +92,6 @@ Evidence: [`docs/product/evidence/VC009_CACHE_VISIBILITY_2026-08-08.md`](../prod
 
 ## Related
 
-- [10-tools.md](./10-tools.md) — snippet-safe tools  
-- [14-l3-throughput.md](./14-l3-throughput.md) — L3 overview  
+- [10-tools.md](./10-tools.md) — snippet-safe tools
+- [14-l3-throughput.md](./14-l3-throughput.md) — L3 overview
 - [KNOWN_LIMITS.md](../product/KNOWN_LIMITS.md)

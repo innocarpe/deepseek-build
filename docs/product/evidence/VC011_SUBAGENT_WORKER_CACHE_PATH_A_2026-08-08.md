@@ -5,7 +5,7 @@
 | **Story** | **VC011** — hermetic **Path A** R0A for Spec **60** explore + implement-class subagents, worker cache law (stable prefix epoch), and parent snippet invalidation after worker mutation |
 | **Plan** | `vision-complete-5x` |
 | **Date** | 2026-08-08 |
-| **Status** | **PLAN** — plan-first; implementation + READY evidence follow in later atomic commits |
+| **Status** | **READY** — Path A R0A explore + implement-class subagents + worker cache stamp green; gates green; unversioned; stacked on #142 |
 | **SemVer** | **none** (this story does **not** bump product version) |
 | **Depends on** | **VC010** L3 multi-tool + bg Path A R0A (open PR **#142** `vc010-l3-parallel-bg`) |
 | **Board** | [`VISION_COMPLETE_5X_GOALS.md`](../VISION_COMPLETE_5X_GOALS.md) · DAG [`WAVE_5x_VISION_PR_DAG.md`](../WAVE_5x_VISION_PR_DAG.md) |
@@ -219,45 +219,73 @@ Restore any generated TSV side-effects to HEAD if gates rewrite them. Clean vend
 
 ## 6. READY evidence
 
-**Status: PLAN** — fill after implementation is green.
+**Status: READY** (implementation complete; independent review file sibling).
 
 ### 6.1 Commands
 
 | Command | Result |
 |---------|--------|
-| `./scripts/test-path-a-vc011-r0a.sh` | _pending_ |
-| `cargo test -p dsb-agent subagent` | _pending_ (support) |
-| `./scripts/check-path-a-linkage.sh` | _pending_ |
-| `./scripts/test-owner-bar.sh` | _pending_ |
-| `./scripts/test-heart-regression.sh` | _pending_ |
-| SemVer on branch | **`5.3.0`** (must remain) |
+| `./scripts/test-path-a-vc011-r0a.sh --skip-build` | **PASS** (explore-subagent, implement-subagent-mutate, worker-cache-stamp) |
+| `cargo test -p dsb-agent subagent` | **PASS** (5 tests; support only) |
+| `cargo test -p dsb-cli stamp_path_a_l3` | **PASS** (support only) |
+| `./scripts/check-path-a-linkage.sh` | **PASS** |
+| `./scripts/test-owner-bar.sh` | **PASS** (60/60; TSV side-effect restored) |
+| `./scripts/test-heart-regression.sh` | **PASS** (PATH_A_E2E SKIP default; L3 offline PASS; AGENT_SUBAGENT PASS) |
+| SemVer on branch | **`5.3.0`** unchanged (no bump) |
 
 ### 6.2 Wire + stamp sample
 
-_pending implementation_
+| Scenario | Fixture batch | Public-entry proof |
+|----------|---------------|--------------------|
+| `explore-subagent` | parent `spawn_subagent` `subagent_type=explore` + child `read_file` explore-marker | final `explore-subagent-ok`; child saw `FINDME-77`; `path_a_l3` stamp |
+| `implement-subagent-mutate` | parent `spawn_subagent` `general-purpose` + child shell write `worker_out.txt` | disk `worker-mutated-ok`; final `implement-subagent-ok` |
+| `worker-cache-stamp` | short text turn only | `worker_epochs_match=true`; kinds + subagents enabled |
+
+Artifacts:
+
+| Path | Role |
+|------|------|
+| [`PATH_A_R0_VC011_explore-subagent_WIRE_last.jsonl`](./PATH_A_R0_VC011_explore-subagent_WIRE_last.jsonl) | Explore spawn wire |
+| [`PATH_A_R0_VC011_implement-subagent-mutate_WIRE_last.jsonl`](./PATH_A_R0_VC011_implement-subagent-mutate_WIRE_last.jsonl) | Implement-class mutate wire |
+| [`PATH_A_R0_VC011_worker-cache-stamp_WIRE_last.jsonl`](./PATH_A_R0_VC011_worker-cache-stamp_WIRE_last.jsonl) | Stamp-only wire |
+| Matching `*_META_last.txt` | Public-entry meta |
+| [`PATH_A_R0_VC011_L3_last.txt`](./PATH_A_R0_VC011_L3_last.txt) | Spec 60 classifier + worker cache stamp from public launch |
+
+Path A L3 stamp sample:
+
+```text
+worker_kind_explore=explore
+worker_kind_implement=implement
+worker_epochs_match=true
+subagents_enabled_in_config=true
+```
 
 ### 6.3 What shipped
 
-_pending_
+1. Hermetic fixture `explore-subagent` / `implement-subagent-mutate` / `worker-cache-stamp` scenarios (parent + child session detection).
+2. Public `deepseek-build`/`dsb` agent R0A harness `scripts/test-path-a-vc011-r0a.sh`.
+3. Spec 60 unit support: unknown kind parse, explore non-mutate, existing cache law + parent_after_worker.
+4. Honest non-claims: no SemVer, no live API sole proof, no VC012 worktree, **no Path A parent snippet-table expire sole green** (V3-60-3 residual — thin unit only).
 
 ### 6.4 Explicit residuals at READY
 
 - Live L3.5 `spawn_subagent` without API key remains **SKIP**.
+- **V3-60-3 Path A parent snippet table expire after worker mutation** is **not** fully proven on public Path A; thin-path unit `implement_write_mutates` + `parent_after_worker` remains support. Disk mutation by implement-class child **is** proven (V3-60-1).
 - Worktree dogfood → **VC012**.
 - SemVer **5.4.0** → **VC013**.
 - Product builder disables `enabled_background` when subagent types are emptied — R0A keeps subagent tools available (same constraint as VC010).
 
 ### 6.5 Independent review
 
-_pending_ sibling file `VC011_INDEPENDENT_REVIEW_2026-08-08.md`.
+See [`VC011_INDEPENDENT_REVIEW_2026-08-08.md`](./VC011_INDEPENDENT_REVIEW_2026-08-08.md).
 
 ---
 
 ## 7. Stack / PR open checklist
 
-- [ ] Branch `vc011-subagent-worker-cache` based on `vc010-l3-parallel-bg`
+- [x] Branch `vc011-subagent-worker-cache` based on `vc010-l3-parallel-bg`
 - [x] First commit = this plan (before source edits)
-- [ ] Atomic commits as §3
+- [x] Atomic commits as §3 (plus READY docs)
 - [ ] `gh pr create --base vc010-l3-parallel-bg` with **English** body + labels (`test`, `area/orchestrator` or `area/tools`)
 - [ ] Body includes **Depends on #142**
 - [ ] `gh pr view --json title,labels,url` shows ≥1 kind label

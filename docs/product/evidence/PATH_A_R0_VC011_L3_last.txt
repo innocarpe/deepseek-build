@@ -1,0 +1,14 @@
+max_parallel_readonly=8
+ro_indices=[0, 4]
+mu_indices=[1, 2, 3, 5]
+bash_mutating=true
+mcp_mutating=true
+unknown_mutating=true
+worker_kind_explore=explore
+worker_kind_implement=implement
+worker_epoch_a=c0767bd1a64eaa344316d063edeb1333dbe0680425611c26294736cbac4b6d41
+worker_epoch_b=c0767bd1a64eaa344316d063edeb1333dbe0680425611c26294736cbac4b6d41
+worker_epochs_match=true
+subagents_enabled_in_config=true
+worktree_product=opt_in
+bare_dsb_session=single

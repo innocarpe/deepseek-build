@@ -1,0 +1,31 @@
+git_sha=a549c358ccaea7a4f7b4cb1545f3d97b76894f68
+cli=/Users/WooseongKim/Projects/deepseek-build/vc011-subagent-worker-cache/target/release/deepseek-build
+dsb=/Users/WooseongKim/Projects/deepseek-build/vc011-subagent-worker-cache/target/release/dsb
+agent_resolved=/Users/WooseongKim/Projects/deepseek-build/vc011-subagent-worker-cache/third_party/grok-build/target/release/xai-grok-pager
+DEEPSEEK_BUILD_AGENT_BIN_unset=yes
+DEEPSEEK_BUILD_HOME=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc011-r0a.vsuCEp/product-home
+scripted_base_url=http://127.0.0.1:56680
+scenario=explore-subagent
+agent_exit=0
+wire=/Users/WooseongKim/Projects/deepseek-build/vc011-subagent-worker-cache/docs/product/evidence/PATH_A_R0_VC011_explore-subagent_WIRE_last.jsonl
+wire_lines=14
+path_a_l3_stamp=present
+l3_max_parallel_readonly=8
+l3_ro_indices=[0, 4]
+l3_mu_indices=[1, 2, 3, 5]
+l3_bash_mutating=true
+l3_mcp_mutating=true
+l3_unknown_mutating=true
+l3_worker_kind_explore=explore
+l3_worker_kind_implement=implement
+l3_worker_epoch_a=c0767bd1a64eaa344316d063edeb1333dbe0680425611c26294736cbac4b6d41
+l3_worker_epoch_b=c0767bd1a64eaa344316d063edeb1333dbe0680425611c26294736cbac4b6d41
+l3_worker_epochs_match=true
+l3_subagents_enabled_in_config=true
+l3_worktree_product=opt_in
+l3_bare_dsb_session=single
+explore_marker='FINDME-77\n'
+worker_out=missing
+agent_out_tail<<EOF
+explore-child-saw-FINDME-77explore-subagent-ok
+EOF

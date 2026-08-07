@@ -4,9 +4,9 @@ This file is standing instructions for any coding agent working in this repo.
 
 ## Current phase
 
-**Active product ultragoal:** **`vision-complete-5x`** — close [VISION.md](docs/product/VISION.md) north star inside **`5.x.y`** (Deep Code + Reasonix + Grok throughput). Owner-bar **`v5.0.0`** is **done**; this train is residual close-out, not a re-tag of 5.0.0.
+**Active product ultragoal:** **`vision-complete-5x`** — close [VISION.md](docs/product/VISION.md) north star inside **`5.x.y`** (Deep Code + Reasonix + Grok throughput). Owner-bar **`v5.0.0`** is **done**; **`5.1.0` is on `main` / shipping** — do **not** re-plan `5.0.1` or `5.1.0` as future feature cuts. Next vision minors: **`5.2.0` → `5.3.0` → `5.4.0` → freeze `5.5.0`** (re-check floor every session).
 
-**Board:** [`docs/product/VISION_COMPLETE_5X_GOALS.md`](docs/product/VISION_COMPLETE_5X_GOALS.md) · DAG [`WAVE_5x_VISION_PR_DAG.md`](docs/product/WAVE_5x_VISION_PR_DAG.md)
+**Board:** [`docs/product/VISION_COMPLETE_5X_GOALS.md`](docs/product/VISION_COMPLETE_5X_GOALS.md) · DAG [`WAVE_5x_VISION_PR_DAG.md`](docs/product/WAVE_5x_VISION_PR_DAG.md) · cold start [`ULTRAGOAL_PROMPT_COLD_START_VISION_5X.md`](docs/product/ULTRAGOAL_PROMPT_COLD_START_VISION_5X.md)
 
 **Completed trains:**  
 - **`owner-bar-5x`** → **`v5.0.0`** (owner-bar complete product)  

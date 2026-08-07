@@ -3,17 +3,28 @@
 | Field | Value |
 |-------|--------|
 | **Plan id** | `vision-complete-5x` |
-| **SemVer band** | **`5.0.1` – `5.y.z`** (no new major until a second product identity jump) |
-| **Depends on** | **`v5.0.0` / owner-bar-5x CUT** (done) |
+| **SemVer band** | **`5.2.0` – `5.Y.0`** (vision close-out). Floor = **`5.1.0` on `main`** / npm may lag |
+| **Depends on** | **`v5.0.0` owner-bar CUT** (done) · **`5.0.1`+ product version fix** (npm) · **`5.1.0` theme/product chrome** (on `main`, deploy in progress) |
 | **North star** | [VISION.md](./VISION.md) + [HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.md) |
 | **PR planning** | [ULTRAGOAL_PR_PLANNING.md](./ULTRAGOAL_PR_PLANNING.md) · DAG [WAVE_5x_VISION_PR_DAG.md](./WAVE_5x_VISION_PR_DAG.md) |
+| **Cold start** | [ULTRAGOAL_PROMPT_COLD_START_VISION_5X.md](./ULTRAGOAL_PROMPT_COLD_START_VISION_5X.md) |
 | **Child runtime** | **Grok only** (parent = Grok Build) |
+
+**Do not** plan releases as `5.0.1` or `5.1.0` — those targets are **already used or shipping**. Next **feature** minor for Deep Code snippet_id is **`5.2.0`**.
 
 ---
 
 ## 0. Honesty first
 
-### What `5.0.0` closed
+### What already shipped (do not re-target)
+
+| Version | Meaning | Status (2026-08-07 check) |
+|---------|---------|---------------------------|
+| **`5.0.0` / `v5.0.0`** | Owner-bar P0 Path A complete | **Tagged** · npm · gate green |
+| **`5.0.1`** | Product version/update alignment (npm line) | **On npm** `latest` as of check; may predate some main fixes |
+| **`5.1.0`** | Product chrome (e.g. DeepSeek Night v2 default, tab icon, related) | **`main` = `5.1.0`**; **GitHub Release/npm may still be catching up** (“배포 중”) |
+
+### What `5.0.0` owner-bar closed (unchanged)
 
 **Owner-bar P0 on Path A** — public CLI → agent, hearts + L3 machinery not dead-wired, dual CLI install, gate green, tag `v5.0.0`.
 
@@ -25,183 +36,209 @@ From [VISION.md](./VISION.md):
 
 > feels as **fast as Grok Build**, as **cheap on long sessions as Reasonix**, and as **correctly tuned to DeepSeek V4 as Deep Code**.
 
-| Pillar | Ideal end-state | `5.0.0` reality |
-|--------|-----------------|-----------------|
-| **L1 Deep Code** | Spec 45 **snippet_id** session table; edit/write/bash bypass laws full; skills thrash-free | **file_version (sha256) equivalent** + snippet_safe default on Path A; skills index OK; residual vs full snippet_id |
-| **L2 Reasonix** | Grok assembly path **byte-stable** Spec 10 prefix; repair always; Flash/Pro + **effort on wire**; cache hits visible | Library + launch stamps + repair call site; wire system stable; **effort field often null**; shell prompt ≠ always `assemble_path_a_context` |
-| **L3 Grok** | Parallel / bg / subagent / worktree **dogfoodable at Grok feel**, worker cache law on **real** workers | Machinery + units + stamps; worktree **opt-in**; live extended residual; not “always as fast as Grok” proven |
-| **Product identity** | Dual CLI, theme, install, version UX = DeepSeek Build | Dual CLI + theme OK; version/update fix landed (**needs 5.0.1 agent prebuilt** for npm users) |
+| Pillar | Ideal end-state | Reality after 5.0.0–5.1.0 |
+|--------|-----------------|---------------------------|
+| **L1 Deep Code** | Spec 45 **snippet_id** session table; edit/write/bash bypass laws full; skills thrash-free | **file_version (sha256) equivalent** + snippet_safe on Path A; skills index OK; **snippet_id still residual** |
+| **L2 Reasonix** | Grok assembly path Spec 10; repair; Flash/Pro + **effort on wire**; cache hits visible | Stamps + repair call site; **effort wire often null**; shell ≠ always `assemble_path_a_context` |
+| **L3 Grok** | Parallel / bg / subagent / worktree dogfood; worker cache on real workers | Machinery + units + stamps; worktree opt-in; live extended residual |
+| **Product identity** | Dual CLI, theme, install, version UX | Dual CLI + **5.1.0 theme v2 on main**; version fix in train; **keep owner-bar green** |
 
-**This train exists to close that gap inside `5.x.y` with many small PRs — not to claim “already done.”**
+**This train closes that gap inside `5.x.y` with many small PRs — without re-burning 5.0.1 / 5.1.0.**
 
 ---
 
-## 1. Success definition (vision-complete)
+## 1. SemVer policy (rebased)
+
+| Ship | When | Notes |
+|------|------|--------|
+| ~~`5.0.1`~~ | **Used** | npm; version/update line — **do not re-plan as future** |
+| ~~`5.1.0`~~ | **Used / shipping** | `main` product chrome — **do not re-plan as future** |
+| **`5.1.x` patch** | Only for **deploy fix** of 5.1.0 (broken release, missing asset, hot banner) | Not for Spec 45 / L3 |
+| **`5.2.0`** | Spec 45 **snippet_id** Path A (Deep Code primary contract) | First **vision** minor |
+| **`5.3.0`** | Spec 10 assembly-in-Grok + effort-on-wire (+ cache visibility) | Reasonix minor |
+| **`5.4.0`** | L3 Path A R0A (parallel / bg / subagent / worker / worktree dogfood) | Grok throughput minor |
+| **`5.Y.0`** | Vision-complete freeze (dual review + CUT) | Prefer **`5.5.0`** if Y free; never below 5.2 |
+
+**Rules**
+
+1. Always full **`MAJOR.MINOR.PATCH`**.  
+2. Read root **`Cargo.toml` / `package.json` on `main`** before every release unit — **never invent a version already on npm or `main`**.  
+3. One SemVer bump unit per release; feature PRs prefer unversioned until cut PR.  
+4. Do **not** re-tag `5.0.0` / `5.1.0` as “now vision complete.”
+
+### Floor check (agents — run every session)
+
+```bash
+git show origin/main:Cargo.toml | rg 'version = "'
+npm view @innocarpe/deepseek-build version
+gh release list --limit 5
+```
+
+Next free **feature** minor = max(on-disk minor, npm minor) + 1 for the **next pillar cut**, or a **patch** only for release repairs.
+
+---
+
+## 2. Success definition (vision-complete)
 
 Ship is **vision-complete** only when **all** of the following are true on **Path A** (public `dsb` / `deepseek-build` → product agent), with R0A evidence:
 
-### V1 — Deep Code (L1) complete
+### V1 — Deep Code (L1) complete → target minor **`5.2.0`**
 
 | ID | Requirement | Evidence |
 |----|-------------|---------|
 | **V1-45-1** | Session snippet table with **`snippet_id`** (not only file_version) on Path A read | Wire + unit + multi-edit R0A |
 | **V1-45-2** | Edit **requires** valid `snippet_id` (or documented dual-accept window with deadline) | Negative goldens |
 | **V1-45-3** | Write create-only; overwrite uses same safety class as edit | R0A |
-| **V1-45-4** | Bash mutation invalidates snippets for touched paths | R0A (G005 style extended) |
+| **V1-45-4** | Bash mutation invalidates snippets for touched paths | R0A |
 | **V1-90** | Perms matrix still green under new edit surface | Heart regression |
 | **V1-70** | Skills index stable; body load thrash-free under multi-turn | Wire + unit |
 
-### V2 — Reasonix (L2) complete
+### V2 — Reasonix (L2) complete → target minor **`5.3.0`**
 
 | ID | Requirement | Evidence |
 |----|-------------|---------|
-| **V2-10-1** | **Grok message assembly** (not only library stamp) uses Spec 10 stable prefix layout | Instrument or golden on assembly |
+| **V2-10-1** | **Grok message assembly** uses Spec 10 stable prefix layout | Golden on assembly / wire |
 | **V2-10-2** | Compaction / resume does not thrash stable prefix | Two-turn + resume goldens |
 | **V2-15** | One-pass repair on every Grok tool-call dispatch path | R0A bad-args |
 | **V2-20** | Flash default + Pro one-shot/sticky per Spec 20 on TUI | Wire |
-| **V2-30** | **`reasoning_effort` / thinking knobs appear on DeepSeek wire** when set | Wire assert |
-| **V2-cache** | User-visible or loggable cache-hit signal (session or turn) | R0A or doctor |
+| **V2-30** | **`reasoning_effort` / thinking knobs on DeepSeek wire** when set | Wire assert |
+| **V2-cache** | User-visible or loggable cache-hit signal | R0A or doctor |
 
-### V3 — Grok throughput (L3) complete under hearts
+### V3 — Grok throughput (L3) complete → target minor **`5.4.0`**
 
 | ID | Requirement | Evidence |
 |----|-------------|---------|
-| **V3-50-1** | Multi-tool RO parallel + mutate serial on **live or hermetic multi-tool** Path A | Wire / log |
+| **V3-50-1** | Multi-tool RO parallel + mutate serial on Path A | Wire / log |
 | **V3-50-2** | Background shell + collect-by-id dogfood Path A | R0A |
 | **V3-60-1** | Explore + implement subagent dogfood Path A | R0A |
 | **V3-60-2** | Worker reuses parent stable prefix template (hash) | R0A |
 | **V3-60-3** | Worker mutation invalidates parent snippets | R0A |
-| **V3-WT** | Worktree flow documented + one full dogfood; bare `dsb` honesty remains | R0A + docs |
+| **V3-WT** | Worktree dogfood + bare `dsb` honesty | R0A + docs |
 
-### V4 — Product finish
+### V4 — Product finish → cut **`5.Y.0`** (prefer **`5.5.0`**)
 
 | ID | Requirement | Evidence |
 |----|-------------|---------|
-| **V4-ver** | npm prebuilt agent shows **product SemVer**; no false update banner | Install smoke |
-| **V4-plat** | Prebuilt platforms claimed in README actually ship (expand beyond darwin-arm64+linux-x64 if claimed) | Release assets |
+| **V4-ver** | npm prebuilt agent shows **product SemVer**; no false update banner | Install smoke on **current** latest |
+| **V4-plat** | Prebuilt platforms claimed in README actually ship | Release assets |
 | **V4-docs** | User-guide matches behavior; KNOWN_LIMITS only true residuals | Doc review |
-| **V4-cut** | Dual adversarial review + CHANGELOG + tag **`v5.Y.0`** vision-complete minor | CUT doc |
-
-**SemVer policy**
-
-| Ship | When |
-|------|------|
-| **`5.0.1`** | Version/update fix + agent prebuilt in npm (patch) |
-| **`5.1.0`** | Spec 45 snippet_id Path A (minor — user-visible edit contract) |
-| **`5.2.0`** | Spec 10 assembly-in-Grok + effort-on-wire (minor) |
-| **`5.3.0`** | L3 live dogfood under hearts (minor) |
-| **`5.Y.0`** | Vision-complete cut (final minor of this train) |
-
-Exact Y chosen at freeze; do **not** burn majors for residual close-out.
+| **V4-owner-bar** | `./scripts/test-owner-bar.sh` still exit 0 | Gate |
+| **V4-cut** | Dual adversarial review + CHANGELOG + tag **`v5.Y.0`** | CUT doc |
 
 ---
 
-## 2. Gap inventory (actionable)
+## 3. Gap inventory (actionable — same substance, new versions)
 
-### Grok (L3) — keep base, deepen product use
-
-| Gap | Severity | Close with |
-|-----|----------|------------|
-| Live multi-tool parallel R0A weak | High | Hermetic multi-tool scenario + live optional |
-| Bg shell collect-by-id not product-dogfooded enough | High | Scripted + live scenario |
-| Subagent spawn R0A weak | High | Path A headless spawn |
-| Worker cache law only unit/stamp | High | Instrument real worker prefix |
-| Worktree opt-in only | Product choice | Keep; dogfood one flow |
-| “As fast as Grok” unmeasured | Med | Simple wall-clock multi-step harness (optional) |
-
-### Reasonix (L2)
+### Deep Code (L1) → **5.2.0**
 
 | Gap | Severity | Close with |
 |-----|----------|------------|
-| Grok system assembly ≠ full Spec 10 library path | High | Wire assembly to `assemble_path_a_context` or document demotion + force equivalent |
-| `reasoning_effort` missing on chat_completions wire | High | Grok DeepSeek backend serialize field |
-| Cache hit invisible | Med | Status row / log field |
-| Compaction residual | Med | Goldens on compact path |
+| No real `snippet_id` table (file_version only) | **Blocker** | Spec 45 Path A |
+| Edit not snippet_id-required | High | VC004-class PR |
+| Write/bash laws under snippet model | Med–High | VC005-class |
+| Skills body thrash polish | Low–Med | minor after 5.2 |
 
-### Deep Code (L1)
-
-| Gap | Severity | Close with |
-|-----|----------|------------|
-| No real `snippet_id` table (file_version only) | **Blocker for vision** | Spec 45 implementation on Path A tools |
-| Write overwrite safety polish | Med | Align write with Spec 45 § write law |
-| Skills body thrash polish | Low–Med | Load-on-demand metrics |
-| Free-form edit still present as escape? | Med | Fail-close audit |
-
-### Install / identity
+### Reasonix (L2) → **5.3.0**
 
 | Gap | Severity | Close with |
 |-----|----------|------------|
-| npm `5.0.0` agent may predate version fix | High | **`5.0.1` release** |
-| Multi-platform prebuilt limited | Med | Expand only if claimed |
-| TUI “Beta” / Grok changelog bleed | Low | Branding PRs |
+| Grok assembly ≠ full Spec 10 library path | High | VC007 |
+| `reasoning_effort` missing on wire | High | VC008 |
+| Cache hit invisible | Med | VC009 |
+| Compaction residual | Med | goldens |
+
+### Grok (L3) → **5.4.0**
+
+| Gap | Severity | Close with |
+|-----|----------|------------|
+| Live/hermetic multi-tool parallel R0A weak | High | VC010 |
+| Bg collect-by-id dogfood weak | High | VC010 |
+| Subagent + worker cache R0A weak | High | VC011 |
+| Worktree dogfood | Med | VC012 |
+| Wall-clock vs Grok unmeasured | Med | optional harness |
+
+### Deploy floor (not vision pillars)
+
+| Gap | Severity | Close with |
+|-----|----------|------------|
+| `5.1.0` Release/npm lag vs `main` | Ops | Finish **5.1.0** ship (not a new minor invent) |
+| Hotfix on 5.1 line | Ops | **`5.1.1`+ patch only** |
 
 ---
 
-## 3. Story board (execution order)
+## 4. Story board (rebased)
 
-Do **not** stop for applause. One PR unit at a time; stack only when sequential.
+| Story | Intent | Target SemVer | Depends | Status |
+|-------|--------|---------------|---------|--------|
+| **VC001** | Product SemVer / update fix ship | ~~5.0.1~~ | — | **DONE** (npm 5.0.1; fix PR #117) |
+| **VC001b** | Theme / chrome **5.1.0** | ~~5.1.0~~ | — | **ON MAIN / shipping** (e.g. theme v2) |
+| **VC001c** | Finish **5.1.0** GitHub Release + npm if lagging | **5.1.0** (same) or **5.1.1** patch | VC001b | **ops** if assets missing |
+| **VC002** | Spec 45 ADR + SnippetStore design | none | prefer after 5.1.0 stable | pending |
+| **VC003** | Path A `read_file` mints `snippet_id` | none | VC002 | pending |
+| **VC004** | Path A edit requires `snippet_id` | part of **5.2.0** | VC003 | pending |
+| **VC005** | Write/bash snippet invalidation | part of **5.2.0** | VC004 | pending |
+| **VC006** | Heart regression under snippet_id | **5.2.0** cut unit | VC005 | pending |
+| **VC007** | Spec 10 assembly on Grok Path A turns | part of **5.3.0** | VC006 prefer | pending |
+| **VC008** | `reasoning_effort` on DeepSeek wire | part of **5.3.0** | VC007 prefer | pending |
+| **VC009** | Cache-hit visibility | **5.3.0** cut unit | VC008 soft | pending |
+| **VC010** | L3 multi-tool + bg Path A R0A | part of **5.4.0** | VC006 | pending |
+| **VC011** | Subagent + worker cache Path A R0A | part of **5.4.0** | VC010 | pending |
+| **VC012** | Worktree dogfood + docs honesty | part of **5.4.0** | VC011 | pending |
+| **VC013** | Live extended matrix when key present | **5.4.0** cut unit | VC012 | pending |
+| **VC014** | User-guide + KNOWN_LIMITS vision pass | none | VC013 | pending |
+| **VC015** | Dual review + CUT **`v5.Y.0`** (prefer **5.5.0**) | **5.Y.0** | VC014 | pending |
 
-| Story | Intent | Target SemVer | Depends |
-|-------|--------|---------------|---------|
-| **VC001** | Ship **`5.0.1`**: version/update fix in prebuilt agent + npm | **5.0.1** | none |
-| **VC002** | Spec 45 design ADR if needed + session SnippetStore on Path A | — | VC001 prefer |
-| **VC003** | Path A `read_file` mints `snippet_id` (+ keep file_version dual) | part of 5.1 | VC002 |
-| **VC004** | Path A `search_replace` requires snippet_id (migration window) | **5.1.0** | VC003 |
-| **VC005** | Write/bash laws + invalidate under snippet_id | 5.1.x | VC004 |
-| **VC006** | Heart regression + owner-bar still green | 5.1.x | VC005 |
-| **VC007** | Grok assembly uses Spec 10 product prefix (or demote honesty + max equivalence) | part of 5.2 | VC001 |
-| **VC008** | `reasoning_effort` on DeepSeek wire | **5.2.0** | VC007 prefer |
-| **VC009** | Cache-hit visibility (status or log) | 5.2.x | VC008 |
-| **VC010** | L3 multi-tool + bg hermetic Path A R0A | part of 5.3 | VC006 |
-| **VC011** | Subagent + worker cache R0A | part of 5.3 | VC010 |
-| **VC012** | Worktree dogfood + docs honesty | 5.3.x | VC011 |
-| **VC013** | Live extended matrix (key present) | 5.3.x | VC012 |
-| **VC014** | User-guide + KNOWN_LIMITS rewrite (only true residuals) | — | VC013 |
-| **VC015** | Dual adversarial review + CUT **`v5.Y.0` vision-complete** | **5.Y.0** | VC014 |
+### Parallel tracks (after 5.1.0 floor stable)
 
-Parallelism (after VC001):
+```text
+5.1.0 shipping ──► do not plan 5.0.1 / 5.1.0 as future goals
+        │
+        ▼
+   VC002–VC006  →  tag/ship 5.2.0   (Deep Code)
+        │
+        ├─► VC007–VC009 → 5.3.0   (Reasonix)
+        │
+        └─► VC010–VC013 → 5.4.0   (Grok L3; after 5.2 hearts green)
+                │
+                ▼
+           VC014–VC015 → 5.5.0 (or free 5.Y.0) vision freeze
+```
 
-- **Track A (Deep Code):** VC002→VC006  
-- **Track B (Reasonix):** VC007→VC009 (after VC001; soft-dep VC006 for heart re-prove)  
-- **Track C (Grok L3):** VC010→VC013 (after VC006)
-
-Do **not** parallel-edit same Grok tool files across tracks without stacks.
-
----
-
-## 4. Overnight / continuous-PR rules
-
-1. **Always PR unit plan** before coding a story ([ULTRAGOAL_PR_PLANNING.md](./ULTRAGOAL_PR_PLANNING.md)).  
-2. **Atomic Conventional Commits**; **merge commit** on GitHub (no squash).  
-3. **English** PR bodies + labels (`github-pr` skill).  
-4. **Path A evidence** for behavior claims; library-only insufficient.  
-5. **Heart regression** after each L1/L2/L3 behavior PR:  
-   `./scripts/test-heart-regression.sh` (+ `--with-e2e` when agent present).  
-6. **Disk:** do not leave full vendor `target/` overnight; clean after agent builds.  
-7. **SemVer:** only release units bump version; full `MAJOR.MINOR.PATCH`.  
-8. **No false complete:** if blocked, leave FAIL/NOT_RUN in a vision ledger row — never SKIP as pass.
-
-### Vision ledger (optional TSV)
-
-`docs/product/evidence/VISION_STATUS.tsv` — same spirit as owner-bar STATUS; fill as stories land. Gate script optional later (`scripts/test-vision-complete.sh`).
+Do **not** parallel-edit the same Grok tool files across tracks without stacks.
 
 ---
 
-## 5. Explicit non-goals (still)
+## 5. Overnight / continuous-PR rules
+
+1. **PR unit plan** before coding ([ULTRAGOAL_PR_PLANNING.md](./ULTRAGOAL_PR_PLANNING.md)).  
+2. **Atomic Conventional Commits**; GitHub **merge commit**.  
+3. **English** PR bodies + labels.  
+4. **Path A evidence** for behavior claims.  
+5. **Heart + owner-bar stay green:**  
+   `./scripts/test-heart-regression.sh` · `./scripts/test-owner-bar.sh`  
+6. **Disk:** clean vendor `target/` after agent builds.  
+7. **Version floor check** every release unit (§1).  
+8. **No false complete** — vision ledger rows FAIL until R0A.
+
+Optional: `docs/product/evidence/VISION_STATUS.tsv`.
+
+---
+
+## 6. Explicit non-goals
 
 - Replacing Grok base with greenfield agent  
 - Multi-vendor core  
 - Gajae multi-stage planning harness  
 - Claiming vision-complete from docs alone  
-- Re-tagging `5.0.0` as “now really vision complete”  
-- Forward calendar wait / paper dogfood instead of current evidence  
+- Re-tagging `5.0.0` / `5.1.0` as vision complete  
+- Planning **`5.0.1` or `5.1.0` as future feature targets**  
 
 ---
 
-## 6. First actions (now)
+## 7. First actions (rebased “now”)
 
-1. Land this plan on `main` (docs PR).  
-2. **VC001 `5.0.1`** — rebuild agent with version fix, package release assets, npm publish.  
-3. Start **VC002/VC003** Spec 45 Path A (largest Deep Code gap).  
+1. Confirm **5.1.0** Release + npm catch-up (**VC001c**) if still mid-deploy.  
+2. **VC002** Spec 45 design — start **5.2.0** track.  
+3. Do **not** open a PR titled “ship 5.1.0 theme” if already on `main` — only finish packaging.
 
-Board owner: continuous agent session until VC015 or hard block.
+Board owner: continuous session until VC015 or hard block.

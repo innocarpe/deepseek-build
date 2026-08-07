@@ -2089,6 +2089,13 @@ pub enum Effect {
         agent_id: AgentId,
         session_id: acp::SessionId,
     },
+    /// Fetch DeepSeek account status (balance + session usage) via
+    /// `x.ai/deepseek/status`. Only renders when the shell reports the
+    /// session is talking to a DeepSeek endpoint.
+    FetchDeepSeekStatus {
+        agent_id: AgentId,
+        session_id: acp::SessionId,
+    },
     /// Re-fetch remote settings to check subscription gate.
     RefreshGate,
     /// Spawn a debounce sleep task for shell suggestions. `agent_id` rides
@@ -2642,6 +2649,18 @@ pub enum TaskResult {
     },
     /// `/usage` session ledger fetch failed. Drop if `session_id` no longer matches.
     SessionUsageFailed {
+        agent_id: AgentId,
+        session_id: acp::SessionId,
+        error: String,
+    },
+    /// DeepSeek status fetched. Drop if `session_id` no longer matches.
+    DeepSeekStatusComplete {
+        agent_id: AgentId,
+        session_id: acp::SessionId,
+        status: Box<xai_grok_shell::extensions::deepseek::DeepSeekStatusResponse>,
+    },
+    /// DeepSeek status fetch failed. Drop if `session_id` no longer matches.
+    DeepSeekStatusFailed {
         agent_id: AgentId,
         session_id: acp::SessionId,
         error: String,

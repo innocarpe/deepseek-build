@@ -3,6 +3,7 @@ mod auth;
 mod billing;
 mod cta_e2e;
 mod dashboard;
+mod deepseek;
 mod jump;
 mod modes;
 mod notes;

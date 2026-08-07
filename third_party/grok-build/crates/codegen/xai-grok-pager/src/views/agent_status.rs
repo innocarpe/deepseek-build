@@ -325,6 +325,40 @@ pub fn mcp_status_line(
     ]))
 }
 
+// ---------------------------------------------------------------------------
+// DeepSeek bottom status row chips
+// ---------------------------------------------------------------------------
+
+/// Format a DeepSeek account balance for the bottom status row.
+///
+/// Uses the currency symbol when the code is known (`USD` → `$`,
+/// `CNY` → `¥`), otherwise falls back to the raw ISO code. The value
+/// string is kept verbatim from the API to avoid float drift.
+pub fn format_deepseek_balance(
+    balance: &xai_grok_shell::extensions::deepseek::DeepSeekBalance,
+) -> String {
+    let sym = match balance.currency.as_str() {
+        "USD" => "$",
+        "CNY" => "¥",
+        other => other,
+    };
+    format!("{sym}{}", balance.total_balance)
+}
+
+/// Format the prompt-cache hit percentage for the bottom status row.
+///
+/// `cache 45%` with `cached_read_tokens` clamped to `input_tokens`.
+/// Returns `None` when there is no input to measure against (zero-input
+/// turns or a fresh session), so the caller hides the chip.
+pub fn format_cache_hit_pct(cached_read_tokens: u64, input_tokens: u64) -> Option<String> {
+    if input_tokens == 0 {
+        return None;
+    }
+    let cached = cached_read_tokens.min(input_tokens);
+    let pct = (cached as f64 / input_tokens as f64) * 100.0;
+    Some(format!("cache {pct:.0}%"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -905,5 +939,44 @@ mod tests {
         let row: String = (0..area.width).map(|x| buf[(x, 0)].symbol()).collect();
         assert_eq!(row.trim(), "XX");
         assert!(!row.contains(SEPARATOR));
+    }
+
+    #[test]
+    fn deepseek_balance_formats_known_currencies() {
+        use xai_grok_shell::extensions::deepseek::DeepSeekBalance;
+        let usd = DeepSeekBalance {
+            currency: "USD".into(),
+            total_balance: "9.82".into(),
+            is_available: true,
+        };
+        let cny = DeepSeekBalance {
+            currency: "CNY".into(),
+            total_balance: "70.16".into(),
+            is_available: true,
+        };
+        let other = DeepSeekBalance {
+            currency: "KRW".into(),
+            total_balance: "1234.5".into(),
+            is_available: true,
+        };
+        assert_eq!(format_deepseek_balance(&usd), "$9.82");
+        assert_eq!(format_deepseek_balance(&cny), "¥70.16");
+        assert_eq!(format_deepseek_balance(&other), "KRW1234.5");
+    }
+
+    #[test]
+    fn cache_hit_pct_hides_with_zero_input() {
+        assert_eq!(format_cache_hit_pct(0, 0), None);
+        assert_eq!(format_cache_hit_pct(100, 0), None);
+    }
+
+    #[test]
+    fn cache_hit_pct_clamps_and_rounds() {
+        assert_eq!(format_cache_hit_pct(0, 100), Some("cache 0%".into()));
+        assert_eq!(format_cache_hit_pct(50, 100), Some("cache 50%".into()));
+        // Cached cannot exceed input — clamp guards defensive API drift.
+        assert_eq!(format_cache_hit_pct(120, 100), Some("cache 100%".into()));
+        // Rounds to whole percent.
+        assert_eq!(format_cache_hit_pct(1, 3), Some("cache 33%".into()));
     }
 }

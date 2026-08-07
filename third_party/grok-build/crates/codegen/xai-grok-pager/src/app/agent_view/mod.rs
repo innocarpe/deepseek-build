@@ -893,6 +893,11 @@ pub struct AgentView {
     pub credit_balance: Option<crate::views::credit_bar::CreditBalance>,
     /// Auto top-up rule paired with `credit_balance` for the prompt warning.
     pub auto_topup: Option<crate::views::credit_bar::AutoTopupInfo>,
+    /// Latest DeepSeek account status (balance + session usage) from the
+    /// `x.ai/deepseek/status` extension. `None` until the first fetch
+    /// lands; the bottom status row renders only when the shell reports
+    /// `is_deepseek` for the session.
+    pub deepseek_status: Option<xai_grok_shell::extensions::deepseek::DeepSeekStatusResponse>,
     /// Current goal orchestration state. Set by `GoalUpdated` session
     /// notifications, cleared when a new session starts.
     pub goal_state: Option<super::agent::GoalDisplayState>,

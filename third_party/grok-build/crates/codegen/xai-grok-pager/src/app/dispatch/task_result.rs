@@ -14,6 +14,9 @@ use super::cta::{
     handle_plugin_cta_mcps_loaded,
 };
 use super::ctx::{find_agent_by_session_id, get_active_agent_mut};
+use super::deepseek::{
+    handle_deepseek_status_complete, handle_deepseek_status_failed,
+};
 use super::notes::{handle_btw_response, handle_memory_note_saved};
 use super::prompt::{
     defer_to_open_reload_window, handle_compact_complete, handle_prompt_response,
@@ -1041,6 +1044,16 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             &session_id,
             format!("Couldn't load session usage: {error}"),
         ),
+        TaskResult::DeepSeekStatusComplete {
+            agent_id,
+            session_id,
+            status,
+        } => handle_deepseek_status_complete(app, agent_id, &session_id, *status),
+        TaskResult::DeepSeekStatusFailed {
+            agent_id,
+            session_id,
+            error,
+        } => handle_deepseek_status_failed(app, agent_id, &session_id, &error),
         TaskResult::FeedbackComplete { .. } => vec![],
         TaskResult::FeedbackFailed { agent_id, error } => {
             if let Some(agent) = app.agents.get_mut(&agent_id) {

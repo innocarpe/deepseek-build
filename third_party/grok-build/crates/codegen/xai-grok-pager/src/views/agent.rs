@@ -123,6 +123,9 @@ pub struct AgentViewLayout {
     pub voice_recording: Rect,
     pub prompt: Rect,
     pub shortcuts: Rect,
+    /// Bottom status row (DeepSeek balance + cache hit rate). Always
+    /// present as a row; renders blank when no DeepSeek status is known.
+    pub deepseek_status: Rect,
     /// Scrollback area narrowed for scrollbar (content rendering uses this).
     pub scrollback_content: Rect,
     /// Scrollbar track position (x coordinate).
@@ -258,6 +261,9 @@ impl AgentViewLayout {
             constraints.push(Constraint::Length(shortcuts_gap));
         }
         constraints.push(Constraint::Length(shortcuts_height));
+        // DeepSeek bottom status row: always present so the row count is
+        // stable; renders blank when no status data has landed.
+        constraints.push(Constraint::Length(1));
         let chunks = Layout::vertical(constraints).split(inner_area);
         let mut i = 0;
         let status_bar = chunks[i];
@@ -360,6 +366,8 @@ impl AgentViewLayout {
             i += 1;
         }
         let shortcuts = chunks[i];
+        i += 1;
+        let deepseek_status = chunks[i];
         let scrollbar_x = area.right().saturating_sub(scrollbar_cfg.gap_right + 1);
         let timeline_width = if scrollbar_cfg.enabled {
             timeline_width
@@ -397,6 +405,7 @@ impl AgentViewLayout {
             voice_recording,
             prompt,
             shortcuts,
+            deepseek_status,
             scrollback_content,
             scrollbar_x,
             timeline_x,

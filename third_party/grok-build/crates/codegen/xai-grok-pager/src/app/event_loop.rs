@@ -1546,6 +1546,12 @@ pub(crate) async fn run(
     const BILLING_POLL_INTERVAL: Duration = Duration::from_secs(30);
     let mut billing_poll_at: Option<Instant> = None;
 
+    // DeepSeek bottom-row status refresh (balance + cache hit rate).
+    // Only fires while the active session is DeepSeek-backed
+    // (`app.deepseek_poll_wanted()`), see `dispatch/deepseek.rs`.
+    const DEEPSEEK_POLL_INTERVAL: Duration = Duration::from_secs(60);
+    let mut deepseek_poll_at: Option<Instant> = None;
+
     const GATE_POLL_INTERVAL: Duration = Duration::from_secs(30);
     let mut gate_poll_at: Option<Instant> = None;
 
@@ -2035,6 +2041,13 @@ pub(crate) async fn run(
             }
         };
 
+        let deepseek_poll = async {
+            match deepseek_poll_at {
+                Some(at) => sleep_until(at).await,
+                None => std::future::pending().await,
+            }
+        };
+
         let gate_poll = async {
             match gate_poll_at {
                 Some(at) => sleep_until(at).await,
@@ -2159,6 +2172,11 @@ pub(crate) async fn run(
                             billing_poll_at = Some(Instant::now() + BILLING_POLL_INTERVAL);
                         } else if !app.billing_poll_wanted {
                             billing_poll_at = None;
+                        }
+                        if app.deepseek_poll_wanted() && deepseek_poll_at.is_none() {
+                            deepseek_poll_at = Some(Instant::now() + DEEPSEEK_POLL_INTERVAL);
+                        } else if !app.deepseek_poll_wanted() {
+                            deepseek_poll_at = None;
                         }
                         if !app.has_access() && gate_poll_at.is_none() {
                             gate_poll_at = Some(Instant::now() + GATE_POLL_INTERVAL);
@@ -2334,6 +2352,22 @@ pub(crate) async fn run(
                 }
                 if app.billing_poll_wanted {
                     billing_poll_at = Some(Instant::now() + BILLING_POLL_INTERVAL);
+                }
+            }
+
+            _ = deepseek_poll => {
+                deepseek_poll_at = None;
+                if let ActiveView::Agent(id) = app.active_view {
+                    let effs = super::dispatch::maybe_refresh_deepseek_status(
+                        &mut app,
+                        id,
+                    );
+                    if process_effects(effs, &mut tasks, &mut app, &progress_tx) {
+                        break;
+                    }
+                }
+                if app.deepseek_poll_wanted() {
+                    deepseek_poll_at = Some(Instant::now() + DEEPSEEK_POLL_INTERVAL);
                 }
             }
 

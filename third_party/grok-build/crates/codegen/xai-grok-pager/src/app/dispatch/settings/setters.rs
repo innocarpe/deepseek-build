@@ -1396,8 +1396,8 @@ pub(in crate::app::dispatch) fn set_auto_dark_theme(app: &mut AppView, new: Stri
         .as_deref()
         .and_then(crate::theme::canonical_name)
         .filter(|s| *s != "auto")
-        // No prior config: fall back to GrokNight (the default).
-        .unwrap_or_else(|| crate::theme::ThemeKind::GrokNight.display_name());
+        // No prior config: fall back to product default.
+        .unwrap_or_else(|| crate::theme::ThemeKind::DeepSeekNightV2.display_name());
     let new_canonical = match crate::theme::canonical_name(&new) {
         Some(c) if c != crate::theme::ThemeKind::Auto.display_name() => c,
         _ => {

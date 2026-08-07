@@ -735,7 +735,7 @@ fn json_contract_is_structural_stable_ordered_and_ansi_free() {
                 "ssh": true,
                 "color": {
                     "level": {"status": "available", "value": "256"},
-                    "availableThemes": ["groknight", "grokday"],
+                    "availableThemes": ["deepseeknight-v2", "grokday"],
                     "totalThemes": 5
                 },
                 "keyboard": {"cmd": "dropped", "opt": "native", "os": "macos"},

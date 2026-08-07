@@ -159,7 +159,7 @@ mod tests {
         theme_cache::seed_auto_theme_defaults_for_test();
         system_appearance::clear_mock();
         // Set LOADED=true so current_kind() doesn't try to read from disk.
-        theme_cache::set(ThemeKind::GrokNight);
+        theme_cache::set(ThemeKind::DeepSeekNightV2);
         f();
         system_appearance::clear_mock();
         theme_cache::reset_for_test();
@@ -241,7 +241,7 @@ mod tests {
     fn suggest_args_explicit_active_when_not_auto() {
         with_test_env(|| {
             theme_cache::set_auto_mode(false);
-            theme_cache::set(ThemeKind::GrokNight);
+            theme_cache::set(ThemeKind::DeepSeekNightV2);
             let cmd = ThemeCommand;
             let models = crate::acp::model_state::ModelState::default();
             let ctx = AppCtx {
@@ -254,14 +254,14 @@ mod tests {
                 screen_mode: crate::app::ScreenMode::Fullscreen,
             };
             let items = cmd.suggest_args(&ctx, "").expect("should return items");
-            let groknight = items
+            let v2 = items
                 .iter()
-                .find(|i| i.insert_text == "groknight")
-                .expect("groknight should be in list");
+                .find(|i| i.insert_text == "deepseeknight-v2")
+                .expect("deepseeknight-v2 should be in list");
             assert!(
-                groknight.description.contains("(active)"),
+                v2.description.contains("(active)"),
                 "explicit theme should show (active), got: {}",
-                groknight.description
+                v2.description
             );
         });
     }
@@ -270,7 +270,7 @@ mod tests {
     fn suggest_args_no_explicit_active_when_auto() {
         with_test_env(|| {
             theme_cache::set_auto_mode(true);
-            theme_cache::set(ThemeKind::GrokNight);
+            theme_cache::set(ThemeKind::DeepSeekNightV2);
             let cmd = ThemeCommand;
             let models = crate::acp::model_state::ModelState::default();
             let ctx = AppCtx {
@@ -334,7 +334,7 @@ mod tests {
     #[test]
     fn run_toggle_dispatches_set_theme_action() {
         with_test_env(|| {
-            theme_cache::set(ThemeKind::GrokNight);
+            theme_cache::set(ThemeKind::DeepSeekNightV2);
             // Hard-fail with a clear message if the precondition
             // breaks — `(0 + 1) % 0` in `run` would otherwise panic
             // with `attempt to calculate the remainder with a
@@ -450,7 +450,7 @@ mod tests {
     #[test]
     fn preview_explicit_theme_applies_directly() {
         with_test_env(|| {
-            theme_cache::set(ThemeKind::GrokNight);
+            theme_cache::set(ThemeKind::DeepSeekNightV2);
             let cmd = ThemeCommand;
             cmd.preview_arg("grokday");
             assert_eq!(Theme::current_kind(), ThemeKind::GrokDay);
@@ -461,12 +461,12 @@ mod tests {
     #[test]
     fn preview_unknown_theme_is_no_op() {
         with_test_env(|| {
-            theme_cache::set(ThemeKind::GrokNight);
+            theme_cache::set(ThemeKind::DeepSeekNightV2);
             let cmd = ThemeCommand;
             cmd.preview_arg("nonexistent-theme");
             assert_eq!(
                 Theme::current_kind(),
-                ThemeKind::GrokNight,
+                ThemeKind::DeepSeekNightV2,
                 "unknown theme name must NOT change Theme::current_kind",
             );
         });
@@ -478,7 +478,7 @@ mod tests {
     #[test]
     fn cancel_preview_restores_previous_kind() {
         with_test_env(|| {
-            theme_cache::set(ThemeKind::GrokNight);
+            theme_cache::set(ThemeKind::DeepSeekNightV2);
             let cmd = ThemeCommand;
             // Simulate user navigating into a different theme during preview.
             cmd.preview_arg("grokday");

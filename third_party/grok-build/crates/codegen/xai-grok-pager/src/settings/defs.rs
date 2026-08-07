@@ -45,9 +45,9 @@ const THEME_CHOICES: &[EnumChoice] = &[
         description: "Follow system dark/light appearance.",
     },
     EnumChoice {
-        canonical: "groknight",
-        display: "Grok Night",
-        description: "Neutral dark with magenta accent.",
+        canonical: "deepseeknight-v2",
+        display: "DeepSeek Night",
+        description: "Product default - measured C-balanced DeepSeek palette.",
     },
     EnumChoice {
         canonical: "grokday",
@@ -69,16 +69,6 @@ const THEME_CHOICES: &[EnumChoice] = &[
         canonical: "oscura-midnight",
         display: "Oscura Midnight",
         description: "Deep dark with warm accents; needs truecolor.",
-    },
-    EnumChoice {
-        canonical: "deepseeknight",
-        display: "DeepSeek Night",
-        description: "Blue-tinted dark with DeepSeek blue #4D6BFE accents.",
-    },
-    EnumChoice {
-        canonical: "deepseeknight-neutral",
-        display: "DeepSeek Night Neutral",
-        description: "Neutral dark canvas; blue accents pop. Default.",
     },
 ];
 
@@ -488,9 +478,9 @@ const VOICE_STT_LANGUAGE_CHOICES: &[EnumChoice] = &[
 /// the user can pair any theme with any system-appearance bucket.
 const CONCRETE_THEME_CHOICES: &[EnumChoice] = &[
     EnumChoice {
-        canonical: "groknight",
-        display: "Grok Night",
-        description: "Neutral dark with magenta accent.",
+        canonical: "deepseeknight-v2",
+        display: "DeepSeek Night",
+        description: "Product default - measured C-balanced DeepSeek palette.",
     },
     EnumChoice {
         canonical: "grokday",
@@ -511,16 +501,6 @@ const CONCRETE_THEME_CHOICES: &[EnumChoice] = &[
         canonical: "oscura-midnight",
         display: "Oscura Midnight",
         description: "Deep dark with warm accents; needs truecolor.",
-    },
-    EnumChoice {
-        canonical: "deepseeknight",
-        display: "DeepSeek Night",
-        description: "Blue-tinted dark with DeepSeek blue #4D6BFE accents.",
-    },
-    EnumChoice {
-        canonical: "deepseeknight-neutral",
-        display: "DeepSeek Night Neutral",
-        description: "Neutral dark canvas; blue accents pop. Default.",
     },
 ];
 
@@ -724,7 +704,7 @@ pub fn default_settings() -> Vec<SettingMeta> {
             ],
             kind: SettingKind::Enum {
                 // `Option<String>` — `None` resolved to "groknight".
-                default: "groknight",
+                default: "deepseeknight-v2",
                 choices: THEME_CHOICES,
                 supports_preview: true,
             },
@@ -740,7 +720,7 @@ pub fn default_settings() -> Vec<SettingMeta> {
             keywords: &["auto", "dark", "theme", "system", "appearance", "night"],
             kind: SettingKind::Enum {
                 // `Option<String>` — `None` falls back to "groknight".
-                default: "groknight",
+                default: "deepseeknight-v2",
                 choices: CONCRETE_THEME_CHOICES,
                 supports_preview: true,
             },

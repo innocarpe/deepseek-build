@@ -370,6 +370,79 @@ pub fn print_product_splash() {
     let _ = out.flush();
 }
 
+/// Stamp Path A Spec 10 prefix epoch under product home (owner-bar G008).
+///
+/// Production call site for [`dsb_context::assemble_path_a_context`] so Path A
+/// linkage is not test-only. Best-effort; failures never block agent launch.
+fn stamp_path_a_prefix_epoch(home: &BuildHome) {
+    use dsb_context::{
+        EnvironmentSummary, PathAContextInputs, SkillIndexEntry, assemble_path_a_context,
+        discover_skills_index,
+    };
+    use dsb_provider_deepseek::{ChatMessage, ToolDefinition, ToolFunction};
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    let cwd_path = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let cwd = cwd_path.display().to_string();
+    let os = std::env::consts::OS;
+    let tool = |name: &str, params: serde_json::Value| ToolDefinition {
+        type_: "function".into(),
+        function: ToolFunction {
+            name: name.into(),
+            description: Some(format!("tool {name}")),
+            parameters: Some(params),
+        },
+    };
+    // Minimal product-shaped inputs: system + Standard tool schema + skills index.
+    // Volatile user turn is empty for the stamp (epoch ignores volatile tail).
+    let tools = vec![
+        tool(
+            "read_file",
+            json!({"type":"object","properties":{"target_file":{"type":"string"}}}),
+        ),
+        tool(
+            "search_replace",
+            json!({
+                "type":"object",
+                "properties":{
+                    "file_path":{"type":"string"},
+                    "old_string":{"type":"string"},
+                    "new_string":{"type":"string"},
+                    "file_version":{"type":"string"}
+                }
+            }),
+        ),
+    ];
+    let skills_index = discover_skills_index(&cwd_path, None).unwrap_or_else(|_| {
+        vec![SkillIndexEntry {
+            name: "product-skills".into(),
+            description: "placeholder".into(),
+        }]
+    });
+    let inputs = PathAContextInputs {
+        system_prompt: "DeepSeek Build Path A stable prefix".into(),
+        tools,
+        skills_index,
+        environment: EnvironmentSummary {
+            os_family: os.into(),
+            cwd,
+        },
+        project_instructions: String::new(),
+        volatile_user_and_tools: vec![ChatMessage::user("")],
+    };
+    let Ok(assembled) = assemble_path_a_context(&inputs) else {
+        return;
+    };
+    let stamp = format!(
+        "path_a_prefix_epoch={}\npath_a_prefix_epoch_short={}\n",
+        assembled.epoch().sha256_hex,
+        assembled.epoch_short()
+    );
+    let path = home.path().join("path_a_prefix_epoch.txt");
+    let _ = std::fs::write(path, stamp);
+}
+
 /// Exec the Grok-class agent, replacing this process (Unix).
 ///
 /// On failure to find the binary, returns an error with install guidance.
@@ -379,6 +452,8 @@ pub fn exec_agent(args: &[String]) -> Result<()> {
     // Fresh homes get the interactive theme picker before the seed is written.
     let theme = prompt_first_launch_theme(&home).unwrap_or(PRODUCT_THEME);
     let _ = ensure_product_agent_config_with_theme(&home, theme);
+    // Spec 10 / G008: production Path A prefix epoch stamp (non-blocking).
+    stamp_path_a_prefix_epoch(&home);
     print_product_splash();
 
     let Some(bin) = find_agent_bin() else {
@@ -465,6 +540,34 @@ mod tests {
     #[test]
     fn toml_escape_quotes() {
         assert_eq!(escape_toml_basic(r#"a"b"#), r#"a\"b"#);
+    }
+
+    /// G008 / L2-10-6: production stamp call site writes epoch under product home.
+    #[test]
+    fn stamp_path_a_prefix_epoch_writes_stable_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dsb_config::BuildHome::from_path(dir.path());
+        stamp_path_a_prefix_epoch(&home);
+        let path = dir.path().join("path_a_prefix_epoch.txt");
+        let body = std::fs::read_to_string(&path).expect("epoch stamp file");
+        assert!(
+            body.contains("path_a_prefix_epoch="),
+            "missing epoch line: {body}"
+        );
+        assert!(
+            body.contains("path_a_prefix_epoch_short="),
+            "missing short epoch: {body}"
+        );
+        // Second stamp with same cwd/tools → identical file (byte-stable).
+        stamp_path_a_prefix_epoch(&home);
+        let body2 = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(body, body2, "stamp must be byte-stable for identical inputs");
+        let hex = body
+            .lines()
+            .find_map(|l| l.strip_prefix("path_a_prefix_epoch="))
+            .expect("epoch hex");
+        assert_eq!(hex.len(), 64, "sha256 hex length");
+        assert!(hex.chars().all(|c| c.is_ascii_hexdigit()));
     }
 }
 

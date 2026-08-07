@@ -279,6 +279,15 @@ set -e
 
 printf '%s\n' "${AGENT_OUT}" | redact_stream | tail -40 | tee "${WORK}/agent.out"
 
+# G008: Path A prefix epoch stamp written by agent_launch before exec.
+EPOCH_STAMP="${HOME_DIR}/path_a_prefix_epoch.txt"
+if [[ -f "${EPOCH_STAMP}" ]]; then
+  cp "${EPOCH_STAMP}" "${OUT_DIR}/PATH_A_PREFIX_EPOCH_last.txt"
+  log "path_a_prefix_epoch stamp present"
+else
+  warn "path_a_prefix_epoch.txt missing under DEEPSEEK_BUILD_HOME (G008 stamp)"
+fi
+
 # Persist wire + meta for evidence (redacted)
 if [[ -f "${WIRE}" ]]; then
   cp "${WIRE}" "${EVIDENCE_WIRE}"
@@ -297,12 +306,22 @@ fi
   if [[ -f "${WIRE}" ]]; then
     echo "wire_lines=$(wc -l <"${WIRE}" | tr -d ' ')"
   fi
+  if [[ -f "${EPOCH_STAMP}" ]]; then
+    echo "path_a_prefix_epoch_stamp=present"
+    cat "${EPOCH_STAMP}"
+  else
+    echo "path_a_prefix_epoch_stamp=missing"
+  fi
 } >"${EVIDENCE_META}"
 
 # --- assertions ---
 FAIL=0
 if [[ ! -s "${WIRE}" ]]; then
   warn "wire transcript empty — agent never hit scripted server"
+  FAIL=1
+fi
+if [[ ! -f "${EPOCH_STAMP}" ]]; then
+  warn "G008 stamp missing — assemble_path_a_context not exercised on launch"
   FAIL=1
 fi
 

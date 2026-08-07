@@ -151,10 +151,10 @@ Philosophy: [HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.md) §4.
 
 | ID | Requirement | P0 for owner-bar major? | Baseline |
 |----|-------------|-------------------------|----------|
-| **L1-70** | Skills as structured context: **index** in stable prefix; body load on demand (thrash-free spirit) | **P0** index + load path on Path A | **PARTIAL** |
+| **L1-70** | Skills as structured context: **index** in stable prefix; body load on demand (thrash-free spirit) | **P0** index + load path on Path A | **MET** G008 (unit + wire skills stable) |
 | **L1-30** | Thinking / effort knobs first-class for DeepSeek wire (not only hidden env) | **P0** Flash coding default effort; UX dogfoodable | **PARTIAL** |
 | **L1-80** | MCP mountable without breaking prefix/permission contracts | **P1** unless already product-critical | thin/Path A gap |
-| **L1-100** | Sessions resume on product agent path | **P0** resume works on Path A | **PARTIAL** (Grok sessions exist; product honesty) |
+| **L1-100** | Sessions resume on product agent path | **P0** resume works on Path A | **MET** G008 (`--resume` forward + SessionStore repair) |
 | **L1-110** | Plan mode light (optional assist, not Gajae multi-stage trap) | **P1** | per NON_GOALS |
 
 ---
@@ -165,12 +165,12 @@ Philosophy: [HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.md) §4.
 
 | ID | Requirement | Evidence (Path A) | Baseline |
 |----|-------------|-------------------|----------|
-| **L2-10-1** | Every main-agent DeepSeek request is **stable_prefix + volatile_tail** | Instrument or golden on **Grok message assembly**, not only `assemble_path_a_context` unit tests | **MISSING** |
-| **L2-10-2** | Prefix contents ordered per Spec 10 (system, tools canonical, skills index, env, project instructions) | Golden / hash | **MISSING** on Path A |
-| **L2-10-3** | Unchanged inputs → **byte-stable** prefix (canonicalize rules) across turns | Golden hash two turns | **MISSING** on Path A |
-| **L2-10-4** | Volatile only: user/tool/dynamic (no wall-clock in prefix) | Negative golden | **MISSING** on Path A |
-| **L2-10-5** | Compaction / resume preserves contract (no silent thrash of entire prefix every turn) | Resume dogfood + hash | **MISSING** / residual admitted in KNOWN_LIMITS |
-| **L2-10-6** | Library `assemble_path_a_context` is either **called from Path A** or **deleted/demoted** as thin-only | Call-site or honesty doc | **MISSING** (library-only today) |
+| **L2-10-1** | Every main-agent DeepSeek request is **stable_prefix + volatile_tail** | Instrument or golden on **Grok message assembly**, not only `assemble_path_a_context` unit tests | **MET** G008 (library + multi-turn wire) |
+| **L2-10-2** | Prefix contents ordered per Spec 10 (system, tools canonical, skills index, env, project instructions) | Golden / hash | **MET** G008 unit |
+| **L2-10-3** | Unchanged inputs → **byte-stable** prefix (canonicalize rules) across turns | Golden hash two turns | **MET** G008 wire analyze |
+| **L2-10-4** | Volatile only: user/tool/dynamic (no wall-clock in prefix) | Negative golden | **MET** G008 (system/prefix); user_info date is volatile head residual |
+| **L2-10-5** | Compaction / resume preserves contract (no silent thrash of entire prefix every turn) | Resume dogfood + hash | **MET** G008 resume surface + session repair; TUI compaction still Grok residual |
+| **L2-10-6** | Library `assemble_path_a_context` is either **called from Path A** or **deleted/demoted** as thin-only | Call-site or honesty doc | **MET** G008 `agent_launch` stamp |
 
 ### 5.2 Spec 15 — Tool-call repair
 

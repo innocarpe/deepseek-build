@@ -1,0 +1,24 @@
+git_sha=7fa9ba110e7775a4f683ec3b04f4c803ea6a759d
+story=G008
+analyze_exit=0
+stamp_unit=stamp_path_a_prefix_epoch_writes_stable_file PASS
+resume_cli_tests=6 PASS
+session_store_tests=4 PASS
+context_path_a_tests=5 PASS
+context_skills_tests=7 PASS
+linkage=PASS
+public_entry_e2e_stamp=present
+{
+  "wire": "docs/product/evidence/PATH_A_R0_LIVENESS_WIRE_last.jsonl",
+  "total_rows": 6,
+  "deepseek_turns": 5,
+  "system_stable": true,
+  "skills_present": true,
+  "skills_stable": true,
+  "volatile_grows": true,
+  "system_no_wall_clock": true,
+  "system_sha256": "b85da153ceff32f538eac75ceb1afb7496aa72ba4a4381972ccec25d08defa7a",
+  "skills_sha256": "82b4d7dc9c334e66f180a2151543d9006e715339333bebf9692c58b98fd36166",
+  "errors": [],
+  "pass": true
+}

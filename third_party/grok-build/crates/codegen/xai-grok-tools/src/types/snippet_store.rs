@@ -1,16 +1,21 @@
 //! Session-local Spec 45 snippet table for Path A (Grok tool path).
 //!
-//! Hosted on per-session [`super::resources::Resources`] via `get_or_default`
-//! and **not** registered for Spec 10 stable-prefix / resources persistence.
-//! Each agent session's `SharedResources` owns its own table — not process-global.
+//! ## Ownership (fail-close)
 //!
-//! VC003: issue on successful text `read_file` only. Edit require (VC004),
-//! write/bash invalidation (VC005), and resume/fork restore (VC006) are out of scope.
+//! Inserted only into a **per-session** [`super::resources::Resources`] bag
+//! (typically behind that session's [`super::resources::SharedResources`] =
+//! `Arc<Mutex<Resources>>`) via `get_or_default`. There is **no** `static`,
+//! `lazy_static`, process-global map, or `register_state` persistence path —
+//! the table dies with the session resources and must never enter Spec 10
+//! stable-prefix bytes.
+//!
+//! VC003: issue on successful **UTF-8 text** `read_file` only. Edit require
+//! (VC004), write/bash invalidation (VC005), and resume/fork restore (VC006)
+//! are out of scope.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-
-use uuid::Uuid;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Opaque session snippet record (ADR 0010 §2 shape; Path A host).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +35,9 @@ pub struct SessionSnippet {
 }
 
 /// Session-owned snippet table. Ephemeral; discarded with the session Resources.
+///
+/// Constructed per `Resources` instance (one bag per agent session /
+/// `SharedResources`). Not process-global.
 #[derive(Debug, Default)]
 pub struct SessionSnippetStore {
     by_id: HashMap<String, SessionSnippet>,
@@ -40,6 +48,9 @@ pub struct SessionSnippetStore {
 
 /// Preview cap matching thin `dsb-tools` / ADR 0010 (Unicode scalars + ellipsis).
 pub const SNIPPET_PREVIEW_MAX_SCALARS: usize = 200;
+
+/// Crockford Base32 alphabet (ULID / ADR 0010). No I, L, O, U.
+const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 impl SessionSnippetStore {
     pub fn new() -> Self {
@@ -62,7 +73,7 @@ impl SessionSnippetStore {
         self.by_id.contains_key(id)
     }
 
-    /// Mint a new opaque `snippet_id` for a successful text read.
+    /// Mint a new opaque `snippet_id` for a successful UTF-8 text read.
     ///
     /// Repeated calls always insert a **new** id (ADR 0010 §2 Multiple IDs).
     pub fn issue(
@@ -101,10 +112,66 @@ impl SessionSnippetStore {
     }
 }
 
-/// `snp_` + opaque unique id (UUID v7, no hyphens). Matches ADR opacity class
-/// (`snp_<ulid>` spirit); Path A uses workspace-available uuid v7.
+/// ADR 0010 §2: `snp_` + Crockford-base32 ULID (26 chars).
+///
+/// Local encoder (no extra crate): 48-bit ms timestamp + 80-bit entropy from
+/// existing workspace `uuid` randomness, packed as a 128-bit ULID and encoded
+/// with the Crockford alphabet.
 pub fn new_snippet_id() -> String {
-    format!("snp_{}", Uuid::now_v7().simple())
+    format!("snp_{}", new_ulid_crockford())
+}
+
+/// Generate a 26-character Crockford Base32 ULID string.
+pub fn new_ulid_crockford() -> String {
+    let ts_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+        & 0x0000_FFFF_FFFF_FFFF; // 48 bits
+    // 10 bytes entropy via existing uuid dependency (no new crates).
+    let entropy = {
+        let b = uuid::Uuid::new_v4().into_bytes();
+        let mut e = [0u8; 10];
+        e.copy_from_slice(&b[0..10]);
+        e
+    };
+    encode_ulid_crockford(ts_ms, &entropy)
+}
+
+/// Encode `(timestamp_ms_48bit, entropy_80bit)` as a 26-char Crockford ULID.
+pub fn encode_ulid_crockford(timestamp_ms: u64, entropy10: &[u8; 10]) -> String {
+    let mut bytes = [0u8; 16];
+    // Big-endian 48-bit timestamp into first 6 bytes.
+    bytes[0] = ((timestamp_ms >> 40) & 0xff) as u8;
+    bytes[1] = ((timestamp_ms >> 32) & 0xff) as u8;
+    bytes[2] = ((timestamp_ms >> 24) & 0xff) as u8;
+    bytes[3] = ((timestamp_ms >> 16) & 0xff) as u8;
+    bytes[4] = ((timestamp_ms >> 8) & 0xff) as u8;
+    bytes[5] = (timestamp_ms & 0xff) as u8;
+    bytes[6..16].copy_from_slice(entropy10);
+
+    // Standard ULID encode: 128-bit BE integer → 26×5-bit Crockford chars
+    // (26*5=130; top 2 bits are zero padding on the left).
+    let mut value = u128::from_be_bytes(bytes);
+    let mut chars = [0u8; 26];
+    for i in (0..26).rev() {
+        chars[i] = CROCKFORD[(value & 0x1f) as usize];
+        value >>= 5;
+    }
+    // SAFETY: CROCKFORD is ASCII.
+    String::from_utf8(chars.to_vec()).expect("crockford alphabet is ascii")
+}
+
+/// True when `id` matches ADR 0010 Path A shape: `snp_` + 26 Crockford chars.
+pub fn is_valid_snippet_id(id: &str) -> bool {
+    let Some(rest) = id.strip_prefix("snp_") else {
+        return false;
+    };
+    rest.len() == 26
+        && rest.bytes().all(|b| {
+            let u = b.to_ascii_uppercase();
+            CROCKFORD.contains(&u)
+        })
 }
 
 fn truncate_preview(text: &str, max_scalars: usize) -> String {
@@ -146,13 +213,42 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn issue_mints_snp_prefix_and_stores() {
+    fn issue_mints_snp_ulid_crockford_and_stores() {
         let mut store = SessionSnippetStore::new();
         let snip = store.issue(Path::new("/tmp/a.txt"), 1, 2, "ab".repeat(32), "hello\n", 2);
-        assert!(snip.snippet_id.starts_with("snp_"));
+        assert!(
+            is_valid_snippet_id(&snip.snippet_id),
+            "ADR 0010 requires snp_ + Crockford ULID; got {}",
+            snip.snippet_id
+        );
+        assert_eq!(snip.snippet_id.len(), 4 + 26);
         assert_eq!(snip.scope, "whole_file");
         assert_eq!(store.len(), 1);
         assert!(store.contains(&snip.snippet_id));
+    }
+
+    #[test]
+    fn encode_ulid_known_vector() {
+        // timestamp 0, entropy all zero → all Crockford zeros.
+        let s = encode_ulid_crockford(0, &[0u8; 10]);
+        assert_eq!(s, "00000000000000000000000000");
+        assert_eq!(s.len(), 26);
+    }
+
+    #[test]
+    fn encode_ulid_timestamp_only_is_sortable_prefix() {
+        let a = encode_ulid_crockford(1, &[0u8; 10]);
+        let b = encode_ulid_crockford(2, &[0u8; 10]);
+        assert!(a < b, "ULID time component must sort lexicographically");
+    }
+
+    #[test]
+    fn new_snippet_id_matches_adr_shape() {
+        let id = new_snippet_id();
+        assert!(is_valid_snippet_id(&id), "got {id}");
+        // Must not look like UUID hex (32 hex chars) without Crockford exclusions.
+        let body = id.strip_prefix("snp_").unwrap();
+        assert!(!body.chars().any(|c| matches!(c, 'I' | 'L' | 'O' | 'U')));
     }
 
     #[test]
@@ -162,10 +258,12 @@ mod tests {
         let b = store.issue(Path::new("/tmp/a.txt"), 1, 1, "v1", "x", 1);
         assert_ne!(a.snippet_id, b.snippet_id);
         assert_eq!(store.len(), 2);
+        assert!(is_valid_snippet_id(&a.snippet_id) && is_valid_snippet_id(&b.snippet_id));
     }
 
     #[test]
     fn stores_are_independent_not_process_global() {
+        // Two Default stores simulate two session Resources bags — not a static.
         let mut a = SessionSnippetStore::new();
         let b = SessionSnippetStore::new();
         let snip = a.issue(Path::new("/tmp/a.txt"), 1, 1, "v", "x", 1);

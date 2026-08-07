@@ -18,7 +18,9 @@ use crate::types::resources::{
     Cwd, DisplayCwd, FileSystem, GitignoreFilter, PathNotFoundHints, RespectGitignore,
     SharedResources, TruncationCfg, display_cwd_or_cwd, resolve_model_path,
 };
-use crate::types::snippet_store::{SessionSnippetStore, snippet_line_range};
+use crate::types::snippet_store::{
+    SessionSnippet, SessionSnippetStore, is_valid_snippet_id, snippet_line_range,
+};
 use crate::types::template_renderer::TemplateRenderer;
 use crate::types::tool::{ToolKind, ToolNamespace};
 use std::sync::LazyLock;
@@ -469,31 +471,44 @@ pub(crate) async fn run_read_file(
         h.update(&file_bytes);
         Some(format!("{:x}", h.finalize()))
     };
-    let file_content = String::from_utf8_lossy(&file_bytes).into_owned();
+    // ADR 0010 / VC003: only **successful UTF-8** text is snippet-mint eligible.
+    // Invalid UTF-8 may still be shown via lossy decode for read UX, but must
+    // not receive a snippet_id (no silent mojibake edit contract).
+    let utf8_ok = std::str::from_utf8(&file_bytes).is_ok();
+    let file_content = if utf8_ok {
+        // SAFETY: just validated.
+        String::from_utf8(file_bytes).expect("utf-8 validated")
+    } else {
+        String::from_utf8_lossy(&file_bytes).into_owned()
+    };
     if file_content.is_empty() {
         let stored_offset = stored_read_offset(input.offset);
-        let version = file_version.clone().unwrap_or_default();
-        let (start_line, end_line) = snippet_line_range(0, stored_offset, input.limit);
-        let snippet = {
-            let mut res = resources.lock().await;
-            let store = res.get_or_default::<SessionSnippetStore>();
-            store.issue(&path, start_line, end_line, version, "", 0)
+        let snippet = if utf8_ok {
+            Some(mint_session_snippet(
+                &resources,
+                &path,
+                file_version.as_deref().unwrap_or(""),
+                0,
+                stored_offset,
+                input.limit,
+                "",
+            )
+            .await)
+        } else {
+            None
         };
-        return Ok(ReadFileOutput::FileContent(FileContent {
-            content: String::new(),
-            content_concise: None,
-            absolute_path: path,
-            offset: stored_offset,
-            limit: input.limit,
-            raw_output: String::new(),
-            total_lines: 0,
-            extracted_images: Vec::new(),
+        return Ok(ReadFileOutput::FileContent(file_content_with_optional_snippet(
+            String::new(),
+            None,
+            path,
+            stored_offset,
+            input.limit,
+            String::new(),
+            0,
+            Vec::new(),
             file_version,
-            snippet_id: Some(snippet.snippet_id),
-            snippet_start_line: Some(snippet.start_line),
-            snippet_end_line: Some(snippet.end_line),
-            snippet_scope: Some(snippet.scope),
-        }));
+            snippet,
+        )));
     }
     let total_lines = file_content.matches('\n').count() + 1;
     let max_lines = {
@@ -585,39 +600,100 @@ pub(crate) async fn run_read_file(
         &mut content_concise,
     )
     .await;
-    // VC003 / ADR 0010 §4: mint session-local snippet_id on successful text read.
-    // Range uses the stored window (1-based offset + limit) over total_lines.
-    let version = file_version.clone().unwrap_or_default();
-    let range_offset = stored_offset.filter(|&o| o > 0).or(Some(1));
-    let (start_line, end_line) = snippet_line_range(total_lines, range_offset, stored_limit);
+    // VC003 / ADR 0010 §4: mint session-local snippet_id only for valid UTF-8 text.
+    // Store lives on this session's SharedResources (get_or_default) — not global.
     let raw_output = extracted.raw_output;
-    let snippet = {
-        let mut res = resources.lock().await;
-        let store = res.get_or_default::<SessionSnippetStore>();
-        store.issue(
-            &path,
-            start_line,
-            end_line,
-            version,
-            &raw_output,
-            total_lines,
+    let snippet = if utf8_ok {
+        Some(
+            mint_session_snippet(
+                &resources,
+                &path,
+                file_version.as_deref().unwrap_or(""),
+                total_lines,
+                stored_offset.filter(|&o| o > 0).or(Some(1)),
+                stored_limit,
+                &raw_output,
+            )
+            .await,
         )
+    } else {
+        None
     };
-    Ok(ReadFileOutput::FileContent(FileContent {
+    Ok(ReadFileOutput::FileContent(file_content_with_optional_snippet(
         content,
         content_concise,
-        absolute_path: path,
-        offset: stored_offset,
-        limit: stored_limit,
+        path,
+        stored_offset,
+        stored_limit,
         raw_output,
         total_lines,
         extracted_images,
         file_version,
-        snippet_id: Some(snippet.snippet_id),
-        snippet_start_line: Some(snippet.start_line),
-        snippet_end_line: Some(snippet.end_line),
-        snippet_scope: Some(snippet.scope),
-    }))
+        snippet,
+    )))
+}
+
+/// Mint into the **session** `Resources` bag behind `SharedResources`.
+/// Callers must only invoke this for successful UTF-8 text reads.
+async fn mint_session_snippet(
+    resources: &SharedResources,
+    path: &std::path::Path,
+    version: &str,
+    total_lines: usize,
+    range_offset: Option<usize>,
+    range_limit: Option<usize>,
+    scope_preview: &str,
+) -> SessionSnippet {
+    let (start_line, end_line) = snippet_line_range(total_lines, range_offset, range_limit);
+    let mut res = resources.lock().await;
+    // Per-session store only — inserted on this Resources instance, never static.
+    let store = res.get_or_default::<SessionSnippetStore>();
+    store.issue(
+        path,
+        start_line,
+        end_line,
+        version.to_string(),
+        scope_preview,
+        total_lines,
+    )
+}
+
+fn file_content_with_optional_snippet(
+    content: String,
+    content_concise: Option<String>,
+    absolute_path: std::path::PathBuf,
+    offset: Option<usize>,
+    limit: Option<usize>,
+    raw_output: String,
+    total_lines: usize,
+    extracted_images: Vec<crate::util::base64_images::ExtractedImage>,
+    file_version: Option<String>,
+    snippet: Option<SessionSnippet>,
+) -> FileContent {
+    let (snippet_id, snippet_start_line, snippet_end_line, snippet_scope) = match snippet {
+        Some(s) => (
+            Some(s.snippet_id),
+            Some(s.start_line),
+            Some(s.end_line),
+            Some(s.scope),
+        ),
+        None => (None, None, None, None),
+    };
+    FileContent {
+        content,
+        content_concise,
+        absolute_path,
+        offset,
+        limit,
+        raw_output,
+        total_lines,
+        extracted_images,
+        file_version,
+        snippet_id,
+        snippet_start_line,
+        snippet_end_line,
+        snippet_scope,
+    }
 }
 /// New-architecture `ReadFile` tool.
 ///
@@ -930,8 +1006,8 @@ mod tests {
                     .as_deref()
                     .expect("snippet_id must be minted on text read");
                 assert!(
-                    id.starts_with("snp_"),
-                    "snippet_id must use snp_ prefix; got {id}"
+                    is_valid_snippet_id(id),
+                    "ADR 0010 requires snp_ + Crockford ULID; got {id}"
                 );
                 assert_eq!(fc.file_version.as_deref(), Some(expected_ver.as_str()));
                 assert_eq!(fc.snippet_scope.as_deref(), Some("whole_file"));
@@ -1056,6 +1132,44 @@ mod tests {
             res.get::<SessionSnippetStore>().is_none()
                 || res.get::<SessionSnippetStore>().unwrap().is_empty(),
             "failed reads must not leave snippet ids"
+        );
+    }
+
+    /// VC003: invalid UTF-8 text path does not mint (ADR encoding fail-closed).
+    #[tokio::test]
+    async fn vc003_invalid_utf8_does_not_mint_snippet_id() {
+        let tmp = TempDir::new().unwrap();
+        // Not binary (no NUL / low control ratio) but invalid UTF-8 sequence.
+        let bytes = b"hello\xffworld\n";
+        std::fs::write(tmp.path().join("bad.txt"), bytes).unwrap();
+        let tool = ReadFileTool;
+        let shared = test_resources(tmp.path()).into_shared();
+        let input = ReadFileInput {
+            path: "bad.txt".to_string(),
+            offset: None,
+            limit: None,
+            pages: None,
+            format: None,
+        };
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(shared.clone()), input)
+            .await
+            .unwrap();
+        match result {
+            ReadFileOutput::FileContent(fc) => {
+                assert!(
+                    fc.snippet_id.is_none(),
+                    "invalid UTF-8 must not mint snippet_id; got {:?}",
+                    fc.snippet_id
+                );
+                // Owner-bar hash alias may still be present (content versioning).
+                assert!(fc.file_version.is_some());
+            }
+            other => panic!("expected FileContent (lossy read), got {other:?}"),
+        }
+        let res = shared.lock().await;
+        assert!(
+            res.get::<SessionSnippetStore>().is_none()
+                || res.get::<SessionSnippetStore>().unwrap().is_empty()
         );
     }
 

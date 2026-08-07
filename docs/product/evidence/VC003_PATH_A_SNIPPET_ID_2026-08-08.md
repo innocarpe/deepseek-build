@@ -207,11 +207,12 @@ test -f docs/adr/0010-spec-45-snippet-store.md
 | Evidence doc committed first | **yes** — `56a249a` | commit |
 | Store + FileContent fields | **yes** — `73b0bc8` | commit |
 | Path A text mint | **yes** — `89564c8` | commit |
-| Text read mints `snippet_id` | **PASS** (`vc003_current_read_file_mints_snippet_id`) | **unit** |
+| Text UTF-8 read mints `snippet_id` | **PASS** (`vc003_current_read_file_mints_snippet_id`) | **unit** |
+| ID shape ADR 0010 §2 exact | **PASS** — `snp_` + 26 Crockford-base32 ULID (`is_valid_snippet_id`, encode vectors) | **unit** |
 | Repeated reads differ | **PASS** (`vc003_repeated_reads_mint_distinct_snippet_ids`) | **unit** |
-| Session-local store | **PASS** (`vc003_snippet_store_is_session_local_not_process_global` + store unit) | **unit** |
+| Session-local store | **PASS** (`vc003_snippet_store_is_session_local_not_process_global` + store unit; no static/global) | **unit** |
 | `file_version` sha256 preserved | **PASS** (`current_read_file_mints_file_version_sha256` + VC003 mint test) | **unit** |
-| Non-text/error no-id | **PASS** (`vc003_binary_read_does_not_mint_snippet_id`, `vc003_not_found_does_not_mint_snippet_id`) | **unit** |
+| Non-text / invalid UTF-8 / error no-id | **PASS** (binary, not-found, `vc003_invalid_utf8_does_not_mint_snippet_id`) | **unit** |
 | Thin Path B oracle still green | **PASS** (`cargo test -p dsb-tools snippets` — 9 ok) | thin oracle (**not** Path A proof) |
 | Public Path A R0A wire | **not run / not claimed** | — |
 | SemVer bump | **none** | cargo version still `5.1.0` |
@@ -220,11 +221,11 @@ test -f docs/adr/0010-spec-45-snippet-store.md
 
 | Piece | Location |
 |-------|----------|
-| Session store | `third_party/grok-build/.../types/snippet_store.rs` — ephemeral `SessionSnippetStore` on `Resources` via `get_or_default` (not Spec 10 persistence) |
+| Session store | `third_party/grok-build/.../types/snippet_store.rs` — ephemeral `SessionSnippetStore` via `SharedResources` → `Resources::get_or_default` (**not** static, **not** process-global, **not** Spec 10 persistence) |
 | Output fields | `FileContent.{snippet_id,snippet_start_line,snippet_end_line,snippet_scope}` + existing `file_version` |
-| Mint path | `implementations/grok_build/read_file` successful text (incl. empty file); PDF/PPTX/image/binary/error unchanged (no id) |
+| Mint path | Successful **UTF-8** text only (incl. empty UTF-8 file); invalid UTF-8 may lossy-display but **no** id; PDF/PPTX/image/binary/error unchanged (no id) |
 | Model-visible | `to_prompt_format` appends `snippet_id`, optional range/scope, and `file_version` |
-| ID shape | `snp_` + UUID v7 simple (opaque session-local; ADR ULID spirit) |
+| ID shape | **ADR 0010 §2 exact:** `snp_` + Crockford-base32 ULID (26 chars). Local encoder (no new crate); 48-bit ms timestamp + 80-bit entropy from existing `uuid` randomness |
 
 ### Commands actually run
 
@@ -234,14 +235,14 @@ git checkout -b feat/vc003-path-a-snippet-id   # from clean spec/vc002-snippet-s
 
 # Path A unit (xai-grok-tools)
 cd third_party/grok-build
-cargo test -p xai-grok-tools vc003
-# ok — 5 passed (mint, multi-id, session-local, not-found, binary)
+cargo test -p xai-grok-tools --lib vc003
+# ok — 6 passed (mint+ULID shape, multi-id, session-local, not-found, binary, invalid-utf8)
 
 cargo test -p xai-grok-tools --lib current_read_file_mints_file_version_sha256
 # ok — 1 passed
 
 cargo test -p xai-grok-tools --lib 'snippet_store::'
-# ok — 5 passed
+# ok — 8 passed (incl. Crockford encode vectors + ADR shape)
 
 cargo test -p xai-grok-tools --lib read_empty_file_prompt
 # ok — 1 passed

@@ -4,16 +4,25 @@ This file is standing instructions for any coding agent working in this repo.
 
 ## Current phase
 
+**Active ultragoal:** plan id **`heart-3x`** → tag **`3.0.0`** (L1/L2 heart fusion).  
+- Board: [`docs/product/HEART_3X_GOALS.md`](docs/product/HEART_3X_GOALS.md) (G001–G008)  
+- PR DAG: [`docs/product/WAVE_3x_PR_DAG.md`](docs/product/WAVE_3x_PR_DAG.md)  
+- Cold start: [`docs/product/ULTRAGOAL_PROMPT_COLD_START_3.0.md`](docs/product/ULTRAGOAL_PROMPT_COLD_START_3.0.md)  
+- Chain: [`docs/product/ULTRAGOAL_CHAIN.md`](docs/product/ULTRAGOAL_CHAIN.md)  
+- Baseline: [`docs/product/PRE_3X_TEST_MATRIX.md`](docs/product/PRE_3X_TEST_MATRIX.md) · `./scripts/test-pre3x-baseline.sh --live`  
+- Ledger: `omc ultragoal status --plan-id heart-3x` (no `--force` recreate)
+
 **Major product lines (PRDs):** [`docs/product/versions/README.md`](docs/product/versions/README.md)  
 - **1.x** scaffold — [PRD-v1](docs/product/PRD-v1.md)  
 - **2.x shipped base** — [PRD-v2](docs/product/PRD-v2.md) (Grok shell + DeepSeek entry/UI)  
-- **3.x next** — [PRD-v3](docs/product/PRD-v3.md) (L1/L2 heart fusion)  
+- **3.x active** — [PRD-v3](docs/product/PRD-v3.md) (L1/L2 heart fusion)  
 - **4.x later** — [PRD-v4](docs/product/PRD-v4.md) (L3 productization)  
 
 **SSOT priority:** [`docs/product/SSOT.md`](docs/product/SSOT.md)  
 **Historical board:** [`docs/product/MASTER_PLAN.md`](docs/product/MASTER_PLAN.md) · replan [`REPLAN_2.0.md`](docs/product/REPLAN_2.0.md)  
 **PR planning:** [`docs/product/ULTRAGOAL_PR_PLANNING.md`](docs/product/ULTRAGOAL_PR_PLANNING.md) ·  
 [`docs/contributing/stack-merge-runbook.md`](docs/contributing/stack-merge-runbook.md)  
+**Merge on GitHub:** **merge commit** (squash disabled on this repo).  
 **Architecture:** [`docs/architecture/HARNESS_PHILOSOPHY.md`](docs/architecture/HARNESS_PHILOSOPHY.md) ·  
 [`docs/architecture/SYSTEM_ARCHITECTURE.md`](docs/architecture/SYSTEM_ARCHITECTURE.md)  
 **SemVer on disk:** read root `Cargo.toml` (do not hardcode). Re-check ultragoal / major PRD each session.

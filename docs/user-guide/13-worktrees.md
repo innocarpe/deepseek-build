@@ -20,33 +20,37 @@ Public launch also stamps product home `path_a_l3.txt` with `worktree_product=op
 ## CLI (public entry)
 
 ```bash
-# Interactive session in a new worktree (name optional) — bare TTY product path
+# Product top-level opt-in (parsed by deepseek-build/dsb, forwarded to agent)
 dsb --worktree feat-foo
 deepseek-build --worktree feat-foo
-# short form:
 dsb -w feat-foo
+dsb --worktree feat-foo --worktree-ref main
 
-# Or forward through the agent subcommand (same public CLI family)
+# Same flags after the agent subcommand (product still parses globals; also valid:)
 dsb agent -- --worktree feat-foo
-deepseek-build agent -- --worktree feat-foo
 
-# Forward agent help / worktree subcommand through the public CLI
-deepseek-build agent -- --help          # agent flags (includes --worktree)
-dsb agent worktree --help               # manage subcommand
-dsb agent worktree list --json          # list tracked worktrees
+# Headless: --worktree is accepted but does NOT create a worktree
+dsb --worktree feat-foo agent -p "…" --cwd .
+
+# Manage worktrees / agent help (public entry)
+deepseek-build agent -- --help
+dsb agent worktree --help
+dsb agent worktree list --json
 
 # Raw agent bin still works when installed:
 deepseek-build-agent --worktree=feat-foo
 deepseek-build-agent worktree --help
 ```
 
-Useful agent flags (see `deepseek-build agent -- --help`):
+**Actual syntax (honesty):** product CLI owns top-level `--worktree` / `-w` / `--worktree-ref` on bare TTY and `agent` paths only (rejected on `run`/`chat`). Agent trailing flags remain valid. Headless `-p` never creates a worktree from the flag.
 
-| Flag | Role |
-|------|------|
-| `-w, --worktree [NAME]` | Start in a new git worktree (**interactive**; ignored for create under `-p`) |
-| `--worktree-ref REF` | Base branch/tag/commit (with `--worktree`) |
-| `--restore-code` | With resume of remote session, apply snapshot codebase |
+Useful flags:
+
+| Flag | Owner | Role |
+|------|-------|------|
+| `-w, --worktree [NAME]` | product (forwarded) + agent | Start in a new git worktree (**interactive**; ignored for create under `-p`) |
+| `--worktree-ref REF` | product (forwarded) + agent | Base branch/tag/commit (with `--worktree`) |
+| `--restore-code` | agent | With resume of remote session, apply snapshot codebase |
 
 Config (product home `~/.deepseek-build/config.toml`):
 

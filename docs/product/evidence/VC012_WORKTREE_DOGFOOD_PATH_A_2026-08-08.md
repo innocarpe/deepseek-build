@@ -48,20 +48,40 @@ It does **not** claim VISION L3 / **5.4.0** freeze complete. It does **not** mak
 
 Close the Grok L3 **V3-WT** gap that G010 left help/stamp-only and VC011 deferred: prove on **public Path A** that worktree CLI is dogfoodable via `deepseek-build`/`dsb`, that bare product launch is **single-session** with **`worktree_product=opt_in`**, and that headless `-p --worktree` **honestly does not create** a worktree — without claiming interactive TTY sole proof or a SemVer cut.
 
+### 1.1 Scope amendment — minimal product top-level `--worktree` (plan delta)
+
+**Discovery (implementation):** Pre-existing public docs and L3 honesty already described opt-in worktree as a product surface (`dsb --worktree=…`, user-guide 13, L3-WT / V3-WT). Inspection showed the **public product CLI did not parse** top-level `--worktree` / `--worktree-ref` (clap rejected them); only agent trailing args after `dsb agent -- …` reached the binary. That made the **documented public contract false** without a code change.
+
+**Decision (minimal, documented):** Include a **thin product CLI forward** so the pre-existing public contract is true:
+
+| Item | Acceptance |
+|------|------------|
+| Parse | Product accepts `--worktree [NAME]` / `-w [NAME]` and `--worktree-ref REF` on bare TTY and `agent` paths only |
+| Forward | `tui_forward_flags` emits the same tokens to the agent after product stamps / before `exec` |
+| Line-mode reject | `run` / `chat` / other non-TUI paths reject these flags (`reject_tui_only_flags`) — not silent no-ops |
+| Dual syntax | **Still valid:** `deepseek-build agent -- --worktree NAME` (existing agent trailing path) |
+| Parser tests | Unit: `tui_forward_flags_worktree_opt_in`, `reject_worktree_flags_on_line_mode` |
+| R0A | `worktree-flag-forward` (stub argv after exec) + product `--help` lists `--worktree`; headless no-create uses product top-level + `-p` |
+
+**Why not residual-only:** Recording “top-level flag absent” while docs claim `dsb --worktree` would ship a known contract lie. The delta is **minimal** (parse + forward + reject; no worktree create logic in product). Interactive TTY create remains residual (process boundary).
+
+**Out of scope for this delta:** Changing vendor headless create behavior; making implement workers default to `isolation=worktree`; SemVer bump.
+
 ---
 
 ## 2. Call-path map (inspected before design)
 
-| Layer | Path | Role today (pre-VC012 residual) |
-|-------|------|----------------------------------|
+| Layer | Path | Role |
+|-------|------|------|
 | Public product | `deepseek-build` / `dsb` → `agent_launch::exec_agent` → agent bin | **Path A** product default |
-| Public agent args | `dsb agent -- <agent flags…>` trailing args | Forwards `--worktree`, `worktree` subcommand, `-p`, etc. |
-| Bare TTY launch | `dsb` / `deepseek-build` (no args) | Single-session TUI; **does not** auto-create worktree |
+| Product top-level (scope amendment) | `--worktree [NAME]`, `-w`, `--worktree-ref` | Parsed by product CLI; forwarded on bare/`agent` only; rejected on line-mode |
+| Public agent args | `dsb agent -- <agent flags…>` trailing args | Existing path: still forwards `--worktree`, `worktree` subcommand, `-p`, etc. |
+| Bare TTY launch | `dsb` / `deepseek-build` (no worktree flags) | Single-session TUI; **does not** auto-create worktree |
 | Agent flags | `-w, --worktree [NAME]`, `--worktree-ref` | Interactive create; **headless `-p` ignores create** (vendor honesty) |
 | Agent subcommand | `worktree list\|show\|rm\|gc\|db` | Manage tracked worktrees (offline-capable list) |
 | Product stamp | `stamp_path_a_l3` → `path_a_l3.txt` | `worktree_product=opt_in` + `bare_dsb_session=single` on every public launch |
 | Offline L3 smoke | `scripts/test-l3-smoke.sh` L3.0/L3.4 | Raw agent help only; **not** public `deepseek-build` entry |
-| User guide | [`docs/user-guide/13-worktrees.md`](../../user-guide/13-worktrees.md) | Headless honesty note; needs public-entry examples |
+| User guide | [`docs/user-guide/13-worktrees.md`](../../user-guide/13-worktrees.md) | Must match actual product + agent syntax |
 | KNOWN_LIMITS | bare `dsb` single-session / worktree opt-in | Present; keep aligned |
 | Spec 60 | Non-goal: mandatory worktree for every implement worker | Isolation `worktree` remains **optional** on Path A `spawn_subagent` |
 
@@ -74,7 +94,8 @@ Public CLI → `agent_launch` → product agent (no `DEEPSEEK_BUILD_AGENT_BIN` f
 1. Resolve public `deepseek-build` (and `dsb` when present).
 2. Hermetic `DEEPSEEK_BUILD_HOME` with a runnable agent binary under `bin/`.
 3. Assert:
-   - `deepseek-build agent --help` (or forwarded agent help) documents `--worktree` / `worktree` subcommand.
+   - Product `deepseek-build --help` documents top-level `--worktree` (scope amendment §1.1).
+   - `deepseek-build agent -- --help` documents agent `--worktree` / `worktree` subcommand.
    - `deepseek-build agent worktree --help` exits success-ish and mentions list/manage.
    - `deepseek-build agent worktree list --json --repo <git-repo>` exits 0 (empty array OK).
 4. Dual-CLI: when `dsb` sits beside the public binary, run the same `worktree list --json` via `dsb agent …`.
@@ -150,11 +171,19 @@ This story ships as **one unversioned PR** with atomic Conventional Commits (not
 - **SemVer:** none
 - **Tests:** n/a (docs)
 
+### PR unit 1b — `feat(cli): minimal product --worktree forward` (scope amendment §1.1)
+
+- **Intent:** Make documented public `dsb --worktree` / `--worktree-ref` true: parse + forward on bare/`agent`; reject on line-mode.
+- **Touches:** `crates/dsb-cli/src/main.rs` (Cli fields, `tui_forward_flags`, `reject_tui_only_flags`, unit tests)
+- **Depends on:** unit 1 (plan must record delta first — this amendment documents it)
+- **SemVer:** none
+- **Tests:** `cargo test -p dsb-cli tui_forward_flags_worktree reject_worktree_flags_on_line_mode`
+
 ### PR unit 2 — `test(scripts): hermetic Path A worktree dogfood harness`
 
-- **Intent:** Public-entry R0A for worktree CLI surface, opt-in stamp, headless no-create honesty.
+- **Intent:** Public-entry R0A for worktree CLI surface, product flag-forward stub, opt-in stamp, headless no-create honesty.
 - **Touches:** `scripts/test-path-a-vc012-r0a.sh`; optionally extend `scripts/lib/scripted_deepseek_server.py` if a dedicated stamp scenario is needed (prefer reusing `worker-cache-stamp` / short text).
-- **Depends on:** unit 1
+- **Depends on:** unit 1b
 - **SemVer:** none
 - **Tests:** `./scripts/test-path-a-vc012-r0a.sh`
 
@@ -180,15 +209,17 @@ This story ships as **one unversioned PR** with atomic Conventional Commits (not
 
 | ID | Check | Evidence |
 |----|-------|----------|
-| **VC012-1** | Public `deepseek-build agent` worktree help + list --json | R0A scenario `worktree-cli-surface` |
+| **VC012-1** | Product `--help` lists top-level `--worktree`; agent help + list --json | R0A `worktree-cli-surface` |
 | **VC012-2** | Dual CLI `dsb agent worktree list` when bin present | Same harness dual path |
-| **VC012-3** | Product `--worktree`/`--worktree-ref` appear in agent argv after exec | R0A scenario `worktree-flag-forward` (stub) |
-| **VC012-4** | Public launch stamps `worktree_product=opt_in` + `bare_dsb_session=single` | R0A scenario `worktree-opt-in-stamp` |
-| **VC012-5** | Headless `-p` + product `--worktree` creates **no** new git worktree | R0A scenario `worktree-headless-no-create` (porcelain identity) |
-| **VC012-6** | Docs honesty (bare single-session; opt-in; headless no-create) | user-guide 13 + KNOWN_LIMITS |
+| **VC012-3** | Product top-level `--worktree`/`--worktree-ref` in agent argv after exec | R0A `worktree-flag-forward` (stub) + unit parse/forward |
+| **VC012-3b** | Line-mode `run`/`chat` reject product worktree flags | Unit `reject_worktree_flags_on_line_mode` |
+| **VC012-4** | Public launch stamps `worktree_product=opt_in` + `bare_dsb_session=single` | R0A `worktree-opt-in-stamp` |
+| **VC012-5** | Headless `-p` + product `--worktree` creates **no** new git worktree | R0A `worktree-headless-no-create` (porcelain identity) |
+| **VC012-6** | Docs honesty matches actual syntax (product + agent paths) | user-guide 13 + KNOWN_LIMITS |
 | **VC012-7** | Owner-bar / path-linkage / heart stay green | gate commands |
 | **VC012-8** | No SemVer bump; stacked PR Depends on #143; not merged | `Cargo.toml` + `gh pr view` |
 | **VC012-R1** | Interactive TTY worktree **create** after exec | **Residual** — process boundary; not asserted in hermetic R0A |
+| **VC012-P** | Evidence META/WIRE `git_sha` = final source/docs head under test | Re-run R0A after final head; READY records SHA |
 
 ---
 

@@ -6,33 +6,51 @@
 | **Plan** | `vision-complete-5x` |
 | **Date** | 2026-08-08 |
 | **Status** | **IMPLEMENTATION** (runtime mint on Path A tool path; unit/integration evidence) |
-| **SemVer** | **none** (no version bump in this story; product remains **`5.1.0`** on disk) |
-| **Depends on** | **PR #125** (VC002 — ADR 0010 Spec 45 session SnippetStore design) · branch base `spec/vc002-snippet-store` |
-| **Board** | [`VISION_COMPLETE_5X_GOALS.md`](../VISION_COMPLETE_5X_GOALS.md) · DAG [`WAVE_5x_VISION_PR_DAG.md`](../WAVE_5x_VISION_PR_DAG.md) |
+| **SemVer** | **none** (no version bump in this story; does **not** cut any release minor) |
+| **Depends on** | **PR #125 MERGED** (VC002 — ADR 0010 Spec 45 session SnippetStore design) |
+| **Board** | [`VISION_COMPLETE_5X_GOALS.md`](../VISION_COMPLETE_5X_GOALS.md) · DAG [`WAVE_5x_VISION_PR_DAG.md`](../WAVE_5x_VISION_PR_DAG.md) (read live on `origin/main` for floor; see §0 residual) |
 | **Normative design** | [`docs/adr/0010-spec-45-snippet-store.md`](../../adr/0010-spec-45-snippet-store.md) §4 issuance |
 | **Semantics SSOT** | [`docs/specs/45-snippet-edit.md`](../../specs/45-snippet-edit.md) |
 | **Binding** | [`HEART_3X_SPEC_BINDING.md`](../../architecture/HEART_3X_SPEC_BINDING.md) · [`HARNESS_PHILOSOPHY.md`](../../architecture/HARNESS_PHILOSOPHY.md) §4.1 |
 
 **This file is the mandatory ultragoal PR unit plan for VC003 plus implementation evidence.**
-It does **not** claim VISION L1 complete, owner-bar re-cut, Path A multi-edit R0A with required `snippet_id`, write/bash invalidation, resume/fork, or any **`5.2.0`** ship.
+It does **not** claim VISION L1 complete, owner-bar re-cut, Path A multi-edit R0A with required `snippet_id`, write/bash invalidation, resume/fork, any SemVer cut, or public R0A wire proof.
 
 ---
 
-## 0. Floor and dependency facts (2026-08-08)
+## 0. Floor and dependency facts
 
-| Probe | Result |
-|-------|--------|
-| Product version on disk (`Cargo.toml`) | **`5.1.0`** |
+### 0.1 Initial story floor (when VC003 opened)
+
+| Probe | Result (story start) |
+|-------|----------------------|
+| Product floor assumed | **`5.1.0`** on main / Release / npm (VC001c complete/skip) |
 | VC002 design | ADR 0010 accepted; evidence `VC002_SPEC45_ADR_2026-08-07.md` |
-| VC002 GitHub PR | **#125** `spec(45): Path A snippet_id ADR + store design` (`spec/vc002-snippet-store`) — **do not alter/merge that PR in this story** |
-| This branch | `feat/vc003-path-a-snippet-id` forked from VC002 stack HEAD (stacked on #125) |
+| VC002 GitHub PR | **#125** opened from `spec/vc002-snippet-store` (design-only) |
+| This branch | `feat/vc003-path-a-snippet-id` forked from VC002 stack tip `9da03a1` |
+| Board (then) | Spec 45 Path A train (VC003–VC006) targeted cut **`5.2.0`** |
+
+### 0.2 Live floor (re-check before open-to-`main`; 2026-08-08)
+
+| Probe | Live result |
+|-------|-------------|
+| `git show origin/main:Cargo.toml` version | **`5.2.0`** (`origin/main` @ `f3a50dd`, tag **`v5.2.0`**) |
+| `package.json` on `origin/main` | **`5.2.0`** |
+| `npm view @innocarpe/deepseek-build version` | **`5.1.0`** (registry lag behind `main`) |
+| `gh release list` Latest | **`v5.1.0`** (published GitHub Release **Latest** still 5.1.0; **`v5.2.0` git tag** exists on main without a matching entry in the top release list) |
+| VC002 PR #125 | **MERGED** into `main` (`64c4066`); remote branch `spec/vc002-snippet-store` **deleted** |
+| VC002 commits on main | **yes** — `5f58a8c` + `9da03a1` are ancestors of `origin/main` |
+| This branch vs main | Behind main; **11 VC003-only commits** (`origin/main..HEAD`); three-dot file delta is Path A mint only (no SemVer files) |
 | Thin Path B | `crates/dsb-tools` `SnippetStore` remains **reference/oracle**, not Path A proof |
 
-### Floor interpretation
+### 0.3 Floor interpretation (fail-close)
 
-- **VC002 is design-complete for implementers; VC003 is the first Path A runtime unit.**
-- Next feature minor for full Spec 45 Path A remains **`5.2.0`** (VC003–VC006 together; SemVer only in VC006).
+- **VC002 is design-complete and merged; VC003 is the first Path A runtime unit** (SemVer **none**).
+- **This PR does not cut `5.2.0`.** That minor is **already used** on `origin/main` (chore release bump #129 / tag `v5.2.0`). Do **not** reuse **`5.2.0`** for Spec 45 completion.
+- **Board residual (honesty):** files on `origin/main` still *document* Spec 45 cut as **`5.2.0`** (VC006) and Reasonix as **`5.3.0`** (VC007–VC009). That mapping is **stale relative to the live `main` SemVer floor**. A separate board rebase is required; **this evidence does not re-assign 5.2.0**.
+- **Remaining Spec 45 train (VC004 → VC005 → cut unit):** schedule the Deep Code completion cut at the **next free feature minor**. Under the live floor (**`main` = 5.2.0**), that is **`5.3.0`** unless a later board/npm re-check shows another free `5.Y.0`. Feature PRs (VC003–VC005) stay **unversioned**.
 - Owner-bar **`file_version` (sha256)** mint stays as a **compatibility alias** of snippet `version`; do not remove or reinterpret it.
+- Safe open base for this branch is **`main`** (not the deleted stack branch).
 
 ---
 
@@ -78,7 +96,7 @@ Per [`ULTRAGOAL_PR_PLANNING.md`](../ULTRAGOAL_PR_PLANNING.md). **VC003 is one fe
 |------|-------|-------------|
 | VC004 | require `snippet_id` on Path A `search_replace` | **not implemented** |
 | VC005 | write/bash invalidation | **not implemented** |
-| VC006 | heart + multi-edit R0A + **`5.2.0`** | **not implemented** |
+| VC006 | heart + multi-edit R0A + **SemVer cut of remaining Spec 45** (live: next free minor **`5.3.0`**, not reused **`5.2.0`**) | **not implemented** |
 
 ### 2.2 Sequential vs parallel
 
@@ -94,7 +112,7 @@ Per [`ULTRAGOAL_PR_PLANNING.md`](../ULTRAGOAL_PR_PLANNING.md). **VC003 is one fe
 - Pure docs elsewhere that do not redefine ADR 0010 semantics may proceed independently.
 
 ```text
-PR #125 (VC002 ADR) ──► VC003 (mint) ──► VC004 ──► VC005 ──► VC006 (5.2.0)
+PR #125 (VC002 ADR, merged) ──► VC003 (mint, no SemVer) ──► VC004 ──► VC005 ──► VC006 (Spec 45 cut @ next free minor; live → 5.3.0)
 ```
 
 ### 2.3 Atomic commits (on `feat/vc003-path-a-snippet-id`)
@@ -117,14 +135,14 @@ test(tools): VC003 snippet_id mint and session-local regressions
 
 | Pattern | Choice for VC003 |
 |---------|------------------|
-| **Base** | Stacked on **PR #125** / `spec/vc002-snippet-store` (or `main` only after #125 merges) |
+| **Base** | **`main`** (live). Historical stack base `spec/vc002-snippet-store` is **deleted** after #125 merge. |
 | **Branch** | `feat/vc003-path-a-snippet-id` |
-| **Merge order** | Bottom-up: #125 → VC003 → VC004 → … |
+| **Merge order** | #125 (done) → VC003 → VC004 → VC005 → Spec 45 cut (next free minor) |
 | **Conflict lock** | Path A `read_file` + `FileContent` + session snippet store owned by VC003; edit path reserved for VC004 |
 
-**Planned PR title (when leader opens later):** `feat(tools): mint snippet_id on Path A read_file`
+**Planned PR title:** `feat(tools): mint snippet_id on Path A read_file`
 **Label kind:** `feat`
-**Body:** Problem / What changed / Testing honesty / AI review / Security / Notes; `Depends on #125`.
+**Body:** Problem / What changed / Testing honesty / AI review / Security / Notes; **Depends on #125 (merged)**; SemVer none; does not cut **`5.2.0`**.
 
 ---
 
@@ -166,7 +184,8 @@ test(tools): VC003 snippet_id mint and session-local regressions
 - Does **not** require `snippet_id` on `search_replace` (VC004).
 - Does **not** implement write create-only / bash expire laws (VC005).
 - Does **not** persist/restore snippet tables across resume/fork (VC006).
-- Does **not** cut **`5.2.0`** or bump SemVer.
+- Does **not** cut **`5.2.0`** (already used on live `main`), **`5.3.0`**, or any other SemVer; does **not** bump product version.
+- Does **not** re-plan board tracks on `main` (board still lists Spec 45 cut as 5.2.0 in places — residual for a board rebase PR).
 - Does **not** claim public `deepseek-build`/`dsb` wire harness R0A unless that harness is actually run and captured in this evidence file (unit/integration tests alone are **labeled** as unit/integration, not R0A).
 
 ---
@@ -218,7 +237,7 @@ test -f docs/adr/0010-spec-45-snippet-store.md
 | Non-text / invalid UTF-8 / error no-id | **PASS** (binary, not-found, `vc003_invalid_utf8_does_not_mint_snippet_id`) | **unit** |
 | Thin Path B oracle still green | **PASS** (`cargo test -p dsb-tools snippets` — 9 ok) | thin oracle (**not** Path A proof) |
 | Public Path A R0A wire | **not run / not claimed** | — |
-| SemVer bump | **none** | cargo version still `5.1.0` |
+| SemVer bump | **none** | this branch does not touch version files; live `origin/main` product is already **`5.2.0`** |
 
 ### Required project gates (verified on branch HEAD `82bbdb2`)
 
@@ -285,13 +304,21 @@ git diff --check spec/vc002-snippet-store...HEAD
 git status --short --branch
 # ## feat/vc003-path-a-snippet-id  (clean at gate run)
 
-# Docs presence + floor
+# Live floor re-check (before open-to-main)
+git show origin/main:Cargo.toml | rg 'version'
+# 5.2.0
+npm view @innocarpe/deepseek-build version
+# 5.1.0 (lag)
+gh release list -R innocarpe/deepseek-build --limit 8
+# Latest = v5.1.0; main also has tag v5.2.0
+
+# Docs presence
 test -f docs/product/evidence/VC003_PATH_A_SNIPPET_ID_2026-08-08.md
 test -f docs/adr/0010-spec-45-snippet-store.md
-# product SemVer still 5.1.0 (no bump)
+# this PR: no SemVer bump; does not cut 5.2.0 (already used on main)
 ```
 
-**Honesty:** All Path A mint claims above are **unit/integration tests inside `xai-grok-tools`**. No public `deepseek-build`/`dsb` agent wire harness (R0A) was run for this story. Required gates (owner-bar / path-a-linkage / heart-regression offline) are green as tabulated; live L3 and Path A E2E remain **SKIP**, not claimed.
+**Honesty:** All Path A mint claims above are **unit/integration tests inside `xai-grok-tools`**. No public `deepseek-build`/`dsb` agent wire harness (R0A) was run for this story. Required gates (owner-bar / path-a-linkage / heart-regression offline) are green as tabulated; live L3 and Path A E2E remain **SKIP**, not claimed. Initial story floor was **`5.1.0`**; live product floor on `origin/main` is **`5.2.0`** — VC003 does not ship that cut; remaining Spec 45 completion is scheduled at the **next free** feature minor (**`5.3.0`** under current live floor).
 
 ---
 

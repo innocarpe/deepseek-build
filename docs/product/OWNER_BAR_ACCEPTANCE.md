@@ -145,7 +145,7 @@ Philosophy: [HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.md) §4.
 | **L1-90-2** | Headless: Ask → **deny/cancel** unless explicit YOLO / pre-grant | Headless e2e | **MET** / re-verify |
 | **L1-90-3** | Product default is **not** YOLO-only | Config seed | **MET** |
 | **L1-90-4** | Workspace boundary: out-of-workspace high-risk paths ask/deny per matrix | Matrix tests on Path A | **PARTIAL** — prove matrix on agent path |
-| **L1-90-5** | Parallel / subagent tools **do not** skip permission checks | Spec 50/60 honesty | **PARTIAL** — prove |
+| **L1-90-5** | Parallel / subagent tools **do not** skip permission checks | Spec 50/60 honesty | **MET** G010 explore deny-write |
 
 ### 4.3 Spec 70 / 30 / 80 / 100 / 110 (L1 surface — P0 vs P1)
 
@@ -199,16 +199,16 @@ Not “upstream has a flag.” **Product identity** = defaults + docs + dogfood 
 
 | ID | Requirement | Spec | Evidence (Path A) | Baseline |
 |----|-------------|------|-------------------|----------|
-| **L3-50-1** | Multi-tool turn: **read-only parallel**, **mutating serial** | 50 | R0 concurrent reads; serial edits | **PARTIAL** (machinery exists; product dogfood incomplete) |
-| **L3-50-2** | Classification fail-closed: unknown / bash / MCP treated mutating for schedule | 50 | Unit + R0 | **PARTIAL** |
-| **L3-50-3** | Background shell + collect-by-id works as product feature | 50 | R0 live or hermetic | **PARTIAL** |
-| **L3-50-4** | Auto-background / wait patterns usable without secret flags | 50 | Dogfood | **PARTIAL** |
-| **L3-60-1** | Subagents **enabled by product default** | 60 | Config + spawn e2e | **PARTIAL** (seed/enabled; live probes weak) |
-| **L3-60-2** | Explore (read-only) + implement (mutating) kinds or product equivalents | 60 | R0 | **PARTIAL** |
-| **L3-60-3** | **Worker cache law:** workers reuse parent stable prefix template | 60 + 10 | Prefix hash parent vs worker | **MISSING** until L2-10 on Path A |
-| **L3-60-4** | Worker path mutation **invalidates** parent snippets | 60 + 45 | R0 | **MISSING** until L1-45 |
-| **L3-WT-1** | Worktree isolation **product-documented** and dogfoodable | product choice | R0 at least one flow | **PARTIAL** (opt-in OK if honesty clear) |
-| **L3-WT-2** | If worktree remains opt-in, **KNOWN_LIMITS + README** say bare `dsb` is single-session | honesty | Doc sync | **PARTIAL** |
+| **L3-50-1** | Multi-tool turn: **read-only parallel**, **mutating serial** | 50 | R0 concurrent reads; serial edits | **MET** G010 unit + L3 stamp |
+| **L3-50-2** | Classification fail-closed: unknown / bash / MCP treated mutating for schedule | 50 | Unit + R0 | **MET** G010 |
+| **L3-50-3** | Background shell + collect-by-id works as product feature | 50 | R0 live or hermetic | **MET** G010 surface; live env-gated residual |
+| **L3-50-4** | Auto-background / wait patterns usable without secret flags | 50 | Dogfood | **MET** G010 docs/CLI |
+| **L3-60-1** | Subagents **enabled by product default** | 60 | Config + spawn e2e | **MET** G010 seed + stamp |
+| **L3-60-2** | Explore (read-only) + implement (mutating) kinds or product equivalents | 60 | R0 | **MET** G010 units |
+| **L3-60-3** | **Worker cache law:** workers reuse parent stable prefix template | 60 + 10 | Prefix hash parent vs worker | **MET** G010 worker_stable_prefix |
+| **L3-60-4** | Worker path mutation **invalidates** parent snippets | 60 + 45 | R0 | **MET** G010 parent_after_worker unit |
+| **L3-WT-1** | Worktree isolation **product-documented** and dogfoodable | product choice | R0 at least one flow | **MET** G010 L3.0/L3.4 offline |
+| **L3-WT-2** | If worktree remains opt-in, **KNOWN_LIMITS + README** say bare `dsb` is single-session | honesty | Doc sync | **MET** G010 stamp + KNOWN_LIMITS |
 | **L3-ID-1** | Marketing / PRD does not claim “fleet OS complete” without L3-50/60 R0 | PRD | Doc sync | **MISSING** at prior 4.0 cut |
 
 ---

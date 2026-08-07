@@ -1,0 +1,5 @@
+git_sha=87c2a2c7ca2def087bed8088c013c01fc060156c
+story=G010
+heart_regression=PASS
+l3_smoke_offline=PASS
+path_a_e2e=PASS path_a_l3_stamp=present

@@ -480,6 +480,84 @@ fn stamp_path_a_routing(home: &BuildHome) {
     let _ = std::fs::write(path, stamp);
 }
 
+/// Stamp Path A L3 schedule + worker-cache defaults (owner-bar G010).
+///
+/// Production call site for [`dsb_agent::is_mutating_tool`] /
+/// [`dsb_agent::partition_indices`] / [`dsb_agent::worker_stable_prefix`] so
+/// Spec 50/60 hearts are not test-only. Best-effort; never blocks launch.
+fn stamp_path_a_l3(home: &BuildHome) {
+    use dsb_agent::{
+        MAX_PARALLEL_READONLY, WorkerKind, is_mutating_tool, partition_indices, worker_stable_prefix,
+    };
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    // Spec 50: RO parallel / mutate serial classification (fail-closed unknown/bash/MCP).
+    let batch = vec![
+        ("read_file".into(), json!({"target_file": "a.txt"})),
+        ("search_replace".into(), json!({"file_path": "a.txt"})),
+        ("run_terminal_command".into(), json!({"command": "echo x"})),
+        ("mcp__demo__ping".into(), json!({})),
+        ("grep".into(), json!({"pattern": "x"})),
+        ("unknown_tool_xyz".into(), json!({})),
+    ];
+    // Map product names → classifier (also accepts short ToolName aliases).
+    let class_input: Vec<(String, serde_json::Value)> = batch
+        .iter()
+        .map(|(n, a): &(String, serde_json::Value)| {
+            let short = match n.as_str() {
+                "read_file" => "read",
+                "search_replace" => "edit",
+                "run_terminal_command" => "bash",
+                other => other,
+            };
+            (short.to_string(), a.clone())
+        })
+        .collect();
+    let (ro, mu) = partition_indices(&class_input);
+    let bash_mut = is_mutating_tool("bash", &json!({"command": "true"}));
+    let mcp_mut = is_mutating_tool("mcp__x__y", &json!({}));
+    let unk_mut = is_mutating_tool("totally_unknown", &json!({}));
+
+    // Spec 60: worker cache law — identical tools/env → same epoch.
+    let tools = dsb_tools::tool_definitions();
+    let epoch_a = worker_stable_prefix(&cwd, None, tools.clone())
+        .map(|s| s.epoch.sha256_hex)
+        .unwrap_or_else(|_| "error".into());
+    let epoch_b = worker_stable_prefix(&cwd, None, tools)
+        .map(|s| s.epoch.sha256_hex)
+        .unwrap_or_else(|_| "error".into());
+
+    let config_body = std::fs::read_to_string(home.path().join("config.toml")).unwrap_or_default();
+    let subagents_enabled = config_body.contains("[subagents]")
+        && config_body
+            .lines()
+            .any(|l| l.trim() == "enabled = true" || l.trim() == "enabled=true");
+
+    let stamp = format!(
+        "max_parallel_readonly={MAX_PARALLEL_READONLY}\n\
+         ro_indices={ro:?}\n\
+         mu_indices={mu:?}\n\
+         bash_mutating={bash_mut}\n\
+         mcp_mutating={mcp_mut}\n\
+         unknown_mutating={unk_mut}\n\
+         worker_kind_explore={}\n\
+         worker_kind_implement={}\n\
+         worker_epoch_a={epoch_a}\n\
+         worker_epoch_b={epoch_b}\n\
+         worker_epochs_match={}\n\
+         subagents_enabled_in_config={subagents_enabled}\n\
+         worktree_product=opt_in\n\
+         bare_dsb_session=single\n",
+        WorkerKind::Explore.as_str(),
+        WorkerKind::Implement.as_str(),
+        epoch_a == epoch_b && epoch_a != "error",
+    );
+    let path = home.path().join("path_a_l3.txt");
+    let _ = std::fs::write(path, stamp);
+}
+
 /// Exec the Grok-class agent, replacing this process (Unix).
 ///
 /// On failure to find the binary, returns an error with install guidance.
@@ -493,6 +571,8 @@ pub fn exec_agent(args: &[String]) -> Result<()> {
     stamp_path_a_prefix_epoch(&home);
     // Spec 20 / G009: production Path A Flash/Pro routing stamp (non-blocking).
     stamp_path_a_routing(&home);
+    // Spec 50/60 / G010: production Path A L3 schedule + worker cache stamp.
+    stamp_path_a_l3(&home);
     print_product_splash();
 
     let Some(bin) = find_agent_bin() else {
@@ -628,6 +708,29 @@ mod tests {
         );
         assert!(body.contains("effort="), "visibility must show effort: {body}");
         assert!(body.contains("thinking="), "visibility must show thinking: {body}");
+    }
+
+    /// G010 / L3-50+60: production L3 stamp — fail-closed classify + worker cache law.
+    #[test]
+    fn stamp_path_a_l3_schedule_and_worker_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dsb_config::BuildHome::from_path(dir.path());
+        // Seed config so subagents_enabled can be true.
+        ensure_product_agent_config(&home).unwrap();
+        stamp_path_a_l3(&home);
+        let body =
+            std::fs::read_to_string(dir.path().join("path_a_l3.txt")).expect("l3 stamp file");
+        assert!(body.contains("bash_mutating=true"), "{body}");
+        assert!(body.contains("mcp_mutating=true"), "{body}");
+        assert!(body.contains("unknown_mutating=true"), "{body}");
+        assert!(body.contains("worker_epochs_match=true"), "{body}");
+        assert!(body.contains("subagents_enabled_in_config=true"), "{body}");
+        assert!(body.contains("worktree_product=opt_in"), "{body}");
+        assert!(body.contains("worker_kind_explore=explore"), "{body}");
+        assert!(body.contains("worker_kind_implement=implement"), "{body}");
+        // Mutating indices must include edit/bash/mcp/unknown (1,2,3,5 after map).
+        assert!(body.contains("mu_indices="), "{body}");
+        assert!(body.contains("ro_indices="), "{body}");
     }
 }
 

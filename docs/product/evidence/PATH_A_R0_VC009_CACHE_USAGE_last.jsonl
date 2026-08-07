@@ -1,4 +1,4 @@
 {"n": 1, "kind": "request", "model": "deepseek-v4-flash", "reasoning_effort": "high"}
-{"n": 1, "ts": 1786133421.552143, "kind": "response_usage", "path": "/chat/completions", "model": "deepseek-v4-flash", "usage": {"prompt_tokens": 100, "completion_tokens": 1, "total_tokens": 101, "prompt_cache_hit_tokens": 80, "prompt_cache_miss_tokens": 20}}
+{"n": 1, "ts": 1786133871.225507, "kind": "response_usage", "path": "/chat/completions", "model": "deepseek-v4-flash", "usage": {"prompt_tokens": 100, "completion_tokens": 1, "total_tokens": 101, "prompt_cache_hit_tokens": 80, "prompt_cache_miss_tokens": 20}}
 {"n": 2, "kind": "request", "model": "deepseek-v4-flash", "reasoning_effort": "high"}
-{"n": 2, "ts": 1786133422.180861, "kind": "response_usage", "path": "/chat/completions", "model": "deepseek-v4-flash", "usage": {"prompt_tokens": 100, "completion_tokens": 1, "total_tokens": 101, "prompt_cache_hit_tokens": 80, "prompt_cache_miss_tokens": 20}}
+{"n": 2, "ts": 1786133871.581556, "kind": "response_usage", "path": "/chat/completions", "model": "deepseek-v4-flash", "usage": {"prompt_tokens": 100, "completion_tokens": 1, "total_tokens": 101, "prompt_cache_hit_tokens": 80, "prompt_cache_miss_tokens": 20}}

@@ -210,14 +210,16 @@ source=path_a_turn_usage
 
 | Field | Value |
 |-------|--------|
-| **Reviewer** | Independent Grok critic (`oh-my-claudecode:critic`, subagent `019fddd4-4c70-7491-a91b-601adbc62099`) |
+| **Reviewer 1** | Independent Grok critic (`oh-my-claudecode:critic`, subagent `019fddd4-4c70-7491-a91b-601adbc62099`) |
 | **Initial verdict** | **NOT_READY** — READY claimed with gate placeholders; stamp gate soft/fixture-only hard path hollow |
 | **P0 closed** | owner-bar **60/60 PASS** + heart regression **PASS** recorded in §6.1 |
 | **P1 closed** | e2e hard-fails if stamp missing or `cached_prompt_tokens<1` or chip missing (Path A consumption, not fixture-only) |
-| **Close-out verdict** | **READY** after P0/P1 fixes + re-green e2e (`cache_stamp_ok cached_prompt_tokens=80`) |
+| **Close-out (after harden)** | **READY** after P0/P1 fixes + re-green e2e (`cache_stamp_ok cached_prompt_tokens=80`) |
+| **Reviewer 2 (final head)** | Fresh independent Grok review of PR **#141** head `88faf07` — full write-up [`VC009_PR141_INDEPENDENT_REVIEW_2026-08-08.md`](./VC009_PR141_INDEPENDENT_REVIEW_2026-08-08.md) |
+| **Final-head verdict** | **READY** — P0/P1 none; P2 residuals only; **do not merge** until stack base #140 lands |
 | **P2 residual** | stamp chip arithmetic is local (not calling pager `format_cache_hit_pct`); board SemVer text still stale |
 
-Implementer self-notes are **not** independent review. This section is the independent close-out after adversarial fixes.
+Implementer self-notes are **not** independent review. Reviewer 2 re-verified hardening, units, e2e, labels, and residual honesty on the final head.
 
 ### 6.5 Residuals (honest)
 

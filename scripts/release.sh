@@ -10,7 +10,8 @@
 #     [--no-publish] [--skip-bump] [--skip-pr] [--skip-tag] [--publish-only]
 #     [--platform ID] [--timeout SEC] [--wait-all]
 #
-# Human gates: npm OTP at publish time. Everything before that is automatic.
+# Human gate: npm OTP is only asked if npm demands one (EOTP). With a
+# publish-capable token (granular/automation) publish is fully automatic.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -107,7 +108,8 @@ tag, prebuilt attach, npm publish.
 - Kind: \`chore(release)\`. Cache impact: none (no agent/prompt/tool behavior change).
 
 ## Notes
-- npm publish is human-gated (OTP): \`./scripts/release.sh $VERSION --publish-only\`
+- npm publish tries without OTP first; a one-time code is asked only if npm
+  returns EOTP: \`./scripts/release.sh $VERSION --publish-only\`
 - \`release-prebuilt.yml\` attaches prebuilt tarballs to the \`v$VERSION\` release;
   wait for the publishing platform's asset before \`npm publish\`.
 EOF
@@ -174,18 +176,30 @@ fi
 
 # --- 6. npm publish -------------------------------------------------------------
 if [[ "$NO_PUBLISH" -eq 1 ]]; then
-  echo "== skipping publish (--no-publish). Manual: npm publish --access public --otp <OTP> =="
+  echo "== skipping publish (--no-publish). Manual: npm publish --access public =="
   exit 0
 fi
 echo "== npm publish @innocarpe/deepseek-build@$VERSION =="
 npm whoami >/dev/null
-OTP="${NPM_OTP:-}"
-if [[ -z "$OTP" ]]; then
-  read -rsp "npm OTP (one-time code): " OTP
-  echo
+# Try without OTP first: a publish-capable token (granular/automation) needs no
+# one-time code. Only fall back to OTP if npm actually demands one (EOTP).
+ERR_LOG="$(mktemp)"
+if ! npm publish --access public 2> "$ERR_LOG"; then
+  if rg -qi "EOTP|one-time pass|two-factor|2fa" "$ERR_LOG"; then
+    OTP="${NPM_OTP:-}"
+    if [[ -z "$OTP" ]]; then
+      read -rsp "npm OTP (one-time code): " OTP
+      echo
+    fi
+    [[ -n "$OTP" ]] || { echo "error: empty OTP" >&2; rm -f "$ERR_LOG"; exit 1; }
+    npm publish --access public --otp "$OTP"
+  else
+    cat "$ERR_LOG" >&2
+    rm -f "$ERR_LOG"
+    exit 1
+  fi
 fi
-[[ -n "$OTP" ]] || { echo "error: empty OTP" >&2; exit 1; }
-npm publish --access public --otp "$OTP"
+rm -f "$ERR_LOG"
 
 echo
 echo "== done. User verification: =="

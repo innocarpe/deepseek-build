@@ -9,8 +9,10 @@ fix on a branch → PR (pr-authoring skill) → merge (merge commit)
 → ./scripts/release.sh <version> → npm i -g @innocarpe/deepseek-build@<version> → verify
 ```
 
-Only the npm publish step needs a human (one-time OTP). Everything else in the
-release half is scripted so a single change costs minutes, not a build marathon.
+Only the npm publish step can need a human, and only when npm actually demands
+a one-time code (EOTP) — a publish-capable token (granular/automation) publishes
+with no OTP at all. Everything else in the release half is scripted so a single
+change costs minutes, not a build marathon.
 
 ## Where the time actually goes
 
@@ -31,7 +33,7 @@ turn repeated builds into incremental ones.
 | Script | Role |
 |--------|------|
 | [`bump-version.sh`](../../scripts/bump-version.sh) | Single-command bump: `Cargo.toml`, `package.json`, `Cargo.lock`, `CHANGELOG.md`, `docs/product/versions/README.md`. Requires a clean tree; `--dry-run` previews. |
-| [`release.sh`](../../scripts/release.sh) | Orchestrator: bump → verify → PR (`chore(release)`) → merge → tag `v{ver}` → wait for prebuilt assets → `npm publish` (OTP). |
+| [`release.sh`](../../scripts/release.sh) | Orchestrator: bump → verify → PR (`chore(release)`) → merge → tag `v{ver}` → wait for prebuilt assets → `npm publish` (OTP only if npm demands it). |
 
 ### `release.sh` flags
 
@@ -47,7 +49,8 @@ turn repeated builds into incremental ones.
 
 ## Human gates
 
-1. **npm OTP** — `release.sh` pauses at publish for the one-time code (or `NPM_OTP` env).
+1. **npm OTP (only if demanded)** — `release.sh` publishes without `--otp` first;
+   if npm returns EOTP it pauses for the one-time code (or `NPM_OTP` env).
 2. **PR body review** — read the generated `chore(release)` PR before it is merged;
    fill CHANGELOG release notes before running the script if a placeholder remains.
 

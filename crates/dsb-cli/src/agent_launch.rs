@@ -341,6 +341,8 @@ pub fn exec_agent(args: &[String]) -> Result<()> {
         .unwrap_or_else(|| PRODUCT_THEME.to_string());
     cmd.env("GROK_THEME", &theme);
     cmd.env("LC_GROK_THEME", &theme);
+    // Brand the vendored resume hints: `dsb --resume <id>` instead of `grok --resume <id>`.
+    cmd.env("GROK_INVOCATION_NAME", crate::invocation_name());
     if env::var_os(dsb_config::ENV_API_KEY).is_none() {
         if let Ok(c) = dsb_config::Credentials::load(&home) {
             cmd.env(dsb_config::ENV_API_KEY, c.api_key());

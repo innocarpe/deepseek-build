@@ -58,6 +58,20 @@ Never silent-copy. Always a dedicated PR:
 
 ---
 
+## Local patches
+
+The tree ships "as upstream", but a small set of **deliberate local deviations** lives in the vendored sources. `rsync -a --delete` in the refresh procedure would silently drop them — re-apply after every refresh and keep this list current:
+
+| File | Patch | Why |
+|------|-------|-----|
+| `crates/codegen/xai-grok-pager/src/app/mod.rs` | `print_exit_resume_hint` prints the command from env `GROK_INVOCATION_NAME` (default `grok`) via `invocation_name()` + pure `resume_hint_line()` | dsb-cli brands quit hints `dsb --resume <id>` so the printed command is pasteable |
+| `crates/codegen/xai-grok-pager/src/app/screen_mode_relaunch.rs` | `screen_mode_relaunch_resume_hint` uses `super::invocation_name()` (pure `_with` variant for tests) | Same branding for the screen-mode relaunch failure hint |
+| `crates/dsb-cli/src/agent_launch.rs` | `exec_agent` sets `GROK_INVOCATION_NAME` to the product command name | Wrapper side of the branding contract |
+
+Tests: `resume_hint_line_brands_invocation_name` and `failed_relaunch_hint_brands_invocation_name` pin the `dsb` output; upstream default (`grok`) assertions keep passing.
+
+---
+
 ## CI plan
 
 ### Default CI workflow (`ci.yml`)

@@ -1,6 +1,6 @@
 {
   "name": "@innocarpe/deepseek-build",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "description": "DeepSeek Build — npm i -g then type dsb for full-screen DeepSeek TUI",
   "license": "Apache-2.0",
   "repository": {
@@ -23,24 +23,19 @@
     "dsb": "npm/bin/dsb.js"
   },
   "files": [
-    "npm/**",
-    "scripts/install.sh",
-    "scripts/check-semver.sh",
-    "crates/**",
-    "Cargo.toml",
-    "Cargo.lock",
-    "rust-toolchain.toml",
+    "npm/bin/**",
+    "npm/lib/**",
+    "npm/scripts/**",
     "README.md",
     "LICENSE",
     "NOTICE",
-    "third_party/grok-build/**",
-    "docs/architecture/GROK_VENDOR.md",
-    "scripts/build-grok-pager.sh"
+    "package.json"
   ],
   "scripts": {
     "postinstall": "node npm/scripts/postinstall.js",
     "version-check": "node npm/scripts/check-version-match.js",
-    "prepublishOnly": "node npm/scripts/check-version-match.js && ./scripts/check-semver.sh"
+    "prepublishOnly": "node npm/scripts/check-version-match.js && ./scripts/check-semver.sh",
+    "package-prebuilt": "./scripts/package-release-binaries.sh"
   },
   "publishConfig": {
     "access": "public"

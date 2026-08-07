@@ -36,7 +36,7 @@ Bare `dsb` / `deepseek-build` is a **single-session** TUI. Worktree isolation is
 | **V3-50-2** | Background shell + collect-by-id | VC010 · re-prove VC013 |
 | **V3-60-1** | Explore + implement-class subagents | VC011 · re-prove VC013 |
 | **V3-60-2** | Worker reuses parent stable-prefix epoch | VC011 stamp · re-prove VC013 |
-| **V3-60-3** | Parent snippet expire after worker mutation | **Residual** (not Path A sole green) |
+| **V3-60-3** | Parent snippet invalidate after worker mutation | **Proven** VC015 Path A R0A (`snippet_stale` after implement-class mutates same path) |
 | **V3-WT** | Worktree CLI dogfood + bare-session honesty | VC012 · re-prove VC013 |
 
 On-branch packaging of this L3 train is product **`5.4.0`** (VC013 cut). That is

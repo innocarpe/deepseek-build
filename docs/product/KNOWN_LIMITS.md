@@ -19,7 +19,7 @@
 | **5.2.0 – 5.2.2** | Live packaging line on **`main` / npm / GitHub Latest`** as of the VC014 docs pass (**`5.2.2`**). Includes early vision floor work; **not** the full unmerged vision stack. |
 | **5.3.0 (on-branch stack)** | Spec 45 Path A `snippet_id` Deep Code cut (VC006) — **may be unmerged** relative to live main. |
 | **5.4.0 (on-branch stack)** | L3 Path A R0A train cut (VC010–VC013) — **may be unmerged** relative to live main. |
-| **5.5.0** | Vision freeze — **not claimed** until VC015 dual review + CUT. |
+| **5.5.0 (on-branch freeze)** | Vision-complete freeze cut (VC015) — **on-branch only** until dual review + merge + human-gated publish; **not** live npm/GitHub Latest by itself. |
 
 **Floor rule:** live install from npm/GitHub Latest can still report **`5.2.2`** while this monorepo stack tip already carries **`5.4.0`**. Treat stack SemVer and registry SemVer as different until merge + human-gated publish.
 
@@ -38,6 +38,7 @@ These are **on Path A** (public `deepseek-build` / `dsb` → product agent) unde
 | Cache-hit visibility (chip path + Path A stamp) | VC009 | [VC009 evidence](./evidence/VC009_CACHE_VISIBILITY_2026-08-08.md) |
 | Multi-tool parallel + bg collect-by-id | VC010 · re-prove VC013 | [VC010](./evidence/VC010_L3_MULTI_TOOL_BG_PATH_A_2026-08-08.md) · [VC013](./evidence/VC013_L3_5_4_0_CUT_2026-08-08.md) |
 | Subagent explore/implement + worker epoch stamp | VC011 · re-prove VC013 | [VC011](./evidence/VC011_SUBAGENT_WORKER_CACHE_PATH_A_2026-08-08.md) |
+| Parent snippet invalidate after implement worker (V3-60-3) | VC015 Path A R0A (`snippet_stale`) | [VC015 evidence](./evidence/VC015_VISION_FREEZE_5_5_0_2026-08-08.md) |
 | Worktree opt-in dogfood + headless no-create | VC012 · re-prove VC013 | [VC012](./evidence/VC012_WORKTREE_DOGFOOD_PATH_A_2026-08-08.md) |
 
 Owner-bar and heart regression gates must stay green on the stack:
@@ -55,11 +56,11 @@ Only items below are treated as **open residual** for vision honesty. Do **not**
 
 | Topic | Reality | Where |
 |-------|---------|-------|
-| **V3-60-3** parent snippet expiry after worker mutation | Disk mutation by implement-class child is proven; **Path A parent snippet-table expire** is **not** sole-green (thin unit support only) | VC011 residual · carried by VC013 |
 | **Interactive TTY worktree create** | Product flag forward + headless no-create + opt-in stamp proven; **interactive create after process `exec`** not asserted as sole green | VC012 residual · carried by VC013 |
 | **Non-darwin packaging / assets** | Prebuilt platform is **`darwin-arm64`** (Apple Silicon macOS) only; other targets deferred | Install / ADR 0009 · [05-npm.md](../user-guide/05-npm.md) |
 | **Human-gated npm / GitHub publish** | Registry publish and Release attach remain **human-gated** (ADR 0007). Docs and on-branch cuts do **not** auto-publish | Release lane |
-| **Stack vs live SemVer lag** | On-branch stack may be **`5.4.0`** while live `main` / npm / GitHub Latest remain **`5.2.2`** until stack merges and publish runs | Floor re-check every session |
+| **Stack vs live SemVer lag** | On-branch stack may carry **`5.5.0`** freeze while live `main` / npm / GitHub Latest remain **`5.2.2`** until stack merges and publish runs | Floor re-check every session |
+| **Explicit parent `expire_all` after spawn** | V3-60-3 is **closed** via Path A parent **`snippet_stale`** after implement-class worker mutates the same path (VC015). Product-default **table clear** (`expire_all`) on parent after worker is **not** separately proven as a Path A sole green path | Spec 60 spirit · VC015 honesty |
 
 ### L2 scope notes (not blockers if over-claimed elsewhere)
 

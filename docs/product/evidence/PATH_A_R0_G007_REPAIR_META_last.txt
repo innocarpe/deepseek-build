@@ -1,0 +1,3 @@
+git_sha=b1fdf5c9958e77dfaf43885f15a8f7e39a11a33f
+agent_exit=0
+file='hello-repaired\n'

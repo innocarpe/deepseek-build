@@ -298,6 +298,45 @@ def make_handler(state: ScriptedState):
                     if stream
                     else _json_text(model, "Path A liveness")
                 )
+            elif state.scenario == "repair-trailing-comma" and state.liveness_dir is not None:
+                # Emit search_replace with trailing-comma JSON args (Spec 15 repair target).
+                import hashlib
+
+                uq = -1
+                for i, m in enumerate(msgs):
+                    if isinstance(m, dict) and "user_query" in str(m.get("content") or ""):
+                        uq = i
+                tool_results = sum(
+                    1
+                    for m in msgs[uq + 1 :]
+                    if isinstance(m, dict) and m.get("role") in ("tool", "function")
+                )
+                a = state.liveness_dir / "a.txt"
+                if tool_results == 0 and a.exists():
+                    ver = hashlib.sha256(a.read_bytes()).hexdigest()
+                    # Deliberately malformed: trailing comma after last field
+                    bad_args = (
+                        '{"file_path":"a.txt","old_string":"hello",'
+                        f'"new_string":"hello-repaired","file_version":"{ver}",'
+                        "}"
+                    )
+                    payload = (
+                        _sse_tool_then_text(
+                            model,
+                            0,
+                            state.final_text,
+                            tool_name="search_replace",
+                            tool_args=bad_args,
+                        )
+                        if stream
+                        else _json_text(model, state.final_text)
+                    )
+                else:
+                    payload = (
+                        _sse_text(model, "repair-ok")
+                        if stream
+                        else _json_text(model, "repair-ok")
+                    )
             elif state.scenario == "write-deny":
                 # One search_replace empty-old overwrite attempt → final text.
                 uq = -1
@@ -519,6 +558,7 @@ def main() -> int:
             "liveness-3edits",
             "write-deny",
             "bash-stale",
+            "repair-trailing-comma",
         ),
         default="text-pong",
     )

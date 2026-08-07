@@ -51,7 +51,7 @@ Binding map: [HEART_3X_SPEC_BINDING.md](../architecture/HEART_3X_SPEC_BINDING.md
 
 - **`4.0.1`+:** `npm i -g` downloads **prebuilt** natives from GitHub Releases (ADR 0009) — seconds, no Rust on default path.
 - Source compile only with `DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD=1` or `./scripts/install.sh` (dev).
-- Prebuilt platforms: attach assets per tag (`darwin-arm64` shipped; CI matrix for others).
+- Prebuilt platform: `darwin-arm64` (Apple Silicon macOS only); other targets are deferred.
 - **npm registry publish** remains **human-gated** (ADR 0007).
 
 ### Auth / network

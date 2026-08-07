@@ -48,7 +48,7 @@ turn repeated builds into incremental ones.
 | `--skip-bump` / `--skip-pr` / `--skip-tag` | Resume from a later stage |
 | `--publish-only` | Skip everything, wait for assets + publish |
 | `--platform ID` | Platform to wait for (default: detect from `npm/lib/platform.js`) |
-| `--wait-all` | Wait for all matrix platforms, not just the local one |
+| `--wait-all` | Retained for future matrix expansion; currently waits for the single `darwin-arm64` target |
 | `--timeout SEC` | Asset wait timeout (default 5400) |
 
 ## CHANGELOG convention (fail-close)
@@ -98,20 +98,20 @@ turn repeated builds into incremental ones.
 > run routinely stays stuck in the GitHub Actions queue ("queued" forever), so
 > release assets have been attached **manually from a local tag worktree** for
 > every shipped version. The wait loop in `release.sh` is a fast-path when CI
-> works; the manual fallback below is the reliable path.
+> works; the manual fallback below is the reliable path. The current release
+> matrix is intentionally limited to Apple Silicon macOS (`darwin-arm64`).
 
 - **Change-scope fast path:** if `third_party/` is unchanged since the previous
   release tag, the vendored agent binary is extracted from that release's
-  tarball and only `dsb-cli` is rebuilt (seconds). If the previous tarball is
-  missing for a platform, the job falls back to a full build.
+  tarball and only `dsb-cli` is rebuilt (seconds). If the previous Apple
+  Silicon tarball is missing, the job falls back to a full build.
 - **sccache:** `RUSTC_WRAPPER=sccache` + `SCCACHE_GHA_CACHE=true` make full
   builds incremental across runs (cache scoping follows the GitHub Actions
   cache service; the fast path is the guaranteed win).
 - **Honest limits:** GitHub runner queue time is outside our control; a first
-  full build after a vendored change is cold; publishing before all platforms
-  attach means other-platform users get a 404 until those assets land (only the
-  publishing machine's platform is waited on by default — use `--wait-all`
-  when other platforms matter).
+  full build after a vendored change is cold; non-Apple-Silicon users are
+  outside the current product support boundary and receive a clear
+  unsupported-platform message.
 
 ### Manual asset fallback (when CI never runs)
 

@@ -31,18 +31,25 @@ Product contract remains: **`dsb` opens the DeepSeek full-screen TUI**. How bina
 
 | `platform` id | Target |
 |---------------|--------|
-| `darwin-arm64` | Apple Silicon |
-| `darwin-x64` | Intel macOS |
-| `linux-x64` | Linux x86_64 (gnu) |
-| `linux-arm64` | Linux aarch64 (gnu) |
+| `darwin-arm64` | Apple Silicon macOS (current supported target) |
 
-Windows: not a first-class prebuilt target yet; document source/dev path.
+The other platform mappings are deferred candidates, not current release
+targets. Windows is not a first-class prebuilt target yet; document the
+source/dev path.
+
+### Current scope amendment (2026-08-07)
+
+The immediate product contract is **Apple Silicon macOS only**. The npm
+platform resolver, release packager, release wait loop, and tag workflow all
+fail closed or build only for `darwin-arm64`. Re-enabling another platform
+requires an explicit product decision and a matching release-harness change;
+it must not happen merely because a runner is available.
 
 ### Release engineering
 
-- Tag `vMAJOR.MINOR.PATCH` **must** attach the tarballs for supported platforms before or with npm publish.  
+- Tag `vMAJOR.MINOR.PATCH` **must** attach the `darwin-arm64` tarball before or with npm publish.
 - Script: `scripts/package-release-binaries.sh` builds/packages local or CI artifacts.  
-- CI workflow (recommended): on tag push, build matrix → upload assets.  
+- CI workflow (recommended): on tag push, build the single target → upload the asset.
 - **npm publish remains human-gated** (ADR 0007).
 
 ### Package identity (unchanged)

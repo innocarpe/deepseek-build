@@ -1,10 +1,10 @@
-git_sha=6fea5d016e3254a575357cfd94e05f95e788db5a
+git_sha=8eea500c24b4f8446a1e5e3ad67fbe52b0ce0f4b
 cli=/Users/WooseongKim/Projects/deepseek-build/vc015-freeze-audit/target/release/deepseek-build
 dsb=/Users/WooseongKim/Projects/deepseek-build/vc015-freeze-audit/target/release/dsb
 agent_resolved=/Users/WooseongKim/Projects/deepseek-build/vc015-freeze-audit/third_party/grok-build/target/release/xai-grok-pager
 DEEPSEEK_BUILD_AGENT_BIN_unset=yes
-DEEPSEEK_BUILD_HOME=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc015-r0a.lnxUcb/product-home
-scripted_base_url=http://127.0.0.1:51318
+DEEPSEEK_BUILD_HOME=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc015-r0a.pins0s/product-home
+scripted_base_url=http://127.0.0.1:51895
 scenario=parent-worker-snippet-stale
 agent_exit=0
 wire=/Users/WooseongKim/Projects/deepseek-build/vc015-freeze-audit/docs/product/evidence/PATH_A_R0_VC015_parent-worker-snippet-stale_WIRE_last.jsonl

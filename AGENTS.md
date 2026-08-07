@@ -4,22 +4,25 @@ This file is standing instructions for any coding agent working in this repo.
 
 ## Current phase
 
-**Active ultragoal:** plan id **`fleet-4x`** → tag **`4.0.0`** (L3 productization).  
-- Board: [`docs/product/FLEET_4X_GOALS.md`](docs/product/FLEET_4X_GOALS.md)  
+**No active product ultragoal train.** Latest majors shipped.
+
+**Completed trains:**  
+- **`fleet-4x`** → **`v4.0.0`** (L3 productization) · patches **`4.0.1`** (prebuilt npm) · **`4.0.2`** (setup → bare `dsb`)  
+- **`heart-3x`** → **`v3.0.0`** · **`l3-prep-lane-b`** · **`ship-3.0.0`**  
+
+**Pointers:**  
+- Board (archive): [`docs/product/FLEET_4X_GOALS.md`](docs/product/FLEET_4X_GOALS.md)  
 - PR DAG: [`docs/product/WAVE_4x_PR_DAG.md`](docs/product/WAVE_4x_PR_DAG.md)  
 - Matrix: [`docs/product/L3_CAPABILITY_MATRIX.md`](docs/product/L3_CAPABILITY_MATRIX.md)  
-- Cold start: [`docs/product/ULTRAGOAL_PROMPT_COLD_START_4.0.md`](docs/product/ULTRAGOAL_PROMPT_COLD_START_4.0.md)  
 - Chain: [`docs/product/ULTRAGOAL_CHAIN.md`](docs/product/ULTRAGOAL_CHAIN.md)  
-- Smoke: `./scripts/test-l3-smoke.sh` · hearts: `cargo test -p dsb-tools path_a` (etc.)  
-- Ledger: `omc ultragoal status --plan-id fleet-4x` (no `--force` recreate)  
-
-**Completed:** **`heart-3x`** → **`v3.0.0`** · **`l3-prep-lane-b`**  
+- Cut: [`docs/product/evidence/CUT_4_0_0_2026-08-07.md`](docs/product/evidence/CUT_4_0_0_2026-08-07.md)  
+- Smoke: `./scripts/test-l3-smoke.sh` · hearts: `cargo test -p dsb-tools path_a`  
 
 **Major product lines (PRDs):** [`docs/product/versions/README.md`](docs/product/versions/README.md)  
 - **1.x** scaffold — [PRD-v1](docs/product/PRD-v1.md)  
 - **2.x shipped shell** — [PRD-v2](docs/product/PRD-v2.md)  
 - **3.x shipped hearts** — [PRD-v3](docs/product/PRD-v3.md) (`3.0.0`)  
-- **4.x active** — [PRD-v4](docs/product/PRD-v4.md) (L3 productization)  
+- **4.x shipped L3** — [PRD-v4](docs/product/PRD-v4.md) (`4.0.0`+)  
 
 
 **SSOT priority:** [`docs/product/SSOT.md`](docs/product/SSOT.md)  

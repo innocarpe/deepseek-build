@@ -318,6 +318,16 @@ def _latest_task_id(msgs: list[Any]) -> str | None:
     return None
 
 
+def _snippet_id_for_content_marker(msgs: list[Any], marker: str) -> str | None:
+    """Snippet id from the tool result whose content contains marker (path-safe)."""
+    for content in reversed(_tool_contents_after_user_query(msgs)):
+        if marker in (content or ""):
+            sid = _extract_snippet_id(content)
+            if sid:
+                return sid
+    return None
+
+
 class ScriptedState:
     def __init__(self, wire_path: Path, scenario: str, final_text: str) -> None:
         self.wire_path = wire_path
@@ -922,9 +932,10 @@ def make_handler(state: ScriptedState):
                         else _json_text(model, "multi-read-parallel-ok")
                     )
             elif state.scenario == "mixed-mutate-serial" and state.liveness_dir is not None:
-                # VC010: multi-read RO batch, then serial search_replace with snippet_id.
+                # VC010: multi-read RO batch, then serial search_replace with the
+                # snippet_id bound to a.txt (not the later b.txt sibling id).
                 tool_results = _tool_results_after_user_query(msgs)
-                latest_sid = _latest_snippet_id(msgs)
+                a_sid = _snippet_id_for_content_marker(msgs, "alpha-marker")
 
                 def emit_tool_m(tname: str, targs: dict[str, Any]) -> bytes:
                     return (
@@ -953,8 +964,8 @@ def make_handler(state: ScriptedState):
                             ("read_file", {"target_file": "b.txt"}),
                         ]
                     )
-                elif tool_results >= 2 and tool_results < 3:
-                    if not latest_sid:
+                elif tool_results == 2:
+                    if not a_sid:
                         payload = (
                             _sse_text(model, "mixed-mutate-FAIL-no-snippet-id")
                             if stream
@@ -966,7 +977,7 @@ def make_handler(state: ScriptedState):
                             "file_path": "a.txt",
                             "old_string": "alpha-marker",
                             "new_string": "alpha-mutated",
-                            "snippet_id": latest_sid,
+                            "snippet_id": a_sid,
                         }
                         if a.exists():
                             targs_m["file_version"] = _file_sha256(a)

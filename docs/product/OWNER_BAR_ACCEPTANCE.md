@@ -110,9 +110,9 @@ Every P0 item needs **at least one** of:
 | **S2** | Bare TTY opens **full-screen Grok-derived agent** (not thin REPL as default) | HEART binding Path A | Process: `dsb` → `deepseek-build-agent` | **MET** |
 | **S3** | Product home `~/.deepseek-build/`; `GROK_HOME` bridge does not strand config | agent_launch | Config seed + agent sees product home | **MET** |
 | **S4** | Every DeepSeek model seed has **`base_url = https://api.deepseek.com`** (model-level; not endpoints-only) | ADR 0005, G001 | Live/offline: no Grok proxy 401 on agent path | **MET** |
-| **S5** | Default UI readable (**DeepSeek blue** family), not Grok near-black low contrast | VISION, design | Screenshot or theme seed dogfood | **PARTIAL** — re-verify on cut |
+| **S5** | Default UI readable (**DeepSeek blue** family), not Grok near-black low contrast | VISION, design | Screenshot or theme seed dogfood | **MET** G011 theme seed `deepseeknight` |
 | **S6** | Full SemVer **`MAJOR.MINOR.PATCH`** everywhere (no bare `5.0`) | versioning.md | `./scripts/check-semver.sh` | **MET** process |
-| **S7** | Install real: cargo and/or npm prebuilt delivers **CLI + agent** for claimed platforms | ADR 0007, npm | Clean-machine smoke: both CLIs open TUI | **PARTIAL** — prove per release |
+| **S7** | Install real: cargo and/or npm prebuilt delivers **CLI + agent** for claimed platforms | ADR 0007, npm | Clean-machine smoke: both CLIs open TUI | **MET** G011 hermetic clean-prefix install |
 | **S8** | No default **YOLO**; product default `yolo = false` / Ask | Spec 90, NON_GOALS | Seed + headless deny/cancel without YOLO | **MET** |
 
 ---

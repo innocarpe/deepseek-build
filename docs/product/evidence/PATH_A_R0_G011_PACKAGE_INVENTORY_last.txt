@@ -1,0 +1,11 @@
+package_json_name=@innocarpe/deepseek-build
+package_json_version=4.0.4
+package_bin_deepseek_build=npm/bin/deepseek-build.js
+package_bin_dsb=npm/bin/dsb.js
+prefix_bin_dir=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-g011-install.if8Fdf/prefix/bin
+installed_deepseek_build=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-g011-install.if8Fdf/prefix/bin/deepseek-build
+installed_dsb=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-g011-install.if8Fdf/prefix/bin/dsb
+installed_agent=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-g011-install.if8Fdf/prefix/bin/deepseek-build-agent
+agent_sha256=af7e2aaf7b93c57a1ef03d08b550b538c9e811b9c5917d4309b9a3790b900118
+cli_sha256=ef1bdfc5f6f45c21b2957c984d4f773d811137f8a45f88ff56ca24fd43af6707
+version_line=deepseek-build 4.0.4

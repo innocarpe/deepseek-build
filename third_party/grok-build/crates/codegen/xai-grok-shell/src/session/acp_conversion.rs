@@ -764,6 +764,10 @@ mod tests {
             total_lines: 100,
             extracted_images: Vec::new(),
             file_version: None,
+            snippet_id: None,
+            snippet_start_line: None,
+            snippet_end_line: None,
+            snippet_scope: None,
         }));
         let update = acp_tool_update(&output, "call-1", None, None).unwrap();
         assert_eq!(update.fields.status, Some(acp::ToolCallStatus::Completed));
@@ -905,6 +909,10 @@ mod tests {
             total_lines: 100,
             extracted_images: Vec::new(),
             file_version: None,
+            snippet_id: None,
+            snippet_start_line: None,
+            snippet_end_line: None,
+            snippet_scope: None,
         }));
         let json = raw_output_json(&output, None).unwrap();
         // Verify it deserializes back into the same type
@@ -1032,6 +1040,10 @@ mod tests {
             total_lines: 100,
             extracted_images: Vec::new(),
             file_version: None,
+            snippet_id: None,
+            snippet_start_line: None,
+            snippet_end_line: None,
+            snippet_scope: None,
         }));
         let json = raw_output_json(&output, Some(&rw)).unwrap();
         let round_tripped: ToolOutput = serde_json::from_value(json).unwrap();
@@ -1281,6 +1293,10 @@ mod tests {
             total_lines: 100,
             extracted_images: Vec::new(),
             file_version: None,
+            snippet_id: None,
+            snippet_start_line: None,
+            snippet_end_line: None,
+            snippet_scope: None,
         }));
         let json = raw_output_json(&output, None).unwrap();
         let round_tripped: ToolOutput = serde_json::from_value(json).unwrap();

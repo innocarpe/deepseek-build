@@ -268,6 +268,10 @@ impl xai_tool_runtime::Tool for CodexReadFileTool {
             total_lines,
             extracted_images: Vec::new(),
             file_version: None,
+            snippet_id: None,
+            snippet_start_line: None,
+            snippet_end_line: None,
+            snippet_scope: None,
         }))
     }
 }

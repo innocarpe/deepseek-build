@@ -264,6 +264,10 @@ pub fn raw_text_to_file_content(text: String) -> ReadFileOutput {
         total_lines,
         extracted_images: Vec::new(),
         file_version: None,
+        snippet_id: None,
+        snippet_start_line: None,
+        snippet_end_line: None,
+        snippet_scope: None,
     })
 }
 

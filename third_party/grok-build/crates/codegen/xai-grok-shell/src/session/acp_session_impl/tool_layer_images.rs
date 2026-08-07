@@ -117,6 +117,10 @@ mod tests {
             total_lines: 1,
             extracted_images: vec![img(&"B".repeat(3000), "image/jpeg")],
             file_version: None,
+            snippet_id: None,
+            snippet_start_line: None,
+            snippet_end_line: None,
+            snippet_scope: None,
         };
         let drained = DrainedToolSuccess::new(run_result(ToolOutput::ReadFile(
             ReadFileOutput::FileContent(fc),
@@ -172,6 +176,10 @@ mod tests {
             total_lines: 1,
             extracted_images: vec![img(&"B".repeat(3000), "image/jpeg")],
             file_version: None,
+            snippet_id: None,
+            snippet_start_line: None,
+            snippet_end_line: None,
+            snippet_scope: None,
         };
         let mut output = ToolOutput::ReadFile(ReadFileOutput::FileContent(fc));
 

@@ -232,9 +232,24 @@ pub struct FileContent {
     pub extracted_images: Vec<crate::util::base64_images::ExtractedImage>,
     /// Spec 45 / owner-bar Path A: full-file content hash (sha256 hex of file
     /// bytes at read time). Models pass this as `search_replace.file_version`
-    /// when snippet_safe is on. Optional for legacy / non-text reads.
+    /// when snippet_safe is on. Compatibility alias of snippet record
+    /// `version` (ADR 0010). Optional for legacy / non-text reads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_version: Option<String>,
+    /// Spec 45 Path A (VC003): opaque session-local snippet id minted on
+    /// successful text read (`snp_…`). Required later for VC004 edit.
+    /// Absent on binary/image/PDF/PPTX/error paths.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snippet_id: Option<String>,
+    /// Inclusive 1-based start line of the minted snippet scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snippet_start_line: Option<usize>,
+    /// Inclusive 1-based end line of the minted snippet scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snippet_end_line: Option<usize>,
+    /// `lines` or `whole_file` (ADR 0010).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snippet_scope: Option<String>,
 }
 /// Image content returned when reading an image file.
 ///
@@ -668,6 +683,36 @@ pub enum ToolOutput {
     #[from(skip)]
     ImageEdit(MediaGenOutput),
 }
+/// Append Path A Spec 45 metadata (`snippet_id`, range/scope, `file_version`)
+/// for model-visible tool results. Preserves owner-bar `file_version` alias.
+fn append_snippet_metadata(body: String, file_content: &FileContent) -> String {
+    let mut meta = Vec::new();
+    if let Some(id) = file_content.snippet_id.as_deref().filter(|s| !s.is_empty()) {
+        meta.push(format!("snippet_id: {id}"));
+    }
+    if let (Some(start), Some(end)) = (
+        file_content.snippet_start_line,
+        file_content.snippet_end_line,
+    ) {
+        meta.push(format!("snippet_range: {start}-{end}"));
+    }
+    if let Some(scope) = file_content
+        .snippet_scope
+        .as_deref()
+        .filter(|s| !s.is_empty())
+    {
+        meta.push(format!("snippet_scope: {scope}"));
+    }
+    if let Some(v) = file_content.file_version.as_deref().filter(|s| !s.is_empty()) {
+        meta.push(format!("file_version: {v}"));
+    }
+    if meta.is_empty() {
+        body
+    } else {
+        format!("{body}\n\n{}", meta.join("\n"))
+    }
+}
+
 impl ToolOutput {
     /// Whether this output is a logical tool failure, for `tool.execution`'s
     /// `success`/`outcome`. Conservative: only known error variants count, so we
@@ -706,7 +751,7 @@ impl ToolOutput {
         match self {
             ToolOutput::ReadFile(read_file_output) => match read_file_output {
                 ReadFileOutput::FileContent(file_content) if file_content.content.is_empty() => {
-                    if file_content.total_lines == 0 {
+                    let body = if file_content.total_lines == 0 {
                         "File is empty.".to_string()
                     } else if file_content
                         .offset
@@ -719,17 +764,13 @@ impl ToolOutput {
                         )
                     } else {
                         "(no lines returned)".to_string()
-                    }
+                    };
+                    append_snippet_metadata(body, file_content)
                 }
                 ReadFileOutput::FileContent(file_content) => {
-                    // Path A / Spec 45: surface minted file_version in model-visible
-                    // tool result so search_replace can re-use sha256(file).
-                    match file_content.file_version.as_deref() {
-                        Some(v) if !v.is_empty() => {
-                            format!("{}\n\nfile_version: {v}", file_content.content)
-                        }
-                        _ => file_content.content.clone(),
-                    }
+                    // Path A / Spec 45: surface snippet_id + file_version so the
+                    // model can edit via VC004 and keep owner-bar hash alias.
+                    append_snippet_metadata(file_content.content.clone(), file_content)
                 }
                 ReadFileOutput::ImageContent(image_content) => {
                     format!(
@@ -1381,6 +1422,10 @@ mod tests {
                 mime_type: "image/jpeg".into(),
             }],
             file_version: None,
+            snippet_id: None,
+            snippet_start_line: None,
+            snippet_end_line: None,
+            snippet_scope: None,
         };
         let v = serde_json::to_value(&fc).unwrap();
         assert!(v.get("extracted_images").is_some());
@@ -1410,6 +1455,10 @@ mod tests {
                 mime_type: "image/png".into(),
             }],
             file_version: None,
+            snippet_id: None,
+            snippet_start_line: None,
+            snippet_end_line: None,
+            snippet_scope: None,
         };
         let output = ToolOutput::ReadFile(ReadFileOutput::FileContent(fc));
         let v = serde_json::to_value(&output).unwrap();
@@ -1432,6 +1481,10 @@ mod tests {
             total_lines,
             extracted_images: vec![],
             file_version: None,
+            snippet_id: None,
+            snippet_start_line: None,
+            snippet_end_line: None,
+            snippet_scope: None,
         }
     }
     /// An empty file must render an explicit notice, not a blank result.

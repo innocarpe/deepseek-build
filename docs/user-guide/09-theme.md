@@ -29,6 +29,18 @@ NO_COLOR=1 deepseek-build chat
 
 Non-TTY output is plain by default. With `NO_COLOR`, the box and whale still print; ANSI is omitted.
 
+## Theme choice
+
+The product default theme is **DeepSeek Night v2** (measured C-balanced DeepSeek
+palette). The original look is still available as **DeepSeek Night (classic)** — the
+blue-tinted DeepSeek palette that shipped before v2.
+
+- Switch any time inside the TUI with `/theme` or the Settings theme sheet.
+- On first launch, the picker offers both (`1` = classic, `2` = v2 default).
+
+Both themes are DeepSeek blue (`#4D6BFE`) based; v2 tunes the palette ramp for
+legibility, classic keeps the original tinted signature.
+
 ## Terminal tab (iTerm2)
 
 Running `deepseek-build` / `dsb` sets the terminal tab title to **DeepSeek Build** (OSC 0),

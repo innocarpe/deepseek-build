@@ -215,11 +215,12 @@ source=path_a_turn_usage
 | **P0 closed** | owner-bar **60/60 PASS** + heart regression **PASS** recorded in §6.1 |
 | **P1 closed** | e2e hard-fails if stamp missing or `cached_prompt_tokens<1` or chip missing (Path A consumption, not fixture-only) |
 | **Close-out (after harden)** | **READY** after P0/P1 fixes + re-green e2e (`cache_stamp_ok cached_prompt_tokens=80`) |
-| **Reviewer 2 (final head)** | Fresh independent Grok review of PR **#141** head `88faf07` — full write-up [`VC009_PR141_INDEPENDENT_REVIEW_2026-08-08.md`](./VC009_PR141_INDEPENDENT_REVIEW_2026-08-08.md) |
-| **Final-head verdict** | **READY** — P0/P1 none; P2 residuals only; **do not merge** until stack base #140 lands |
+| **Reviewer 2 (code head)** | Fresh independent Grok review of PR **#141** **reviewed code head `88faf07`** — full write-up [`VC009_PR141_INDEPENDENT_REVIEW_2026-08-08.md`](./VC009_PR141_INDEPENDENT_REVIEW_2026-08-08.md) |
+| **Code-head verdict** | **READY** on `88faf07` — P0/P1 none; P2 residuals only; **do not merge** until stack base #140 lands |
+| **Docs-only tips after review** | `ad8a9e6` (+ later docs-only corrections) land the report / evidence pointers / meta refresh — **not** a second product-code review |
 | **P2 residual** | stamp chip arithmetic is local (not calling pager `format_cache_hit_pct`); board SemVer text still stale |
 
-Implementer self-notes are **not** independent review. Reviewer 2 re-verified hardening, units, e2e, labels, and residual honesty on the final head.
+Implementer self-notes are **not** independent review. Reviewer 2 re-verified hardening, units, e2e, labels, and residual honesty on **code head `88faf07`**, not on later docs-only commits.
 
 ### 6.5 Residuals (honest)
 

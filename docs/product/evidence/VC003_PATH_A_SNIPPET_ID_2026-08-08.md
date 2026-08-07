@@ -203,19 +203,61 @@ test -f docs/adr/0010-spec-45-snippet-store.md
 
 | Check | Result | Evidence class |
 |-------|--------|----------------|
-| Branch created from VC002 HEAD | `feat/vc003-path-a-snippet-id` | git |
-| Evidence doc committed first | yes | commit |
-| Text read mints `snippet_id` | _(fill)_ | unit |
-| Repeated reads differ | _(fill)_ | unit |
-| Session-local store | _(fill)_ | unit |
-| `file_version` sha256 preserved | _(fill)_ | unit |
-| Non-text/error no-id | _(fill)_ | unit |
+| Branch created from VC002 HEAD | `feat/vc003-path-a-snippet-id` (from `spec/vc002-snippet-store` @ `9da03a1`) | git |
+| Evidence doc committed first | **yes** — `56a249a` | commit |
+| Store + FileContent fields | **yes** — `73b0bc8` | commit |
+| Path A text mint | **yes** — `89564c8` | commit |
+| Text read mints `snippet_id` | **PASS** (`vc003_current_read_file_mints_snippet_id`) | **unit** |
+| Repeated reads differ | **PASS** (`vc003_repeated_reads_mint_distinct_snippet_ids`) | **unit** |
+| Session-local store | **PASS** (`vc003_snippet_store_is_session_local_not_process_global` + store unit) | **unit** |
+| `file_version` sha256 preserved | **PASS** (`current_read_file_mints_file_version_sha256` + VC003 mint test) | **unit** |
+| Non-text/error no-id | **PASS** (`vc003_binary_read_does_not_mint_snippet_id`, `vc003_not_found_does_not_mint_snippet_id`) | **unit** |
+| Thin Path B oracle still green | **PASS** (`cargo test -p dsb-tools snippets` — 9 ok) | thin oracle (**not** Path A proof) |
 | Public Path A R0A wire | **not run / not claimed** | — |
 | SemVer bump | **none** | cargo version still `5.1.0` |
 
+### Design that shipped (code)
+
+| Piece | Location |
+|-------|----------|
+| Session store | `third_party/grok-build/.../types/snippet_store.rs` — ephemeral `SessionSnippetStore` on `Resources` via `get_or_default` (not Spec 10 persistence) |
+| Output fields | `FileContent.{snippet_id,snippet_start_line,snippet_end_line,snippet_scope}` + existing `file_version` |
+| Mint path | `implementations/grok_build/read_file` successful text (incl. empty file); PDF/PPTX/image/binary/error unchanged (no id) |
+| Model-visible | `to_prompt_format` appends `snippet_id`, optional range/scope, and `file_version` |
+| ID shape | `snp_` + UUID v7 simple (opaque session-local; ADR ULID spirit) |
+
 ### Commands actually run
 
-_(filled after implementation)_
+```bash
+# Branch
+git checkout -b feat/vc003-path-a-snippet-id   # from clean spec/vc002-snippet-store
+
+# Path A unit (xai-grok-tools)
+cd third_party/grok-build
+cargo test -p xai-grok-tools vc003
+# ok — 5 passed (mint, multi-id, session-local, not-found, binary)
+
+cargo test -p xai-grok-tools --lib current_read_file_mints_file_version_sha256
+# ok — 1 passed
+
+cargo test -p xai-grok-tools --lib 'snippet_store::'
+# ok — 5 passed
+
+cargo test -p xai-grok-tools --lib read_empty_file_prompt
+# ok — 1 passed
+
+# Thin oracle (not Path A proof)
+cargo test -p dsb-tools snippets
+# ok — 9 passed
+
+# Docs / whitespace
+git diff --check
+test -f docs/product/evidence/VC003_PATH_A_SNIPPET_ID_2026-08-08.md
+test -f docs/adr/0010-spec-45-snippet-store.md
+rg -n 'version' Cargo.toml | head -1   # 5.1.0
+```
+
+**Honesty:** All Path A mint claims above are **unit/integration tests inside `xai-grok-tools`**. No public `deepseek-build`/`dsb` agent wire harness (R0A) was run for this story.
 
 ---
 

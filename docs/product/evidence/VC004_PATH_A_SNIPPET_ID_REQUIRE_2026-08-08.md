@@ -351,6 +351,21 @@ git show origin/main:Cargo.toml | rg version
 | `cargo fmt … xai-grok-tools -- --check` | **0** | clean after `c3d4421` | VC004 vendor crate only |
 | `git diff --check` (branch range after evidence fix) | **0** | no trailing whitespace / conflict markers | re-verified after this evidence update |
 
+### 7.5 Independent adversarial review (read-only Grok)
+
+| Field | Value |
+|-------|--------|
+| Reviewer | Separate read-only Grok code-reviewer lane (not the implementer self-approve) |
+| Scope | Branch `vc004-snippet-id-require` / Path A `search_replace` require gate + tests + evidence + Spec/ADR §5 |
+| **Verdict** | **READY** |
+| **P0** | **none** |
+| **P1** | **none** |
+| P2 residuals (non-blocking) | (1) authorize `Err(_)` fallthrough should prefer NotFound-only; (2) TOCTOU double-read before write; (3) add dual-accept lock unit (`file_version` alone still rejected); (4) normalized-fallback scope uses `old_string.len()`; (5) path compare via host canonicalize vs tool FS; (6) stale “require file_version” comments in Standard toolset / FileContent docs |
+| VC005/VC006 smuggling | **none** found |
+| Honesty | Unit lane only; no R0A claim; floor **5.2.1** used; next free feature minor **5.3.0** |
+
+P2 items are optional polish / later stories — **not** required to call VC004 implementation-ready under the unit evidence bar.
+
 ---
 
 ## 8. References

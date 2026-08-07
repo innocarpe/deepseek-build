@@ -51,6 +51,10 @@ if [[ -z "$PLATFORM" ]]; then
   echo "error: could not detect platform" >&2
   exit 1
 fi
+if [[ "$PLATFORM" != "darwin-arm64" ]]; then
+  echo "error: this release package currently supports darwin-arm64 only (got $PLATFORM)" >&2
+  exit 1
+fi
 
 ASSET="deepseek-build-${VERSION}-${PLATFORM}.tar.gz"
 mkdir -p "$OUT_DIR"

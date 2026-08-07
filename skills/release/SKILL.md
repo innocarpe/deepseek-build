@@ -37,8 +37,8 @@ is silently skipped.
    first, then build.
 5. **No silent asset skip.** `release-prebuilt.yml` tag runs routinely stay
    "queued" forever. If `gh release view v<ver> --json assets` shows no tarball
-   for the publishing platform, attach manually (fallback below) — do not
-   publish an npm version whose binary is missing or stale.
+   for `darwin-arm64`, attach manually (fallback below) — do not publish an
+   npm version whose binary is missing or stale.
 6. **Verify after publish** with a real global install + `dsb --version` +
    a `strings` check for the release's markers (e.g. `deepseek.com` status
    handling) on the installed binary.
@@ -84,7 +84,7 @@ gh release view v4.0.4 --json assets                      # confirm tarball
 - [ ] `strings $(command -v dsb)` (or the agent binary) shows the release's
       behavior markers — e.g. for the image-fix release, the DeepSeek
       endpoint / status markers — not the pre-fix build
-- [ ] `gh release view v<ver> --json tagName,assets` shows the tarball
+- [ ] `gh release view v<ver> --json tagName,assets` shows the `darwin-arm64` tarball
 - [ ] CHANGELOG still newest-first: `./scripts/reorder-changelog.sh --check`
 - [ ] README version literals match `<ver>`
 

@@ -24,7 +24,7 @@ dsb          # full-screen DeepSeek TUI
 - `postinstall` downloads a **platform tarball** from GitHub Releases for this SemVer and installs into `~/.deepseek-build/bin/`.  
 - Should finish in **seconds** (network + extract), not tens of minutes.  
 - Node **≥ 18**.  
-- Platforms: `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`.
+- Platform: `darwin-arm64` (Apple Silicon macOS only).
 
 If `dsb` is not on PATH after install:
 
@@ -68,7 +68,7 @@ Node shims (`npm/bin/*.js`) resolve natives from:
 npm publish --access public   # human OTP (ADR 0007)
 ```
 
-CI should attach all supported platform tarballs on each version tag.
+CI attaches the `darwin-arm64` tarball on each version tag.
 
 ## Publish (owner)
 

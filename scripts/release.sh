@@ -164,14 +164,18 @@ if [[ "$SKIP_TAG" -eq 0 ]]; then
 fi
 
 # --- 5. wait for prebuilt assets ----------------------------------------------
+SUPPORTED_PLATFORM="darwin-arm64"
 if [[ -z "$PLATFORM" ]]; then
   PLATFORM="$(node -e "console.log(require('./npm/lib/platform').platformId()||'')" 2>/dev/null || true)"
 fi
 if [[ -z "$PLATFORM" ]]; then
-  echo "error: could not detect platform; pass --platform <id>" >&2
+  PLATFORM="$SUPPORTED_PLATFORM"
+fi
+if [[ "$PLATFORM" != "$SUPPORTED_PLATFORM" ]]; then
+  echo "error: this release harness currently supports $SUPPORTED_PLATFORM only (got $PLATFORM)" >&2
   exit 1
 fi
-ALL_PLATFORMS=(darwin-arm64 darwin-x64 linux-x64)
+ALL_PLATFORMS=("$SUPPORTED_PLATFORM")
 WAIT_LABEL="$PLATFORM"; [[ "$WAIT_ALL" -eq 1 ]] && WAIT_LABEL="all (${ALL_PLATFORMS[*]})"
 echo "== waiting for v$VERSION release assets ($WAIT_LABEL, timeout ${TIMEOUT}s) =="
 DEADLINE=$(( $(date +%s) + TIMEOUT ))

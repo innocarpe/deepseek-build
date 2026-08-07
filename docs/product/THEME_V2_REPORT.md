@@ -4,17 +4,25 @@
 > 색상값은 전부 sRGB 상대휘도(WCAG 2.1) / CIE L\* / HSL 색상각으로 직접 계산해 검증했습니다.
 > GitHub PR/이슈로 나가는 텍스트는 영어로 번역해야 합니다 (`github-pr` 규칙).
 
+> **현재 계약 (후속 결정, 이 문서의 역사적 제안보다 우선):** classic
+> `deepseeknight`가 DSB 제품/runtime/config 기본 테마입니다.
+> `deepseeknight-v2`는 선택 가능하며 picker의 첫 번째 alternate입니다.
+> `DeepSeekNightNeutral`과 `GrokNight`은 parser/config 호환성만 유지하고
+> picker에서는 숨깁니다. 아래의 v2 기본값 및 classic picker 제거 내용은
+> 당시의 설계 의도와 기준선을 기록한 **superseded historical** 내용입니다.
+
 ---
 
 ## 0. 요청 요약
 
-1. **DeepSeek Night v2 (C-balanced)** 를 만들고 **제품 기본 테마**로 삼는다.
+1. **[역사적 목표 — superseded]** DeepSeek Night v2 (C-balanced)를 만들고
+   **제품 기본 테마**로 삼는다.
 2. 나머지 테마는 **유의미한 것만 남겨** 사용자가 고를 수 있게 한다.
 3. 색 선택은 취향이 아니라 **측정 가능한 불변조건**으로 고정한다.
 
 ---
 
-## 1. 먼저: 지금 상태에서 발견한 결함 3가지
+## 1. 먼저: 지금 상태에서 발견한 결함 3가지 (역사적 기준선 — superseded)
 
 ### 1-1. `deepseeknight`가 Settings 선택지에 없다 (기능 결함)
 
@@ -165,7 +173,6 @@ fuzzy_accent: BLUE,       // ⑥
 
 accent_plan:     AMBER,
 accent_verify:   VIOLET,
-accent_feedback: GREEN,
 accent_remember: GREEN,
 accent_model:    GRAY_BRIGHT,
 
@@ -225,7 +232,7 @@ v1 대비 **h5/h6가 AA 미달 회색으로 렌더되던 문제**도 함께 해�
 
 ---
 
-## 3. 기본 테마로 만들기 — 정확한 변경 지점
+## 3. 기본 테마로 만들기 — 정확한 변경 지점 (역사적 구현 제안 — superseded)
 
 ### 3-1. 렌더 레이어
 
@@ -240,7 +247,7 @@ v1 대비 **h5/h6가 AA 미달 회색으로 렌더되던 문제**도 함께 해�
 | `theme/mod.rs:101` `requires_truecolor()` | `=> false` |
 | `theme/mod.rs:116` `from_name()` | `"deepseeknight-v2" \| "deepseek2" \| "dsb2"` 매핑 |
 | `theme/mod.rs:158` `display_name_for_canonical()` | `"DeepSeek Night"` + **누락된 `"oscura-midnight"`도 함께 추가** |
-| `theme/mod.rs:170` `Default for Theme` | `deepseeknight_v2()` |
+| `theme/mod.rs:170` `Default for Theme` | **역사적 제안 (superseded):** `deepseeknight_v2()`; 현재 runtime 기본은 `deepseeknight()` |
 | `theme/mod.rs:289` kind→theme 매치 | 분기 추가 |
 | `theme/mod.rs:297` `Auto` fallback | `deepseeknight_v2()` |
 | `theme/mod.rs:361` `clamp_to_terminal` | fallback을 `DeepSeekNightV2`로 |
@@ -255,16 +262,19 @@ v1 대비 **h5/h6가 AA 미달 회색으로 렌더되던 문제**도 함께 해�
 |---|---|
 | `settings/defs.rs:41` `THEME_CHOICES` | `auto` 다음에 DeepSeek Night 항목 추가 |
 | `settings/defs.rs:479` `CONCRETE_THEME_CHOICES` | **맨 앞**에 추가 |
-| `settings/defs.rs:707` `theme.default` | `"groknight"` → `"deepseeknight-v2"` |
-| `settings/defs.rs:723` `auto_dark_theme.default` | `"groknight"` → `"deepseeknight-v2"` |
+| `settings/defs.rs:707` `theme.default` | **역사적 제안 (superseded):** `"groknight"` → `"deepseeknight-v2"`; 현재 기본은 `"deepseeknight"` |
+| `settings/defs.rs:723` `auto_dark_theme.default` | **역사적 제안 (superseded):** `"groknight"` → `"deepseeknight-v2"`; 현재 dark 기본은 `"deepseeknight"` |
 | `settings/defs.rs:739` `auto_light_theme.default` | `"grokday"` → §4 참고 |
 | `settings/registry.rs:619,626,866,882` | `.unwrap_or("groknight")` → 새 기본값 |
+
+> 아래 선택지 블록은 v2를 기본으로 삼던 당시의 제안이며 superseded입니다.
+> 현재는 classic이 기본이고 v2는 첫 번째 선택 가능 alternate입니다.
 
 ```rust
 EnumChoice {
     canonical: "deepseeknight-v2",
     display: "DeepSeek Night",
-    description: "Product default — DeepSeek blue on neutral dark.",
+    description: "Historical proposal (superseded) — V2 alternate; classic is current product default.",
 },
 ```
 
@@ -272,25 +282,31 @@ EnumChoice {
 
 `crates/dsb-cli/src/agent_launch.rs:78`
 ```rust
-pub const PRODUCT_THEME: &str = "deepseeknight-v2";
+pub const PRODUCT_THEME: &str = "deepseeknight-v2"; // Historical proposal (superseded; current: "deepseeknight")
 ```
 `:407 :428 :440 :443 :465`와 `crates/dsb-tools/src/path_a_permissions.rs:210`의 fixture 문자열도 같이 갱신 필요합니다.
 
 ---
 
-## 4. 테마 목록 정리 — "유의미한 것" 기준
+## 4. 테마 목록 정리 — "유의미한 것" 기준 (역사적 결정 — superseded)
 
 기준 셋: **(a) 브랜드 정합성**, **(b) 사용자가 이름을 알아보는가**, **(c) 역할이 겹치지 않는가**.
 
 | 테마 | 판단 | 근거 |
 |---|---|---|
-| **DeepSeek Night (v2)** | **기본** | 제품 정체성 |
+| **DeepSeek Night (v2)** | **역사적 기본 (superseded)** | 당시 제품 정체성 제안; 현재는 첫 번째 picker alternate |
+| **DeepSeek Night (classic)** | **현재 기본 + 선택 가능** | DSB 제품/runtime/config 기본 |
 | **Grok Night** | **목록에서 제거** | 다른 제품 브랜드명이 DeepSeek UI에 노출. 역할도 v2와 완전 중복 |
 | **Grok Day** | **개명 + 재설계 필요** | 유일한 라이트 테마라 기능적으로 필요하지만 이름이 브랜드 누출 |
 | **Tokyo Night** | **유지** | 커뮤니티 표준. 사용자가 이름으로 인지 |
 | **Rose Pine Moon** | **유지** | 위와 동일 |
 | **Oscura Midnight** | **유지** | 위와 동일. `display_name_for_canonical` 누락만 수정 |
 | **terminal_default** | **유지 (minimal 전용)** | `Color::Reset` 기반 polarity-safe 경로 |
+
+> **현재 계약:** classic `deepseeknight`는 제품/runtime/config 기본이며 picker에서
+> 선택할 수 있습니다. `deepseeknight-v2`는 picker의 첫 번째 alternate이고,
+> `DeepSeekNightNeutral`과 `GrokNight`은 parser/config 호환성만 유지하며 picker에서
+> 숨깁니다. 위 표의 v2 기본 및 classic 제거 결정은 superseded historical intent입니다.
 
 **하위호환:** `from_name()`에서 `"groknight"` / `"grokday"` **파싱은 반드시 유지**하세요. 목록에서만 빼고 기존 config는 계속 해석돼야 합니다. 목록에서 사라진 값이 저장돼 있을 때의 동작(그대로 적용 vs 기본값으로 마이그레이션)을 명시적으로 정하고 테스트를 다세요.
 

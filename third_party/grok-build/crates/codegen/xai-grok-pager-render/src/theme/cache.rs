@@ -67,7 +67,7 @@ static AUTO_THEME_CONFIG: Mutex<Option<AutoThemeConfig>> = Mutex::new(None);
 ///
 /// `dark_theme` and `light_theme` are the user-configured overrides read
 /// from `[ui].auto_dark_theme` and `[ui].auto_light_theme` in `config.toml`.
-/// When `None`, `to_theme_kind()` defaults to `GrokNight` / `GrokDay`.
+/// When `None`, `to_theme_kind()` defaults to `DeepSeekNight` / `GrokDay`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AutoThemeConfig {
     pub dark_theme: Option<ThemeKind>,
@@ -170,7 +170,7 @@ pub fn invalidate_auto_theme_config() {
 /// Precedence:
 /// 1. Environment variable (`GROK_THEME` / `LC_GROK_THEME`)
 /// 2. Config file (`[ui].theme`)
-/// 3. Default: `DeepSeekNight` (DeepSeek Build product skin)
+/// 3. Default: `DeepSeekNight` (DeepSeek Build product/default skin)
 #[must_use]
 pub fn resolve_initial_theme() -> ThemeKind {
     resolve_initial_theme_from(env_theme_name().as_deref(), load_from_disk(), true)
@@ -244,7 +244,7 @@ fn resolve_from_appearance(appearance: Option<system_appearance::SystemAppearanc
 /// Resolve "auto" by detecting system appearance and mapping via config.
 ///
 /// Returns the concrete `ThemeKind` based on the current system appearance
-/// and the user's dark/light theme mapping. Falls back to `GrokNight`
+/// and the user's dark/light theme mapping. Falls back to `DeepSeekNight`
 /// when detection fails.
 ///
 /// Uses desktop APIs + env hints (no OSC 11) — safe to call at runtime while
@@ -476,7 +476,7 @@ mod tests {
 
             assert_eq!(
                 resolve_from_config(None, false),
-                ThemeKind::DeepSeekNightV2
+                ThemeKind::DeepSeekNight
             );
         });
     }
@@ -516,7 +516,7 @@ mod tests {
         with_test_env(|| {
             system_appearance::set_mock(Some(system_appearance::SystemAppearance::Dark));
             let result = resolve_auto();
-            assert_eq!(result, ThemeKind::DeepSeekNightV2);
+            assert_eq!(result, ThemeKind::DeepSeekNight);
         });
     }
 
@@ -534,7 +534,7 @@ mod tests {
         with_test_env(|| {
             system_appearance::set_mock(None);
             let result = resolve_auto();
-            assert_eq!(result, ThemeKind::DeepSeekNightV2);
+            assert_eq!(result, ThemeKind::DeepSeekNight);
         });
     }
 
@@ -566,7 +566,7 @@ mod tests {
     fn resolve_from_config_no_config_returns_product_default() {
         with_test_env(|| {
             let result = resolve_from_config(None, true);
-            assert_eq!(result, ThemeKind::DeepSeekNightV2);
+            assert_eq!(result, ThemeKind::DeepSeekNight);
             assert!(!is_auto_mode());
         });
     }
@@ -588,7 +588,7 @@ mod tests {
         with_test_env(|| {
             system_appearance::set_mock(Some(system_appearance::SystemAppearance::Dark));
             let result = resolve_from_config(Some(ThemeKind::Auto), true);
-            assert_eq!(result, ThemeKind::DeepSeekNightV2);
+            assert_eq!(result, ThemeKind::DeepSeekNight);
             assert!(is_auto_mode(), "auto config must enable auto mode");
         });
     }
@@ -608,7 +608,7 @@ mod tests {
         with_test_env(|| {
             system_appearance::set_mock(None);
             let result = resolve_from_config(Some(ThemeKind::Auto), true);
-            assert_eq!(result, ThemeKind::DeepSeekNightV2);
+            assert_eq!(result, ThemeKind::DeepSeekNight);
             assert!(is_auto_mode(), "auto mode is set before detection");
         });
     }
@@ -642,7 +642,7 @@ mod tests {
             system_appearance::set_mock(Some(system_appearance::SystemAppearance::Dark));
             assert_eq!(
                 resolve_initial_theme_from(Some("auto"), Some(ThemeKind::TokyoNight), false),
-                ThemeKind::DeepSeekNightV2
+                ThemeKind::DeepSeekNight
             );
             assert!(is_auto_mode());
         });
@@ -787,7 +787,7 @@ mod tests {
                     Some(ThemeKind::TokyoNight),
                     true,
                 ),
-                ThemeKind::DeepSeekNightV2
+                ThemeKind::DeepSeekNight
             );
             assert!(is_auto_mode());
         });

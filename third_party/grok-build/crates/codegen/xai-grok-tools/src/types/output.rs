@@ -230,6 +230,11 @@ pub struct FileContent {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(skip)]
     pub extracted_images: Vec<crate::util::base64_images::ExtractedImage>,
+    /// Spec 45 / owner-bar Path A: full-file content hash (sha256 hex of file
+    /// bytes at read time). Models pass this as `search_replace.file_version`
+    /// when snippet_safe is on. Optional for legacy / non-text reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_version: Option<String>,
 }
 /// Image content returned when reading an image file.
 ///
@@ -716,7 +721,16 @@ impl ToolOutput {
                         "(no lines returned)".to_string()
                     }
                 }
-                ReadFileOutput::FileContent(file_content) => file_content.content.clone(),
+                ReadFileOutput::FileContent(file_content) => {
+                    // Path A / Spec 45: surface minted file_version in model-visible
+                    // tool result so search_replace can re-use sha256(file).
+                    match file_content.file_version.as_deref() {
+                        Some(v) if !v.is_empty() => {
+                            format!("{}\n\nfile_version: {v}", file_content.content)
+                        }
+                        _ => file_content.content.clone(),
+                    }
+                }
                 ReadFileOutput::ImageContent(image_content) => {
                     format!(
                         "[Image content of type: {} is included inline in this tool result]",
@@ -1366,6 +1380,7 @@ mod tests {
                 data: payload.clone(),
                 mime_type: "image/jpeg".into(),
             }],
+            file_version: None,
         };
         let v = serde_json::to_value(&fc).unwrap();
         assert!(v.get("extracted_images").is_some());
@@ -1394,6 +1409,7 @@ mod tests {
                 data: payload.clone(),
                 mime_type: "image/png".into(),
             }],
+            file_version: None,
         };
         let output = ToolOutput::ReadFile(ReadFileOutput::FileContent(fc));
         let v = serde_json::to_value(&output).unwrap();
@@ -1415,6 +1431,7 @@ mod tests {
             raw_output: String::new(),
             total_lines,
             extracted_images: vec![],
+            file_version: None,
         }
     }
     /// An empty file must render an explicit notice, not a blank result.

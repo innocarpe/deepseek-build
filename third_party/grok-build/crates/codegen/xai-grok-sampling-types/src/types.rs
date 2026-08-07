@@ -541,6 +541,11 @@ pub struct Usage {
     pub prompt_tokens_details: Option<PromptTokensDetails>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completion_tokens_details: Option<CompletionTokensDetails>,
+    /// DeepSeek reports cache hits as a top-level `prompt_cache_hit_tokens`
+    /// field (not `prompt_tokens_details.cached_tokens`). Absent on x.ai and
+    /// OpenAI responses, so it defaults to `None` and stays backward compatible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_hit_tokens: Option<u32>,
     /// xAI extension: request price in USD ticks (1 USD = 1e10 ticks).
     /// The REST mapper backfills `0` for unbilled requests; capture sites
     /// normalize `0` to "unreported" (see `stream/chat_completions.rs`).

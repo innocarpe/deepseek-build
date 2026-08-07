@@ -70,6 +70,16 @@ const THEME_CHOICES: &[EnumChoice] = &[
         display: "Oscura Midnight",
         description: "Deep dark with warm accents; needs truecolor.",
     },
+    EnumChoice {
+        canonical: "deepseeknight",
+        display: "DeepSeek Night",
+        description: "Blue-tinted dark with DeepSeek blue #4D6BFE accents.",
+    },
+    EnumChoice {
+        canonical: "deepseeknight-neutral",
+        display: "DeepSeek Night Neutral",
+        description: "Neutral dark canvas; blue accents pop. Default.",
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -501,6 +511,16 @@ const CONCRETE_THEME_CHOICES: &[EnumChoice] = &[
         canonical: "oscura-midnight",
         display: "Oscura Midnight",
         description: "Deep dark with warm accents; needs truecolor.",
+    },
+    EnumChoice {
+        canonical: "deepseeknight",
+        display: "DeepSeek Night",
+        description: "Blue-tinted dark with DeepSeek blue #4D6BFE accents.",
+    },
+    EnumChoice {
+        canonical: "deepseeknight-neutral",
+        display: "DeepSeek Night Neutral",
+        description: "Neutral dark canvas; blue accents pop. Default.",
     },
 ];
 

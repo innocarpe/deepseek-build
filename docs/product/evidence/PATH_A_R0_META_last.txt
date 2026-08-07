@@ -1,0 +1,37 @@
+git_sha=87c2a2c7ca2def087bed8088c013c01fc060156c
+cli=/Users/WooseongKim/Projects/OpenSources/deepseek-build-owner-bar-5x/target/debug/deepseek-build
+dsb=/Users/WooseongKim/Projects/OpenSources/deepseek-build-owner-bar-5x/target/debug/dsb
+agent_resolved=/Users/WooseongKim/.deepseek-build/bin/xai-grok-pager
+DEEPSEEK_BUILD_AGENT_BIN_unset=yes
+DEEPSEEK_BUILD_HOME=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-path-a-r0.m3GyAt/product-home
+scripted_base_url=http://127.0.0.1:64662
+scenario=text-pong
+agent_exit=0
+wire=/Users/WooseongKim/Projects/OpenSources/deepseek-build-owner-bar-5x/docs/product/evidence/PATH_A_R0_WIRE_last.jsonl
+wire_lines=3
+path_a_prefix_epoch_stamp=present
+path_a_prefix_epoch=da115ae59bd2465acf65c57fa04aa5bb67c37a09bc2ebcdefa935078e4fb321e
+path_a_prefix_epoch_short=da115ae59bd2465a
+path_a_routing_stamp=present
+path_a_default_model=deepseek-v4-flash
+path_a_pro_model=deepseek-v4-pro
+flash_visibility=model=deepseek-v4-flash thinking=on effort=high
+pro_once_visibility=model=deepseek-v4-pro thinking=on effort=high escalate_reason=user_pro_once
+after_pro_visibility=model=deepseek-v4-flash thinking=on effort=high
+flash_wire_id=deepseek-v4-flash
+pro_wire_id=deepseek-v4-pro
+path_a_l3_stamp=present
+max_parallel_readonly=8
+ro_indices=[0, 4]
+mu_indices=[1, 2, 3, 5]
+bash_mutating=true
+mcp_mutating=true
+unknown_mutating=true
+worker_kind_explore=explore
+worker_kind_implement=implement
+worker_epoch_a=291bd96f08f29074771aff16d8c37bd2713a228de132cdce98be07fd5362ec37
+worker_epoch_b=291bd96f08f29074771aff16d8c37bd2713a228de132cdce98be07fd5362ec37
+worker_epochs_match=true
+subagents_enabled_in_config=true
+worktree_product=opt_in
+bare_dsb_session=single

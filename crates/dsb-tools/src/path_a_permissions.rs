@@ -207,7 +207,7 @@ mod tests {
         // Seed-like toml
         let seed = r#"
 [ui]
-theme = "deepseeknight"
+theme = "deepseeknight-neutral"
 yolo = false
 "#;
         assert!(!config_enables_yolo(seed));

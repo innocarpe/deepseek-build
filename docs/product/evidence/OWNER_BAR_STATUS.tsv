@@ -1,61 +1,61 @@
 id	status	reason	git_sha
-F1	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-F2	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-F3	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-F4	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-F5	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L1-100	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L1-30	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L1-45-0	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L1-45-1	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L1-45-2	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L1-45-3	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L1-45-4	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L1-45-5	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L1-45-6	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L1-45-7	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L1-45-8	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L1-70	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L1-90-1	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L1-90-2	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L1-90-3	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L1-90-4	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L1-90-5	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L2-10-1	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L2-10-2	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L2-10-3	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L2-10-4	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L2-10-5	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L2-10-6	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L2-15-1	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L2-15-2	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L2-15-3	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L2-15-4	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L2-20-1	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L2-20-2	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L2-20-3	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L2-20-4	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L2-20-5	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L3-50-1	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L3-50-2	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L3-50-3	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L3-50-4	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L3-60-1	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L3-60-2	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L3-60-3	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L3-60-4	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L3-ID-1	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L3-WT-1	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-L3-WT-2	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-OB-1	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-OB-2	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-OB-3	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-OB-4	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-S1	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-S2	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-S3	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-S4	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-S5	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-S6	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-S7	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
-S8	FAIL	no_R0A_harness_yet	af80969b16146123e52eb483e3ab6afdfc959084
+F1	PASS	G008-G010 production heart call sites on Path A launch	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+F2	PASS	G004 Standard tool_configs always applied	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+F3	PASS	G001 honesty demotion 3.x/4.x	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+F4	PASS	G012 CUT Path A R0A only	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+F5	PASS	G012 dual adversarial reviews	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L1-100	PASS	G008 resume surface SessionStore	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L1-30	PASS	G009 effort CLI+router residual wire field	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L1-45-0	PASS	G004 liveness R0A	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L1-45-1	PASS	G004 Standard snippet_safe	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L1-45-2	PASS	G003 mint file_version	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L1-45-3	PASS	G004 negative missing token	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L1-45-4	PASS	G004 negative stale token	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L1-45-5	PASS	G004 negative ambiguous	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L1-45-6	PASS	G004 empty-old guard	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L1-45-7	PASS	G005 write-deny	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L1-45-8	PASS	G005 bash-stale invalidate	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L1-70	PASS	G008 skills index wire+unit	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L1-90-1	PASS	G006 perms matrix	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L1-90-2	PASS	G006 headless Ask deny	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L1-90-3	PASS	G006 yolo false product	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L1-90-4	PASS	G006 workspace boundary	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L1-90-5	PASS	G010 explore cannot skip perms	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L2-10-1	PASS	G008 stable_prefix volatile_tail	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L2-10-2	PASS	G008 Spec 10 order unit	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L2-10-3	PASS	G008 multi-turn wire stable	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L2-10-4	PASS	G008 no wall-clock in system/prefix	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L2-10-5	PASS	G008 resume+session repair	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L2-10-6	PASS	G008 assemble_path_a production stamp	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L2-15-1	PASS	G007 one-pass repair	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L2-15-2	PASS	G007 no invent/rename	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L2-15-3	PASS	G007/G008 session pairing repair	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L2-15-4	PASS	G007 Grok tool_calls dispatch	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L2-20-1	PASS	G009 Flash default wire	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L2-20-2	PASS	G009 Pro once stamp+wire	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L2-20-3	PASS	G009 visibility_line	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L2-20-4	PASS	G009 routing precedence units	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L2-20-5	PASS	G009 both models base_url	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L3-50-1	PASS	G010 partition RO/MU	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L3-50-2	PASS	G010 fail-closed classify	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L3-50-3	PASS	G010 bg surface residual live key	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L3-50-4	PASS	G010 docs no secret flags	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L3-60-1	PASS	G010 subagents default on	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L3-60-2	PASS	G010 explore+implement	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L3-60-3	PASS	G010 worker cache law	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L3-60-4	PASS	G010 parent_after_worker invalidate	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L3-ID-1	PASS	G012 claims match L3 evidence	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L3-WT-1	PASS	G010 worktree help L3.0/L3.4	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+L3-WT-2	PASS	G010 opt-in honesty KNOWN_LIMITS	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+OB-1	PASS	G011 public entry no override	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+OB-2	PASS	G012 STATUS covers all ledger rows	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+OB-3	PASS	G012 PASS on cut SHA+manifest	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+OB-4	PASS	G001 gate selftest substrate	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+S1	PASS	G011 dual CLI SemVer	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+S2	PASS	G002 public entry agent path	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+S3	PASS	G011 product home stamps	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+S4	PASS	G009/G011 base_url seed	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+S5	PASS	G011 deepseeknight theme	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+S6	PASS	G012 SemVer process check-semver	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+S7	PASS	G011 clean-prefix install	3bcf0ee78da19738db5e9effdaefb439dcb8ca44
+S8	PASS	G006 yolo false default	3bcf0ee78da19738db5e9effdaefb439dcb8ca44

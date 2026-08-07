@@ -1,0 +1,6 @@
+git_sha=10b035cae1b9c0135a96a9a56dd8c1bb62ff4bf6
+expected_file_version=96b458e0a2bf038bf983342fd79e077feab262ae0d660d5f3846de99091c344b
+agent_exit=0
+scripted_base_url=http://127.0.0.1:57734
+found=True
+agent=/Users/WooseongKim/Projects/OpenSources/deepseek-build-owner-bar-5x/third_party/grok-build/target/debug/xai-grok-pager

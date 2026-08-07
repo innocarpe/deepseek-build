@@ -8,7 +8,7 @@ Shipped user-facing behavior is documented here. Intent for unshipped features s
 0. **[First-run setup](./00-setup.md)** — API key onboarding (**required** before chat)
 1. **[Install](./01-install.md)** — PATH install (`deepseek-build` / `dsb`)
 2. **[Dogfood profile](./02-dogfood-profile.md)** — `--dogfood` trusted local write + bash
-3. **[Sessions](./03-sessions.md)** — persist/resume JSONL
+3. **[Sessions](./03-sessions.md)** — persist/resume JSONL + TUI resume
 4. **[Surface](./04-surface.md)** — skills index + thinking/effort
 5. **[npm](./05-npm.md)** — `@innocarpe/deepseek-build` dual bins
 6. **[Authentication](./06-auth.md)** — load order, login/status/logout

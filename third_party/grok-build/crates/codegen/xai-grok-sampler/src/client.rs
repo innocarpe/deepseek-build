@@ -23,10 +23,10 @@ use serde::Serialize;
 
 use xai_grok_sampling_types::error::{try_parse_stream_error, user_facing_api_error_message};
 use xai_grok_sampling_types::{
-    ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, ConversationRequest,
-    ConversationResponse, CreateResponseWrapper, DOOM_LOOP_CHECK_HEADER, MessagesRequestWrapper,
-    ResponseModelMetadata, Result, SamplingError, SentCredential, build_messages_request,
-    is_check_event, messages, rs,
+    ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, ChatContentBlock,
+    ChatRequestMessage, ConversationRequest, ConversationResponse, CreateResponseWrapper,
+    DOOM_LOOP_CHECK_HEADER, MessageContent, MessagesRequestWrapper, ResponseModelMetadata, Result,
+    SamplingError, SentCredential, build_messages_request, is_check_event, messages, rs,
 };
 
 use crate::config::{AuthScheme, OriginClientInfo, SamplerConfig};
@@ -42,6 +42,54 @@ const DEFAULT_CLIENT_IDENTIFIER: &str = "grok-shell";
 /// Product identifier baked into User-Agent strings.
 const AGENT_PRODUCT: &str = "grok-shell";
 const ANTHROPIC_DEFAULT_MAX_TOKENS: u32 = 128_000;
+
+/// Text-only endpoints (DeepSeek's official API) reject `image_url` content
+/// blocks with a 400 `unknown variant 'image_url'`. When the request is bound
+/// for one of those endpoints we strip image blocks at the wire boundary —
+/// the images themselves stay available to the model via on-disk paths that
+/// the shell prepends to the user message (`<image_files>` block), so the
+/// agent can still OCR/read them with its own tools.
+///
+/// Non-image blocks in the same message are collapsed into a single text
+/// message so no other content is lost, and messages without image blocks are
+/// left untouched.
+fn strip_image_content_blocks(messages: &mut [ChatRequestMessage]) {
+    for msg in messages.iter_mut() {
+        let MessageContent::Blocks(blocks) = &msg.content else {
+            continue;
+        };
+        let text_only: Vec<ChatContentBlock> = blocks
+            .iter()
+            .filter(|b| !matches!(b, ChatContentBlock::ImageUrl { .. }))
+            .cloned()
+            .collect();
+        if text_only.len() == blocks.len() {
+            continue;
+        }
+        msg.content = MessageContent::Text(
+            text_only
+                .into_iter()
+                .filter_map(|b| match b {
+                    ChatContentBlock::Text { text } => Some(text),
+                    ChatContentBlock::ImageUrl { .. } => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+    }
+}
+
+/// True when `base_url` points at DeepSeek's official API, whose
+/// /chat/completions endpoint accepts text content only. Matches any
+/// `*.deepseek.com` host (including `/v1` path prefixes) so endpoint
+/// prefixes and model names cannot bypass the text-only wire.
+fn is_official_deepseek_endpoint(base_url: &str) -> bool {
+    let host = reqwest::Url::parse(base_url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_owned))
+        .unwrap_or_else(|| base_url.to_owned());
+    host == "api.deepseek.com" || host.ends_with(".deepseek.com")
+}
 
 /// Per-request `x-grok-*` headers. Optional fields are skipped when empty/`None`.
 struct GrokRequestHeaders<'a> {
@@ -1860,6 +1908,9 @@ impl SamplingClient {
 
         let trace = request.trace.take();
         let mut chat_request: ChatCompletionRequest = request.into();
+        if is_official_deepseek_endpoint(&self.base_url) {
+            strip_image_content_blocks(&mut chat_request.messages);
+        }
         if let Some(trace) = trace {
             chat_request.trace = Some(trace);
         }
@@ -1878,6 +1929,9 @@ impl SamplingClient {
 
         let trace = request.trace.take();
         let mut chat_request: ChatCompletionRequest = request.into();
+        if is_official_deepseek_endpoint(&self.base_url) {
+            strip_image_content_blocks(&mut chat_request.messages);
+        }
         if let Some(trace) = trace {
             chat_request.trace = Some(trace);
         }
@@ -2993,5 +3047,118 @@ mod tests {
             event,
             rs::ResponseStreamEvent::ResponseOutputTextDelta(_)
         ));
+    }
+
+    #[test]
+    fn strip_image_content_blocks_removes_image_url_from_deepseek_wire() {
+        use xai_grok_sampling_types::types::{
+            ChatContentBlock, ChatRequestMessage, ImageUrl, MessageContent, Role,
+        };
+
+        let user_msg = ChatRequestMessage {
+            role: Role::User,
+            content: MessageContent::Blocks(vec![
+                ChatContentBlock::Text {
+                    text: "<image_files>\n1. /tmp/shot.png\n</image_files>".into(),
+                },
+                ChatContentBlock::ImageUrl {
+                    image_url: ImageUrl {
+                        url: "data:image/png;base64,AAAA".into(),
+                    },
+                },
+            ]),
+            name: None,
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            model_id: None,
+            reasoning_content: None,
+        };
+        let tool_msg = ChatRequestMessage {
+            role: Role::Tool,
+            content: MessageContent::Blocks(vec![ChatContentBlock::ImageUrl {
+                image_url: ImageUrl {
+                    url: "data:image/png;base64,BBBB".into(),
+                },
+            }]),
+            name: None,
+            tool_calls: Vec::new(),
+            tool_call_id: Some("call_1".into()),
+            model_id: None,
+            reasoning_content: None,
+        };
+        let mut messages = vec![user_msg, tool_msg];
+        strip_image_content_blocks(&mut messages);
+
+        for msg in &messages {
+            let MessageContent::Text(text) = &msg.content else {
+                panic!("expected text content, got {:?}", msg.content);
+            };
+            assert!(!text.contains("image_url"), "wire must not carry image_url: {text}");
+        }
+        assert!(messages[0].content.blocks().len() == 1);
+        assert!(matches!(
+            messages[0].content.blocks()[0],
+            ChatContentBlock::Text { .. }
+        ));
+        // Tool-result image is dropped entirely (no text to keep) — the empty
+        // text keeps the tool message present so tool-call pairing survives.
+        assert!(messages[1].content.is_empty());
+        // Idempotent: a second pass is a no-op and the serialized body never
+        // contains "image_url".
+        strip_image_content_blocks(&mut messages);
+        let body = serde_json::to_string(&messages).unwrap();
+        assert!(!body.contains("image_url"));
+        assert!(!body.contains("base64"));
+    }
+
+    #[test]
+    fn strip_image_content_blocks_leaves_text_only_messages_untouched() {
+        use xai_grok_sampling_types::types::{ChatRequestMessage, MessageContent, Role};
+
+        let msg = ChatRequestMessage {
+            role: Role::User,
+            content: MessageContent::Text("plain text, no images".into()),
+            name: None,
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            model_id: None,
+            reasoning_content: None,
+        };
+        let mut messages = vec![msg];
+        strip_image_content_blocks(&mut messages);
+        assert!(matches!(
+            &messages[0].content,
+            MessageContent::Text(t) if t == "plain text, no images"
+        ));
+    }
+
+    #[test]
+    fn is_official_deepseek_endpoint_detects_text_only_wire() {
+        for url in [
+            "https://api.deepseek.com",
+            "https://api.deepseek.com/v1",
+            "https://api.deepseek.com/chat/completions",
+            "https://api.deepseek.com/v1/chat/completions",
+            "http://api.deepseek.com",
+            "https://anything.deepseek.com",
+        ] {
+            assert!(
+                is_official_deepseek_endpoint(url),
+                "expected {url} to be treated as text-only DeepSeek"
+            );
+        }
+        for url in [
+            "https://api.x.ai",
+            "https://api.grok.com",
+            "https://openrouter.ai/api/v1",
+            "http://localhost:8787/v1",
+            "https://proxy.example.com",
+            "",
+        ] {
+            assert!(
+                !is_official_deepseek_endpoint(url),
+                "expected {url} to keep image support"
+            );
+        }
     }
 }

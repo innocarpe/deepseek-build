@@ -1,8 +1,9 @@
 //! Theming for the pager.
 //!
 //! All colors come from the `Theme` struct. No hardcoded colors elsewhere.
-//! The default **product** theme is DeepSeekNight (DeepSeek blue `#4D6BFE`).
-//! GrokNight remains available as a built-in option.
+//! The default **product** theme is DeepSeek Night Neutral (DeepSeek blue
+//! `#4D6BFE` accents on a hue-neutral ramp); DeepSeek Night (blue-tinted
+//! ramp) remains selectable, as does GrokNight and the other built-ins.
 //!
 //! ## Color support
 //!
@@ -36,8 +37,12 @@ pub enum ThemeKind {
     TokyoNight = 2,
     RosePineMoon = 3,
     OscuraMidnight = 5,
-    /// DeepSeek Build product default — DeepSeek blue `#4D6BFE` accents.
+    /// DeepSeek Build product skin — DeepSeek blue `#4D6BFE` accents on a
+    /// blue-tinted ramp (the original dsb signature look).
     DeepSeekNight = 6,
+    /// DeepSeek Build product default — DeepSeek blue `#4D6BFE` accents on
+    /// a hue-neutral ramp (same luminance, max gray-ramp legibility).
+    DeepSeekNightNeutral = 7,
     /// Meta-variant: follow system dark/light appearance.
     ///
     /// Never stored in `cache::CURRENT` — resolved to a concrete
@@ -52,6 +57,7 @@ impl ThemeKind {
     /// All theme kinds (including those that may not work on the current terminal).
     pub const ALL: &[ThemeKind] = &[
         ThemeKind::DeepSeekNight,
+        ThemeKind::DeepSeekNightNeutral,
         ThemeKind::GrokNight,
         ThemeKind::GrokDay,
         ThemeKind::TokyoNight,
@@ -69,6 +75,7 @@ impl ThemeKind {
         const ALL: &[ThemeKind] = ThemeKind::ALL;
         const NO_TRUECOLOR: &[ThemeKind] = &[
             ThemeKind::DeepSeekNight,
+            ThemeKind::DeepSeekNightNeutral,
             ThemeKind::GrokNight,
             ThemeKind::GrokDay,
         ];
@@ -84,6 +91,7 @@ impl ThemeKind {
     pub fn display_name(self) -> &'static str {
         match self {
             Self::DeepSeekNight => "deepseeknight",
+            Self::DeepSeekNightNeutral => "deepseeknight-neutral",
             Self::GrokNight => "groknight",
             Self::TokyoNight => "tokyonight",
             Self::GrokDay => "grokday",
@@ -101,6 +109,7 @@ impl ThemeKind {
     pub fn requires_truecolor(self) -> bool {
         match self {
             Self::DeepSeekNight => false,
+            Self::DeepSeekNightNeutral => false,
             Self::GrokNight => false,
             Self::TokyoNight => true,
             Self::GrokDay => false,
@@ -117,10 +126,13 @@ impl ThemeKind {
         let lower = name.to_lowercase();
         match lower.as_str() {
             "auto" | "system" => Some(Self::Auto),
-            "deepseeknight" | "deepseek-night" | "deepseek" | "dsb" | "dark" => {
+            "deepseeknight-neutral" | "deepseek-neutral" | "dsb-neutral" => {
+                Some(Self::DeepSeekNightNeutral)
+            }
+            "deepseeknight" | "deepseek-night" | "deepseek" | "dsb" => {
                 Some(Self::DeepSeekNight)
             }
-            "groknight" | "grok-night" => Some(Self::GrokNight),
+            "groknight" | "grok-night" | "dark" => Some(Self::GrokNight),
             "tokyonight" | "tokyo-night" | "tokyo" => Some(Self::TokyoNight),
             "grokday" | "grok-day" | "light" | "day" => Some(Self::GrokDay),
             "rosepine" | "rose-pine" | "rosepine-moon" | "rose-pine-moon" => {
@@ -159,6 +171,7 @@ pub fn display_name_for_canonical(value: &str) -> &str {
     match value {
         "auto" => "Auto",
         "deepseeknight" => "DeepSeek Night",
+        "deepseeknight-neutral" => "DeepSeek Night Neutral",
         "groknight" => "Grok Night",
         "grokday" => "Grok Day",
         "tokyonight" => "Tokyo Night",
@@ -169,7 +182,7 @@ pub fn display_name_for_canonical(value: &str) -> &str {
 
 impl Default for Theme {
     fn default() -> Self {
-        Self::deepseeknight()
+        Self::deepseeknight_neutral()
     }
 }
 
@@ -287,6 +300,7 @@ impl Theme {
         }
         let base = match cache::current_kind() {
             ThemeKind::DeepSeekNight => Self::deepseeknight(),
+            ThemeKind::DeepSeekNightNeutral => Self::deepseeknight_neutral(),
             ThemeKind::GrokNight => Self::groknight(),
             ThemeKind::TokyoNight => Self::tokyonight(),
             ThemeKind::GrokDay => Self::grokday(),
@@ -294,7 +308,7 @@ impl Theme {
             ThemeKind::OscuraMidnight => Self::oscura_midnight(),
             // Auto is resolved to a concrete theme before being stored;
             // if reached, fall back to product default.
-            ThemeKind::Auto => Self::deepseeknight(),
+            ThemeKind::Auto => Self::deepseeknight_neutral(),
         };
         // Sample polarity pre-quantization — post-quantize `bg_base` may
         // land on a named/indexed entry whose luminance is host-palette-
@@ -359,7 +373,7 @@ impl Theme {
     /// Clamp a theme kind to what the terminal supports.
     fn clamp_to_terminal(kind: ThemeKind) -> ThemeKind {
         if kind.requires_truecolor() && !color_support::detect().has_truecolor() {
-            ThemeKind::DeepSeekNight
+            ThemeKind::DeepSeekNightNeutral
         } else {
             kind
         }
@@ -728,6 +742,8 @@ mod tests {
         assert!(!ThemeKind::TokyoNight.is_auto());
         assert!(!ThemeKind::RosePineMoon.is_auto());
         assert!(!ThemeKind::OscuraMidnight.is_auto());
+        assert!(!ThemeKind::DeepSeekNight.is_auto());
+        assert!(!ThemeKind::DeepSeekNightNeutral.is_auto());
     }
 
     #[test]
@@ -747,6 +763,8 @@ mod tests {
         assert!(Theme::tokyonight().is_dark());
         assert!(Theme::rosepine_moon().is_dark());
         assert!(Theme::oscura_midnight().is_dark());
+        assert!(Theme::deepseeknight().is_dark());
+        assert!(Theme::deepseeknight_neutral().is_dark());
         assert!(!Theme::grokday().is_dark());
     }
 
@@ -1088,6 +1106,8 @@ mod tests {
                 ThemeKind::TokyoNight => Theme::tokyonight(),
                 ThemeKind::RosePineMoon => Theme::rosepine_moon(),
                 ThemeKind::OscuraMidnight => Theme::oscura_midnight(),
+                ThemeKind::DeepSeekNight => Theme::deepseeknight(),
+                ThemeKind::DeepSeekNightNeutral => Theme::deepseeknight_neutral(),
                 ThemeKind::Auto => unreachable!("ALL excludes Auto"),
             };
             let track = lum(theme.scrollbar_bg, "scrollbar_bg", kind);
@@ -1221,6 +1241,22 @@ mod tests {
         assert_eq!(ThemeKind::from_name("grokday"), Some(ThemeKind::GrokDay));
         assert_eq!(ThemeKind::from_name("light"), Some(ThemeKind::GrokDay));
         assert_eq!(
+            ThemeKind::from_name("deepseeknight"),
+            Some(ThemeKind::DeepSeekNight)
+        );
+        assert_eq!(
+            ThemeKind::from_name("dsb"),
+            Some(ThemeKind::DeepSeekNight)
+        );
+        assert_eq!(
+            ThemeKind::from_name("deepseeknight-neutral"),
+            Some(ThemeKind::DeepSeekNightNeutral)
+        );
+        assert_eq!(
+            ThemeKind::from_name("dsb-neutral"),
+            Some(ThemeKind::DeepSeekNightNeutral)
+        );
+        assert_eq!(
             ThemeKind::from_name("tokyonight"),
             Some(ThemeKind::TokyoNight)
         );
@@ -1255,6 +1291,13 @@ mod tests {
             ("grok-day", ThemeKind::GrokDay),
             ("light", ThemeKind::GrokDay),
             ("day", ThemeKind::GrokDay),
+            ("deepseeknight", ThemeKind::DeepSeekNight),
+            ("deepseek-night", ThemeKind::DeepSeekNight),
+            ("deepseek", ThemeKind::DeepSeekNight),
+            ("dsb", ThemeKind::DeepSeekNight),
+            ("deepseeknight-neutral", ThemeKind::DeepSeekNightNeutral),
+            ("deepseek-neutral", ThemeKind::DeepSeekNightNeutral),
+            ("dsb-neutral", ThemeKind::DeepSeekNightNeutral),
             ("rosepine", ThemeKind::RosePineMoon),
             ("rose-pine", ThemeKind::RosePineMoon),
             ("rosepine-moon", ThemeKind::RosePineMoon),

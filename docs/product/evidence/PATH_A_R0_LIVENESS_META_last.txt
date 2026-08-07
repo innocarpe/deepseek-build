@@ -1,0 +1,4 @@
+git_sha=392205d472ef98c45f889c5916a495232754620d
+agent_exit=0
+a='hello2\n'
+b='world1\n'

@@ -1,5 +1,13 @@
 # Build and attach prebuilt natives on version tags (ADR 0009).
 # Maintainer still runs npm publish (OTP) after assets exist.
+#
+# Change-scope fast path (docs/contributing/release-cycle.md):
+#   - third_party/ unchanged since the previous release tag -> reuse that
+#     release's vendored agent binary, rebuild only the dsb-cli wrappers
+#     (seconds instead of a full vendored build).
+#   - third_party/ changed -> full vendored build; sccache makes it
+#     incremental across runs (SCCACHE_GHA_CACHE).
+# If the previous tarball is missing for a platform, we fall back to full.
 name: release-prebuilt
 
 on:
@@ -9,6 +17,10 @@ on:
 
 permissions:
   contents: write
+
+env:
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_CACHE: "true"
 
 jobs:
   build:
@@ -26,6 +38,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: mozilla-actions/sccache-action@v0.0.6
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.94.0
@@ -36,10 +49,44 @@ jobs:
           else
             sudo apt-get update && sudo apt-get install -y protobuf-compiler
           fi
+      - name: Detect change scope
+        id: scope
+        run: |
+          PREV_TAG="$(git tag --merged HEAD --sort=-v:refname | awk '!seen[$0]++' | sed -n '2p' || true)"
+          SCOPE="full"
+          if [[ -n "$PREV_TAG" ]] && git diff --quiet "$PREV_TAG" HEAD -- third_party/; then
+            SCOPE="wrapper"
+          fi
+          echo "prev_tag=${PREV_TAG:-}" >> "$GITHUB_OUTPUT"
+          echo "scope=${SCOPE}" >> "$GITHUB_OUTPUT"
+          echo "scope=${SCOPE} prev_tag=${PREV_TAG:-none}"
+      - name: Fetch previous release binaries (reuse agent when vendored tree unchanged)
+        id: prev
+        if: steps.scope.outputs.scope != 'full'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p /tmp/prev "$HOME/.deepseek-build/bin"
+          if ! gh release download "${{ steps.scope.outputs.prev_tag }}" \
+                --pattern "deepseek-build-*-${{ matrix.platform }}.tar.gz" \
+                --dir /tmp/prev --clobber; then
+            echo "prev tarball missing for ${{ steps.scope.outputs.prev_tag }}/${{ matrix.platform }}; falling back to full build"
+            echo "scope=full" >> "$GITHUB_OUTPUT"
+          else
+            tar -xzf /tmp/prev/*.tar.gz -C "$HOME/.deepseek-build/bin"
+            echo "reused agent from ${{ steps.scope.outputs.prev_tag }} (${{ matrix.platform }})"
+          fi
       - name: Build wrappers
         run: |
           cargo install --path crates/dsb-cli --locked --force --root "$HOME/.deepseek-build"
+      - name: Install dotslash (vendored protoc launcher)
+        if: steps.scope.outputs.scope == 'full' || steps.prev.outputs.scope == 'full'
+        run: |
+          if ! command -v dotslash >/dev/null 2>&1; then
+            cargo install dotslash
+          fi
       - name: Build agent
+        if: steps.scope.outputs.scope == 'full' || steps.prev.outputs.scope == 'full'
         run: |
           ./scripts/build-grok-pager.sh release
           AGENT="$(ls third_party/grok-build/target/release/xai-grok-pager-bin third_party/grok-build/target/release/xai-grok-pager 2>/dev/null | head -1)"

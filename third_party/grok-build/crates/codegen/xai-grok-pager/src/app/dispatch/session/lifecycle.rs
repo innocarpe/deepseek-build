@@ -1108,6 +1108,10 @@ pub(in crate::app::dispatch) fn handle_session_created(
             agent_id,
             silent: true,
         });
+        effects.push(Effect::FetchDeepSeekStatus {
+            agent_id,
+            session_id: session_id_clone.clone(),
+        });
         if let Some(switch) = deferred {
             effects.push(Effect::SwitchModel {
                 agent_id,
@@ -1210,6 +1214,10 @@ pub(in crate::app::dispatch) fn handle_worktree_session_created(
         effects.push(Effect::FetchBilling {
             agent_id,
             silent: true,
+        });
+        effects.push(Effect::FetchDeepSeekStatus {
+            agent_id,
+            session_id: session_id_clone.clone(),
         });
         if let Some(switch) = deferred {
             effects.push(Effect::SwitchModel {

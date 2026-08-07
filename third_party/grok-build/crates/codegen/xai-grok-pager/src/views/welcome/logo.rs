@@ -12,6 +12,9 @@ use ratatui::widgets::{Paragraph, Widget};
 use crate::render::color::blend_color;
 use crate::theme::Theme;
 
+// The source mark is deliberately widened for terminal cells: a monospace
+// cell is narrower than it is tall, so an undistorted braille raster looks
+// pinched compared with the official DeepSeek silhouette.
 const LOGO: &str = include_str!("../../../assets/logo/logo07.txt");
 const LOGO_SMALL: &str = include_str!("../../../assets/logo/logo05.txt");
 
@@ -247,6 +250,7 @@ mod tests {
         // beside the menu), and it's the large variant — never the small one.
         assert_eq!(full_logo_line_count_for(false), count_lines(LOGO));
         assert_eq!(full_logo_visual_width_for(false), visual_width(LOGO));
+        assert_eq!(full_logo_visual_width_for(false), 22);
         assert!(full_logo_line_count_for(false) > count_lines(LOGO_SMALL));
         assert!(full_logo_visual_width_for(false) > visual_width(LOGO_SMALL));
     }
@@ -269,6 +273,11 @@ mod tests {
         } else {
             assert_eq!(compact_logo_line_count(), 0);
         }
+    }
+
+    #[test]
+    fn compact_logo_uses_widened_terminal_aspect_ratio() {
+        assert_eq!(visual_width(LOGO_SMALL), 14);
     }
 
     #[test]

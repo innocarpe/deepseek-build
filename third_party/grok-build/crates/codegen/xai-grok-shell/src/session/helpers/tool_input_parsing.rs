@@ -44,6 +44,179 @@ pub fn normalize_empty_arguments(arguments: &str) -> &str {
     }
 }
 
+/// Spec 15 one-pass repair result for Path A / Grok tool dispatch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Spec15RepairOutcome {
+    /// Argument string after empty-normalize + at most one repair pass.
+    pub arguments: String,
+    /// True if any repair transformation was applied.
+    pub repair_applied: bool,
+}
+
+/// Spec 15 spirit (DeepSeek Build owner-bar G007): repair tool arguments **once**
+/// before execute on the Grok dispatch path.
+///
+/// Allowed: trailing commas, single-quoted strings, control-char escapes,
+/// unwrap JSON-string-wrapped object once, empty → `{}`.
+/// Never invent required fields or rename tools (name handled by caller).
+pub fn repair_tool_arguments_one_pass(raw: &str) -> Spec15RepairOutcome {
+    let mut repair_applied = false;
+    let mut current = normalize_empty_arguments(raw).trim().to_string();
+
+    // Unwrap JSON string containing object once.
+    if let Ok(serde_json::Value::String(inner)) = serde_json::from_str::<serde_json::Value>(&current)
+    {
+        let inner_trim = inner.trim();
+        if inner_trim.starts_with('{') || inner_trim.starts_with('[') {
+            current = inner;
+            repair_applied = true;
+        }
+    }
+
+    if serde_json::from_str::<serde_json::Value>(&current).is_ok() {
+        return Spec15RepairOutcome {
+            arguments: current,
+            repair_applied,
+        };
+    }
+
+    // Exactly one repair pass (Spec 15).
+    let repaired = apply_spec15_repairs(&current);
+    if repaired != current {
+        repair_applied = true;
+        current = repaired;
+    }
+
+    Spec15RepairOutcome {
+        arguments: current,
+        repair_applied,
+    }
+}
+
+fn apply_spec15_repairs(input: &str) -> String {
+    let mut s = strip_trailing_commas(input);
+    s = convert_single_quotes(&s);
+    s = escape_control_chars_in_strings(&s);
+    s
+}
+
+fn strip_trailing_commas(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == ',' {
+            let mut j = i + 1;
+            while j < chars.len() && chars[j].is_whitespace() {
+                j += 1;
+            }
+            if j < chars.len() && (chars[j] == '}' || chars[j] == ']') {
+                i += 1;
+                continue;
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
+fn convert_single_quotes(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    let mut in_double = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if in_double {
+            out.push(c);
+            if c == '\\' && i + 1 < chars.len() {
+                out.push(chars[i + 1]);
+                i += 2;
+                continue;
+            }
+            if c == '"' {
+                in_double = false;
+            }
+            i += 1;
+            continue;
+        }
+        if c == '"' {
+            in_double = true;
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        if c == '\'' {
+            out.push('"');
+            i += 1;
+            while i < chars.len() {
+                let ch = chars[i];
+                if ch == '\\' && i + 1 < chars.len() {
+                    out.push(ch);
+                    out.push(chars[i + 1]);
+                    i += 2;
+                    continue;
+                }
+                if ch == '\'' {
+                    out.push('"');
+                    i += 1;
+                    break;
+                }
+                if ch == '"' {
+                    out.push('\\');
+                    out.push('"');
+                    i += 1;
+                    continue;
+                }
+                out.push(ch);
+                i += 1;
+            }
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+fn escape_control_chars_in_strings(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_string = false;
+    let mut escape = false;
+    for c in s.chars() {
+        if escape {
+            out.push(c);
+            escape = false;
+            continue;
+        }
+        if c == '\\' && in_string {
+            out.push(c);
+            escape = true;
+            continue;
+        }
+        if c == '"' {
+            in_string = !in_string;
+            out.push(c);
+            continue;
+        }
+        if in_string {
+            match c {
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                c if (c as u32) < 0x20 => {
+                    out.push_str(&format!("\\u{:04x}", c as u32));
+                }
+                _ => out.push(c),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,5 +343,38 @@ mod tests {
     fn normalize_non_empty_passthrough() {
         assert_eq!(normalize_empty_arguments(r#"{"a":1}"#), r#"{"a":1}"#);
         assert_eq!(normalize_empty_arguments("not json"), "not json");
+    }
+
+    #[test]
+    fn spec15_trailing_comma_repairs_once() {
+        let raw = r#"{"file_path":"a.rs","old_string":"x","new_string":"y",}"#;
+        let out = repair_tool_arguments_one_pass(raw);
+        assert!(out.repair_applied);
+        let v: serde_json::Value = serde_json::from_str(&out.arguments).unwrap();
+        assert_eq!(v["file_path"], "a.rs");
+        assert_eq!(v["new_string"], "y");
+    }
+
+    #[test]
+    fn spec15_single_quotes_repair() {
+        let raw = r#"{'file_path':'a.rs'}"#;
+        let out = repair_tool_arguments_one_pass(raw);
+        assert!(out.repair_applied);
+        let v: serde_json::Value = serde_json::from_str(&out.arguments).unwrap();
+        assert_eq!(v["file_path"], "a.rs");
+    }
+
+    #[test]
+    fn spec15_valid_json_no_repair() {
+        let raw = r#"{"file_path":"a.rs"}"#;
+        let out = repair_tool_arguments_one_pass(raw);
+        assert!(!out.repair_applied);
+        assert_eq!(out.arguments, raw);
+    }
+
+    #[test]
+    fn spec15_unrepairable_stays_unparseable() {
+        let out = repair_tool_arguments_one_pass("not-json-at-all");
+        assert!(serde_json::from_str::<serde_json::Value>(&out.arguments).is_err());
     }
 }

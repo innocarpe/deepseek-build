@@ -969,6 +969,27 @@ pub async fn run(
         Err(run_error) => Err(run_error),
     }
 }
+/// Invocation command name for pasteable resume hints.
+///
+/// dsb-cli sets `GROK_INVOCATION_NAME=dsb` (or `deepseek-build`) so quit
+/// hints read `dsb --resume <id>` instead of the upstream `grok --resume <id>`.
+/// Defaults to "grok" so standalone upstream builds keep their behavior.
+pub(crate) fn invocation_name() -> String {
+    std::env::var("GROK_INVOCATION_NAME")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "grok".to_string())
+}
+
+/// `  <cmd> [--minimal] --resume <session_id>` — pure, env-free, testable.
+fn resume_hint_line(cmd: &str, session_id: &str, minimal: bool) -> String {
+    if minimal {
+        format!("  {cmd} --minimal --resume {session_id}")
+    } else {
+        format!("  {cmd} --resume {session_id}")
+    }
+}
+
 /// Plain-quit "Resume this session with…" lines (after terminal restore).
 ///
 /// A summary, when present — title, last prompt, last response, one line
@@ -993,11 +1014,12 @@ fn print_exit_resume_hint(info: &ExitInfo, max_width: usize, w: &mut impl Write)
         let _ = writeln!(w);
     }
     let _ = writeln!(w, "Resume this session with:");
-    if info.minimal {
-        let _ = writeln!(w, "  grok --minimal --resume {}", info.session_id);
-    } else {
-        let _ = writeln!(w, "  grok --resume {}", info.session_id);
-    }
+    let cmd = invocation_name();
+    let _ = writeln!(
+        w,
+        "{}",
+        resume_hint_line(&cmd, &info.session_id, info.minimal)
+    );
 }
 /// Screen-mode relaunch failure fallback (same quit tail as plain resume).
 fn print_relaunch_failure_hint(
@@ -2295,6 +2317,21 @@ mod tests {
         assert!(out.contains(&format!("\n> {}…\n", "p".repeat(17))));
         assert!(out.contains(&format!("\n  {}…\n", "r".repeat(17))));
         assert!(out.contains("  grok --resume sess-abc\n"));
+    }
+    #[test]
+    fn resume_hint_line_brands_invocation_name() {
+        assert_eq!(
+            resume_hint_line("dsb", "sess-abc", false),
+            "  dsb --resume sess-abc"
+        );
+        assert_eq!(
+            resume_hint_line("dsb", "sess-abc", true),
+            "  dsb --minimal --resume sess-abc"
+        );
+        assert_eq!(
+            resume_hint_line("deepseek-build", "sess-abc", false),
+            "  deepseek-build --resume sess-abc"
+        );
     }
     #[test]
     fn print_relaunch_failure_hint_writes_expected_lines() {

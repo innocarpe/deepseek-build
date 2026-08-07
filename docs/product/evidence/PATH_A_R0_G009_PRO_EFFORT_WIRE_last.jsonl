@@ -1,0 +1,3 @@
+{"n": 0, "model": "grok-4.5", "reasoning_effort": null, "keys": ["max_tokens", "model", "stream", "stream_options", "temperature", "tool_choice"]}
+{"n": 1, "model": "deepseek-v4-pro", "reasoning_effort": null, "keys": ["model", "stream", "stream_options"]}
+{"n": 2, "model": "deepseek-v4-pro", "reasoning_effort": null, "keys": ["model", "stream", "stream_options"]}

@@ -1231,6 +1231,23 @@ impl AppView {
     pub fn is_zdr_blocked(&self) -> bool {
         self.is_zdr && !self.zdr_access_enabled
     }
+    /// Whether the DeepSeek status poll should keep running.
+    ///
+    /// The active agent's `deepseek_status` gates the poll: unknown
+    /// (`None`) keeps polling until the first response lands, a
+    /// successful `is_deepseek=true` keeps it alive, and a confirmed
+    /// `is_deepseek=false` stops it (x.ai sessions need no balance row).
+    pub fn deepseek_poll_wanted(&self) -> bool {
+        match self.active_view {
+            ActiveView::Agent(id) => self
+                .agents
+                .get(&id)
+                .and_then(|a| a.deepseek_status.as_ref())
+                .map(|s| s.is_deepseek)
+                .unwrap_or(true),
+            _ => false,
+        }
+    }
     /// User is not gated (no gate from remote settings or subscription fallback).
     pub fn has_access(&self) -> bool {
         self.gate.is_none()

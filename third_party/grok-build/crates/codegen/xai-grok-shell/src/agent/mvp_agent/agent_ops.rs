@@ -4389,19 +4389,20 @@ impl MvpAgent {
                 .map(|v| v as usize)
         };
         {
+            // Owner-bar G004: apply tool_configs for ALL file toolsets including
+            // Standard (snippet_safe + empty_old_string guard). Previously applied
+            // only when effective != Standard — dead wiring on Path A default.
             let cfg = self.cfg.borrow();
             let effective = cfg
                 .toolset
                 .resolve_file_toolset(cfg.remote_settings.as_ref());
-            if effective != crate::tools::FileToolset::Standard {
-                let file_tools = effective
-                    .tool_configs(&cfg.toolset.hashline)
-                    .map_err(|e| {
-                        acp::Error::invalid_params()
-                            .data(format!("invalid [toolset.hashline] config: {e}"))
-                    })?;
-                agent_definition.override_file_tools(file_tools);
-            }
+            let file_tools = effective
+                .tool_configs(&cfg.toolset.hashline)
+                .map_err(|e| {
+                    acp::Error::invalid_params()
+                        .data(format!("invalid file toolset config: {e}"))
+                })?;
+            agent_definition.override_file_tools(file_tools);
         }
         let lsp_tools_enabled = self.cfg.borrow().resolve_lsp_tools().value;
         if lsp_tools_enabled && tool_ctx.lsp.is_none() {

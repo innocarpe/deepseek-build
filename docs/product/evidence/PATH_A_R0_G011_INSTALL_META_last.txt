@@ -1,0 +1,13 @@
+git_sha=186a60c8eae66fa1da72e994dccaf973e40b49bf
+story=G011
+prefix=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-g011-install.if8Fdf/prefix
+product_home=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-g011-install.if8Fdf/product-home
+dual_version=deepseek-build 4.0.4
+agent_src=/Users/WooseongKim/Projects/OpenSources/deepseek-build-owner-bar-5x/third_party/grok-build/target/debug/xai-grok-pager
+agent_sha256=af7e2aaf7b93c57a1ef03d08b550b538c9e811b9c5917d4309b9a3790b900118
+agent_exit=0
+wire_lines=3
+stamps=prefix,routing,l3
+DEEPSEEK_BUILD_AGENT_BIN_unset=yes
+theme=deepseeknight
+result=PASS

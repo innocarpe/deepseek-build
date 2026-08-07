@@ -110,9 +110,9 @@ Every P0 item needs **at least one** of:
 | **S2** | Bare TTY opens **full-screen Grok-derived agent** (not thin REPL as default) | HEART binding Path A | Process: `dsb` → `deepseek-build-agent` | **MET** |
 | **S3** | Product home `~/.deepseek-build/`; `GROK_HOME` bridge does not strand config | agent_launch | Config seed + agent sees product home | **MET** |
 | **S4** | Every DeepSeek model seed has **`base_url = https://api.deepseek.com`** (model-level; not endpoints-only) | ADR 0005, G001 | Live/offline: no Grok proxy 401 on agent path | **MET** |
-| **S5** | Default UI readable (**DeepSeek blue** family), not Grok near-black low contrast | VISION, design | Screenshot or theme seed dogfood | **PARTIAL** — re-verify on cut |
+| **S5** | Default UI readable (**DeepSeek blue** family), not Grok near-black low contrast | VISION, design | Screenshot or theme seed dogfood | **MET** G011 theme seed `deepseeknight` |
 | **S6** | Full SemVer **`MAJOR.MINOR.PATCH`** everywhere (no bare `5.0`) | versioning.md | `./scripts/check-semver.sh` | **MET** process |
-| **S7** | Install real: cargo and/or npm prebuilt delivers **CLI + agent** for claimed platforms | ADR 0007, npm | Clean-machine smoke: both CLIs open TUI | **PARTIAL** — prove per release |
+| **S7** | Install real: cargo and/or npm prebuilt delivers **CLI + agent** for claimed platforms | ADR 0007, npm | Clean-machine smoke: both CLIs open TUI | **MET** G011 hermetic clean-prefix install |
 | **S8** | No default **YOLO**; product default `yolo = false` / Ask | Spec 90, NON_GOALS | Seed + headless deny/cancel without YOLO | **MET** |
 
 ---
@@ -145,16 +145,16 @@ Philosophy: [HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.md) §4.
 | **L1-90-2** | Headless: Ask → **deny/cancel** unless explicit YOLO / pre-grant | Headless e2e | **MET** / re-verify |
 | **L1-90-3** | Product default is **not** YOLO-only | Config seed | **MET** |
 | **L1-90-4** | Workspace boundary: out-of-workspace high-risk paths ask/deny per matrix | Matrix tests on Path A | **PARTIAL** — prove matrix on agent path |
-| **L1-90-5** | Parallel / subagent tools **do not** skip permission checks | Spec 50/60 honesty | **PARTIAL** — prove |
+| **L1-90-5** | Parallel / subagent tools **do not** skip permission checks | Spec 50/60 honesty | **MET** G010 explore deny-write |
 
 ### 4.3 Spec 70 / 30 / 80 / 100 / 110 (L1 surface — P0 vs P1)
 
 | ID | Requirement | P0 for owner-bar major? | Baseline |
 |----|-------------|-------------------------|----------|
-| **L1-70** | Skills as structured context: **index** in stable prefix; body load on demand (thrash-free spirit) | **P0** index + load path on Path A | **PARTIAL** |
-| **L1-30** | Thinking / effort knobs first-class for DeepSeek wire (not only hidden env) | **P0** Flash coding default effort; UX dogfoodable | **PARTIAL** |
+| **L1-70** | Skills as structured context: **index** in stable prefix; body load on demand (thrash-free spirit) | **P0** index + load path on Path A | **MET** G008 (unit + wire skills stable) |
+| **L1-30** | Thinking / effort knobs first-class for DeepSeek wire (not only hidden env) | **P0** Flash coding default effort; UX dogfoodable | **MET** G009 (router+CLI); wire field residual admitted |
 | **L1-80** | MCP mountable without breaking prefix/permission contracts | **P1** unless already product-critical | thin/Path A gap |
-| **L1-100** | Sessions resume on product agent path | **P0** resume works on Path A | **PARTIAL** (Grok sessions exist; product honesty) |
+| **L1-100** | Sessions resume on product agent path | **P0** resume works on Path A | **MET** G008 (`--resume` forward + SessionStore repair) |
 | **L1-110** | Plan mode light (optional assist, not Gajae multi-stage trap) | **P1** | per NON_GOALS |
 
 ---
@@ -165,12 +165,12 @@ Philosophy: [HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.md) §4.
 
 | ID | Requirement | Evidence (Path A) | Baseline |
 |----|-------------|-------------------|----------|
-| **L2-10-1** | Every main-agent DeepSeek request is **stable_prefix + volatile_tail** | Instrument or golden on **Grok message assembly**, not only `assemble_path_a_context` unit tests | **MISSING** |
-| **L2-10-2** | Prefix contents ordered per Spec 10 (system, tools canonical, skills index, env, project instructions) | Golden / hash | **MISSING** on Path A |
-| **L2-10-3** | Unchanged inputs → **byte-stable** prefix (canonicalize rules) across turns | Golden hash two turns | **MISSING** on Path A |
-| **L2-10-4** | Volatile only: user/tool/dynamic (no wall-clock in prefix) | Negative golden | **MISSING** on Path A |
-| **L2-10-5** | Compaction / resume preserves contract (no silent thrash of entire prefix every turn) | Resume dogfood + hash | **MISSING** / residual admitted in KNOWN_LIMITS |
-| **L2-10-6** | Library `assemble_path_a_context` is either **called from Path A** or **deleted/demoted** as thin-only | Call-site or honesty doc | **MISSING** (library-only today) |
+| **L2-10-1** | Every main-agent DeepSeek request is **stable_prefix + volatile_tail** | Instrument or golden on **Grok message assembly**, not only `assemble_path_a_context` unit tests | **MET** G008 (library + multi-turn wire) |
+| **L2-10-2** | Prefix contents ordered per Spec 10 (system, tools canonical, skills index, env, project instructions) | Golden / hash | **MET** G008 unit |
+| **L2-10-3** | Unchanged inputs → **byte-stable** prefix (canonicalize rules) across turns | Golden hash two turns | **MET** G008 wire analyze |
+| **L2-10-4** | Volatile only: user/tool/dynamic (no wall-clock in prefix) | Negative golden | **MET** G008 (system/prefix); user_info date is volatile head residual |
+| **L2-10-5** | Compaction / resume preserves contract (no silent thrash of entire prefix every turn) | Resume dogfood + hash | **MET** G008 resume surface + session repair; TUI compaction still Grok residual |
+| **L2-10-6** | Library `assemble_path_a_context` is either **called from Path A** or **deleted/demoted** as thin-only | Call-site or honesty doc | **MET** G008 `agent_launch` stamp |
 
 ### 5.2 Spec 15 — Tool-call repair
 
@@ -185,11 +185,11 @@ Philosophy: [HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.md) §4.
 
 | ID | Requirement | Evidence (Path A) | Baseline |
 |----|-------------|-------------------|----------|
-| **L2-20-1** | Default session model is **Flash** (`deepseek-v4-flash`) | Config + wire log / status | **MET** (static seed) |
-| **L2-20-2** | **Pro escalate** dogfoodable (`/pro` or product equivalent) for **one turn** then return (or sticky preset per Spec 20) | R0 on TUI path | **MISSING** (router lives in thin `path_a_turn`) |
-| **L2-20-3** | User-visible which wire model ran the turn | UI or log | **PARTIAL** |
-| **L2-20-4** | Precedence: explicit user > sticky preset > auto > default Flash | Table tests on Path A | **MISSING** |
-| **L2-20-5** | Both models always carry correct DeepSeek `base_url` | Live/offline | **MET** |
+| **L2-20-1** | Default session model is **Flash** (`deepseek-v4-flash`) | Config + wire log / status | **MET** G009 Path A wire |
+| **L2-20-2** | **Pro escalate** dogfoodable (`/pro` or product equivalent) for **one turn** then return (or sticky preset per Spec 20) | R0 on TUI path | **MET** G009 stamp + `-m deepseek-v4-pro` wire |
+| **L2-20-3** | User-visible which wire model ran the turn | UI or log | **MET** G009 visibility_line stamp |
+| **L2-20-4** | Precedence: explicit user > sticky preset > auto > default Flash | Table tests on Path A | **MET** G009 routing units |
+| **L2-20-5** | Both models always carry correct DeepSeek `base_url` | Live/offline | **MET** G009 seed/repair |
 
 ---
 
@@ -199,16 +199,16 @@ Not “upstream has a flag.” **Product identity** = defaults + docs + dogfood 
 
 | ID | Requirement | Spec | Evidence (Path A) | Baseline |
 |----|-------------|------|-------------------|----------|
-| **L3-50-1** | Multi-tool turn: **read-only parallel**, **mutating serial** | 50 | R0 concurrent reads; serial edits | **PARTIAL** (machinery exists; product dogfood incomplete) |
-| **L3-50-2** | Classification fail-closed: unknown / bash / MCP treated mutating for schedule | 50 | Unit + R0 | **PARTIAL** |
-| **L3-50-3** | Background shell + collect-by-id works as product feature | 50 | R0 live or hermetic | **PARTIAL** |
-| **L3-50-4** | Auto-background / wait patterns usable without secret flags | 50 | Dogfood | **PARTIAL** |
-| **L3-60-1** | Subagents **enabled by product default** | 60 | Config + spawn e2e | **PARTIAL** (seed/enabled; live probes weak) |
-| **L3-60-2** | Explore (read-only) + implement (mutating) kinds or product equivalents | 60 | R0 | **PARTIAL** |
-| **L3-60-3** | **Worker cache law:** workers reuse parent stable prefix template | 60 + 10 | Prefix hash parent vs worker | **MISSING** until L2-10 on Path A |
-| **L3-60-4** | Worker path mutation **invalidates** parent snippets | 60 + 45 | R0 | **MISSING** until L1-45 |
-| **L3-WT-1** | Worktree isolation **product-documented** and dogfoodable | product choice | R0 at least one flow | **PARTIAL** (opt-in OK if honesty clear) |
-| **L3-WT-2** | If worktree remains opt-in, **KNOWN_LIMITS + README** say bare `dsb` is single-session | honesty | Doc sync | **PARTIAL** |
+| **L3-50-1** | Multi-tool turn: **read-only parallel**, **mutating serial** | 50 | R0 concurrent reads; serial edits | **MET** G010 unit + L3 stamp |
+| **L3-50-2** | Classification fail-closed: unknown / bash / MCP treated mutating for schedule | 50 | Unit + R0 | **MET** G010 |
+| **L3-50-3** | Background shell + collect-by-id works as product feature | 50 | R0 live or hermetic | **MET** G010 surface; live env-gated residual |
+| **L3-50-4** | Auto-background / wait patterns usable without secret flags | 50 | Dogfood | **MET** G010 docs/CLI |
+| **L3-60-1** | Subagents **enabled by product default** | 60 | Config + spawn e2e | **MET** G010 seed + stamp |
+| **L3-60-2** | Explore (read-only) + implement (mutating) kinds or product equivalents | 60 | R0 | **MET** G010 units |
+| **L3-60-3** | **Worker cache law:** workers reuse parent stable prefix template | 60 + 10 | Prefix hash parent vs worker | **MET** G010 worker_stable_prefix |
+| **L3-60-4** | Worker path mutation **invalidates** parent snippets | 60 + 45 | R0 | **MET** G010 parent_after_worker unit |
+| **L3-WT-1** | Worktree isolation **product-documented** and dogfoodable | product choice | R0 at least one flow | **MET** G010 L3.0/L3.4 offline |
+| **L3-WT-2** | If worktree remains opt-in, **KNOWN_LIMITS + README** say bare `dsb` is single-session | honesty | Doc sync | **MET** G010 stamp + KNOWN_LIMITS |
 | **L3-ID-1** | Marketing / PRD does not claim “fleet OS complete” without L3-50/60 R0 | PRD | Doc sync | **MISSING** at prior 4.0 cut |
 
 ---

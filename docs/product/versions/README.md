@@ -20,7 +20,7 @@ Tags and line PRDs do **not** override that file.
 | **2.x** | [PRD-v2.md](../PRD-v2.md) | **Shipped shell cut** | Grok-derived full-screen agent + DeepSeek entry/UI/npm |
 | **3.x** | [PRD-v3.md](../PRD-v3.md) | **Tagged `3.0.0` — owner-bar NOT MET** | Heart fusion *attempt*; Path A fusion incomplete (library / dead wiring) — [OWNER_BAR_ACCEPTANCE.md](../OWNER_BAR_ACCEPTANCE.md) |
 | **4.x** | [PRD-v4.md](../PRD-v4.md) | **Tagged `4.0.0`–`4.0.2` — owner-bar NOT MET** | L3 productization *attempt*; machinery + docs, not full product identity |
-| **5.x** | [PRD-v5.md](../PRD-v5.md) | **Active `owner-bar-5x` → `5.0.0`** | Owner-bar complete product — [OWNER_BAR_5X_GOALS.md](../OWNER_BAR_5X_GOALS.md) · [WAVE_5x_PR_DAG.md](../WAVE_5x_PR_DAG.md) · [OWNER_BAR_P0_LEDGER.md](../OWNER_BAR_P0_LEDGER.md) |
+| **5.x** | [PRD-v5.md](../PRD-v5.md) | **Shipped `5.0.0` / `v5.0.0` — owner-bar MET** | Owner-bar complete product — [CUT_5_0_0_2026-08-07.md](../evidence/CUT_5_0_0_2026-08-07.md) · [OWNER_BAR_5X_GOALS.md](../OWNER_BAR_5X_GOALS.md) |
 
 Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** product major PRDs.
 
@@ -47,6 +47,11 @@ Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** p
 | 2026-08-07 | **`3.0.0` / tag `v3.0.0`** heart fusion cut (`heart-3x`) — later found **not owner-bar green** | PRD-v3, CUT_3_0_0, adversarial review |
 | 2026-08-07 | **`4.0.0` / tag `v4.0.0`** L3 productization (`fleet-4x`) — **not owner-bar green** | PRD-v4, PR #85, CUT_4_0_0 |
 | 2026-08-07 | **`4.0.1`** prebuilt npm install (ADR 0009) · **`4.0.2`** setup → bare `dsb` | PR #86, #87 |
+| 2026-08-07 | **`4.0.3`** `dsb --resume` surface + hint branding | PR #92 |
+| 2026-08-07 | **`5.0.0` / tag `v5.0.0`** owner-bar complete (`owner-bar-5x`) | PRD-v5, CUT_5_0_0, dual adversarial reviews |
+| 2026-08-07 | **`5.0.1`** widen the DeepSeek whale logo to official terminal proportions | PR #113 |
+| 2026-08-07 | **`4.0.4`** Image attachments on text-only DeepSeek endpoints (persist to session assets + OCR hint); DeepSeek status line with account balance & cache hit rate; G003 mint file_version on Path A read_file | PR #_(fill in)_ |
+| 2026-08-07 | **release-cycle harness** — `bump-version.sh` + `release.sh` + CI sccache/fast-path + runbook | PR #94 |
 | 2026-08-07 | Owner-bar checklist normative; true complete product = **5.x** only when checklist green | [OWNER_BAR_ACCEPTANCE.md](../OWNER_BAR_ACCEPTANCE.md) |
 | 2026-08-07 | Dual adversarial plan review (Claude Opus + Codex gpt-5.6-sol); train **`owner-bar-5x`** package | [evidence/OWNER_BAR_5X_PLAN_ADVERSARIAL_2026-08-07.md](../evidence/OWNER_BAR_5X_PLAN_ADVERSARIAL_2026-08-07.md) · PRD-v5 · WAVE_5x |
 

@@ -971,9 +971,18 @@ impl SessionActor {
                 }
             }
         }
-        let args_str = crate::session::helpers::tool_input_parsing::normalize_empty_arguments(
+        // Spec 15 / owner-bar G007: one-pass repair on Grok dispatch before execute.
+        let repaired = crate::session::helpers::tool_input_parsing::repair_tool_arguments_one_pass(
             &call.function.arguments,
         );
+        if repaired.repair_applied {
+            tracing::info!(
+                tool_name = %call.function.name,
+                call_id = %call.id,
+                "Spec 15 one-pass tool argument repair applied on Path A dispatch"
+            );
+        }
+        let args_str = repaired.arguments.as_str();
         let parse_result = serde_json::from_str::<serde_json::Value>(args_str);
         let mut concatenated_json_count: usize = 0;
         let raw_input = match &parse_result {
@@ -3128,6 +3137,7 @@ mod plan_mode_edit_gate_tests {
             old_string: "a".into(),
             new_string: "b".into(),
             replace_all: false,
+            file_version: None,
         })
     }
     fn write(path: &str) -> ToolInput {

@@ -4,25 +4,25 @@ This file is standing instructions for any coding agent working in this repo.
 
 ## Current phase
 
-**No active product ultragoal train.** Latest majors shipped.
+**No active product ultragoal train.** Latest major: **`v5.0.0`** owner-bar complete (`owner-bar-5x`).
 
 **Completed trains:**  
-- **`fleet-4x`** → **`v4.0.0`** (L3 productization) · patches **`4.0.1`** (prebuilt npm) · **`4.0.2`** (setup → bare `dsb`)  
-- **`heart-3x`** → **`v3.0.0`** · **`l3-prep-lane-b`** · **`ship-3.0.0`**  
+- **`owner-bar-5x`** → **`v5.0.0`** (owner-bar complete product)  
+- **`fleet-4x`** → **`v4.0.0`** L3 productization *attempt* · patches **`4.0.1`** / **`4.0.2`** / **`4.0.x`**  
+- **`heart-3x`** → **`v3.0.0`** heart fusion *attempt*  
 
 **Pointers:**  
-- Board (archive): [`docs/product/FLEET_4X_GOALS.md`](docs/product/FLEET_4X_GOALS.md)  
-- PR DAG: [`docs/product/WAVE_4x_PR_DAG.md`](docs/product/WAVE_4x_PR_DAG.md)  
-- Matrix: [`docs/product/L3_CAPABILITY_MATRIX.md`](docs/product/L3_CAPABILITY_MATRIX.md)  
+- Cut: [`docs/product/evidence/CUT_5_0_0_2026-08-07.md`](docs/product/evidence/CUT_5_0_0_2026-08-07.md)  
+- Board (archive): [`docs/product/OWNER_BAR_5X_GOALS.md`](docs/product/OWNER_BAR_5X_GOALS.md)  
+- Gate: `./scripts/test-owner-bar.sh` (green on cut) · `./scripts/check-path-a-linkage.sh`  
 - Chain: [`docs/product/ULTRAGOAL_CHAIN.md`](docs/product/ULTRAGOAL_CHAIN.md)  
-- Cut: [`docs/product/evidence/CUT_4_0_0_2026-08-07.md`](docs/product/evidence/CUT_4_0_0_2026-08-07.md)  
-- Smoke: `./scripts/test-l3-smoke.sh` · hearts: `cargo test -p dsb-tools path_a`  
 
 **Major product lines (PRDs):** [`docs/product/versions/README.md`](docs/product/versions/README.md)  
 - **1.x** scaffold — [PRD-v1](docs/product/PRD-v1.md)  
 - **2.x shipped shell** — [PRD-v2](docs/product/PRD-v2.md)  
-- **3.x shipped hearts** — [PRD-v3](docs/product/PRD-v3.md) (`3.0.0`)  
-- **4.x shipped L3** — [PRD-v4](docs/product/PRD-v4.md) (`4.0.0`+)  
+- **3.x tagged hearts *attempt*** — [PRD-v3](docs/product/PRD-v3.md) (`3.0.0`) — **not owner-bar green**  
+- **4.x tagged L3 *attempt*** — [PRD-v4](docs/product/PRD-v4.md) (`4.0.0`+) — **not owner-bar green**  
+- **5.x owner-bar complete** — [PRD-v5](docs/product/PRD-v5.md) (`5.0.0`)  
 
 
 **SSOT priority:** [`docs/product/SSOT.md`](docs/product/SSOT.md)  

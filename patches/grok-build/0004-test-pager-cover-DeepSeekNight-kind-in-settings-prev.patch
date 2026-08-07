@@ -1,0 +1,29 @@
+From 3525b33cc60e9d048e8c2f2c65d097ef8a88b8b6 Mon Sep 17 00:00:00 2001
+From: Wooseong Kim <innocarpe@gmail.com>
+Date: Fri, 7 Aug 2026 16:51:48 +0900
+Subject: [PATCH 4/5] test(pager): cover DeepSeekNight kind in settings preview
+ test
+
+The settings-modal preview contrast test matches on ThemeKind and
+omits the DeepSeekNight arm added by the DSB fork, so the pager lib
+test build fails to compile on origin/main. Add the missing arm via
+Theme::deepseeknight().
+---
+ .../codegen/xai-grok-pager/src/views/settings_modal/tests.rs     | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/views/settings_modal/tests.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/views/settings_modal/tests.rs
+index 803f5e8..6a16b15 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/views/settings_modal/tests.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/views/settings_modal/tests.rs
+@@ -7161,6 +7161,7 @@ fn max_thoughts_width_preview_title_styling_distinguishes_from_content() {
+         // Resolved via `Theme::current()` rather than a constructor
+         // because `theme::oscura` is a private module.
+         crate::theme::ThemeKind::OscuraMidnight => crate::theme::Theme::current(),
++        crate::theme::ThemeKind::DeepSeekNight => crate::theme::Theme::deepseeknight(),
+         crate::theme::ThemeKind::Auto => crate::theme::Theme::groknight(),
+     };
+     assert_ne!(
+-- 
+2.50.1 (Apple Git-155)
+

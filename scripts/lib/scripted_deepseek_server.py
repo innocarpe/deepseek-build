@@ -318,6 +318,58 @@ def _latest_task_id(msgs: list[Any]) -> str | None:
     return None
 
 
+_SUBAGENT_ID_RE = re.compile(
+    r"subagent_id[\"'=\s:]+([A-Za-z0-9_.:-]+)|"
+    r"<subagent_id>\s*([^<\s]+)\s*</subagent_id>|"
+    r"id=([A-Za-z0-9_.:-]+),\s*type=",
+    re.IGNORECASE,
+)
+
+
+def _latest_subagent_id(msgs: list[Any]) -> str | None:
+    """Extract the most recent spawn_subagent id from tool results."""
+    for content in reversed(_tool_contents_after_user_query(msgs)):
+        m = _SUBAGENT_ID_RE.search(content or "")
+        if m:
+            return (m.group(1) or m.group(2) or m.group(3) or "").strip() or None
+        # Fall back to generic task id patterns (product may reuse task_id form).
+        m2 = _TASK_ID_RE.search(content or "")
+        if m2:
+            return (m2.group(1) or m2.group(2) or "").strip() or None
+    return None
+
+
+def _msgs_blob(msgs: list[Any]) -> str:
+    parts: list[str] = []
+    for m in msgs:
+        if isinstance(m, dict):
+            parts.append(str(m.get("content") or ""))
+    return "\n".join(parts)
+
+
+def _is_child_session(msgs: list[Any], token: str) -> bool:
+    """True when this request is the spawned child's conversation (token present, no parent user_query)."""
+    blob = _msgs_blob(msgs)
+    if token not in blob:
+        return False
+    # Parent headless prompts wrap the human ask in <user_query>…</user_query>.
+    if "user_query" in blob and token not in blob.split("user_query", 1)[0]:
+        # Token only appears after user_query → could still be parent echoing; prefer
+        # child when there is no user_query wrapper at all.
+        pass
+    if "user_query" not in blob:
+        return True
+    # Child prompts usually lack the outer Path A user_query XML from headless -p.
+    # If the only user_query is unrelated and token is in a plain user message, treat as child.
+    for m in msgs:
+        if not isinstance(m, dict) or m.get("role") != "user":
+            continue
+        content = str(m.get("content") or "")
+        if token in content and "user_query" not in content:
+            return True
+    return False
+
+
 def _snippet_id_for_content_marker(msgs: list[Any], marker: str) -> str | None:
     """Snippet id from the tool result whose content contains marker (path-safe)."""
     for content in reversed(_tool_contents_after_user_query(msgs)):
@@ -1038,6 +1090,167 @@ def make_handler(state: ScriptedState):
                         if stream
                         else _json_text(model, "bg-collect-ok")
                     )
+            elif state.scenario == "explore-subagent":
+                # VC011: Path A spawn_subagent explore (read-only child) + parent final.
+                # Child sessions are detected via VC011_EXPLORE_CHILD token in messages.
+                child_token = "VC011_EXPLORE_CHILD"
+                tool_results = _tool_results_after_user_query(msgs)
+
+                def emit_tool_ex(tname: str, targs: dict[str, Any]) -> bytes:
+                    return (
+                        _sse_tool_then_text(
+                            model,
+                            0,
+                            state.final_text,
+                            tool_name=tname,
+                            tool_args=json.dumps(targs),
+                        )
+                        if stream
+                        else _json_text(model, state.final_text)
+                    )
+
+                if _is_child_session(msgs, child_token):
+                    # Child: one read_file then final text with marker contents.
+                    child_tools = sum(
+                        1
+                        for m in msgs
+                        if isinstance(m, dict) and m.get("role") in ("tool", "function")
+                    )
+                    if child_tools == 0:
+                        payload = emit_tool_ex(
+                            "read_file",
+                            {"target_file": "explore-marker.txt"},
+                        )
+                    else:
+                        payload = (
+                            _sse_text(model, "explore-child-saw-FINDME-77")
+                            if stream
+                            else _json_text(model, "explore-child-saw-FINDME-77")
+                        )
+                else:
+                    # Parent: spawn explore (foreground), optionally collect, then final.
+                    if tool_results == 0:
+                        payload = emit_tool_ex(
+                            "spawn_subagent",
+                            {
+                                "subagent_type": "explore",
+                                "description": "VC011 explore dogfood",
+                                "prompt": (
+                                    f"{child_token}: Read explore-marker.txt with read_file only. "
+                                    "Reply with the file contents when done. Do not write or edit."
+                                ),
+                                "run_in_background": False,
+                            },
+                        )
+                    elif tool_results == 1:
+                        # If spawn returned only an id (background path forced), collect.
+                        sid = _latest_subagent_id(msgs) or _latest_task_id(msgs)
+                        contents = "\n".join(_tool_contents_after_user_query(msgs))
+                        if sid and "explore-child" not in contents and "FINDME-77" not in contents:
+                            payload = emit_tool_ex(
+                                "get_command_or_subagent_output",
+                                {
+                                    "task_ids": [sid],
+                                    "timeout_ms": 60000,
+                                },
+                            )
+                        else:
+                            payload = (
+                                _sse_text(model, "explore-subagent-ok")
+                                if stream
+                                else _json_text(model, "explore-subagent-ok")
+                            )
+                    else:
+                        payload = (
+                            _sse_text(model, "explore-subagent-ok")
+                            if stream
+                            else _json_text(model, "explore-subagent-ok")
+                        )
+            elif state.scenario == "implement-subagent-mutate":
+                # VC011: Path A spawn_subagent general-purpose (implement-class) mutates disk.
+                child_token = "VC011_IMPLEMENT_CHILD"
+                tool_results = _tool_results_after_user_query(msgs)
+
+                def emit_tool_im(tname: str, targs: dict[str, Any]) -> bytes:
+                    return (
+                        _sse_tool_then_text(
+                            model,
+                            0,
+                            state.final_text,
+                            tool_name=tname,
+                            tool_args=json.dumps(targs),
+                        )
+                        if stream
+                        else _json_text(model, state.final_text)
+                    )
+
+                if _is_child_session(msgs, child_token):
+                    child_tools = sum(
+                        1
+                        for m in msgs
+                        if isinstance(m, dict) and m.get("role") in ("tool", "function")
+                    )
+                    if child_tools == 0:
+                        # Prefer shell write so Path A yolo can apply without snippet_id.
+                        payload = emit_tool_im(
+                            "run_terminal_command",
+                            {
+                                "command": "printf 'worker-mutated-ok\\n' > worker_out.txt",
+                                "description": "VC011 implement child mutate",
+                            },
+                        )
+                    else:
+                        payload = (
+                            _sse_text(model, "implement-child-mutated")
+                            if stream
+                            else _json_text(model, "implement-child-mutated")
+                        )
+                else:
+                    if tool_results == 0:
+                        payload = emit_tool_im(
+                            "spawn_subagent",
+                            {
+                                "subagent_type": "general-purpose",
+                                "description": "VC011 implement dogfood",
+                                "prompt": (
+                                    f"{child_token}: Create worker_out.txt containing exactly "
+                                    "the line worker-mutated-ok using run_terminal_command. "
+                                    "Do not spawn further subagents. Reply when the file exists."
+                                ),
+                                "run_in_background": False,
+                            },
+                        )
+                    elif tool_results == 1:
+                        sid = _latest_subagent_id(msgs) or _latest_task_id(msgs)
+                        contents = "\n".join(_tool_contents_after_user_query(msgs))
+                        if sid and "implement-child" not in contents and "worker-mutated" not in contents:
+                            payload = emit_tool_im(
+                                "get_command_or_subagent_output",
+                                {
+                                    "task_ids": [sid],
+                                    "timeout_ms": 60000,
+                                },
+                            )
+                        else:
+                            payload = (
+                                _sse_text(model, "implement-subagent-ok")
+                                if stream
+                                else _json_text(model, "implement-subagent-ok")
+                            )
+                    else:
+                        payload = (
+                            _sse_text(model, "implement-subagent-ok")
+                            if stream
+                            else _json_text(model, "implement-subagent-ok")
+                        )
+            elif state.scenario == "worker-cache-stamp":
+                # VC011: public-entry only needs a short Path A turn so agent_launch
+                # writes path_a_l3 worker_epochs_match (no spawn required).
+                payload = (
+                    _sse_text(model, "worker-cache-stamp-ok")
+                    if stream
+                    else _json_text(model, "worker-cache-stamp-ok")
+                )
             elif state.scenario == "tool-then-text":
                 if not has_tool_result:
                     payload = (
@@ -1176,6 +1389,10 @@ def main() -> int:
             "multi-read-parallel",
             "mixed-mutate-serial",
             "bg-collect-by-id",
+            # VC011 L3 subagent + worker cache Path A R0A
+            "explore-subagent",
+            "implement-subagent-mutate",
+            "worker-cache-stamp",
         ),
         default="text-pong",
     )
@@ -1183,7 +1400,7 @@ def main() -> int:
         "--liveness-dir",
         default="",
         help=(
-            "Workspace dir with a.txt/b.txt for liveness / VC006 / VC010 scenarios "
+            "Workspace dir with a.txt/b.txt for liveness / VC006 / VC010 / VC011 scenarios "
             "(hashes and files computed live)"
         ),
     )

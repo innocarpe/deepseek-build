@@ -75,11 +75,11 @@ Open a **new** terminal (or source your shell config), then:
 
 ```bash
 deepseek-build --version
-# → deepseek-build 4.0.4  (on-disk until owner-bar cut; not 5.0.0 complete)
+# → deepseek-build 5.0.0  (on-disk until owner-bar cut; not 5.0.0 complete)
 dsb --version
-# → dsb 4.0.4
+# → dsb 5.0.0
 ./scripts/check-semver.sh
-# → check-semver: ok (4.0.4)
+# → check-semver: ok (5.0.0)
 ./scripts/test-owner-bar.sh || true
 # → RED until owner-bar-5x fusion (expected)
 ```

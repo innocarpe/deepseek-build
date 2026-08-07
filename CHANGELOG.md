@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.0.0 — 2026-08-07
+
+### L3 productization (PRD-v4 / fleet-4x)
+
+- **Product defaults:** `[subagents] enabled = true` in auto-created product config; keep **`yolo = false`** (hearts)
+- **Capability matrix** + user guides 11–14 (subagent / bg / worktree / throughput)
+- **Smoke:** `./scripts/test-l3-smoke.sh`
+- Tag **`v4.0.0`** (full SemVer only)
+
+
 ## Unreleased
 
 ## 3.0.0 — 2026-08-07

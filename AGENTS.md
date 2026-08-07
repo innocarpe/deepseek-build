@@ -4,19 +4,23 @@ This file is standing instructions for any coding agent working in this repo.
 
 ## Current phase
 
-**Completed ultragoal:** plan id **`heart-3x`** → tag **`v3.0.0`** (L1/L2 heart fusion).  
-- Board: [`docs/product/HEART_3X_GOALS.md`](docs/product/HEART_3X_GOALS.md) (G001–G008)  
-- PR DAG: [`docs/product/WAVE_3x_PR_DAG.md`](docs/product/WAVE_3x_PR_DAG.md)  
-- Cut evidence: [`docs/product/evidence/CUT_3_0_0_2026-08-07.md`](docs/product/evidence/CUT_3_0_0_2026-08-07.md)  
+**Active ultragoal:** plan id **`fleet-4x`** → tag **`4.0.0`** (L3 productization).  
+- Board: [`docs/product/FLEET_4X_GOALS.md`](docs/product/FLEET_4X_GOALS.md)  
+- PR DAG: [`docs/product/WAVE_4x_PR_DAG.md`](docs/product/WAVE_4x_PR_DAG.md)  
+- Matrix: [`docs/product/L3_CAPABILITY_MATRIX.md`](docs/product/L3_CAPABILITY_MATRIX.md)  
+- Cold start: [`docs/product/ULTRAGOAL_PROMPT_COLD_START_4.0.md`](docs/product/ULTRAGOAL_PROMPT_COLD_START_4.0.md)  
 - Chain: [`docs/product/ULTRAGOAL_CHAIN.md`](docs/product/ULTRAGOAL_CHAIN.md)  
-- Baseline: [`docs/product/PRE_3X_TEST_MATRIX.md`](docs/product/PRE_3X_TEST_MATRIX.md) · `./scripts/test-pre3x-baseline.sh --live`  
-- Ledger: `omc ultragoal status --plan-id heart-3x`  
-- **Next product train:** **`fleet-4x`** → **`4.0.0`** — [`docs/product/PARALLEL_3X_4X_PLAN.md`](docs/product/PARALLEL_3X_4X_PLAN.md)
+- Smoke: `./scripts/test-l3-smoke.sh` · hearts: `cargo test -p dsb-tools path_a` (etc.)  
+- Ledger: `omc ultragoal status --plan-id fleet-4x` (no `--force` recreate)  
+
+**Completed:** **`heart-3x`** → **`v3.0.0`** · **`l3-prep-lane-b`**  
+
 **Major product lines (PRDs):** [`docs/product/versions/README.md`](docs/product/versions/README.md)  
 - **1.x** scaffold — [PRD-v1](docs/product/PRD-v1.md)  
-- **2.x shipped base** — [PRD-v2](docs/product/PRD-v2.md) (Grok shell + DeepSeek entry/UI)  
-- **3.x active** — [PRD-v3](docs/product/PRD-v3.md) (L1/L2 heart fusion)  
-- **4.x later** — [PRD-v4](docs/product/PRD-v4.md) (L3 productization)  
+- **2.x shipped shell** — [PRD-v2](docs/product/PRD-v2.md)  
+- **3.x shipped hearts** — [PRD-v3](docs/product/PRD-v3.md) (`3.0.0`)  
+- **4.x active** — [PRD-v4](docs/product/PRD-v4.md) (L3 productization)  
+
 
 **SSOT priority:** [`docs/product/SSOT.md`](docs/product/SSOT.md)  
 **Historical board:** [`docs/product/MASTER_PLAN.md`](docs/product/MASTER_PLAN.md) · replan [`REPLAN_2.0.md`](docs/product/REPLAN_2.0.md)  

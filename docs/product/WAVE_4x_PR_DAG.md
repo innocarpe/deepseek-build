@@ -1,8 +1,9 @@
 # Wave 4.x PR DAG — L3 productization → **`4.0.0`**
 
-**Status:** **Draft** (ready-for-impl only after **`v3.0.0`** + finalize PR)  
-**Plan id (future):** `fleet-4x`  
+**Status:** **ready-for-impl** (gate: **`v3.0.0`** shipped 2026-08-07)  
+**Plan id:** `fleet-4x`  
 **PRD:** [PRD-v4.md](./PRD-v4.md)  
+**Matrix:** [L3_CAPABILITY_MATRIX.md](./L3_CAPABILITY_MATRIX.md)  
 **Parallel ops:** [PARALLEL_3X_4X_PLAN.md](./PARALLEL_3X_4X_PLAN.md)  
 **Depends on:** [PRD-v3.md](./PRD-v3.md) / heart-3x complete (tag **`v3.0.0`**)
 
@@ -27,8 +28,8 @@ Merge: **merge commit** on this repo. Full SemVer only.
 
 | Gate | Requirement |
 |------|-------------|
-| **Start fleet-4x code** | `v3.0.0` tagged; this DAG marked **ready-for-impl**; hearts green |
-| **Prep only (now)** | Units **4x-P0-*** may land on `main` as docs/research during heart-3x |
+| **Start fleet-4x code** | **OPEN** — `v3.0.0` tagged; this DAG **ready-for-impl**; hearts green |
+| **Prep (done during 3.0)** | Units **4x-P0-1..4** landed (Lane B) |
 
 ---
 
@@ -124,9 +125,7 @@ flowchart TB
 ## Status snapshot
 
 ```text
-P0 prep (during 3.0):  draft / in progress
-H1–H3 (post 3.0):      blocked until v3.0.0
-DAG status:            DRAFT
+P0 prep (during 3.0):  complete (Lane B)
+H1–H3 (post 3.0):      active under fleet-4x
+DAG status:            ready-for-impl
 ```
-
-When flipping to ready-for-impl, change **Status** at top of this file in the same PR as cold-start 4.0.

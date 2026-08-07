@@ -1,15 +1,16 @@
 # Known limitations
 
 **On-disk SemVer:** read root `Cargo.toml` (do not hardcode).  
-**Major line PRDs:** [versions/README.md](./versions/README.md) · current ship **[PRD-v3.md](./PRD-v3.md)** · next L3 max **[PRD-v4.md](./PRD-v4.md)**  
+**Major line PRDs:** [versions/README.md](./versions/README.md) · current ship **[PRD-v4.md](./PRD-v4.md)** (`4.0.0`) · hearts **[PRD-v3.md](./PRD-v3.md)** (`3.0.0`)  
 **Legacy:** `2.x` shell — [PRD-v2.md](./PRD-v2.md) · `1.x` scaffold — [PRD-v1.md](./PRD-v1.md)
 
-## Honesty: 2.x vs 3.0.0
+## Honesty: majors
 
 | Cut | Meaning |
 |-----|---------|
 | **2.x** | **Shell cut** — Grok-derived full-screen agent + DeepSeek entry/UI/npm. Hearts residual. |
-| **3.0.0** | **Heart fusion** — L1 + L2 P0 contracts on the **default agent path** (Path A). |
+| **3.0.0** | **Heart fusion** — L1 + L2 P0 on the **default agent path** (Path A). |
+| **4.0.0** | **L3 productization** — subagents on by default; worktree opt-in; matrix + guides; **yolo still false**. |
 
 ## What 3.0.0 delivers (P0)
 
@@ -29,7 +30,8 @@ Binding map: [HEART_3X_SPEC_BINDING.md](../architecture/HEART_3X_SPEC_BINDING.md
 | Full Spec 45 **snippet_id** mint inside Grok `read_file` | 3.0.0 uses **file_version (sha256) equivalent** + product `SnippetStore` adapter | 3.x minor polish if needed |
 | Every Grok compaction path byte-identical to `assemble_path_a_context` | Contract + tests on product assembly API; deep shell prompt paths may still differ | dogfood / minor |
 | Live agent dogfood without API key / agent binary | Contract tests green offline; live T4/T5 env-gated | ops |
-| L3 worktree/subagent as product identity | Machine present; docs/smoke prep; not productized defaults | [PRD-v4.md](./PRD-v4.md) |
+| L3 worktree forced on bare `dsb` | Worktree remains **opt-in** (`--worktree`); bare `dsb` is single-session TUI | product choice (4.0.0) |
+| Live L3 extended smoke without API key | Offline CLI green; live env-gated | ops |
 | Skills thrash-free full (Spec 70) | Index in stable prefix; thrash-free body load polish | 3.x minor if non-breaking |
 
 ## What 2.x still is (shell)

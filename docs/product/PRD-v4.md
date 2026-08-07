@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|--------|
 | **SemVer line** | **`4.0.0` – `4.x.y`** (after 3.x heart fusion) |
-| Status | **Planned** — prep allowed during 3.0; **code train after `v3.0.0`** |
+| Status | **Active train `fleet-4x`** (after `v3.0.0` shipped) |
 | Owner | @innocarpe |
 | Last updated | 2026-08-07 |
 | Index | [versions/README.md](./versions/README.md) |
@@ -72,6 +72,6 @@ Cold start (after finalize): [ULTRAGOAL_PROMPT_COLD_START_4.0.md](./ULTRAGOAL_PR
 
 | Item | State |
 |------|-------|
-| 4.x ultragoal train | **Blocked** until `v3.0.0` + WAVE_4x ready-for-impl |
-| Prep on main | **Allowed** (4x-P0-1..4) |
-| Code defaults for fleet | **Blocked** until hearts green (or explicit PRD waiver) |
+| 4.x ultragoal train | **Active** `fleet-4x` (gate passed: `v3.0.0` + ready-for-impl) |
+| Prep on main | **Complete** (Lane B + 4x-P0-1..4) |
+| Code defaults for fleet | **In train** — must keep `yolo = false` / Path A hearts |

@@ -140,8 +140,12 @@ xai_api_base_url = "{DEEPSEEK_API_BASE_URL}"
 
 [ui]
 theme = "{PRODUCT_THEME}"
-# Product default: Spec 90 — not YOLO-only (G005 / Path A).
+# Product default: Spec 90 — not YOLO-only (G005 / Path A / 3.0.0).
 yolo = false
+
+# L3 product defaults (4.0.0): subagents on; worktree remains opt-in CLI.
+[subagents]
+enabled = true
 "#
     );
 
@@ -196,6 +200,11 @@ fn repair_product_agent_config(body: &str) -> String {
             next.push_str("\n[endpoints]\n");
         }
         next.push_str(&format!("xai_api_base_url = \"{DEEPSEEK_API_BASE_URL}\"\n"));
+    }
+
+    // L3: ensure subagents stay enabled unless user already set [subagents].
+    if !next.contains("[subagents]") {
+        next.push_str("\n[subagents]\nenabled = true\n");
     }
 
     next
@@ -400,6 +409,11 @@ fn product_config_seed_contains_deepseek_defaults() {
     assert!(
         body.contains("yolo = false"),
         "seed missing yolo = false: {body}"
+    );
+    // L3 / 4.0.0: subagents enabled as product default.
+    assert!(
+        body.contains("[subagents]") && body.contains("enabled = true"),
+        "seed missing subagents enabled: {body}"
     );
     // Load-bearing: model-level base_url (not only endpoints.xai_api_base_url).
     assert!(

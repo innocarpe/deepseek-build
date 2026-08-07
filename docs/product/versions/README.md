@@ -15,7 +15,7 @@ When agents or humans start a train, **pick the major line first**, then the PRD
 | **1.x** | [PRD-v1.md](../PRD-v1.md) | **Shipped / legacy scaffold** | Thin clap agent + contracts (`1.0.0`–`1.1.0`) — **not** final product DoD |
 | **2.x** | [PRD-v2.md](../PRD-v2.md) | **Shipped shell cut** | Grok-derived full-screen agent + DeepSeek entry/UI/npm (`2.0.0`–`2.0.3+`) |
 | **3.x** | [PRD-v3.md](../PRD-v3.md) | **Shipped heart fusion (`3.0.0`)** | L1+L2 P0 under Path A — [HEART_3X_GOALS.md](../HEART_3X_GOALS.md) · cut [CUT_3_0_0_2026-08-07.md](../evidence/CUT_3_0_0_2026-08-07.md) |
-| **4.x** | [PRD-v4.md](../PRD-v4.md) | **Next major (after `v3.0.0`)** | L3 productization — [PARALLEL_3X_4X_PLAN.md](../PARALLEL_3X_4X_PLAN.md) · [WAVE_4x_PR_DAG.md](../WAVE_4x_PR_DAG.md) · [FLEET_4X_GOALS.md](../FLEET_4X_GOALS.md) |
+| **4.x** | [PRD-v4.md](../PRD-v4.md) | **Active `fleet-4x` → `4.0.0`** | L3 productization — [WAVE_4x_PR_DAG.md](../WAVE_4x_PR_DAG.md) · [FLEET_4X_GOALS.md](../FLEET_4X_GOALS.md) · [L3_CAPABILITY_MATRIX.md](../L3_CAPABILITY_MATRIX.md) |
 
 Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** product major PRDs.
 

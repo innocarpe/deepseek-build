@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 5.2.1 — 2026-08-08
+
+- DeepSeek Night v2 markdown hierarchy restore: h2 headings, code, and command
+  lines regain hue (blue h2/code, v1-yellow commands) on top of the unchanged
+  C-balanced surfaces
+
 ## 5.2.0 — 2026-08-08
 
 - theme classic default + vision complete + theme picker restore

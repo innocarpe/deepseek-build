@@ -5,7 +5,7 @@
 | **Story** | **VC010** — hermetic **Path A** R0A for Spec 50 multi-tool **read-only parallel**, **mutate serial**, and **background shell collect-by-id** |
 | **Plan** | `vision-complete-5x` |
 | **Date** | 2026-08-08 |
-| **Status** | **PLAN** — unit plan locked; implementation follows on this branch |
+| **Status** | **READY** — Path A R0A multi-tool + bg green; gates green; unversioned; stacked on #141 |
 | **SemVer** | **none** (this story does **not** bump product version) |
 | **Depends on** | **VC009** cache visibility (open PR **#141** `vc009-cache-visibility`); Track C board also lists soft depend on VC006 hearts |
 | **Board** | [`VISION_COMPLETE_5X_GOALS.md`](../VISION_COMPLETE_5X_GOALS.md) · DAG [`WAVE_5x_VISION_PR_DAG.md`](../WAVE_5x_VISION_PR_DAG.md) |
@@ -205,44 +205,75 @@ Restore any generated TSV side-effects to HEAD if gates rewrite them. Clean vend
 
 ---
 
-## 6. READY evidence (filled after implementation)
+## 6. READY evidence
 
-_Status: pending implementation._
+**Status: READY** (implementation complete; independent review file sibling).
 
 ### 6.1 Commands
 
 | Command | Result |
 |---------|--------|
-| `./scripts/test-path-a-vc010-r0a.sh` | TBD |
-| `./scripts/check-path-a-linkage.sh` | TBD |
-| `./scripts/test-owner-bar.sh` | TBD |
-| `./scripts/test-heart-regression.sh` | TBD |
-| Independent Grok review | TBD |
+| `./scripts/test-path-a-vc010-r0a.sh --skip-build` | **PASS** (multi-read-parallel, mixed-mutate-serial, bg-collect-by-id) |
+| `cargo test -p dsb-agent product_path_a_names_partition` | **PASS** (support only) |
+| `cargo test -p dsb-tools bg` | **PASS** (support only) |
+| `./scripts/check-path-a-linkage.sh` | **PASS** |
+| `./scripts/test-owner-bar.sh` | **PASS** (60/60; TSV side-effect restored) |
+| `./scripts/test-heart-regression.sh` | **PASS** (PATH_A_E2E SKIP default; L3 offline PASS) |
+| SemVer on branch | **`5.3.0`** unchanged (no bump) |
 
-### 6.2 Artifacts (expected)
+### 6.2 Wire + stamp sample
+
+| Scenario | Fixture batch | Public-entry proof |
+|----------|---------------|--------------------|
+| `multi-read-parallel` | `response_tool_calls` with **2× `read_file`** | final `multi-read-parallel-ok`; ≥2 tool results; `path_a_l3` stamp |
+| `mixed-mutate-serial` | multi-read then `search_replace` with **a.txt** `snippet_id` | disk `a.txt=alpha-mutated`; final `mixed-mutate-serial-ok` |
+| `bg-collect-by-id` | `run_terminal_command` `is_background:true` → `get_command_or_subagent_output` `task_ids` | tool output contains **`bg-ok-77`**; final `bg-collect-ok` |
+
+Artifacts:
 
 | Path | Role |
 |------|------|
-| `PATH_A_R0_VC010_multi-read-parallel_WIRE_last.jsonl` | Multi-tool RO batch wire |
-| `PATH_A_R0_VC010_mixed-mutate-serial_WIRE_last.jsonl` | Mixed mutate wire |
-| `PATH_A_R0_VC010_bg-collect-by-id_WIRE_last.jsonl` | Bg + collect wire |
-| Matching `*_META_last.txt` | Public-entry meta + assertions |
-| `PATH_A_L3_last.txt` / stamp copy | Spec 50 classifier stamp from launch |
+| [`PATH_A_R0_VC010_multi-read-parallel_WIRE_last.jsonl`](./PATH_A_R0_VC010_multi-read-parallel_WIRE_last.jsonl) | Multi-read RO batch wire |
+| [`PATH_A_R0_VC010_mixed-mutate-serial_WIRE_last.jsonl`](./PATH_A_R0_VC010_mixed-mutate-serial_WIRE_last.jsonl) | Mixed mutate wire |
+| [`PATH_A_R0_VC010_bg-collect-by-id_WIRE_last.jsonl`](./PATH_A_R0_VC010_bg-collect-by-id_WIRE_last.jsonl) | Bg + collect wire |
+| Matching `*_META_last.txt` | Public-entry meta |
+| [`PATH_A_R0_VC010_L3_last.txt`](./PATH_A_R0_VC010_L3_last.txt) | Spec 50 classifier stamp from public launch |
 
-### 6.3 Explicit residuals at READY
+Path A L3 stamp sample:
 
-- Live L3.1–L3.5 without API key remain SKIP.
-- VC011+ subagent/worktree/5.4.0 cut remain out of scope.
+```text
+max_parallel_readonly=8
+ro_indices=[0, 4]
+mu_indices=[1, 2, 3, 5]
+bash_mutating=true
+worker_epochs_match=true
+subagents_enabled_in_config=true
+```
+
+### 6.3 What shipped
+
+1. Hermetic fixture multi-tool SSE + `response_tool_calls` wire records.
+2. Public `deepseek-build`/`dsb` agent R0A harness `scripts/test-path-a-vc010-r0a.sh`.
+3. Product-name → Spec 50 partition unit test (stamp honesty support).
+4. Honest non-claims: no SemVer, no live API sole proof, no VC011 subagent R0A.
+
+### 6.4 Explicit residuals at READY
+
+- Live L3.1–L3.5 without API key remain **SKIP**.
 - Wall-clock concurrency not claimed; multi-call batch + results + serial mutate path claimed.
+- VC011 subagent + worker cache R0A, VC012 worktree, VC013 **5.4.0** cut remain out of scope.
+- Product builder disables `enabled_background` when subagent types are emptied — R0A keeps subagent tools available; do not strip `Agent`/`spawn_subagent` in this harness.
 
----
+### 6.5 Independent review
+
+See [`VC010_INDEPENDENT_REVIEW_2026-08-08.md`](./VC010_INDEPENDENT_REVIEW_2026-08-08.md).
 
 ## 7. Stack / PR open checklist
 
-- [ ] Branch `vc010-l3-parallel-bg` based on `vc009-cache-visibility`
-- [ ] First commit = this plan (before source edits)
-- [ ] Atomic commits as §3
+- [x] Branch `vc010-l3-parallel-bg` based on `vc009-cache-visibility`
+- [x] First commit = this plan (before source edits)
+- [x] Atomic commits as §3 (plus small fix commits for R0A honesty)
 - [ ] `gh pr create --base vc009-cache-visibility` with **English** body + labels (`test`, `area/orchestrator` or `area/tools`)
 - [ ] Body includes **Depends on #141**
 - [ ] `gh pr view --json title,labels,url` shows ≥1 kind label
-- [ ] **Do not merge**; **do not bump SemVer**
+- [x] **Do not merge**; **do not bump SemVer** (still 5.3.0)

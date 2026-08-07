@@ -26,10 +26,10 @@ It does **not** claim VISION L1 complete, owner-bar re-cut, Path A multi-edit R0
 |-------|-------------|
 | This worktree branch | `vc005-snippet-invalidation` (started from VC004 tip; implements VC005 only on top) |
 | Stack base for feature commits | VC004 tip on branch (includes post-rebase VC004 evidence; **not** yet on `main` at open) |
-| `git show origin/main:Cargo.toml` version | **`5.2.1`** |
-| `package.json` on `origin/main` | **`5.2.1`** (inherited; **not** bumped by this story) |
-| `npm view @innocarpe/deepseek-build version` | **`5.2.0`** — lag behind `main` |
-| `gh release list` Latest | **`v5.2.0`** — GitHub Release lag; **owned by separate release-5.2.1 lane** |
+| `git show origin/main:Cargo.toml` version | **`5.2.2`** (re-check at close; was **`5.2.1`** at story open) |
+| `package.json` on `origin/main` | **`5.2.2`** (inherited from main when rebased; **not** bumped by this story) |
+| `npm view @innocarpe/deepseek-build version` | **`5.2.1`** — lag behind `main` |
+| `gh release list` Latest | **`v5.2.1`** — GitHub Release lag; packaging lag owned by separate release lane |
 | Board text residual | Still may document Spec 45 cut as **`5.2.0`** (VC006) in places — **stale vs live main floor** |
 | VC003 | **on main** via #130; Path A mint remains prerequisite |
 | VC004 | **open stack** PR **#135** (require gate); this story stacks after it |
@@ -37,9 +37,9 @@ It does **not** claim VISION L1 complete, owner-bar re-cut, Path A multi-edit R0
 
 ### 0.2 Floor interpretation (fail-close)
 
-- **`5.2.0` and `5.2.1` are already used** on the product line (main product version **`5.2.1`**). This story **must not** reuse or cut either.
-- npm/GitHub release lag for **5.2.1** is **out of scope** here (separate Grok release lane). **Do not** duplicate packaging.
-- Remaining Spec 45 completion after VC005 belongs to the **next free feature minor**. With main at **`5.2.1`**, that remains **`5.3.0`** unless a later board/npm re-check shows another free `5.Y.0`.
+- **`5.2.0`, `5.2.1`, and `5.2.2` are already used** on the product line (live main product version **`5.2.2`** at close). This story **must not** reuse or cut any of them.
+- npm/GitHub release lag behind main is **out of scope** here (separate Grok release lane). **Do not** duplicate packaging.
+- Remaining Spec 45 completion after VC005 belongs to the **next free feature minor**. With main at **`5.2.2`**, that remains **`5.3.0`** unless a later board/npm re-check shows another free `5.Y.0`.
 - Feature PRs (VC003–VC005) stay **unversioned**. Only a dedicated cut unit (historical VC006 slot, rebased) bumps SemVer.
 - Owner-bar **`file_version` (sha256)** remains a **compatibility alias** of snippet `version`; do not remove it.
 - Safe open base when stacking is gone: **`main` after VC004 merges**; until then this branch remains a VC004→VC005 stack.
@@ -333,19 +333,19 @@ git checkout HEAD -- docs/product/evidence/OWNER_BAR_STATUS.tsv \
 | Broader `search_replace::tests` | **PASS** — **92** tests (incl. concise) | **unit** |
 | Thin oracle | **PASS** — `dsb-tools` snippets **9** + path_a_edit **8** | thin oracle (**not** Path A proof) |
 | Public Path A R0A wire | **not run / not claimed** | — |
-| SemVer bump | **none** | no version files touched; live `origin/main` is **`5.2.1`** |
+| SemVer bump | **none** | no version files touched; live `origin/main` is **`5.2.2`** (do not cut) |
 
 ### 7.4 Commands actually run (exact)
 
 ```bash
-# Floor
+# Floor (story open → close)
 git fetch origin main
 git show origin/main:Cargo.toml | rg 'version = "'
-# 5.2.1
+# open: 5.2.1 · close: 5.2.2
 npm view @innocarpe/deepseek-build version
-# 5.2.0 (lag; release-5.2.1 lane)
+# close: 5.2.1 (lag behind main)
 gh release list -R innocarpe/deepseek-build --limit 8
-# Latest v5.2.0
+# Latest v5.2.1
 
 # Focused + regressions
 cd third_party/grok-build
@@ -380,7 +380,7 @@ git checkout HEAD -- docs/product/evidence/OWNER_BAR_STATUS.tsv \
   docs/product/evidence/PATH_A_R0_G010_HEART_REGRESSION_last.tsv
 ```
 
-**Honesty:** All Path A invalidation claims above are **unit tests inside `xai-grok-tools`**. No public `deepseek-build`/`dsb` agent wire harness (R0A) was run for this story. Gate TSV rewrites were **restored to HEAD** and **not** committed. Live product floor on `origin/main` is **`5.2.1`** — VC005 does not ship any SemVer cut or release packaging; remaining Spec 45 completion stays at the **next free feature minor (`5.3.0` under current live floor)**. Branch stacks VC004 (open PR **#135**) until that merges.
+**Honesty:** All Path A invalidation claims above are **unit tests inside `xai-grok-tools`**. No public `deepseek-build`/`dsb` agent wire harness (R0A) was run for this story. Gate TSV rewrites were **restored to HEAD** and **not** committed. Live product floor on `origin/main` at close is **`5.2.2`** — VC005 does not ship any SemVer cut or release packaging; do **not** reuse **5.2.0/5.2.1/5.2.2**; remaining Spec 45 completion stays at the **next free feature minor (`5.3.0` under current live floor)**. Branch still stacks VC004 (PR **#135**) until that merges; rebase onto latest main before open.
 
 ### Required project gates (verified)
 
@@ -406,7 +406,7 @@ git checkout HEAD -- docs/product/evidence/OWNER_BAR_STATUS.tsv \
 | **P1** | **none remaining** (both fixed + unit-covered) |
 | P2 residuals (non-blocking) | (1) force-overwrite success copy still says “created”; (2) triple FS read on empty-old path; (3) `path_exists_use_edit` is substring in `InvalidInput` not a dedicated enum; (4) residual bash classifier bluntness on unknown mutators (intentional M2 fail-close) |
 | VC006/R0A/SemVer smuggling | **none** found |
-| Honesty | Unit lane only; no R0A claim; floor **5.2.1**; next free feature minor **5.3.0** |
+| Honesty | Unit lane only; no R0A claim; floor **5.2.2** at close; next free feature minor **5.3.0** |
 
 P2 items are optional polish / later stories — **not** required to call VC005 implementation-ready under the unit evidence bar.
 

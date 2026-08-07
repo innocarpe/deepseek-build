@@ -898,7 +898,10 @@ fn picker_maps_numbers_names_and_defaults() {
         picker_answer_to_theme(PRODUCT_THEME_V2),
         Some(PRODUCT_THEME_V2)
     );
-    assert_eq!(picker_answer_to_theme("deepseek-night"), Some(PRODUCT_THEME));
+    assert_eq!(
+        picker_answer_to_theme("deepseek-night"),
+        Some(PRODUCT_THEME)
+    );
     assert_eq!(
         picker_answer_to_theme("deepseeknight-v2"),
         Some(PRODUCT_THEME_V2)

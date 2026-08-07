@@ -17,6 +17,29 @@ function ensureDir(p) {
   fs.mkdirSync(p, { recursive: true });
 }
 
+/**
+ * Run `<binary> --version` and require the package version in the output.
+ *
+ * Guards against a corrupted install: a truncated/partial binary (e.g. from a
+ * disk-full write) can pass `file`/`codesign` checks yet be killed by the OS
+ * at exec ("Killed: 9" / taskgated invalid signature). Installing over a bad
+ * file also keeps its inode, which can retain a stale signature-rejection
+ * cache entry. We therefore (1) remove the destination first so a fresh
+ * inode is written, and (2) verify the freshly installed binary actually
+ * runs before declaring success.
+ */
+function verifyInstalledBin(dest, name, version) {
+  const r = spawnSync(dest, ['--version'], { encoding: 'utf8', timeout: 20000 });
+  if (r.status !== 0) {
+    return `\`${name} --version\` exited with status ${r.status} (expected 0)`;
+  }
+  const out = `${r.stdout || ''}${r.stderr || ''}`;
+  if (!out.includes(version)) {
+    return `\`${name} --version\` printed "${out.trim().slice(0, 60)}" (expected to contain ${version})`;
+  }
+  return null;
+}
+
 function hasCmd(cmd) {
   const r = spawnSync(process.platform === 'win32' ? 'where' : 'which', [cmd], {
     encoding: 'utf8',
@@ -115,6 +138,14 @@ function installPrebuilt(opts) {
         };
       }
       const dest = path.join(binDir, name);
+      // Remove first so a fresh inode is created: overwriting in place can
+      // keep a stale code-signature rejection cached by the OS for that
+      // inode (symptom: binary instantly SIGKILLed at exec after reinstall).
+      try {
+        fs.rmSync(dest, { force: true });
+      } catch {
+        // ignore
+      }
       fs.copyFileSync(src, dest);
       try {
         fs.chmodSync(dest, 0o755);
@@ -129,6 +160,30 @@ function installPrebuilt(opts) {
         } catch {
           // ignore
         }
+      }
+    }
+
+    // Self-check the installed binaries actually run (catches truncated
+    // writes, e.g. disk-full during install) and report a clear error.
+    for (const name of REQUIRED) {
+      const dest = path.join(binDir, name);
+      const problem = verifyInstalledBin(dest, name, version);
+      if (problem) {
+        // Do not leave a broken binary around for the next attempt.
+        try {
+          fs.rmSync(dest, { force: true });
+        } catch {
+          // ignore
+        }
+        return {
+          ok: false,
+          error:
+            `installed binary failed self-check: ${problem}.\n` +
+            `  The install may have been corrupted (e.g. low disk space).\n` +
+            `  Remove ${binDir} and reinstall (npm rebuild -g @innocarpe/deepseek-build).`,
+          platform,
+          url,
+        };
       }
     }
 

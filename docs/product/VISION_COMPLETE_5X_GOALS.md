@@ -3,14 +3,14 @@
 | Field | Value |
 |-------|--------|
 | **Plan id** | `vision-complete-5x` |
-| **SemVer band** | **`5.2.0` – `5.Y.0`** (vision close-out). Floor = **`5.1.0` on `main`** / npm may lag |
-| **Depends on** | **`v5.0.0` owner-bar CUT** (done) · **`5.0.1`+ product version fix** (npm) · **`5.1.0` theme/product chrome** (on `main`, deploy in progress) |
+| **SemVer band** | **`5.2.0` – `5.Y.0`** (vision close-out). Floor = **`5.1.0`** aligned on **`main`**, GitHub Release, and npm |
+| **Depends on** | **`v5.0.0` owner-bar CUT** (done) · **`5.0.1`+ product version fix** (npm) · **`5.1.0` theme/product chrome** (shipped: `main` + Release + npm) |
 | **North star** | [VISION.md](./VISION.md) + [HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.md) |
 | **PR planning** | [ULTRAGOAL_PR_PLANNING.md](./ULTRAGOAL_PR_PLANNING.md) · DAG [WAVE_5x_VISION_PR_DAG.md](./WAVE_5x_VISION_PR_DAG.md) |
 | **Cold start** | [ULTRAGOAL_PROMPT_COLD_START_VISION_5X.md](./ULTRAGOAL_PROMPT_COLD_START_VISION_5X.md) |
 | **Child runtime** | **Grok only** (parent = Grok Build) |
 
-**Do not** plan releases as `5.0.1` or `5.1.0` — those targets are **already used or shipping**. Next **feature** minor for Deep Code snippet_id is **`5.2.0`**.
+**Do not** plan releases as `5.0.1` or `5.1.0` — those targets are **already used / shipped**. Next **feature** minor for Deep Code snippet_id is **`5.2.0`**.
 
 ---
 
@@ -22,7 +22,7 @@
 |---------|---------|---------------------------|
 | **`5.0.0` / `v5.0.0`** | Owner-bar P0 Path A complete | **Tagged** · npm · gate green |
 | **`5.0.1`** | Product version/update alignment (npm line) | **On npm** `latest` as of check; may predate some main fixes |
-| **`5.1.0`** | Product chrome (e.g. DeepSeek Night v2 default, tab icon, related) | **`main` = `5.1.0`**; **GitHub Release/npm may still be catching up** (“배포 중”) |
+| **`5.1.0`** | Product chrome (e.g. DeepSeek Night v2 default, tab icon, related) | **Aligned:** `main` = **`5.1.0`** · GitHub Release **`v5.1.0`** (darwin-arm64 asset) · npm **`@innocarpe/deepseek-build@5.1.0`** / **`latest` = `5.1.0`** |
 
 ### What `5.0.0` owner-bar closed (unchanged)
 
@@ -52,7 +52,7 @@ From [VISION.md](./VISION.md):
 | Ship | When | Notes |
 |------|------|--------|
 | ~~`5.0.1`~~ | **Used** | npm; version/update line — **do not re-plan as future** |
-| ~~`5.1.0`~~ | **Used / shipping** | `main` product chrome — **do not re-plan as future** |
+| ~~`5.1.0`~~ | **Used / shipped** | `main` + GitHub Release + npm **`5.1.0`** — **do not re-plan as future** |
 | **`5.1.x` patch** | Only for **deploy fix** of 5.1.0 (broken release, missing asset, hot banner) | Not for Spec 45 / L3 |
 | **`5.2.0`** | Spec 45 **snippet_id** Path A (Deep Code primary contract) | First **vision** minor |
 | **`5.3.0`** | Spec 10 assembly-in-Grok + effort-on-wire (+ cache visibility) | Reasonix minor |
@@ -161,8 +161,8 @@ Ship is **vision-complete** only when **all** of the following are true on **Pat
 
 | Gap | Severity | Close with |
 |-----|----------|------------|
-| `5.1.0` Release/npm lag vs `main` | Ops | Finish **5.1.0** ship (not a new minor invent) |
-| Hotfix on 5.1 line | Ops | **`5.1.1`+ patch only** |
+| ~~`5.1.0` Release/npm lag vs `main`~~ | Ops | **Closed** — main / Release / npm aligned at **`5.1.0`** (VC001c complete) |
+| Hotfix on 5.1 line | Ops | **`5.1.1`+ patch only** (only if ship breaks; not required now) |
 
 ---
 
@@ -171,9 +171,9 @@ Ship is **vision-complete** only when **all** of the following are true on **Pat
 | Story | Intent | Target SemVer | Depends | Status |
 |-------|--------|---------------|---------|--------|
 | **VC001** | Product SemVer / update fix ship | ~~5.0.1~~ | — | **DONE** (npm 5.0.1; fix PR #117) |
-| **VC001b** | Theme / chrome **5.1.0** | ~~5.1.0~~ | — | **ON MAIN / shipping** (e.g. theme v2) |
-| **VC001c** | Finish **5.1.0** GitHub Release + npm if lagging | **5.1.0** (same) or **5.1.1** patch | VC001b | **ops** if assets missing |
-| **VC002** | Spec 45 ADR + SnippetStore design | none | prefer after 5.1.0 stable | pending |
+| **VC001b** | Theme / chrome **5.1.0** | ~~5.1.0~~ | — | **DONE** (on `main`; e.g. theme v2) |
+| **VC001c** | Finish **5.1.0** GitHub Release + npm if lagging | **5.1.0** (same) or **5.1.1** patch | VC001b | **COMPLETE / SKIP** — Release + npm **`5.1.0`/`latest`** aligned ([evidence](./evidence/VC001C_5_1_0_SHIP_2026-08-07.md) §8) |
+| **VC002** | Spec 45 ADR + SnippetStore design | none | after 5.1.0 stable (**floor met**) | may proceed / pending |
 | **VC003** | Path A `read_file` mints `snippet_id` | none | VC002 | pending |
 | **VC004** | Path A edit requires `snippet_id` | part of **5.2.0** | VC003 | pending |
 | **VC005** | Write/bash snippet invalidation | part of **5.2.0** | VC004 | pending |
@@ -191,7 +191,7 @@ Ship is **vision-complete** only when **all** of the following are true on **Pat
 ### Parallel tracks (after 5.1.0 floor stable)
 
 ```text
-5.1.0 shipping ──► do not plan 5.0.1 / 5.1.0 as future goals
+5.1.0 shipped (main + Release + npm) ──► do not plan 5.0.1 / 5.1.0 as future goals
         │
         ▼
    VC002–VC006  →  tag/ship 5.2.0   (Deep Code)
@@ -237,8 +237,8 @@ Optional: `docs/product/evidence/VISION_STATUS.tsv`.
 
 ## 7. First actions (rebased “now”)
 
-1. Confirm **5.1.0** Release + npm catch-up (**VC001c**) if still mid-deploy.  
-2. **VC002** Spec 45 design — start **5.2.0** track.  
-3. Do **not** open a PR titled “ship 5.1.0 theme” if already on `main` — only finish packaging.
+1. **5.1.0 floor is closed** (main + GitHub Release + npm **`5.1.0`/`latest`**). **VC001c COMPLETE / SKIP** — do not re-run packaging catch-up unless ship breaks.
+2. **VC002** Spec 45 design — start **5.2.0** track (floor met).
+3. Do **not** open a PR titled “ship 5.1.0 theme” or re-plan **`5.1.0`** as a future feature target.
 
 Board owner: continuous session until VC015 or hard block.

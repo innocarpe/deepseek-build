@@ -13,8 +13,8 @@
 | **Semantics SSOT** | [`docs/specs/45-snippet-edit.md`](../../specs/45-snippet-edit.md) §1.5 write bypass · §1.6 invalidation · test plan `write_*` / `bash_mutation_expires_snippets` |
 | **Binding** | [`HEART_3X_SPEC_BINDING.md`](../../architecture/HEART_3X_SPEC_BINDING.md) · [`HARNESS_PHILOSOPHY.md`](../../architecture/HARNESS_PHILOSOPHY.md) §4.1 |
 
-**This file is the mandatory ultragoal PR unit plan for VC005 plus (later) implementation evidence.**
-It does **not** claim VISION L1 complete, owner-bar re-cut, Path A multi-edit R0A, resume/fork table restore (VC006), any SemVer cut, packaging/release of **5.2.1**, or public R0A wire proof.
+**This file is the mandatory ultragoal PR unit plan for VC005 plus implementation evidence.**
+It does **not** claim VISION L1 complete, owner-bar re-cut, Path A multi-edit R0A, resume/fork table restore (VC006), any SemVer cut, packaging/release of **5.2.0** / **5.2.1** / **5.2.2**, or public R0A wire proof.
 
 ---
 
@@ -24,25 +24,26 @@ It does **not** claim VISION L1 complete, owner-bar re-cut, Path A multi-edit R0
 
 | Probe | Live result |
 |-------|-------------|
-| This worktree branch | `vc005-snippet-invalidation` (started from VC004 tip; implements VC005 only on top) |
-| Stack base for feature commits | VC004 tip on branch (includes post-rebase VC004 evidence; **not** yet on `main` at open) |
-| `git show origin/main:Cargo.toml` version | **`5.2.2`** (re-check at close; was **`5.2.1`** at story open) |
-| `package.json` on `origin/main` | **`5.2.2`** (inherited from main when rebased; **not** bumped by this story) |
-| `npm view @innocarpe/deepseek-build version` | **`5.2.1`** — lag behind `main` |
-| `gh release list` Latest | **`v5.2.1`** — GitHub Release lag; packaging lag owned by separate release lane |
+| This worktree branch | `vc005-snippet-invalidation` (based on VC004 branch `vc004-snippet-id-require`; implements VC005 only on top) |
+| Stack base for feature commits / PR base | **`vc004-snippet-id-require`** (open PR **#135**); **not** `origin/main` until after #135 merges |
+| `git show origin/main:Cargo.toml` version | **Close-time floor `5.2.2`** at `d71c1b3` (historical open-time probe was **`5.2.1`**) |
+| `package.json` on `origin/main` | **`5.2.2`** at close (historical open-time was **`5.2.1`**); **not** bumped by this story |
+| `npm view @innocarpe/deepseek-build version` | **`5.2.1`** at close — lag behind `main` |
+| `gh release list` Latest | **`v5.2.1`** at close — lag; **5.2.2 packaging is a separate release lane** (not this story) |
 | Board text residual | Still may document Spec 45 cut as **`5.2.0`** (VC006) in places — **stale vs live main floor** |
 | VC003 | **on main** via #130; Path A mint remains prerequisite |
-| VC004 | **open stack** PR **#135** (require gate); this story stacks after it |
+| VC004 | **open stack** PR **#135** on `vc004-snippet-id-require` (require gate); VC005 opens stacked on that branch |
 | Thin Path B | `crates/dsb-tools` `SnippetStore` remains **reference/oracle**, not Path A proof |
 
 ### 0.2 Floor interpretation (fail-close)
 
-- **`5.2.0`, `5.2.1`, and `5.2.2` are already used** on the product line (live main product version **`5.2.2`** at close). This story **must not** reuse or cut any of them.
-- npm/GitHub release lag behind main is **out of scope** here (separate Grok release lane). **Do not** duplicate packaging.
-- Remaining Spec 45 completion after VC005 belongs to the **next free feature minor**. With main at **`5.2.2`**, that remains **`5.3.0`** unless a later board/npm re-check shows another free `5.Y.0`.
-- Feature PRs (VC003–VC005) stay **unversioned**. Only a dedicated cut unit (historical VC006 slot, rebased) bumps SemVer.
+- **Close-time live floor is `origin/main` = `5.2.2` (`d71c1b3`).** Historical open-time probes recorded **`5.2.1`** and are preserved as history only.
+- **`5.2.0`, `5.2.1`, and `5.2.2` are already used.** VC005 has **no SemVer bump** and **must not** reuse or cut any of them.
+- npm **5.2.1** / GitHub Latest **v5.2.1** lag is **out of scope** here; **5.2.2 release packaging is a separate lane**. **Do not** duplicate packaging.
+- Remaining Spec 45 completion after VC005 belongs to the **next free feature minor** → **`5.3.0`** under the current close-time floor (unless a later board/npm re-check shows another free `5.Y.0`).
+- Feature PRs (VC003–VC005) stay **unversioned**. Only a dedicated cut unit (historical VC006 slot) bumps SemVer.
 - Owner-bar **`file_version` (sha256)** remains a **compatibility alias** of snippet `version`; do not remove it.
-- Safe open base when stacking is gone: **`main` after VC004 merges**; until then this branch remains a VC004→VC005 stack.
+- **Open as a stacked PR** with base **`vc004-snippet-id-require`** and body **`Depends on #135`**. **Do not** rebase onto `origin/main` before open. **Rebase / retarget after #135 merges.**
 
 ---
 
@@ -132,8 +133,8 @@ Per [`ULTRAGOAL_PR_PLANNING.md`](../ULTRAGOAL_PR_PLANNING.md). **VC005 is one fe
 
 | Unit | Story | Status here |
 |------|-------|-------------|
-| VC006 / Spec 45 cut | heart + multi-edit R0A + SemVer cut of remaining Spec 45 | **not implemented**; cut at **next free minor** (live → **`5.3.0`**, not reused **`5.2.0`/`5.2.1`**) |
-| release-5.2.1 packaging | npm/GitHub lag close | **not this story** |
+| VC006 / Spec 45 cut | heart + multi-edit R0A + SemVer cut of remaining Spec 45 | **not implemented**; cut at **next free minor** (live → **`5.3.0`**; not reused **`5.2.0`/`5.2.1`/`5.2.2`**) |
+| release-5.2.2 packaging | npm/GitHub lag close (Latest still **5.2.1** / **v5.2.1** while main is **5.2.2**) | **not this story** (separate release lane) |
 
 ### 3.2 Sequential vs parallel
 
@@ -172,21 +173,22 @@ docs(product): record VC005 Path A invalidation gate evidence
 | One concern per commit | Mix VC006 resume/fork / R0A / SemVer into this branch |
 | Keep `file_version` mint/alias | Remove `file_version` or break dual CLI |
 | Session-local Resources store only | Process-global / cross-session table |
-| English Conventional subjects | Bump `Cargo.toml` / package SemVer / claim `5.2.0` or `5.2.1` cut |
+| English Conventional subjects | Bump `Cargo.toml` / package SemVer / claim **`5.2.0`**, **`5.2.1`**, or **`5.2.2`** cut |
 | Host-only force flag | Free model boolean that skips version/edit safety |
 
 ### 3.4 Chaining / stacking
 
 | Pattern | Choice for VC005 |
 |---------|------------------|
-| **Base** | VC004 stack tip until #135 merges; then rebase onto **`main`** |
+| **Base (at open)** | **`vc004-snippet-id-require`** (stacked on open PR **#135**) — **not** `origin/main` |
 | **Branch** | `vc005-snippet-invalidation` |
+| **After #135 merges** | **Rebase / retarget** onto updated **`main`** (do **not** do this before open) |
 | **Merge order** | #130 (VC003) → #135 (VC004) → VC005 → Spec 45 cut (next free minor) |
 | **Conflict lock** | Path A `SessionSnippetStore` expiry + `search_replace` success/write path + bash post-dispatch invalidation owned by VC005; resume/fork reserved for VC006 |
 
 **Planned PR title (when opened later):** `feat(tools): Path A write/bash snippet invalidation laws`
 **Label kind:** `feat`
-**Body:** Problem / What changed / Testing honesty / AI review / Security / Notes; **Depends on #135** (VC004); SemVer none; does **not** cut **`5.2.0`/`5.2.1`**; next free feature minor under live floor is **`5.3.0`**.
+**Body:** Problem / What changed / Testing honesty / AI review / Security / Notes; **`Depends on #135`** (VC004); base **`vc004-snippet-id-require`**; SemVer **none**; does **not** reuse/cut **`5.2.0`/`5.2.1`/`5.2.2`**; next free feature minor under close-time floor is **`5.3.0`**.
 
 ---
 
@@ -213,7 +215,7 @@ docs(product): record VC005 Path A invalidation gate evidence
 
 - Does **not** implement resume/fork snippet table persist/restore (VC006).
 - Does **not** prove Path A multi-edit R0A / heart regression under real `snippet_id` tables (VC006 / R0A).
-- Does **not** cut **`5.2.0`**, **`5.2.1`**, **`5.3.0`**, or any other SemVer; does **not** bump product version; does **not** package npm/GitHub release.
+- Does **not** cut or reuse **`5.2.0`**, **`5.2.1`**, **`5.2.2`**, **`5.3.0`**, or any other SemVer; does **not** bump product version; does **not** package npm/GitHub release (including the separate **5.2.2** packaging lane).
 - Does **not** re-plan board tracks on `main` (board residual still lists Spec 45 cut as 5.2.0 in places).
 - Does **not** claim public `deepseek-build`/`dsb` wire harness R0A unless that harness is run and captured with honest labels.
 - Does **not** add mtime watchers or external-editor eager detection (lazy `snippet_stale` remains).
@@ -308,7 +310,7 @@ git checkout HEAD -- docs/product/evidence/OWNER_BAR_STATUS.tsv \
 | Bash hook | After backend accepts dispatch (FG run Ok / BG start Ok) apply plan; validation reject / backend Err → no expire |
 | Dual CLI | Unchanged (`deepseek-build` / `dsb`) |
 | Dependencies | **None** added |
-| SemVer | **none**; live floor **5.2.1**; next free feature minor **5.3.0** |
+| SemVer | **none** (no bump); close-time live floor **`5.2.2`** at `d71c1b3`; does not reuse **5.2.0/5.2.1/5.2.2**; next free feature minor **5.3.0** |
 
 ### 7.3 Acceptance matrix
 
@@ -380,7 +382,7 @@ git checkout HEAD -- docs/product/evidence/OWNER_BAR_STATUS.tsv \
   docs/product/evidence/PATH_A_R0_G010_HEART_REGRESSION_last.tsv
 ```
 
-**Honesty:** All Path A invalidation claims above are **unit tests inside `xai-grok-tools`**. No public `deepseek-build`/`dsb` agent wire harness (R0A) was run for this story. Gate TSV rewrites were **restored to HEAD** and **not** committed. Live product floor on `origin/main` at close is **`5.2.2`** — VC005 does not ship any SemVer cut or release packaging; do **not** reuse **5.2.0/5.2.1/5.2.2**; remaining Spec 45 completion stays at the **next free feature minor (`5.3.0` under current live floor)**. Branch still stacks VC004 (PR **#135**) until that merges; rebase onto latest main before open.
+**Honesty:** All Path A invalidation claims above are **unit tests inside `xai-grok-tools`**. No public `deepseek-build`/`dsb` agent wire harness (R0A) was run for this story. Gate TSV rewrites were **restored to HEAD** and **not** committed. Close-time live product floor on `origin/main` is **`5.2.2`** at **`d71c1b3`** (historical open-time probe **`5.2.1`** preserved above). VC005 has **no SemVer bump** and does **not** reuse **5.2.0/5.2.1/5.2.2**; remaining Spec 45 completion stays at the **next free feature minor (`5.3.0`)**. npm/GitHub Latest lag at **5.2.1**/**v5.2.1** and the **5.2.2 packaging lane** are separate. **Open stacked** against **`vc004-snippet-id-require`** with body **`Depends on #135`**; **do not** rebase onto `origin/main` before open — **rebase / retarget after #135 merges**.
 
 ### Required project gates (verified)
 
@@ -406,7 +408,7 @@ git checkout HEAD -- docs/product/evidence/OWNER_BAR_STATUS.tsv \
 | **P1** | **none remaining** (both fixed + unit-covered) |
 | P2 residuals (non-blocking) | (1) force-overwrite success copy still says “created”; (2) triple FS read on empty-old path; (3) `path_exists_use_edit` is substring in `InvalidInput` not a dedicated enum; (4) residual bash classifier bluntness on unknown mutators (intentional M2 fail-close) |
 | VC006/R0A/SemVer smuggling | **none** found |
-| Honesty | Unit lane only; no R0A claim; floor **5.2.2** at close; next free feature minor **5.3.0** |
+| Honesty | Unit lane only; no R0A claim; close-time floor **5.2.2** (`d71c1b3`); no reuse of **5.2.0/5.2.1/5.2.2**; next free feature minor **5.3.0**; stacked open base **`vc004-snippet-id-require`** / **Depends on #135** |
 
 P2 items are optional polish / later stories — **not** required to call VC005 implementation-ready under the unit evidence bar.
 

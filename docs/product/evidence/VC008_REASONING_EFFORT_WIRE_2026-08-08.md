@@ -178,7 +178,7 @@ cargo test -p dsb-cli -- tui_forward_flags
 | `repair_injects_reasoning_effort_defaults_without_clobber` | **PASS** |
 | `tui_forward_flags` (incl. effort → `--reasoning-effort`) | **PASS** (7 tests) |
 | `check-path-a-linkage.sh` | **PASS** |
-| `test-path-a-public-entry-e2e.sh` | **PASS** — `wire_models flash=2 pro=0 effort_ok=2 samples=['deepseek-v4-flash:high', …]` |
+| `test-path-a-public-entry-e2e.sh` | **PASS** (repair integration: hermetic seed **omits** effort keys; product `agent_launch` injects; wire `effort_ok=2` flash/`high`) |
 | `test-owner-bar.sh` | **PASS** (60/60; TSV restored) |
 | `test-heart-regression.sh` | **PASS** (TSV restored) |
 
@@ -201,15 +201,26 @@ Full wire: [`PATH_A_R0_WIRE_last.jsonl`](./PATH_A_R0_WIRE_last.jsonl) · meta: [
 3. Product CLI `--effort` forwarded on TUI/agent path as `--reasoning-effort`.
 4. Hermetic public-entry e2e asserts ≥1 DeepSeek body with non-null `reasoning_effort` string.
 
-### 6.5 Independent review
+### 6.5 Independent review (Grok-only)
 
-_(filled after Grok-only adversarial review — required before merge readiness)_
+| Field | Value |
+|-------|--------|
+| **Reviewer** | Independent Grok critic (`oh-my-claudecode:critic`, subagent `019fddab-07da-7350-912d-f861f7b31d51`) |
+| **Verdict** | **READY** |
+| **P0** | none |
+| **P1 (residualized)** | (a) e2e dual-seed hollow — **closed** by omitting effort keys so repair injects; (b) CLI `--effort` override unit-only (not hermetic wire) — residual; (c) pro model wire not re-captured this story — residual (seed/repair unit covers pro; flash wire proven) |
+| **P2** | Agent-binary-without-product-CLI skips repair; board SemVer text stale; seed unit global `contains` vs section-scoped |
+
+Implementer self-notes are **not** independent review. This section is the independent close-out.
 
 ### 6.6 Residuals (honest)
 
 | Residual | Notes |
 |----------|--------|
-| Path A Grok `thinking: { type }` body field | Not on Grok `ChatCompletionRequest`; Spec 30 Path B provider still sends both |
-| Session-title side model `grok-4.5` | May omit effort — not DeepSeek product wire |
+| Path A Grok `thinking: { type }` body field | Not on Grok `ChatCompletionRequest`; Spec 30 Path B provider still sends both — **do not claim full Spec 30** |
+| Session-title side model `grok-4.5` | Effort null — not DeepSeek product wire |
+| CLI `--effort` override on hermetic wire | Argv unit only; default model-config path is wire-proven |
+| Pro model hermetic wire re-capture | Seed/repair unit covers pro; flash R0A is the public-entry proof |
+| Agent binary without product CLI | `ensure_product_agent_config*` runs only on product `exec_agent`; direct agent may keep old config |
 | VC009 cache-hit visibility / Reasonix cut | Separate story; SemVer residual cut **`5.4.0`** under current floor |
-| VC007 turn-prefix stamp soft warn on this agent binary | Unrelated; agent binary on host may lag VC007 wire rewrite until stack rebuild |
+| VC007 turn-prefix stamp soft warn on host agent binary | Unrelated to VC008 wire; stack agent rebuild may lag |

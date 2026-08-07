@@ -187,6 +187,8 @@ cat >"${HOME_DIR}/config.toml" <<EOF
 [models]
 default = "deepseek-v4-flash"
 
+# VC008: omit reasoning_effort keys so product agent_launch *repair* must inject
+# Spec 30 defaults before the agent binary reads config (integration, not dual-seed).
 [model.deepseek-v4-flash]
 model = "deepseek-v4-flash"
 name = "DeepSeek V4 Flash"
@@ -195,8 +197,6 @@ api_backend = "chat_completions"
 base_url = "${BASE_URL}"
 api_key = "sk-scripted-path-a-r0"
 env_key = "DEEPSEEK_API_KEY"
-supports_reasoning_effort = true
-reasoning_effort = "high"
 
 [model.deepseek-v4-pro]
 model = "deepseek-v4-pro"
@@ -206,8 +206,6 @@ api_backend = "chat_completions"
 base_url = "${BASE_URL}"
 api_key = "sk-scripted-path-a-r0"
 env_key = "DEEPSEEK_API_KEY"
-supports_reasoning_effort = true
-reasoning_effort = "high"
 
 [endpoints]
 xai_api_base_url = "${BASE_URL}"

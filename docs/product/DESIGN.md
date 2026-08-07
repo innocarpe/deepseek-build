@@ -99,7 +99,10 @@ Permission asks use stderr labels `[permission]` (readable, high priority). Colo
 - Full TUI framework  
 - Custom background painting / alternate screen  
 - Theme file format / user CSS  
-- Shipping the official SVG/PNG logo binary inside the crate  
+- Shipping the official SVG/PNG logo binary inside the crate **for the banner**  
+  (scoped change: the official PNG logo is now shipped under `npm/assets/` for the
+  terminal **tab icon** — see `scripts/install-iterm-tab-icon.sh`; the in-terminal
+  banner stays line-art/braille only)
 - Windows console legacy code-page workarounds beyond ANSI when supported  
 
 ## 9. Related

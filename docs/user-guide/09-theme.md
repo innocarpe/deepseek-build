@@ -29,7 +29,28 @@ NO_COLOR=1 deepseek-build chat
 
 Non-TTY output is plain by default. With `NO_COLOR`, the box and whale still print; ANSI is omitted.
 
+## Terminal tab (iTerm2)
+
+Running `deepseek-build` / `dsb` sets the terminal tab title to **DeepSeek Build** (OSC 0),
+and on iTerm2 (macOS 15+ Tahoe tab style) the tab shows the **official DeepSeek whale
+logo** — no border or background, matching how Claude Code / Codex / Grok Build tabs are
+recognized.
+
+The tab logo is an iTerm2 per-process icon mapping. To enable it once:
+
+```bash
+./scripts/install-iterm-tab-icon.sh        # install (idempotent)
+./scripts/install-iterm-tab-icon.sh check  # verify state
+./scripts/install-iterm-tab-icon.sh remove # uninstall
+```
+
+This writes `graphic_deepseek.png` plus merged `graphic_icons.json` /
+`graphic_colors.json` under `~/Library/Application Support/iTerm2/`, mapping the
+`deepseek-build-agent` process name to the official logo in DeepSeek blue (`#4D6BFE`).
+The title works in any terminal; the logo requires iTerm2.
+
 ## Spec / design SSOT
 
 - `docs/product/DESIGN.md`
-- Implementation: `crates/dsb-cli/src/theme.rs`, `crates/dsb-cli/src/banner.rs`
+- Implementation: `crates/dsb-cli/src/theme.rs`, `crates/dsb-cli/src/banner.rs`,
+  `scripts/install-iterm-tab-icon.sh`

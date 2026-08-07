@@ -239,13 +239,48 @@ pub fn snippet_line_range(
 }
 
 /// Compare two paths the same way Path A edit authorization does.
+///
+/// Prefer live `canonicalize` when the path still exists. When either side is
+/// already gone (post-`rm` expire), fall back to a stable absolute/lex form so
+/// mint-time `/private/tmp/…` still matches extract-time `/tmp/…` on macOS.
 pub fn snippet_paths_equal(a: &Path, b: &Path) -> bool {
     if a == b {
         return true;
     }
-    let ca = std::fs::canonicalize(a).unwrap_or_else(|_| a.to_path_buf());
-    let cb = std::fs::canonicalize(b).unwrap_or_else(|_| b.to_path_buf());
-    ca == cb
+    let ca = canonicalize_or_absolute(a);
+    let cb = canonicalize_or_absolute(b);
+    if ca == cb {
+        return true;
+    }
+    // Last resort: strip known macOS private prefix asymmetry.
+    normalize_path_key(&ca) == normalize_path_key(&cb)
+}
+
+/// Absolute path suitable for snippet binding / expire after the file may be gone.
+pub fn canonicalize_or_absolute(path: &Path) -> PathBuf {
+    if let Ok(c) = std::fs::canonicalize(path) {
+        return c;
+    }
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    std::env::current_dir()
+        .map(|cwd| cwd.join(path))
+        .unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn normalize_path_key(path: &Path) -> String {
+    let s = path.to_string_lossy();
+    // macOS: /var -> /private/var, /tmp -> /private/tmp when canonicalized.
+    let stripped = s
+        .strip_prefix("/private/tmp")
+        .map(|rest| format!("/tmp{rest}"))
+        .or_else(|| {
+            s.strip_prefix("/private/var")
+                .map(|rest| format!("/var{rest}"))
+        })
+        .unwrap_or_else(|| s.into_owned());
+    stripped
 }
 
 /// VC005 / ADR 0010 §6.2 plan after a dispatched bash (or equivalent) command.
@@ -309,8 +344,9 @@ pub fn bash_command_may_mutate_files(command: &str) -> bool {
     ) {
         return true;
     }
-    // Redirection writes.
-    if lower.contains('>') {
+    // File-writing redirects only — ignore fd-only forms (`2>&1`, `>&2`) and
+    // redirects into `/dev/null` so harmless stderr capture does not expire_all.
+    if command_has_file_writing_redirect(command) {
         return true;
     }
     // Git mutations.
@@ -393,6 +429,52 @@ fn contains_any(hay: &str, needles: &[&str]) -> bool {
     needles.iter().any(|n| hay.contains(n))
 }
 
+/// True when `command` has a redirect that may write a real filesystem path.
+///
+/// Non-mutating: `2>&1`, `>&2`, `>/dev/null`, `2>/dev/null`.
+fn command_has_file_writing_redirect(command: &str) -> bool {
+    let bytes = command.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] != b'>' {
+            i += 1;
+            continue;
+        }
+        // `N>` forms: optional leading digits already before `>`.
+        let mut j = i + 1;
+        if j < bytes.len() && bytes[j] == b'>' {
+            // `>>`
+            j += 1;
+        } else if j < bytes.len() && bytes[j] == b'&' {
+            // `>&1` / `2>&1` — fd dup, not a file write.
+            i = j + 1;
+            continue;
+        }
+        while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        if let Some((tok, _next)) = take_shell_token(&command[j..]) {
+            let t = tok.trim().trim_matches(|c| c == '\'' || c == '"');
+            if is_non_file_redirect_target(t) {
+                i = j + 1;
+                continue;
+            }
+            // Real path target (or unknown token) — treat as file-writing.
+            return true;
+        }
+        // Bare `>` with no token — fail closed as potential mutation.
+        return true;
+    }
+    false
+}
+
+fn is_non_file_redirect_target(tok: &str) -> bool {
+    matches!(
+        tok,
+        "/dev/null" | "/dev/stdout" | "/dev/stderr" | "/dev/fd/1" | "/dev/fd/2" | "1" | "2" | "0"
+    )
+}
+
 /// Best-effort path token extraction for expire_path (known set).
 ///
 /// Returns absolute or cwd-joined paths. Empty means "unknown set".
@@ -400,22 +482,28 @@ pub fn extract_bash_touched_paths(command: &str, cwd: &Path) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
-    // Capture targets of `> file`, `>> file`, `2> file`.
+    // Capture targets of `> file`, `>> file`, `2> file` (not fd dups).
     let bytes = command.as_bytes();
     let mut i = 0usize;
     while i < bytes.len() {
         if bytes[i] == b'>' {
-            // skip >> and optional digit prefix already scanned
             let mut j = i + 1;
             if j < bytes.len() && bytes[j] == b'>' {
                 j += 1;
+            } else if j < bytes.len() && bytes[j] == b'&' {
+                // fd dup — skip
+                i = j + 1;
+                continue;
             }
             while j < bytes.len() && bytes[j].is_ascii_whitespace() {
                 j += 1;
             }
             if let Some((tok, next)) = take_shell_token(&command[j..]) {
-                push_path_token(tok, cwd, &mut out, &mut seen);
-                i = j + (next);
+                if !is_non_file_redirect_target(tok.trim().trim_matches(|c| c == '\'' || c == '"'))
+                {
+                    push_path_token(tok, cwd, &mut out, &mut seen);
+                }
+                i = j + next;
                 continue;
             }
         }
@@ -501,7 +589,9 @@ fn push_path_token(
     } else {
         cwd.join(tok)
     };
-    let key = p.to_string_lossy().to_string();
+    // Prefer the same absolute/lex form mint uses so expire_path matches after rm.
+    let p = canonicalize_or_absolute(&p);
+    let key = normalize_path_key(&p);
     if seen.insert(key) {
         out.push(p);
     }
@@ -755,5 +845,34 @@ mod tests {
             }
             other => panic!("expected Paths, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn vc005_expire_path_matches_macos_private_tmp_asymmetry() {
+        // Mint as if canonicalize produced /private/tmp/…; expire via /tmp/….
+        let mut store = SessionSnippetStore::new();
+        let snip = store.issue(Path::new("/private/tmp/a.txt"), 1, 1, "v", "x", 1);
+        store.expire_path(Path::new("/tmp/a.txt"));
+        assert!(
+            !store.contains(&snip.snippet_id),
+            "post-rm path form must still expire mint-time private/tmp ids"
+        );
+    }
+
+    #[test]
+    fn vc005_bash_fd_redirect_is_not_file_mutation() {
+        let cwd = Path::new("/ws");
+        assert_eq!(
+            bash_snippet_expire_plan("ls 2>&1", cwd),
+            BashSnippetExpirePlan::None
+        );
+        assert_eq!(
+            bash_snippet_expire_plan("ls 2>/dev/null", cwd),
+            BashSnippetExpirePlan::None
+        );
+        assert_eq!(
+            bash_snippet_expire_plan("cat file >/dev/null", cwd),
+            BashSnippetExpirePlan::None
+        );
     }
 }

@@ -5,6 +5,7 @@ pub mod bundle;
 pub(crate) mod chat_conversation_history;
 pub mod code_nav;
 pub mod debug;
+pub mod deepseek;
 pub mod feedback;
 pub mod fs;
 pub mod git;

@@ -1,0 +1,329 @@
+//! `x.ai/deepseek/status` — DeepSeek account balance + session usage for the
+//! pager's bottom status line.
+//!
+//! DeepSeek exposes account balance via `GET {base}/user/balance` and reports
+//! prompt-cache hits as a top-level `prompt_cache_hit_tokens` field (mapped
+//! into `TokenUsage.cached_prompt_tokens` by `xai-grok-sampling-types`).
+//!
+//! Fail-soft by design: any balance failure (non-DeepSeek base URL, missing
+//! key, HTTP error, unparseable body) surfaces as `balance: None` so the pager
+//! simply hides the chip — the balance is never a hard dependency of the
+//! status line. Usage is always projected from the in-memory ledger (no HTTP).
+
+use agent_client_protocol as acp;
+use serde::{Deserialize, Serialize};
+
+use super::{ExtResult, parse_params, to_raw_response};
+use crate::agent::MvpAgent;
+use crate::extensions::notification::PromptUsage;
+use crate::session::SessionHandle;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeepSeekStatusRequest {
+    session_id: String,
+}
+
+/// Wire response for `x.ai/deepseek/status`.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeepSeekStatusResponse {
+    /// True when the session's base URL is a DeepSeek host. Gates the pager's
+    /// bottom status row — a non-DeepSeek session renders nothing even though
+    /// `usage` is always populated.
+    pub is_deepseek: bool,
+    /// Selected account balance; `None` when the base URL is not DeepSeek or
+    /// the fetch failed (fail-soft — the pager hides the chip).
+    pub balance: Option<DeepSeekBalance>,
+    /// Cumulative session usage projected from the ledger (same shape as
+    /// `x.ai/session/usage`).
+    pub usage: PromptUsage,
+}
+
+/// A single DeepSeek account balance, currency-preference resolved
+/// (USD → CNY → first reported) for display.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeepSeekBalance {
+    /// ISO 4217 currency code, e.g. `USD` or `CNY`.
+    pub currency: String,
+    /// Raw API string (e.g. `"70.16"`) — kept verbatim to avoid float drift.
+    pub total_balance: String,
+    /// Whether the account is currently available for billing.
+    #[serde(default)]
+    pub is_available: bool,
+}
+
+/// Upstream `GET /user/balance` body.
+#[derive(Debug, Deserialize)]
+struct DeepSeekBalanceResponse {
+    #[serde(default)]
+    is_available: bool,
+    #[serde(default)]
+    balance_infos: Vec<DeepSeekBalanceInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeepSeekBalanceInfo {
+    currency: String,
+    #[serde(default)]
+    total_balance: String,
+}
+
+#[tracing::instrument(skip_all, fields(method = %args.method))]
+pub async fn handle(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
+    match args.method.as_ref() {
+        "x.ai/deepseek/status" => handle_status(agent, args).await,
+        _ => Err(acp::Error::method_not_found()),
+    }
+}
+
+async fn handle_status(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
+    let req: DeepSeekStatusRequest = parse_params(args)?;
+    let session_id = acp::SessionId::new(req.session_id.as_str());
+
+    // Wait out in-flight session/load rather than racing reconnect to not-found.
+    let Some(handle) = agent.session_handle_waiting_for_load(&session_id).await else {
+        return Err(acp::Error::resource_not_found(Some(format!(
+            "session not found: {}",
+            req.session_id
+        ))));
+    };
+
+    // Is this session pointed at a DeepSeek base URL? Gates both the balance
+    // fetch and (via the response flag) the pager's bottom status row.
+    let is_deepseek = handle
+        .chat_state_handle
+        .get_sampling_config()
+        .await
+        .map(|cfg| is_deepseek_base_url(&cfg.base_url))
+        .unwrap_or(false);
+
+    // Balance is slow (HTTP) and optional; only fetch it for DeepSeek hosts.
+    let balance = if is_deepseek {
+        fetch_balance(&handle).await
+    } else {
+        None
+    };
+
+    // Fail closed: a dead chat-state actor is an error, never a zero bill.
+    let ledger = handle
+        .chat_state_handle
+        .try_get_session_usage()
+        .await
+        .map_err(|()| acp::Error::internal_error().data("failed to read session usage"))?;
+
+    to_raw_response(&DeepSeekStatusResponse {
+        is_deepseek,
+        balance,
+        usage: PromptUsage::from(&ledger),
+    })
+}
+
+/// Fetch the DeepSeek account balance. Returns `None` (never errors) when the
+/// session's base URL is not DeepSeek, no API key is configured, or the
+/// upstream call/parse fails.
+async fn fetch_balance(handle: &SessionHandle) -> Option<DeepSeekBalance> {
+    let base_url = handle.chat_state_handle.get_sampling_config().await?.base_url;
+    if !is_deepseek_base_url(&base_url) {
+        return None;
+    }
+    let api_key = handle.chat_state_handle.get_credentials().await.api_key?;
+
+    // Normalize: DeepSeek accepts both `https://api.deepseek.com` and the
+    // `.../v1` chat-completions suffix; balance lives at the bare base.
+    let base = base_url.trim_end_matches('/').trim_end_matches("/v1");
+    let url = format!("{base}/user/balance");
+
+    let response = match crate::http::shared_client()
+        .get(&url)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+    {
+        Ok(response) if response.status().is_success() => response,
+        Ok(response) => {
+            tracing::warn!(
+                status = %response.status(),
+                url = %url,
+                "deepseek status: balance upstream error"
+            );
+            return None;
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "deepseek status: balance fetch failed");
+            return None;
+        }
+    };
+
+    let body: DeepSeekBalanceResponse = match response.json().await {
+        Ok(body) => body,
+        Err(e) => {
+            tracing::warn!(error = %e, "deepseek status: balance parse failed");
+            return None;
+        }
+    };
+
+    let info = prefer_currency(&body.balance_infos, &["USD", "CNY"])?;
+    tracing::info!(
+        currency = %info.currency,
+        is_available = body.is_available,
+        "deepseek status: balance fetched"
+    );
+    Some(DeepSeekBalance {
+        currency: info.currency.clone(),
+        total_balance: info.total_balance.clone(),
+        is_available: body.is_available,
+    })
+}
+
+/// Pick the first balance info matching a preferred currency, falling back to
+/// the first reported entry (Reasonix convention: USD → CNY → first).
+fn prefer_currency<'a>(
+    infos: &'a [DeepSeekBalanceInfo],
+    preferred: &[&str],
+) -> Option<&'a DeepSeekBalanceInfo> {
+    for want in preferred {
+        if let Some(info) = infos.iter().find(|info| info.currency == *want) {
+            return Some(info);
+        }
+    }
+    infos.first()
+}
+
+/// True only for DeepSeek-operated hosts (`api.deepseek.com` and
+/// `*.deepseek.com`), so `x.ai/deepseek/status` never pokes a foreign base URL.
+fn is_deepseek_base_url(url: &str) -> bool {
+    reqwest::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_owned))
+        .is_some_and(|host| host == "api.deepseek.com" || host.ends_with(".deepseek.com"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prefer_currency_prefers_usd_then_cny_then_first() {
+        let infos = vec![
+            DeepSeekBalanceInfo {
+                currency: "CNY".into(),
+                total_balance: "70.16".into(),
+            },
+            DeepSeekBalanceInfo {
+                currency: "USD".into(),
+                total_balance: "9.82".into(),
+            },
+        ];
+        assert_eq!(prefer_currency(&infos, &["USD", "CNY"]).unwrap().currency, "USD");
+        assert_eq!(prefer_currency(&infos, &["CNY", "USD"]).unwrap().currency, "CNY");
+        // Unknown preference falls back to the first entry.
+        assert_eq!(
+            prefer_currency(&infos, &["EUR", "JPY"]).unwrap().currency,
+            "CNY"
+        );
+        assert!(prefer_currency(&[], &["USD"]).is_none());
+    }
+
+    #[test]
+    fn balance_response_deserializes_from_deepseek_json() {
+        let json = serde_json::json!({
+            "is_available": true,
+            "balance_infos": [
+                {"currency": "CNY", "total_balance": "70.16"},
+                {"currency": "USD", "total_balance": "9.82"}
+            ]
+        });
+        let body: DeepSeekBalanceResponse = serde_json::from_value(json).unwrap();
+        assert!(body.is_available);
+        assert_eq!(body.balance_infos.len(), 2);
+        let info = prefer_currency(&body.balance_infos, &["USD", "CNY"]).unwrap();
+        assert_eq!(info.currency, "USD");
+        assert_eq!(info.total_balance, "9.82");
+    }
+
+    #[test]
+    fn status_response_serializes_balance_and_usage() {
+        let resp = DeepSeekStatusResponse {
+            is_deepseek: true,
+            balance: Some(DeepSeekBalance {
+                currency: "CNY".into(),
+                total_balance: "70.16".into(),
+                is_available: true,
+            }),
+            usage: PromptUsage::default(),
+        };
+        let v = serde_json::to_value(&resp).unwrap();
+        assert_eq!(v["isDeepseek"], true);
+        assert_eq!(v["balance"]["currency"], "CNY");
+        assert_eq!(v["balance"]["totalBalance"], "70.16");
+        assert_eq!(v["balance"]["isAvailable"], true);
+        // usage is always present on the wire.
+        assert!(v.get("usage").is_some());
+        let rt: DeepSeekStatusResponse = serde_json::from_value(v).unwrap();
+        assert!(rt.is_deepseek);
+        assert_eq!(rt.balance.unwrap().total_balance, "70.16");
+    }
+
+    #[test]
+    fn status_response_serializes_missing_balance() {
+        let resp = DeepSeekStatusResponse {
+            is_deepseek: true,
+            balance: None,
+            usage: PromptUsage::default(),
+        };
+        let v = serde_json::to_value(&resp).unwrap();
+        assert_eq!(v["balance"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn status_response_non_deepseek_flag_round_trips() {
+        // A non-DeepSeek session still gets `usage`, but `is_deepseek` is
+        // false so the pager keeps the bottom row empty.
+        let resp = DeepSeekStatusResponse {
+            is_deepseek: false,
+            balance: None,
+            usage: PromptUsage::default(),
+        };
+        let v = serde_json::to_value(&resp).unwrap();
+        assert_eq!(v["isDeepseek"], false);
+        assert!(v.get("usage").is_some());
+        let rt: DeepSeekStatusResponse = serde_json::from_value(v).unwrap();
+        assert!(!rt.is_deepseek);
+    }
+
+    #[test]
+    fn is_deepseek_base_url_accepts_official_and_v1() {
+        assert!(is_deepseek_base_url("https://api.deepseek.com"));
+        assert!(is_deepseek_base_url("https://api.deepseek.com/v1"));
+        assert!(is_deepseek_base_url("https://api.deepseek.com/"));
+        assert!(is_deepseek_base_url("https://proxy.deepseek.com"));
+        assert!(!is_deepseek_base_url("https://api.openai.com"));
+        assert!(!is_deepseek_base_url("https://api.x.ai"));
+        assert!(!is_deepseek_base_url("not a url"));
+        // Suffix-attack guard: `evil-deepseek.com` must not match.
+        assert!(!is_deepseek_base_url("https://evil-deepseek.com"));
+    }
+
+    #[test]
+    fn balance_url_normalization_strips_v1_suffix() {
+        // Mirrors the normalization applied in `fetch_balance`.
+        let normalized = |base: &str| {
+            format!("{}/user/balance", base.trim_end_matches('/').trim_end_matches("/v1"))
+        };
+        assert_eq!(
+            normalized("https://api.deepseek.com"),
+            "https://api.deepseek.com/user/balance"
+        );
+        assert_eq!(
+            normalized("https://api.deepseek.com/v1"),
+            "https://api.deepseek.com/user/balance"
+        );
+        assert_eq!(
+            normalized("https://api.deepseek.com/v1/"),
+            "https://api.deepseek.com/user/balance"
+        );
+    }
+}

@@ -2449,6 +2449,9 @@ impl acp::Agent for MvpAgent {
             "x.ai/auto-topup-rule" => {
                 crate::extensions::billing::handle(self, &args).await
             }
+            "x.ai/deepseek/status" => {
+                crate::extensions::deepseek::handle(self, &args).await
+            }
             "x.ai/share_session" => crate::extensions::share::handle(self, &args).await,
             "x.ai/privacy/setCodingDataRetention" => {
                 crate::extensions::privacy::handle(self, &args).await

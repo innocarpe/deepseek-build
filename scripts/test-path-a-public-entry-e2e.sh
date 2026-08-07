@@ -288,6 +288,16 @@ else
   warn "path_a_prefix_epoch.txt missing under DEEPSEEK_BUILD_HOME (G008 stamp)"
 fi
 
+# VC007: Spec 10 turn assembly stamp (written on Path A turns after build_request).
+# Soft: requires rebuilt agent binary that includes apply_spec10_path_a_turn_assembly.
+TURN_EPOCH_STAMP="${HOME_DIR}/path_a_turn_prefix_epoch.txt"
+if [[ -f "${TURN_EPOCH_STAMP}" ]]; then
+  cp "${TURN_EPOCH_STAMP}" "${OUT_DIR}/PATH_A_TURN_PREFIX_EPOCH_last.txt"
+  log "path_a_turn_prefix_epoch stamp present (VC007)"
+else
+  warn "path_a_turn_prefix_epoch.txt missing — rebuild agent binary for VC007 turn stamp"
+fi
+
 # G009: Path A Spec 20 routing stamp (Flash default + /pro once).
 ROUTING_STAMP="${HOME_DIR}/path_a_routing.txt"
 if [[ -f "${ROUTING_STAMP}" ]]; then
@@ -329,6 +339,12 @@ fi
     cat "${EPOCH_STAMP}"
   else
     echo "path_a_prefix_epoch_stamp=missing"
+  fi
+  if [[ -f "${TURN_EPOCH_STAMP}" ]]; then
+    echo "path_a_turn_prefix_epoch_stamp=present"
+    cat "${TURN_EPOCH_STAMP}"
+  else
+    echo "path_a_turn_prefix_epoch_stamp=missing"
   fi
   if [[ -f "${ROUTING_STAMP}" ]]; then
     echo "path_a_routing_stamp=present"

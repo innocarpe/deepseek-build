@@ -248,11 +248,26 @@ This story is **one PR** (exactly one unmerged stacked PR). Internally:
 
 | Command | Result | Notes |
 |---------|--------|-------|
-| `git diff --check` (base..HEAD) | **PASS** | After whitespace clean `f66067c` |
-| `./scripts/check-semver.sh` | **PASS** | cargo ≡ npm **5.4.0** (no bump) |
-| `./scripts/check-path-a-linkage.sh` | **PASS** | |
-| `./scripts/test-owner-bar.sh` | **PASS** | 60/60; `OWNER_BAR_STATUS.tsv` restored to HEAD |
-| `./scripts/test-heart-regression.sh` | **PASS** | PATH_A_E2E SKIP default; L3 offline PASS; TSV noise not committed |
+| `git diff --check` (base..HEAD) | **PASS** | After whitespace clean `f66067c`; re-prove tip `bb87427` exit **0** |
+| `./scripts/check-semver.sh` | **PASS** | cargo ≡ npm **5.4.0** (no bump); re-prove tip exit **0** |
+| `./scripts/check-path-a-linkage.sh` | **PASS** | re-prove tip exit **0** |
+| `./scripts/test-owner-bar.sh` | **PASS** | 60/60; `OWNER_BAR_STATUS.tsv` restored to HEAD; re-prove tip exit **0** |
+| `./scripts/test-heart-regression.sh` | **PASS** | PATH_A_E2E **SKIP** (default, not fail); L3 offline PASS; L3.1–L3.5 **SKIP** no key; re-prove tip exit **0** |
+
+#### 6.2.1 First combined gate task — diagnosis (not product FAIL)
+
+Session terminal log `call-bde2f54a-…-41` looked like a gate failure with a long-running tail. **Root cause was shell pipeline + one real docs gate, not owner-bar/heart product red.**
+
+| Observation | Diagnosis |
+|-------------|-----------|
+| Command shape | `git diff --check && semver && path-a && owner-bar; echo OWNER_EXIT=$? && heart; echo HEART_EXIT=$?` |
+| First failure | **`git diff --check` FAIL** — markdown trailing spaces (exit **2**) on VC014 doc edits |
+| `OWNER_EXIT=2` | **Misleading pipeline artifact** — `&&` short-circuit skipped `check-semver` / `check-path-a-linkage` / `test-owner-bar`; `$?` was from `git diff --check`, **not** owner-bar |
+| Heart still ran | Because of `;` after the `&&` chain; heart **PASS** while earlier product gates never ran |
+| “Still running” / timeout | Host auto-backgrounded the long combined command; no orphan gate process remains after completion |
+| Correction | Whitespace clean `f66067c`; re-ran each gate **separately** with explicit exit codes at tip **`bb87427`** → all **0** / PASS (see table above) |
+
+**Do not treat the first combined task as owner-bar FAIL.** Real issue was docs `git diff --check` only; product gates were un-run then later **PASS**.
 
 ### 6.3 Residuals at READY (allow-list retained)
 

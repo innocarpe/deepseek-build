@@ -12,8 +12,10 @@
 
 | Order | Plan / stage | Role | Prompt / board |
 |-------|--------------|------|----------------|
-| **1** | **`vision-complete-5x`** | **Active** — Deep Code + Reasonix + Grok feel under `5.x` | [VISION_COMPLETE_5X_GOALS.md](./VISION_COMPLETE_5X_GOALS.md) · [WAVE_5x_VISION_PR_DAG.md](./WAVE_5x_VISION_PR_DAG.md) · [VISION.md](./VISION.md) |
+| **1** | **`vision-complete-5x`** | **Active** — Deep Code + Reasonix + Grok feel under `5.x` | [VISION_COMPLETE_5X_GOALS.md](./VISION_COMPLETE_5X_GOALS.md) · [WAVE_5x_VISION_PR_DAG.md](./WAVE_5x_VISION_PR_DAG.md) · [ULTRAGOAL_PROMPT_COLD_START_VISION_5X.md](./ULTRAGOAL_PROMPT_COLD_START_VISION_5X.md) · [VISION.md](./VISION.md) |
 | — | **`owner-bar-5x`** | **Complete** owner-bar product cut **`5.0.0`** | [CUT_5_0_0_2026-08-07.md](./evidence/CUT_5_0_0_2026-08-07.md) · [OWNER_BAR_5X_GOALS.md](./OWNER_BAR_5X_GOALS.md) · [PRD-v5.md](./PRD-v5.md) |
+
+**SemVer floor (do not re-plan as future feature cuts):** `5.0.0` owner-bar · `5.0.1` npm version fix · **`5.1.0` on `main`** (chrome/theme; deploy may lag). **Next vision minors:** **`5.2.0`** Deep Code · **`5.3.0`** Reasonix · **`5.4.0`** L3 · **`5.5.0`** freeze (re-check `main`/npm before every bump).
 
 ```text
 G001 TruthHarness (RED gate)

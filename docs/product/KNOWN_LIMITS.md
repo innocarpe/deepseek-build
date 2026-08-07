@@ -13,7 +13,8 @@
 | **2.x** | **Shell cut** — Grok-derived full-screen agent + DeepSeek entry/UI/npm. Hearts residual. |
 | **3.0.0 (tagged)** | Heart fusion *attempt* — **owner-bar NOT MET** (library/thin Path A claims; dead snippet wiring). |
 | **4.0.0 / 4.0.1 (tagged)** | L3 productization *attempt* — machinery + docs; **owner-bar NOT MET**. |
-| **5.0.0 (in train)** | **Only** major allowed to claim complete product — [OWNER_BAR_P0_LEDGER.md](./OWNER_BAR_P0_LEDGER.md) all PASS on Path A. |
+| **5.0.0** | Owner-bar complete product — [OWNER_BAR_P0_LEDGER.md](./OWNER_BAR_P0_LEDGER.md) all PASS on Path A. |
+| **5.0.1 / 5.1.0** | Patches/chrome after owner-bar; **not** vision-complete. Vision residual train: [VISION_COMPLETE_5X_GOALS.md](./VISION_COMPLETE_5X_GOALS.md) (**next feature minor `5.2.0`+**). |
 
 ## What 3.0.0 delivers (P0)
 

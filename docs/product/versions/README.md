@@ -48,6 +48,7 @@ Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** p
 | 2026-08-07 | **`4.0.0` / tag `v4.0.0`** L3 productization (`fleet-4x`) — **not owner-bar green** | PRD-v4, PR #85, CUT_4_0_0 |
 | 2026-08-07 | **`4.0.1`** prebuilt npm install (ADR 0009) · **`4.0.2`** setup → bare `dsb` | PR #86, #87 |
 | 2026-08-07 | **`4.0.3`** `dsb --resume` surface + hint branding | PR #92 |
+| 2026-08-07 | **release-cycle harness** — `bump-version.sh` + `release.sh` + CI sccache/fast-path + runbook | PR #94 |
 | 2026-08-07 | Owner-bar checklist normative; true complete product = **5.x** only when checklist green | [OWNER_BAR_ACCEPTANCE.md](../OWNER_BAR_ACCEPTANCE.md) |
 | 2026-08-07 | Dual adversarial plan review (Claude Opus + Codex gpt-5.6-sol); train **`owner-bar-5x`** package | [evidence/OWNER_BAR_5X_PLAN_ADVERSARIAL_2026-08-07.md](../evidence/OWNER_BAR_5X_PLAN_ADVERSARIAL_2026-08-07.md) · PRD-v5 · WAVE_5x |
 

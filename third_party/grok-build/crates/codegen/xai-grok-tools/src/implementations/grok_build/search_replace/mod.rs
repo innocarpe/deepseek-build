@@ -18,13 +18,13 @@ use crate::types::output::{
     SearchReplaceEditContextInformation, SearchReplaceEditDetail, SearchReplaceEditsApplied,
     SearchReplaceOutput,
 };
-use crate::types::snippet_store::{SessionSnippetStore, is_valid_snippet_id};
 use crate::types::requirements::{Expr, ToolParamsRequirement, ToolRequirement};
 #[allow(unused_imports)]
 use crate::types::resources::{
     Cwd, DisplayCwd, FileSystem, GitignoreFilter, NotificationHandle, Params, PathNotFoundHints,
     RespectGitignore, SharedResources, display_cwd_or_cwd, resolve_model_path,
 };
+use crate::types::snippet_store::{SessionSnippetStore, is_valid_snippet_id};
 use crate::types::template_renderer::TemplateRenderer;
 use crate::types::tool::{ToolKind, ToolNamespace};
 use crate::util::truncate_str_with_marker;
@@ -577,7 +577,11 @@ async fn authorize_snippet_safe_edit(
     path: &std::path::Path,
     input: &SearchReplaceInput,
 ) -> Result<AuthorizedSnippetScope, SearchReplaceOutput> {
-    let snippet_id = match input.snippet_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
+    let snippet_id = match input
+        .snippet_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
     {
         None => {
             return Err(SearchReplaceOutput::InvalidInput(
@@ -1930,7 +1934,10 @@ mod tests {
             .unwrap();
         match result {
             SearchReplaceOutput::InvalidInput(msg) => {
-                assert!(msg.contains("snippet_not_found") || msg.contains("unknown"), "msg={msg}");
+                assert!(
+                    msg.contains("snippet_not_found") || msg.contains("unknown"),
+                    "msg={msg}"
+                );
                 assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello\n");
             }
             other => panic!("Expected InvalidInput, got {other:?}"),
@@ -2018,10 +2025,9 @@ mod tests {
         }));
         let mut input = make_input("f.txt", "hello", "hi");
         input.snippet_id = Some(id);
-        let result =
-            xai_tool_runtime::Tool::run(&tool, test_ctx(resources_b.into_shared()), input)
-                .await
-                .unwrap();
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources_b.into_shared()), input)
+            .await
+            .unwrap();
         match result {
             SearchReplaceOutput::InvalidInput(msg) => {
                 assert!(

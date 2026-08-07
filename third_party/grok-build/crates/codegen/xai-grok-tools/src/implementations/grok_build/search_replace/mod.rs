@@ -24,7 +24,7 @@ use crate::types::resources::{
     Cwd, DisplayCwd, FileSystem, GitignoreFilter, NotificationHandle, Params, PathNotFoundHints,
     RespectGitignore, SharedResources, display_cwd_or_cwd, resolve_model_path,
 };
-use crate::types::snippet_store::{SessionSnippetStore, is_valid_snippet_id};
+use crate::types::snippet_store::{SessionSnippetStore, is_valid_snippet_id, snippet_paths_equal};
 use crate::types::template_renderer::TemplateRenderer;
 use crate::types::tool::{ToolKind, ToolNamespace};
 use crate::util::truncate_str_with_marker;
@@ -160,6 +160,14 @@ pub struct SearchReplaceParams {
     /// Free-form whole-file primary overwrite is fail-closed.
     #[serde(default)]
     pub snippet_safe: bool,
+    /// Host/policy-only force overwrite for empty-`old_string` write spirit
+    /// (VC005 / ADR 0010 §6.1). Product Standard leaves this **false**.
+    ///
+    /// When true under `snippet_safe`, empty `old_string` may overwrite an
+    /// existing path and must expire session snippets for that path.
+    /// **Not** a model-facing free boolean — never mapped from tool input.
+    #[serde(default)]
+    pub allow_force_write_overwrite: bool,
 }
 impl Default for SearchReplaceParams {
     fn default() -> Self {
@@ -169,6 +177,7 @@ impl Default for SearchReplaceParams {
             unicode_normalized_fallback: false,
             include_user_edit_hint: true,
             snippet_safe: false,
+            allow_force_write_overwrite: false,
         }
     }
 }
@@ -245,7 +254,12 @@ pub(crate) async fn run_search_replace(
             "Old string and new string are the same".to_owned(),
         ));
     }
-    let (empty_old_string_does_not_override, include_user_edit_hint, snippet_safe);
+    let (
+        empty_old_string_does_not_override,
+        include_user_edit_hint,
+        snippet_safe,
+        allow_force_write_overwrite,
+    );
     {
         let res = resources.lock().await;
         let sr_params = res.get::<Params<SearchReplaceParams>>();
@@ -258,6 +272,9 @@ pub(crate) async fn run_search_replace(
             .map(|p| p.0.include_user_edit_hint)
             .unwrap_or(true);
         snippet_safe = snippet_safe_flag;
+        allow_force_write_overwrite = sr_params
+            .map(|p| p.0.allow_force_write_overwrite)
+            .unwrap_or(false);
     }
     // VC004 / Spec 45: snippet_safe requires a valid session-local snippet_id
     // for edits of existing files (hard require; file_version alone is not enough).
@@ -281,6 +298,8 @@ pub(crate) async fn run_search_replace(
             display_cwd.as_deref(),
             hints_enabled,
             empty_old_string_does_not_override,
+            snippet_safe,
+            allow_force_write_overwrite,
         )
         .await?
     } else {
@@ -300,13 +319,22 @@ pub(crate) async fn run_search_replace(
         )
         .await?
     };
-    if let SearchReplaceOutput::EditsApplied(applied) = &result {
-        let (mut added, mut removed) = (0i64, 0i64);
-        for detail in &applied.edits.details {
-            let (a, r) = crate::types::output::line_diff(&detail.old_string, &detail.new_string);
-            added += a;
-            removed += r;
+    // VC005 / ADR 0010 §6: successful mutation expires all snippets for path.
+    if matches!(&result, SearchReplaceOutput::EditsApplied(_)) {
+        let mut res = resources.lock().await;
+        if let Some(store) = res.get_mut::<SessionSnippetStore>() {
+            store.expire_path(&path);
         }
+        let (mut added, mut removed) = (0i64, 0i64);
+        if let SearchReplaceOutput::EditsApplied(applied) = &result {
+            for detail in &applied.edits.details {
+                let (a, r) =
+                    crate::types::output::line_diff(&detail.old_string, &detail.new_string);
+                added += a;
+                removed += r;
+            }
+        }
+        drop(res);
         tracing::info_span!(
             "edit.lines",
             tool_name = "search_replace",
@@ -351,8 +379,12 @@ async fn handle_new_file_creation(
     display_cwd: Option<&std::path::Path>,
     hints_enabled: bool,
     empty_old_string_does_not_override: bool,
+    snippet_safe: bool,
+    allow_force_write_overwrite: bool,
 ) -> Result<SearchReplaceOutput, xai_tool_runtime::ToolError> {
-    let file_exists = match fs.read_file(path).await {
+    // Path existence for Spec 45 write law: any readable existing path (incl. empty).
+    let path_exists = fs.read_file(path).await.is_ok();
+    let file_nonempty = match fs.read_file(path).await {
         Ok(bytes) => !bytes.is_empty(),
         Err(_) => false,
     };
@@ -360,7 +392,16 @@ async fn handle_new_file_creation(
         Ok(bytes) => Some(String::from_utf8_lossy(&bytes).to_string()),
         Err(_) => None,
     };
-    if file_exists && empty_old_string_does_not_override {
+    // VC005 / ADR 0010 §6.1: under snippet_safe, existing path empty-old write is
+    // denied unless host/policy force is granted.
+    if snippet_safe && path_exists && !allow_force_write_overwrite {
+        return Ok(SearchReplaceOutput::InvalidInput(format!(
+            "path_exists_use_edit: path {} already exists; read + search_replace with a valid snippet_id (empty old_string overwrite is denied under snippet_safe)",
+            input.file_path
+        )));
+    }
+    // Legacy / non-snippet_safe guard: empty old_string cannot overwrite non-empty.
+    if file_nonempty && empty_old_string_does_not_override {
         let old_string_name;
         {
             let res = resources.lock().await;
@@ -405,9 +446,11 @@ async fn handle_new_file_creation(
             )),
         });
     }
+    // Force overwrite of an existing path is not a brand-new file.
+    let is_overwrite = path_exists
+        && (allow_force_write_overwrite || !empty_old_string_does_not_override);
     if let Some(old_text) = old_text
-        && file_exists
-        && !empty_old_string_does_not_override
+        && is_overwrite
     {
         notification_handle.send_file_written(FileWritten {
             tool_call_id: tool_call_id.to_string(),
@@ -654,13 +697,7 @@ async fn authorize_snippet_safe_edit(
 
 /// Compare resolved edit path to the path recorded on the session snippet.
 fn snippet_paths_match(edit_path: &std::path::Path, snippet_path: &std::path::Path) -> bool {
-    if edit_path == snippet_path {
-        return true;
-    }
-    // Best-effort canonicalize both sides (symlink / relative residual).
-    let a = std::fs::canonicalize(edit_path).unwrap_or_else(|_| edit_path.to_path_buf());
-    let b = std::fs::canonicalize(snippet_path).unwrap_or_else(|_| snippet_path.to_path_buf());
-    a == b
+    snippet_paths_equal(edit_path, snippet_path)
 }
 
 /// Inclusive 1-based line range → half-open byte range `[start, end)` in
@@ -2882,6 +2919,7 @@ neutTest_set);
             unicode_normalized_fallback: true,
             include_user_edit_hint: false,
             snippet_safe: false,
+            allow_force_write_overwrite: false,
         }
     }
     /// Exact match still works and returns unicode_normalized=false.
@@ -3062,6 +3100,7 @@ neutTest_set);
             unicode_normalized_fallback: false,
             include_user_edit_hint: false,
             snippet_safe: false,
+            allow_force_write_overwrite: false,
         }));
         let input = make_input("f.txt", "\"hello\"", "replaced");
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)

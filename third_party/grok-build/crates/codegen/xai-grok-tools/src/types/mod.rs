@@ -35,7 +35,9 @@ pub use process_manager::{KillOutcome, TaskSnapshot, format_system_time_rfc3339}
 pub use schema::GrokIntegerSchema;
 pub use session_mode::SessionMode;
 pub use snippet_store::{
-    SessionSnippet, SessionSnippetStore, is_valid_snippet_id, new_snippet_id, snippet_line_range,
+    BashSnippetExpirePlan, SessionSnippet, SessionSnippetStore, bash_command_may_mutate_files,
+    bash_snippet_expire_plan, extract_bash_touched_paths, is_valid_snippet_id, new_snippet_id,
+    snippet_line_range, snippet_paths_equal,
 };
 pub use tool_index::{SearchSnapshot, ServerSummary, ToolIndex, ToolSearchIndex, ToolSearchResult};
 pub use tool_io::{MCPToolInput, ToolInput};

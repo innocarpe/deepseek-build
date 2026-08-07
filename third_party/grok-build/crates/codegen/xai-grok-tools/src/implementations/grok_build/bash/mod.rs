@@ -1558,6 +1558,24 @@ ${%- endif %}"#
             None => command.to_string(),
         }
     }
+
+    /// VC005: expire session snippets after bash dispatch (ADR 0010 §6.2).
+    ///
+    /// No-op when the session has no store yet. Never inserts a store just to
+    /// clear it.
+    async fn apply_snippet_expire_plan(
+        resources: &crate::types::resources::SharedResources,
+        plan: &crate::types::snippet_store::BashSnippetExpirePlan,
+    ) {
+        use crate::types::snippet_store::{BashSnippetExpirePlan, SessionSnippetStore};
+        if matches!(plan, BashSnippetExpirePlan::None) {
+            return;
+        }
+        let mut res = resources.lock().await;
+        if let Some(store) = res.get_mut::<SessionSnippetStore>() {
+            store.apply_bash_expire_plan(plan);
+        }
+    }
 }
 
 impl crate::types::tool_metadata::ToolMetadata for BashTool {
@@ -1976,6 +1994,12 @@ impl xai_tool_runtime::Tool for BashTool {
         // to the model (e.g. the monitor tool). Bash commands run as-is.
         let display_command: Option<String> = None;
 
+        // VC005 / ADR 0010 §6.2: plan session-snippet invalidation for this
+        // command. Applied only after the backend accepts the dispatch
+        // (validation failures above must not expire snippets).
+        let snippet_expire_plan =
+            crate::types::snippet_store::bash_snippet_expire_plan(&input.command, &cwd);
+
         // --- Route to foreground or background ---
         let output_file = session_folder
             .join("terminal")
@@ -2029,6 +2053,9 @@ impl xai_tool_runtime::Tool for BashTool {
                     return Err(bash_err.into());
                 }
             };
+
+            // Backend accepted dispatch → apply snippet invalidation (fail-closed).
+            Self::apply_snippet_expire_plan(&resources, &snippet_expire_plan).await;
 
             let task_id = handle.task_id;
             let bg_output_file = handle.output_file;
@@ -2126,6 +2153,10 @@ impl xai_tool_runtime::Tool for BashTool {
                     return Err(bash_err.into());
                 }
             };
+
+            // Backend accepted dispatch → apply snippet invalidation even if the
+            // command later exits non-zero (partial mutation is possible).
+            Self::apply_snippet_expire_plan(&resources, &snippet_expire_plan).await;
 
             // ─── Backgrounded (user Ctrl+G or auto-timeout): return BackgroundTaskStarted ───
             let auto_backgrounded = result.signal.as_deref() == Some("auto_backgrounded");

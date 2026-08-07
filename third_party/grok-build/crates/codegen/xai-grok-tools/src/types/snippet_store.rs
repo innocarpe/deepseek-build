@@ -9,9 +9,10 @@
 //! the table dies with the session resources and must never enter Spec 10
 //! stable-prefix bytes.
 //!
-//! VC003: issue on successful **UTF-8 text** `read_file` only. Edit require
-//! (VC004), write/bash invalidation (VC005), and resume/fork restore (VC006)
-//! are out of scope.
+//! - **VC003:** issue on successful **UTF-8 text** `read_file` only.
+//! - **VC004:** edit require against this store (Path A `search_replace`).
+//! - **VC005:** `expire_path` / `expire_all` + bash mutation classification.
+//! - **VC006:** resume/fork restore remains out of scope.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -73,6 +74,34 @@ impl SessionSnippetStore {
 
     pub fn contains(&self, id: &str) -> bool {
         self.by_id.contains_key(id)
+    }
+
+    /// Expire (remove) all snippets bound to `path` (ADR 0010 §6).
+    ///
+    /// Path compare is exact PathBuf equality first, then host
+    /// canonicalize when both sides resolve (same spirit as Path A edit
+    /// path binding).
+    pub fn expire_path(&mut self, path: &Path) {
+        self.by_id
+            .retain(|_, s| !snippet_paths_equal(path, &s.path));
+    }
+
+    /// Expire every session file snippet (unknown bash mutation / M2 default).
+    pub fn expire_all(&mut self) {
+        self.by_id.clear();
+    }
+
+    /// Apply a bash mutation invalidation plan (VC005 / ADR 0010 §6.2).
+    pub fn apply_bash_expire_plan(&mut self, plan: &BashSnippetExpirePlan) {
+        match plan {
+            BashSnippetExpirePlan::None => {}
+            BashSnippetExpirePlan::Paths(paths) => {
+                for p in paths {
+                    self.expire_path(p);
+                }
+            }
+            BashSnippetExpirePlan::All => self.expire_all(),
+        }
     }
 
     /// Mint a new opaque `snippet_id` for a successful UTF-8 text read.
@@ -207,6 +236,319 @@ pub fn snippet_line_range(
     };
     let end = end.max(start);
     (start, end)
+}
+
+/// Compare two paths the same way Path A edit authorization does.
+pub fn snippet_paths_equal(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    let ca = std::fs::canonicalize(a).unwrap_or_else(|_| a.to_path_buf());
+    let cb = std::fs::canonicalize(b).unwrap_or_else(|_| b.to_path_buf());
+    ca == cb
+}
+
+/// VC005 / ADR 0010 §6.2 plan after a dispatched bash (or equivalent) command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BashSnippetExpirePlan {
+    /// Read-only / non-mutating — leave the table alone.
+    None,
+    /// Known touched paths — expire only those.
+    Paths(Vec<PathBuf>),
+    /// May mutate files but path set is unknown — expire all session snippets.
+    All,
+}
+
+/// Classify a shell command for session-snippet invalidation (Path A M2).
+///
+/// Heuristic only (not a full shell parser). Fail-closed: when mutation is
+/// possible but paths cannot be extracted, returns [`BashSnippetExpirePlan::All`].
+///
+/// `cwd` is used to resolve relative path tokens found in the command.
+pub fn bash_snippet_expire_plan(command: &str, cwd: &Path) -> BashSnippetExpirePlan {
+    if !bash_command_may_mutate_files(command) {
+        return BashSnippetExpirePlan::None;
+    }
+    let paths = extract_bash_touched_paths(command, cwd);
+    if paths.is_empty() {
+        BashSnippetExpirePlan::All
+    } else {
+        BashSnippetExpirePlan::Paths(paths)
+    }
+}
+
+/// True when the command is treated as potentially file-mutating for Spec 45.
+pub fn bash_command_may_mutate_files(command: &str) -> bool {
+    let lower = command.to_ascii_lowercase();
+    let trimmed = lower.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    // Explicit write / delete / move / permission mutators.
+    if contains_any(
+        &lower,
+        &[
+            "rm ", "rm\t", "rmdir ", "unlink ", "mv ", "cp ", "tee ", "touch ", "mkdir ", "chmod ",
+            "chown ", "truncate ", "install ", "sed -i", "perl -i", "dd ",
+        ],
+    ) {
+        return true;
+    }
+    // Redirection writes.
+    if lower.contains('>') {
+        return true;
+    }
+    // Git mutations.
+    if lower.contains("git ")
+        && contains_any(
+            &lower,
+            &[
+                "git commit",
+                "git push",
+                "git rebase",
+                "git reset",
+                "git tag ",
+                "git merge",
+                "git cherry-pick",
+                "git clean",
+                "git checkout",
+                "git restore",
+                "git stash",
+                "git apply",
+                "git am ",
+            ],
+        )
+    {
+        return true;
+    }
+    if lower.contains("sudo ") {
+        return true;
+    }
+
+    // Known-safe read-ish tools (no redirect handled above).
+    if is_bash_read_only_command(trimmed) {
+        return false;
+    }
+
+    // Unrecognized → unknown mutation set → fail closed (caller expire_all).
+    true
+}
+
+fn is_bash_read_only_command(trimmed_lower: &str) -> bool {
+    // First token only. Redirects / mutator phrases are handled by the caller.
+    let first = trimmed_lower
+        .split(|c: char| c.is_whitespace() || c == '|')
+        .find(|t| !t.is_empty())
+        .unwrap_or("");
+    matches!(
+        first,
+        "ls" | "cat"
+            | "head"
+            | "tail"
+            | "pwd"
+            | "echo"
+            | "true"
+            | "false"
+            | "which"
+            | "type"
+            | "file"
+            | "stat"
+            | "wc"
+            | "rg"
+            | "grep"
+            | "find"
+            | "git"
+            | "sleep"
+            | "date"
+            | "whoami"
+            | "id"
+            | "env"
+            | "printenv"
+            | "uname"
+            | "basename"
+            | "dirname"
+            | "realpath"
+            | "readlink"
+            | "test"
+            | "["
+    )
+}
+
+fn contains_any(hay: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|n| hay.contains(n))
+}
+
+/// Best-effort path token extraction for expire_path (known set).
+///
+/// Returns absolute or cwd-joined paths. Empty means "unknown set".
+pub fn extract_bash_touched_paths(command: &str, cwd: &Path) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    // Capture targets of `> file`, `>> file`, `2> file`.
+    let bytes = command.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'>' {
+            // skip >> and optional digit prefix already scanned
+            let mut j = i + 1;
+            if j < bytes.len() && bytes[j] == b'>' {
+                j += 1;
+            }
+            while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if let Some((tok, next)) = take_shell_token(&command[j..]) {
+                push_path_token(tok, cwd, &mut out, &mut seen);
+                i = j + (next);
+                continue;
+            }
+        }
+        i += 1;
+    }
+
+    // Mutator verbs: take following path-like tokens.
+    for (idx, tok) in shell_tokens(command).into_iter().enumerate() {
+        let t = tok.as_str();
+        let tl = t.to_ascii_lowercase();
+        let is_mutator = matches!(
+            tl.as_str(),
+            "rm" | "rmdir"
+                | "unlink"
+                | "mv"
+                | "cp"
+                | "tee"
+                | "touch"
+                | "mkdir"
+                | "chmod"
+                | "chown"
+                | "truncate"
+                | "install"
+        );
+        if !is_mutator {
+            continue;
+        }
+        // Collect subsequent non-flag tokens as candidate paths.
+        for later in shell_tokens(command).into_iter().skip(idx + 1) {
+            if later.starts_with('-') {
+                continue;
+            }
+            if later.contains('=') && !later.contains('/') {
+                continue;
+            }
+            // Stop at next obvious verb-ish token.
+            let ll = later.to_ascii_lowercase();
+            if matches!(
+                ll.as_str(),
+                "rm" | "mv" | "cp" | "&&" | "||" | "|" | ";" | "then" | "do" | "fi"
+            ) {
+                break;
+            }
+            push_path_token(&later, cwd, &mut out, &mut seen);
+        }
+    }
+
+    out
+}
+
+fn push_path_token(
+    tok: &str,
+    cwd: &Path,
+    out: &mut Vec<PathBuf>,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    let tok = tok.trim().trim_matches(|c| c == '\'' || c == '"');
+    if tok.is_empty() || tok == "-" || tok == "/dev/null" {
+        return;
+    }
+    // Skip pure options and shell operators.
+    if tok.starts_with('-')
+        || matches!(tok, "&&" | "||" | "|" | ";" | "&" | "2" | "1" | "0")
+        || tok.contains('*')
+        || tok.contains('?')
+        || tok.contains('[')
+    {
+        return;
+    }
+    // Require path-ish: has / or .ext or bare relative filename with a letter.
+    let pathish = tok.contains('/')
+        || tok.contains('\\')
+        || tok.starts_with('.')
+        || tok.contains('.')
+        || tok
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.');
+    if !pathish {
+        return;
+    }
+    let p = if Path::new(tok).is_absolute() {
+        PathBuf::from(tok)
+    } else {
+        cwd.join(tok)
+    };
+    let key = p.to_string_lossy().to_string();
+    if seen.insert(key) {
+        out.push(p);
+    }
+}
+
+fn shell_tokens(command: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = command;
+    while let Some((tok, consumed)) = take_shell_token(rest) {
+        out.push(tok.to_string());
+        rest = &rest[consumed..];
+        rest = rest.trim_start();
+        if rest.is_empty() {
+            break;
+        }
+    }
+    out
+}
+
+/// Returns (token, bytes_consumed_from_s including leading whitespace skip inside?).
+fn take_shell_token(s: &str) -> Option<(&str, usize)> {
+    let s_trim_start = s.trim_start();
+    let lead = s.len() - s_trim_start.len();
+    if s_trim_start.is_empty() {
+        return None;
+    }
+    let bytes = s_trim_start.as_bytes();
+    if bytes[0] == b'\'' || bytes[0] == b'"' {
+        let quote = bytes[0];
+        let mut i = 1;
+        while i < bytes.len() {
+            if bytes[i] == quote {
+                let tok = &s_trim_start[1..i];
+                return Some((tok, lead + i + 1));
+            }
+            if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                i += 2;
+                continue;
+            }
+            i += 1;
+        }
+        // Unclosed quote — take rest.
+        return Some((&s_trim_start[1..], lead + s_trim_start.len()));
+    }
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c.is_ascii_whitespace() || matches!(c, b'|' | b';' | b'&' | b'>' | b'<') {
+            break;
+        }
+        i += 1;
+    }
+    if i == 0 {
+        // operator token
+        let mut j = 1;
+        while j < bytes.len() && matches!(bytes[j], b'|' | b'&' | b'>' | b'<') {
+            j += 1;
+        }
+        return Some((&s_trim_start[..j], lead + j));
+    }
+    Some((&s_trim_start[..i], lead + i))
 }
 
 #[cfg(test)]

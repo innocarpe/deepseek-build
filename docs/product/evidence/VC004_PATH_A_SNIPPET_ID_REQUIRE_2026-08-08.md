@@ -24,17 +24,19 @@ It does **not** claim VISION L1 complete, owner-bar re-cut, Path A multi-edit R0
 
 | Probe | Live result |
 |-------|-------------|
-| This worktree branch | `vc004-snippet-id-require` @ `a691d29` (PR #130 head / VC003 tip) |
+| This worktree branch | `vc004-snippet-id-require` (started @ PR #130 / VC003 tip `a691d29`) |
 | Working tree product `Cargo.toml` | **`5.1.0`** (behind main; **not** bumped by this story) |
-| `git show origin/main:Cargo.toml` version | **`5.2.0`** (`origin/main` includes chore/release-5.2.0) |
+| `git show origin/main:Cargo.toml` version (story start) | **`5.2.0`** (already used; do not reuse) |
+| `git show origin/main:Cargo.toml` version (post-validation re-check) | **`5.2.1`** |
+| `package.json` on `origin/main` (re-check) | **`5.2.1`** |
 | Board text on this branch | Still documents Spec 45 cut as **`5.2.0`** (VC006) — **stale vs live main floor** |
 | VC003 on this branch | **present** — Path A `read_file` mints `snippet_id` into session `SessionSnippetStore` |
 | Thin Path B | `crates/dsb-tools` `SnippetStore` remains **reference/oracle**, not Path A proof |
 
 ### 0.2 Floor interpretation (fail-close)
 
-- **`5.2.0` is already used** on live `origin/main`. This story **must not** reuse or cut **`5.2.0`**.
-- Under the live floor, remaining Spec 45 completion (VC004 → VC005 → cut unit) belongs to the **next free feature minor**. With main at **`5.2.0`**, that is **`5.3.0`** unless a later board/npm re-check shows another free `5.Y.0`.
+- **`5.2.0` is already used** (and live main has moved on to **`5.2.1`**). This story **must not** reuse or cut **`5.2.0`** / **`5.2.1`**.
+- Under the live floor, remaining Spec 45 completion (VC004 → VC005 → cut unit) belongs to the **next free feature minor**. With main at **`5.2.1`**, that remains **`5.3.0`** unless a later board/npm re-check shows another free `5.Y.0`.
 - Feature PRs (VC003–VC005) stay **unversioned**. Only a dedicated cut unit (historical VC006 slot, rebased) bumps SemVer.
 - Owner-bar **`file_version` (sha256)** remains a **compatibility alias** of snippet `version`; do not remove it from wire/output.
 - Safe open base: stack on VC003 / PR #130 head (or `main` after #130 merges).
@@ -160,8 +162,8 @@ test(tools): VC004 snippet_id require and fail-closed regressions
 | **Merge order** | #130 (VC003) → VC004 → VC005 → Spec 45 cut (next free minor) |
 | **Conflict lock** | Path A `search_replace` + `SearchReplaceInput` + session snippet lookup owned by VC004; write/bash expire reserved for VC005 |
 
-**Planned PR title (when opened later):** `feat(tools): require snippet_id on Path A search_replace`  
-**Label kind:** `feat`  
+**Planned PR title (when opened later):** `feat(tools): require snippet_id on Path A search_replace`
+**Label kind:** `feat`
 **Body:** Problem / What changed / Testing honesty / AI review / Security / Notes; **Depends on #130**; SemVer none; does **not** cut **`5.2.0`**.
 
 ---
@@ -241,32 +243,113 @@ cargo test -p dsb-tools snippets path_a_edit
 
 ## 7. Implementation evidence (filled after code)
 
+### 7.1 Atomic commits on `vc004-snippet-id-require`
+
+| Order | SHA (prefix) | Subject | Contents honesty |
+|------:|--------------|---------|------------------|
+| 1 | `b4eaa7c` | `docs(product): VC004 Path A snippet_id require plan + evidence` | Plan only (this file first) |
+| 2 | `bf11e2e` | `feat(tools): require session snippet_id on Path A search_replace` | Contract/impl + minimal compile-side field wiring + existing `snippet_safe` suite adapted to hard `snippet_id` |
+| 3 | `262ea1f` | `test(tools): VC004 snippet_id require and fail-closed regressions` | Focused `vc004_*` unit tests only (+255 lines) |
+| 4 | `c3d4421` | `style(tools): cargo fmt Path A search_replace snippet_id sources` | rustfmt only |
+
+**No VC005/VC006 behavior** in these commits: no write create-only residual laws, no bash/external expire, no eager path-wide snippet purge claim, no R0A harness, no SemVer bump, no resume/fork table restore.
+
+### 7.2 What shipped (code)
+
+| Piece | Location / behavior |
+|-------|---------------------|
+| Wire arg | `SearchReplaceInput.snippet_id: Option<String>` (serde default; model-visible schema description) |
+| Product gate | When `SearchReplaceParams.snippet_safe` and non-create edit: **hard require** valid session `snippet_id` |
+| Authorization | Lookup in session `SessionSnippetStore` on `Resources`; shape via `is_valid_snippet_id`; path match; full-file sha256 vs stored `version` |
+| Compat alias | Optional `file_version` still accepted; if present must equal current sha256; **not** sufficient alone |
+| Scope | Matches filtered to inclusive 1-based `[start_line, end_line]` recorded at mint |
+| Fail-closed | Missing / malformed / unknown / path mismatch / stale / file_version mismatch → `InvalidInput`; **no disk write** |
+| Create path | Empty `old_string` new-file create still does **not** require `snippet_id` |
+| Dual CLI | Unchanged (`deepseek-build` / `dsb`) |
+| Dependencies | **None** added |
+
+### 7.3 Acceptance matrix
+
 | Check | Result | Evidence class |
 |-------|--------|----------------|
-| Evidence doc committed first | **pending** | commit |
-| `SearchReplaceInput.snippet_id` + `snippet_safe` require gate | **pending** | commit |
-| Scope-limited match for authorized id | **pending** | commit |
-| Valid id edit succeeds | **pending** | unit |
-| Missing / malformed / unknown fail closed | **pending** | unit |
-| Stale / version mismatch fail closed | **pending** | unit |
-| Path mismatch fail closed | **pending** | unit |
-| No partial write | **pending** | unit |
-| Session isolation | **pending** | unit |
-| Create without id still ok | **pending** | unit |
-| VC003 mint regressions still green | **pending** | unit |
-| Thin oracle still green | **pending** | thin oracle (**not** Path A proof) |
+| Evidence doc committed first | **PASS** — `b4eaa7c` | commit |
+| `SearchReplaceInput.snippet_id` + `snippet_safe` require gate | **PASS** — `bf11e2e` | commit |
+| Scope-limited match for authorized id | **PASS** — `bf11e2e` + unit | commit + unit |
+| Valid id edit succeeds | **PASS** (`vc004_valid_snippet_id_edits_within_scope`, `snippet_safe_accepts_valid_snippet_id`) | **unit** |
+| Missing / malformed / unknown fail closed | **PASS** (`vc004_missing_*`, `vc004_malformed_*`, `vc004_unknown_*`) | **unit** |
+| Stale / version mismatch fail closed | **PASS** (`snippet_safe_stale_*`, `vc004_file_version_mismatch_*`) | **unit** |
+| Path mismatch fail closed | **PASS** (`vc004_path_mismatch_rejected`) | **unit** |
+| No partial write | **PASS** (all fail-closed cases assert original bytes) | **unit** |
+| Session isolation | **PASS** (`vc004_session_isolation_unknown_in_other_resources`) | **unit** |
+| Create without id still ok | **PASS** (`vc004_create_new_file_without_snippet_id_allowed`) | **unit** |
+| Scope outside-range is no-match | **PASS** (`vc004_occurrence_outside_scope_is_no_match`) | **unit** |
+| Broader `search_replace::tests` suite | **PASS** — **85** tests, 0 failed | **unit** |
+| VC003 mint regressions still green | **PASS** — **11** tests, 0 failed | **unit** |
+| Thin oracle still green | **PASS** — `dsb-tools` `snippets` 9 + `path_a_edit` 8 | thin oracle (**not** Path A proof) |
 | Public Path A R0A wire | **not run / not claimed** | — |
-| SemVer bump | **none** | must not touch version files; live `origin/main` product is already **`5.2.0`** |
+| SemVer bump | **none** | no version files touched; live `origin/main` is **`5.2.1`** (do not cut) |
 
-### Required project gates (fill after verification)
+### 7.4 Commands actually run (exact)
+
+```bash
+# Atomic history
+git log --oneline b4eaa7c^..HEAD
+# b4eaa7c docs plan
+# bf11e2e feat require
+# 262ea1f test vc004
+# c3d4421 style fmt
+
+# Focused VC004 + adapted snippet_safe
+cd third_party/grok-build
+CARGO_INCREMENTAL=0 RUSTC_WRAPPER= cargo test -p xai-grok-tools --lib vc004
+# ok — 9 passed
+
+CARGO_INCREMENTAL=0 RUSTC_WRAPPER= cargo test -p xai-grok-tools --lib snippet_safe
+# ok — 3 passed
+
+CARGO_INCREMENTAL=0 RUSTC_WRAPPER= cargo test -p xai-grok-tools --lib search_replace::tests
+# ok — 85 passed
+
+CARGO_INCREMENTAL=0 RUSTC_WRAPPER= cargo test -p xai-grok-tools --lib vc003
+# ok — 11 passed
+
+cargo fmt --manifest-path third_party/grok-build/Cargo.toml -p xai-grok-tools -- --check
+# exit 0 (after style commit)
+
+# Thin oracle (repo root; not Path A proof)
+cargo test -p dsb-tools snippets
+# ok — 9 passed
+cargo test -p dsb-tools path_a_edit
+# ok — 8 passed
+
+# Required project gates (on HEAD c3d4421; TSV side-effects restored to HEAD after)
+./scripts/test-owner-bar.sh
+# exit 0 — ALL PASS (PASS=60 FAIL=0 NOT_RUN=0)
+
+./scripts/check-path-a-linkage.sh
+# exit 0 — PASS
+
+./scripts/test-heart-regression.sh
+# exit 0 — PASS
+# SKIPs (documented, not green-washed): live L3.1–L3.5 (no credentials);
+# PATH_A_E2E (not requested; needs --with-e2e)
+
+# Live floor re-check
+git show origin/main:Cargo.toml | rg version
+# 5.2.1
+```
+
+**Honesty:** All Path A require claims above are **unit tests inside `xai-grok-tools`**. No public `deepseek-build`/`dsb` agent wire harness (R0A) was run for this story. Gate TSV rewrites (`OWNER_BAR_STATUS.tsv`, heart regression last TSV) were **restored to HEAD** and **not** committed. Live floor on `origin/main` is **`5.2.1`** — VC004 does not ship any SemVer cut; remaining Spec 45 completion stays at the **next free feature minor (`5.3.0` under current live floor)**.
+
+### Required project gates (verified)
 
 | Gate | Exit | Result | Honesty |
 |------|------|--------|---------|
-| `./scripts/test-owner-bar.sh` | pending | | |
-| `./scripts/check-path-a-linkage.sh` | pending | | |
-| `./scripts/test-heart-regression.sh` | pending | | |
-| `cargo fmt … xai-grok-tools -- --check` | pending | | |
-| `git diff --check` | pending | | |
+| `./scripts/test-owner-bar.sh` | **0** | **ALL PASS** — `PASS=60 FAIL=0 NOT_RUN=0` | Owner-bar green on SHA `c3d4421`; linkage + forbidden-evidence green |
+| `./scripts/check-path-a-linkage.sh` | **0** | **PASS** | NOTE: third_party/grok-build has no dsb-* Cargo dep (expected until F1) |
+| `./scripts/test-heart-regression.sh` | **0** | **PASS** | Live L3.1–L3.5 **SKIP** (no credentials); `PATH_A_E2E` **SKIP** |
+| `cargo fmt … xai-grok-tools -- --check` | **0** | clean after `c3d4421` | VC004 vendor crate only |
+| `git diff --check` (branch range after evidence fix) | **0** | no trailing whitespace / conflict markers | re-verified after this evidence update |
 
 ---
 

@@ -208,7 +208,7 @@ test -f docs/adr/0010-spec-45-snippet-store.md
 | Store + FileContent fields | **yes** — `73b0bc8` | commit |
 | Path A text mint | **yes** — `89564c8` | commit |
 | Text UTF-8 read mints `snippet_id` | **PASS** (`vc003_current_read_file_mints_snippet_id`) | **unit** |
-| ID shape ADR 0010 §2 exact | **PASS** — `snp_` + 26 Crockford-base32 ULID (`is_valid_snippet_id`, encode vectors) | **unit** |
+| ID shape ADR 0010 §2 exact | **PASS** — `snp_` + 26 Crockford-base32 ULID; alphabet `0123456789ABCDEFGHJKMNPQRSTVWXYZ`; UUID-v7-simple rejected (`uuid_v7_simple_is_not_valid_snippet_id_shape`) | **unit** |
 | Repeated reads differ | **PASS** (`vc003_repeated_reads_mint_distinct_snippet_ids`) | **unit** |
 | Session-local store | **PASS** (`vc003_snippet_store_is_session_local_not_process_global` + store unit; no static/global) | **unit** |
 | `file_version` sha256 preserved | **PASS** (`current_read_file_mints_file_version_sha256` + VC003 mint test) | **unit** |
@@ -242,7 +242,7 @@ cargo test -p xai-grok-tools --lib current_read_file_mints_file_version_sha256
 # ok — 1 passed
 
 cargo test -p xai-grok-tools --lib 'snippet_store::'
-# ok — 8 passed (incl. Crockford encode vectors + ADR shape)
+# ok — 9 passed (Crockford 26-char alphabet exact + UUID-v7-simple rejected)
 
 cargo test -p xai-grok-tools --lib read_empty_file_prompt
 # ok — 1 passed

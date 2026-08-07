@@ -1009,6 +1009,16 @@ mod tests {
                     is_valid_snippet_id(id),
                     "ADR 0010 requires snp_ + Crockford ULID; got {id}"
                 );
+                let suffix = id.strip_prefix("snp_").expect("snp_");
+                assert_eq!(suffix.len(), 26, "got {id}");
+                assert!(
+                    suffix.bytes().all(|b| {
+                        crate::types::snippet_store::CROCKFORD_ALPHABET
+                            .as_bytes()
+                            .contains(&b)
+                    }),
+                    "suffix must be Crockford-only; got {id}"
+                );
                 assert_eq!(fc.file_version.as_deref(), Some(expected_ver.as_str()));
                 assert_eq!(fc.snippet_scope.as_deref(), Some("whole_file"));
                 assert_eq!(fc.snippet_start_line, Some(1));

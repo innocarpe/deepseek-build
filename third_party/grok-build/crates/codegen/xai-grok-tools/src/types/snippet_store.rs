@@ -49,7 +49,9 @@ pub struct SessionSnippetStore {
 /// Preview cap matching thin `dsb-tools` / ADR 0010 (Unicode scalars + ellipsis).
 pub const SNIPPET_PREVIEW_MAX_SCALARS: usize = 200;
 
-/// Crockford Base32 alphabet (ULID / ADR 0010). No I, L, O, U.
+/// Crockford Base32 alphabet (ULID / ADR 0010 §2). No I, L, O, U.
+/// Exact character set required for the 26-char ULID suffix after `snp_`.
+pub const CROCKFORD_ALPHABET: &str = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 impl SessionSnippetStore {
@@ -245,10 +247,46 @@ mod tests {
     #[test]
     fn new_snippet_id_matches_adr_shape() {
         let id = new_snippet_id();
+        assert!(id.starts_with("snp_"), "got {id}");
+        let suffix = id.strip_prefix("snp_").expect("snp_ prefix");
+        // ADR 0010 §2: suffix is exactly 26 Crockford-base32 chars.
+        assert_eq!(
+            suffix.len(),
+            26,
+            "ULID suffix must be 26 chars, not UUID-hex-32; got {suffix:?} (len={})",
+            suffix.len()
+        );
+        for (i, b) in suffix.bytes().enumerate() {
+            assert!(
+                CROCKFORD_ALPHABET.as_bytes().contains(&b),
+                "suffix[{i}]={:?} not in Crockford alphabet {CROCKFORD_ALPHABET}; id={id}",
+                b as char
+            );
+        }
+        // Forbidden Crockford exclusions must never appear.
+        assert!(
+            !suffix.bytes().any(|b| matches!(b, b'I' | b'L' | b'O' | b'U'
+                | b'i' | b'l' | b'o' | b'u')),
+            "forbidden crockford chars in {id}"
+        );
         assert!(is_valid_snippet_id(&id), "got {id}");
-        // Must not look like UUID hex (32 hex chars) without Crockford exclusions.
-        let body = id.strip_prefix("snp_").unwrap();
-        assert!(!body.chars().any(|c| matches!(c, 'I' | 'L' | 'O' | 'U')));
+        // Explicitly not UUID-v7-simple under snp_ (32 lowercase hex).
+        assert_ne!(suffix.len(), 32);
+        assert!(
+            !suffix.bytes().all(|b| b.is_ascii_hexdigit() && suffix.len() == 32),
+            "must not be UUID hex"
+        );
+    }
+
+    #[test]
+    fn uuid_v7_simple_is_not_valid_snippet_id_shape() {
+        // Historical mistaken shape: snp_ + Uuid::now_v7().simple() (32 hex).
+        let fake = format!("snp_{}", uuid::Uuid::now_v7().simple());
+        assert_eq!(fake.strip_prefix("snp_").unwrap().len(), 32);
+        assert!(
+            !is_valid_snippet_id(&fake),
+            "UUID v7 simple must fail ADR 0010 §2 validation; got {fake}"
+        );
     }
 
     #[test]

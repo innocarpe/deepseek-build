@@ -15,7 +15,13 @@ Shipped user-facing behavior is documented here. Intent for unshipped features s
 7. **[Chat and run](./07-chat-run.md)** — REPL, one-shot, flags
 8. **[Permissions](./08-permissions.md)** — ask once/always, fail-closed
 9. **[Theme](./09-theme.md)** — DeepSeek blue default
-10. **[Tools](./10-tools.md)** — built-ins, parallel, bg shell, subagents, MCP
+10. **[Tools](./10-tools.md)** — thin-path built-ins (overlay `dsb-tools`)
+11. **[Subagents](./11-subagents.md)** — full-screen agent child sessions (L3)
+12. **[Background tasks](./12-background-tasks.md)** — bg shell / task output (L3)
+13. **[Worktrees](./13-worktrees.md)** — git worktree sessions (L3)
+14. **[Throughput overview](./14-l3-throughput.md)** — L3 map + smoke commands
+
+**L3 smoke (installed agent, no vendor test build):** `./scripts/test-l3-smoke.sh`
 
 ## Quick start
 

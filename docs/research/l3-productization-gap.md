@@ -1,13 +1,14 @@
 # L3 productization gap inventory (prep for 4.0.0)
 
-**Status:** Living inventory — fill during heart-3x; **not** a ship claim  
+**Status:** Living inventory — **executed prep** (docs + smoke), not a ship claim  
 **Normative ops:** [PARALLEL_3X_4X_PLAN.md](../product/PARALLEL_3X_4X_PLAN.md)  
-**WAVE unit:** 4x-P0-3  
-**Last updated:** 2026-08-07
+**WAVE unit:** 4x-P0-3 / 4x-P0-4  
+**Last updated:** 2026-08-07  
+**Smoke:** `./scripts/test-l3-smoke.sh` · evidence `docs/product/evidence/L3_SMOKE_*.md`
 
-Purpose: list Grok **L3-class** capabilities already in the vendored machine vs what DeepSeek Build treats as **product defaults / docs / dogfood**.
+Purpose: Grok **L3** already in the vendored machine vs DeepSeek Build **product** surface.
 
-Do **not** change product defaults here. Evidence-only.
+Do **not** change product defaults in this prep track (Lane B). Default flips wait for **4.0.0** after hearts.
 
 ---
 
@@ -15,49 +16,58 @@ Do **not** change product defaults here. Evidence-only.
 
 | Column | Meaning |
 |--------|---------|
-| **In vendor** | Present in `third_party/grok-build` (or product agent) |
-| **Product default** | On by default for DeepSeek Build users without exotic flags |
-| **Documented** | User-facing DeepSeek Build docs (not only upstream Grok guide) |
-| **Dogfooded on DeepSeek** | Live evidence under `api.deepseek.com` path |
-| **4.0 action** | docs / default / evidence / later |
+| **In vendor** | Present in `third_party/grok-build` / agent bin |
+| **Product default** | On without exotic flags for DSB users |
+| **Documented (DSB)** | `docs/user-guide/*` product docs |
+| **Dogfooded** | Live under DeepSeek (`base_url` on model) |
+| **Code pointers** | Where to look (vendor) |
 
 ---
 
-## Matrix (initial)
+## Matrix
 
-| Capability | In vendor | Product default | Documented (DSB) | Dogfooded (DeepSeek) | 4.0 action |
-|------------|-----------|-----------------|------------------|----------------------|------------|
-| Parallel / multi tool calls | yes | TBD | partial | partial (T4 tools serial cases) | matrix + defaults |
-| Background shell / task output | yes | TBD | no / weak | no | evidence + defaults |
-| Subagent spawn | yes | TBD | weak | no (T5.2 skip) | dogfood + docs |
-| Worktree isolation | yes | TBD | weak | no (T5.7 skip) | dogfood + docs |
-| Headless `-p` scripting | yes | yes (when used) | partial | **yes** (T4/T5) | guide polish |
-| MCP | yes | TBD | partial | no | later minor if not P0 |
-| Skills | yes | TBD | partial | no | 3.x minor / 4.x as needed |
-| Leader / multi-session | yes | no | no | no | out of 4.0.0 P0 unless promoted |
-| Permissions product matrix | Grok modes | partial | partial | T5.8 smoke | **owned by 3.0** first |
-| Snippet-safe edit | thin path strong | agent path residual | honesty in KNOWN_LIMITS | thin yes | **owned by 3.0** |
-
-Update rows when heart-3x PRs reveal real injection points (paths under `xai-grok-tools`, shell, pager).
+| Capability | In vendor | Product default | Documented (DSB) | Dogfooded | Code / CLI pointers | 4.0 action |
+|------------|-----------|-----------------|------------------|-----------|---------------------|------------|
+| Headless `-p` | yes | opt-in CLI | [14](../user-guide/14-l3-throughput.md) | **yes** (L3.1 / T4) | `xai-grok-pager` headless; `deepseek-build-agent -p` | polish |
+| Background shell | yes | model-driven | [12](../user-guide/12-background-tasks.md) | **L3.2 smoke** | `xai-grok-tools` `run_terminal_cmd`; task output tools | defaults + evidence |
+| Subagents | yes (default on) | on, not “fleet UX” | [11](../user-guide/11-subagents.md) | **L3.5** `--extended` | `spawn_subagent`; `--no-subagents`; `[subagents]` | product dogfood + docs |
+| Worktree sessions | yes | opt-in `--worktree` | [13](../user-guide/13-worktrees.md) | **L3.4** help; interactive create TBD | `--worktree`; `worktree` subcmd; config `*_worktree_mode` | dogfood create path |
+| Parallel tool runs | yes | TBD | partial | partial | tool runtime / agent loop | matrix + defaults |
+| MCP | yes | TBD | thin MCP docs | no | `xai-grok-mcp` | later if not P0 |
+| Skills | yes | TBD | surface docs | no | skill discovery under tools | 3.x / 4.x |
+| Leader / multi-session | yes | no | no | no | leader socket paths | not 4.0 P0 unless promoted |
+| Permissions product | Grok modes | residual | 08-permissions (thin) | T5.8 | **3.0 owns agent path** | after hearts |
+| Snippet-safe edit | Grok edit + thin strong | agent residual | honesty KNOWN_LIMITS | thin / 3.0 | **3.0 owns** `search_replace` path | after hearts |
 
 ---
 
-## Suggested evidence commands (no default mutation)
+## Vendor path cheat sheet (pin may move with SOURCE_REV)
+
+| Area | Path (under `third_party/grok-build/`) |
+|------|----------------------------------------|
+| Agent composition root | `crates/codegen/xai-grok-pager-bin` |
+| Headless | `crates/codegen/xai-grok-pager/src/headless*.rs` |
+| Tools (bash/edit/…) | `crates/codegen/xai-grok-tools/src/implementations/grok_build/` |
+| Subagent resolution | `crates/codegen/xai-grok-subagent-resolution/` |
+| Shell / session | `crates/codegen/xai-grok-shell/` |
+| Upstream user guides | `crates/codegen/xai-grok-pager/docs/user-guide/16-subagents.md`, `20-background-tasks.md` |
+
+Product install name: `~/.deepseek-build/bin/deepseek-build-agent` (GROK_HOME = product home).
+
+---
+
+## Smoke commands
 
 ```bash
 export PATH="$HOME/.deepseek-build/bin:$PATH"
-# Headless only; hermetic GROK_HOME with DeepSeek base_url (see scripts/lib/common.sh)
-./scripts/test-deepseek-live.sh --extended   # existing T5 stubs
-# Manual follow-ups (record in docs/product/evidence/):
-# deepseek-build-agent -p "…" --tools … --yolo --max-turns N
+./scripts/test-l3-smoke.sh
+./scripts/test-l3-smoke.sh --extended
 ```
 
 ---
 
-## Open questions for 4.0 finalize
+## Open questions (4.0 finalize)
 
-1. Which agent **profile** is the product default after hearts?  
-2. Is worktree **opt-in flag** enough for 4.0.0 P0, or must bare `dsb` teach fleet?  
-3. How much MCP is P0 vs 4.x minor?  
-
-Resolve in WAVE_4x ready-for-impl PR after `v3.0.0`.
+1. Default profile after hearts — single-session vs throughput-first?  
+2. Worktree: flag-only vs `/new` prompt product default?  
+3. MCP in 4.0.0 P0 or minor?  

@@ -40,3 +40,6 @@ third_party/grok-build/**/.DS_Store
 
 # Pre-3.x baseline runtime results (local only)
 docs/product/evidence/_last_pre3x_*.tsv
+
+# L3 smoke runtime results
+docs/product/evidence/_last_l3_smoke.tsv

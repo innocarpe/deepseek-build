@@ -53,6 +53,8 @@ schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_path_to_error = { workspace = true }
+sha2 = { workspace = true }
+
 xai-tool-runtime = { workspace = true }
 xai-tool-types = { workspace = true }
 xai-tool-protocol = { workspace = true }

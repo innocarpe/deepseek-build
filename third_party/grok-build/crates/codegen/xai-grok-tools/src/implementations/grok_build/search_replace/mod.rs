@@ -90,6 +90,13 @@ pub struct SearchReplaceInput {
         description = "Replace all occurrences of ${{ params.edit.old_string }} (default false)"
     )]
     pub replace_all: bool,
+    /// Spec 45 spirit (DeepSeek Build): sha256 hex of full file bytes at read time.
+    /// Required when `SearchReplaceParams.snippet_safe` is true for non-create edits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Full-file content hash (sha256 hex) from a prior read. Required when snippet_safe mode is on."
+    )]
+    pub file_version: Option<String>,
 }
 fn default_true() -> bool {
     true
@@ -127,6 +134,14 @@ pub struct SearchReplaceParams {
     /// Default: `true`.
     #[serde(default = "default_true")]
     pub include_user_edit_hint: bool,
+    /// DeepSeek Build Spec 45 spirit on the Grok edit path.
+    ///
+    /// When true:
+    /// - empty `old_string` cannot overwrite a non-empty existing file
+    /// - non-create edits require `file_version` matching sha256(file)
+    /// Free-form whole-file primary overwrite is fail-closed.
+    #[serde(default)]
+    pub snippet_safe: bool,
 }
 impl Default for SearchReplaceParams {
     fn default() -> Self {
@@ -135,6 +150,7 @@ impl Default for SearchReplaceParams {
             empty_old_string_does_not_override: false,
             unicode_normalized_fallback: false,
             include_user_edit_hint: true,
+            snippet_safe: false,
         }
     }
 }
@@ -211,16 +227,48 @@ pub(crate) async fn run_search_replace(
             "Old string and new string are the same".to_owned(),
         ));
     }
-    let (empty_old_string_does_not_override, include_user_edit_hint);
+    let (empty_old_string_does_not_override, include_user_edit_hint, snippet_safe);
     {
         let res = resources.lock().await;
         let sr_params = res.get::<Params<SearchReplaceParams>>();
+        let snippet_safe_flag = sr_params.map(|p| p.0.snippet_safe).unwrap_or(false);
         empty_old_string_does_not_override = sr_params
             .map(|p| p.0.empty_old_string_does_not_override)
-            .unwrap_or(false);
+            .unwrap_or(false)
+            || snippet_safe_flag;
         include_user_edit_hint = sr_params
             .map(|p| p.0.include_user_edit_hint)
             .unwrap_or(true);
+        snippet_safe = snippet_safe_flag;
+    }
+    // Spec 45 spirit: snippet_safe requires file_version for edits of existing files.
+    if snippet_safe && !input.old_string.is_empty() {
+        match fs.read_file(&path).await {
+            Ok(bytes) => {
+                use sha2::{Digest, Sha256};
+                let mut h = Sha256::new();
+                h.update(&bytes);
+                let current = format!("{:x}", h.finalize());
+                match input.file_version.as_deref() {
+                    None => {
+                        return Ok(SearchReplaceOutput::InvalidInput(
+                            "snippet_safe mode requires file_version (sha256 of file at read time); free-form primary edit is rejected"
+                                .to_owned(),
+                        ));
+                    }
+                    Some(v) if v != current => {
+                        return Ok(SearchReplaceOutput::InvalidInput(
+                            "snippet_stale: file_version does not match current file content; re-read before edit"
+                                .to_owned(),
+                        ));
+                    }
+                    Some(_) => {}
+                }
+            }
+            Err(_) => {
+                // Missing file with non-empty old_string falls through to normal FileNotFound.
+            }
+        }
     }
     let result = if input.old_string.is_empty() {
         handle_new_file_creation(
@@ -928,6 +976,7 @@ mod tests {
             old_string: old_string.to_string(),
             new_string: new_string.to_string(),
             replace_all: false,
+            file_version: None,
         }
     }
     fn description_renderer() -> TemplateRenderer {
@@ -1264,6 +1313,7 @@ mod tests {
             old_string: "aaa".to_string(),
             new_string: "ccc".to_string(),
             replace_all: true,
+            file_version: None,
         };
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
             .await
@@ -1488,6 +1538,87 @@ mod tests {
             other => panic!("Expected FileAlreadyExists, got {:?}", other),
         }
     }
+    #[tokio::test]
+    async fn snippet_safe_rejects_edit_without_file_version() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("f.txt"), "hello world\n").unwrap();
+        let tool = SearchReplaceTool;
+        let mut resources = test_resources(tmp.path());
+        resources.insert(Params(SearchReplaceParams {
+            snippet_safe: true,
+            empty_old_string_does_not_override: true,
+            ..Default::default()
+        }));
+        let input = make_input("f.txt", "hello", "hi");
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
+            .await
+            .unwrap();
+        match result {
+            SearchReplaceOutput::InvalidInput(msg) => {
+                assert!(
+                    msg.contains("file_version") || msg.contains("free-form"),
+                    "unexpected msg: {msg}"
+                );
+                let content = std::fs::read_to_string(tmp.path().join("f.txt")).unwrap();
+                assert_eq!(content, "hello world\n");
+            }
+            other => panic!("Expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn snippet_safe_accepts_matching_file_version() {
+        use sha2::{Digest, Sha256};
+        let tmp = TempDir::new().unwrap();
+        let body = b"hello world\n";
+        std::fs::write(tmp.path().join("f.txt"), body).unwrap();
+        let mut h = Sha256::new();
+        h.update(body);
+        let ver = format!("{:x}", h.finalize());
+        let tool = SearchReplaceTool;
+        let mut resources = test_resources(tmp.path());
+        resources.insert(Params(SearchReplaceParams {
+            snippet_safe: true,
+            empty_old_string_does_not_override: true,
+            ..Default::default()
+        }));
+        let mut input = make_input("f.txt", "hello", "hi");
+        input.file_version = Some(ver);
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
+            .await
+            .unwrap();
+        match result {
+            SearchReplaceOutput::EditsApplied(_) => {
+                let content = std::fs::read_to_string(tmp.path().join("f.txt")).unwrap();
+                assert_eq!(content, "hi world\n");
+            }
+            other => panic!("Expected EditsApplied, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn snippet_safe_stale_file_version_rejected() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("f.txt"), "hello world\n").unwrap();
+        let tool = SearchReplaceTool;
+        let mut resources = test_resources(tmp.path());
+        resources.insert(Params(SearchReplaceParams {
+            snippet_safe: true,
+            ..Default::default()
+        }));
+        let mut input = make_input("f.txt", "hello", "hi");
+        input.file_version = Some("00".repeat(32));
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
+            .await
+            .unwrap();
+        match result {
+            SearchReplaceOutput::InvalidInput(msg) => {
+                assert!(msg.contains("snippet_stale"), "msg={msg}");
+            }
+            other => panic!("Expected InvalidInput, got {other:?}"),
+        }
+    }
+
     #[tokio::test]
     async fn empty_old_string_creates_new_file_even_with_override_guard() {
         let tmp = TempDir::new().unwrap();
@@ -2276,6 +2407,7 @@ neutTest_set);
             empty_old_string_does_not_override: false,
             unicode_normalized_fallback: true,
             include_user_edit_hint: false,
+            snippet_safe: false,
         }
     }
     /// Exact match still works and returns unicode_normalized=false.
@@ -2455,6 +2587,7 @@ neutTest_set);
             empty_old_string_does_not_override: false,
             unicode_normalized_fallback: false,
             include_user_edit_hint: false,
+            snippet_safe: false,
         }));
         let input = make_input("f.txt", "\"hello\"", "replaced");
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
@@ -2619,6 +2752,7 @@ neutTest_set);
             old_string: "foo".to_string(),
             new_string: "qux".to_string(),
             replace_all: true,
+            file_version: None,
         };
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
             .await

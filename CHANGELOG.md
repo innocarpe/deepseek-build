@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 3.0.0-alpha.1 — 2026-08-07
+
+### L1 heart (Path A snippet-safe)
+
+- Spec 45 spirit on **default Grok** `search_replace` path: `snippet_safe` + `file_version` gate; empty-old whole-file overwrite fail-closed
+- Product adapter: `dsb-tools` `path_a_edit` contract tests (H45.*)
+- Standard file toolset injects `snippet_safe=true` for DeepSeek agent
+
+
 ## 2.0.3 — 2026-08-07
 
 ### Install (product contract)

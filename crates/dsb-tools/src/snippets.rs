@@ -20,7 +20,7 @@ pub struct Snippet {
     pub preview: String,
 }
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum EditError {
     #[error("snippet_not_found")]
     NotFound,

@@ -9,6 +9,7 @@
 mod bg_shell;
 mod grants;
 mod mcp;
+mod path_a_edit;
 mod permissions;
 mod plan;
 mod snippets;
@@ -19,6 +20,10 @@ pub use grants::{AskChoice, GRANTS_FILE, PermissionGrants};
 pub use mcp::{
     McpCatalog, McpCatalogEntry, McpConfigFile, McpError, catalog_from_config,
     catalog_tool_definitions, load_mcp_config, wire_name,
+};
+pub use path_a_edit::{
+    GrokPathEditRequest, PathAEditError, PathAEditPolicy, apply_path_a_edit, path_file_version,
+    reject_free_form_primary,
 };
 pub use permissions::{
     Decision, PermissionError, PermissionPolicy, Scope, classify_bash, decide,

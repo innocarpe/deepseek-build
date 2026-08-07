@@ -253,6 +253,134 @@ pub fn path_a_inputs_from_turn(
     }
 }
 
+/// Strip a previously applied Spec 10 section block so re-assembly is idempotent.
+///
+/// The product base system prompt is everything before the first
+/// `\n\n## Tools\n` marker introduced by this module.
+pub fn extract_base_system_prompt(system_content: &str) -> String {
+    const MARKER: &str = "\n\n## Tools\n";
+    match system_content.find(MARKER) {
+        Some(i) => system_content[..i].to_string(),
+        None => system_content.to_string(),
+    }
+}
+
+/// Discover standing project instructions (Spec 10 §1.4) under `workspace_root`.
+///
+/// Order: DEEPSEEK.md | DEEPSEEK_BUILD.md (first found), AGENTS.md,
+/// `.deepseek-build/instructions.md`. Missing files skip. Best-effort IO.
+pub fn discover_project_instructions(workspace_root: &std::path::Path) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for name in ["DEEPSEEK.md", "DEEPSEEK_BUILD.md"] {
+        let p = workspace_root.join(name);
+        if p.is_file() {
+            if let Ok(body) = std::fs::read_to_string(&p) {
+                let body = body.replace("\r\n", "\n").replace('\r', "\n");
+                parts.push(format!("### {name}\n\n{}", body.trim_end()));
+            }
+            break;
+        }
+    }
+    let agents = workspace_root.join("AGENTS.md");
+    if agents.is_file() {
+        if let Ok(body) = std::fs::read_to_string(&agents) {
+            let body = body.replace("\r\n", "\n").replace('\r', "\n");
+            parts.push(format!("### AGENTS.md\n\n{}", body.trim_end()));
+        }
+    }
+    let nested = workspace_root
+        .join(".deepseek-build")
+        .join("instructions.md");
+    if nested.is_file() {
+        if let Ok(body) = std::fs::read_to_string(&nested) {
+            let body = body.replace("\r\n", "\n").replace('\r', "\n");
+            parts.push(format!(
+                "### instructions.md\n\n{}",
+                body.trim_end()
+            ));
+        }
+    }
+    parts.join("\n\n---\n\n")
+}
+
+/// Discover skills **index only** (name + one-line description) under workspace.
+///
+/// Roots: `{ws}/skills/*/SKILL.md`, `{ws}/.deepseek-build/skills/*/SKILL.md`,
+/// optional `user_skills_root`. Sorted by name. Best-effort IO.
+pub fn discover_skills_index(
+    workspace: &std::path::Path,
+    user_skills_root: Option<&std::path::Path>,
+) -> Vec<Spec10SkillIndexEntry> {
+    let mut roots = vec![
+        workspace.join("skills"),
+        workspace.join(".deepseek-build").join("skills"),
+    ];
+    if let Some(u) = user_skills_root {
+        roots.push(u.to_path_buf());
+    }
+    let mut by_name: std::collections::BTreeMap<String, Spec10SkillIndexEntry> =
+        std::collections::BTreeMap::new();
+    for root in roots {
+        let Ok(rd) = std::fs::read_dir(&root) else {
+            continue;
+        };
+        for ent in rd.flatten() {
+            let path = ent.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let skill_md = path.join("SKILL.md");
+            if !skill_md.is_file() {
+                continue;
+            }
+            let name = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            if name.is_empty() || name.starts_with('.') {
+                continue;
+            }
+            let Ok(raw) = std::fs::read_to_string(&skill_md) else {
+                continue;
+            };
+            let description = extract_skill_description(&raw);
+            by_name.insert(
+                name.clone(),
+                Spec10SkillIndexEntry { name, description },
+            );
+        }
+    }
+    by_name.into_values().collect()
+}
+
+fn extract_skill_description(raw: &str) -> String {
+    // Prefer YAML frontmatter description: lines; else first non-empty body line.
+    let text = raw.trim();
+    if let Some(rest) = text.strip_prefix("---") {
+        if let Some(end) = rest.find("\n---") {
+            let fm = &rest[..end];
+            for line in fm.lines() {
+                let line = line.trim();
+                if let Some(v) = line.strip_prefix("description:") {
+                    let v = v.trim().trim_matches('"').trim_matches('\'');
+                    if !v.is_empty() {
+                        return v.to_string();
+                    }
+                }
+            }
+        }
+    }
+    for line in text.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('#') || t.starts_with("---") {
+            continue;
+        }
+        return t.chars().take(120).collect();
+    }
+    String::new()
+}
+
 /// Run Spec 10 Path A turn assembly from request-shaped inputs and stamp/log.
 ///
 /// Production Path A call site helper (VC007). Best-effort; never panics.
@@ -264,8 +392,9 @@ pub fn apply_spec10_path_a_turn_assembly(
     project_instructions: String,
     volatile_count: usize,
 ) -> Spec10PathAAssembled {
+    let base = extract_base_system_prompt(system_prompt);
     let inputs = path_a_inputs_from_turn(
-        system_prompt,
+        &base,
         tools,
         cwd,
         skills_index,
@@ -288,8 +417,76 @@ pub fn apply_spec10_path_a_turn_assembly(
             "prefix_epoch_full": assembled.epoch_sha256_hex,
             "volatile_count": assembled.volatile_count,
             "stable_bytes": assembled.stable_prefix_bytes.len(),
+            "wire_system_rewritten": true,
         })),
     );
+    assembled
+}
+
+/// Apply Spec 10 assembly **to a live ConversationRequest** (mutates system message).
+///
+/// This is the Path A wire-honest path for V2-10-1: `messages_to_api` leading
+/// system content becomes Spec 10 ordered stable prefix layout. Tools remain
+/// in the API `tools[]` field as well (Grok hybrid; document also in system).
+///
+/// Returns the assembled epoch metadata. Best-effort; never panics.
+pub fn apply_spec10_to_conversation_request(
+    request: &mut xai_grok_sampling_types::ConversationRequest,
+    cwd: &str,
+    workspace_root: Option<&std::path::Path>,
+    user_skills_root: Option<&std::path::Path>,
+) -> Spec10PathAAssembled {
+    let system_prompt = request
+        .items
+        .iter()
+        .find_map(|item| match item {
+            xai_grok_sampling_types::ConversationItem::System(sys) => {
+                Some(sys.content.as_ref().to_string())
+            }
+            _ => None,
+        })
+        .unwrap_or_default();
+    let volatile_count = request
+        .items
+        .iter()
+        .filter(|item| {
+            !matches!(
+                item,
+                xai_grok_sampling_types::ConversationItem::System(_)
+            )
+        })
+        .count();
+
+    let root = workspace_root
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(cwd));
+    let skills_index = discover_skills_index(&root, user_skills_root);
+    let project_instructions = discover_project_instructions(&root);
+
+    let assembled = apply_spec10_path_a_turn_assembly(
+        &system_prompt,
+        &request.tools,
+        cwd,
+        skills_index,
+        project_instructions,
+        volatile_count,
+    );
+
+    // Mutate wire: leading System content = Spec 10 stable body.
+    let mut found_system = false;
+    for item in &mut request.items {
+        if let xai_grok_sampling_types::ConversationItem::System(sys) = item {
+            sys.content = std::sync::Arc::<str>::from(assembled.stable_body.as_str());
+            found_system = true;
+            break;
+        }
+    }
+    if !found_system {
+        request.items.insert(
+            0,
+            xai_grok_sampling_types::ConversationItem::system(assembled.stable_body.clone()),
+        );
+    }
     assembled
 }
 
@@ -459,5 +656,96 @@ mod tests {
         assert_eq!(a.epoch_sha256_hex, b.epoch_sha256_hex);
         assert_eq!(a.volatile_count, 2);
         assert_eq!(b.volatile_count, 9);
+    }
+
+    #[test]
+    fn vc007_extract_base_system_idempotent() {
+        let assembled = assemble_spec10_path_a_turn(&base_inputs());
+        let base = extract_base_system_prompt(&assembled.stable_body);
+        assert_eq!(base, "SYSTEM_FIXED");
+        // Re-assemble from extracted base → same epoch
+        let mut inputs = base_inputs();
+        inputs.system_prompt = base;
+        let again = assemble_spec10_path_a_turn(&inputs);
+        assert_eq!(again.epoch_sha256_hex, assembled.epoch_sha256_hex);
+    }
+
+    #[test]
+    fn vc007_wire_rewrite_mutates_system_message() {
+        let tools = vec![tool(
+            "read_file",
+            json!({"type":"object","properties":{"target_file":{"type":"string"}}}),
+        )];
+        let mut req = xai_grok_sampling_types::ConversationRequest {
+            items: vec![
+                xai_grok_sampling_types::ConversationItem::system("GROK_BASE_TEMPLATE"),
+                xai_grok_sampling_types::ConversationItem::user("hello"),
+            ],
+            tools: tools.clone(),
+            hosted_tools: vec![],
+            tool_choice: None,
+            model: Some("deepseek-v4-flash".into()),
+            temperature: None,
+            max_output_tokens: None,
+            top_p: None,
+            x_grok_conv_id: None,
+            x_grok_req_id: None,
+            x_grok_session_id: None,
+            x_grok_turn_idx: None,
+            x_grok_agent_id: None,
+            x_grok_deployment_id: None,
+            x_grok_user_id: None,
+            trace: None,
+            reasoning_effort: None,
+            json_schema: None,
+            prompt_cache_key: None,
+        };
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("AGENTS.md"), "project rules").unwrap();
+        let assembled = apply_spec10_to_conversation_request(
+            &mut req,
+            dir.path().to_str().unwrap(),
+            Some(dir.path()),
+            None,
+        );
+        let sys = match &req.items[0] {
+            xai_grok_sampling_types::ConversationItem::System(s) => s.content.as_ref(),
+            _ => panic!("expected system first"),
+        };
+        assert!(sys.contains("GROK_BASE_TEMPLATE"));
+        assert!(sys.contains("## Tools\n"));
+        assert!(sys.contains("## Skills index\n"));
+        assert!(sys.contains("## Environment\n"));
+        assert!(sys.contains("## Project instructions\n"));
+        assert!(sys.contains("project rules"));
+        assert_eq!(sys, assembled.stable_body.as_str());
+        // Second apply is idempotent (epoch stable).
+        let e1 = assembled.epoch_sha256_hex.clone();
+        let a2 = apply_spec10_to_conversation_request(
+            &mut req,
+            dir.path().to_str().unwrap(),
+            Some(dir.path()),
+            None,
+        );
+        assert_eq!(a2.epoch_sha256_hex, e1);
+    }
+
+    #[test]
+    fn vc007_discover_project_and_skills() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("AGENTS.md"), "agents body").unwrap();
+        let skills = dir.path().join("skills").join("demo");
+        std::fs::create_dir_all(&skills).unwrap();
+        std::fs::write(
+            skills.join("SKILL.md"),
+            "---\ndescription: Demo skill\n---\n# Demo\n",
+        )
+        .unwrap();
+        let proj = discover_project_instructions(dir.path());
+        assert!(proj.contains("agents body"));
+        let idx = discover_skills_index(dir.path(), None);
+        assert_eq!(idx.len(), 1);
+        assert_eq!(idx[0].name, "demo");
+        assert_eq!(idx[0].description, "Demo skill");
     }
 }

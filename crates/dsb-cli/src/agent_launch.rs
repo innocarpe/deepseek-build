@@ -651,6 +651,16 @@ pub fn exec_agent(args: &[String]) -> Result<()> {
     // agent (the agent re-emits it on its own title ticks).
     emit_product_title();
 
+    // iTerm2 tab icon: install the DeepSeek logo mapping on first run so the
+    // tab shows the official whale right after `npm i -g` — no extra step.
+    // Best-effort, silent; `check`/`remove` via scripts/install-iterm-tab-icon.sh.
+    match crate::terminal_tab_icon::ensure_iterm2_tab_icon() {
+        crate::terminal_tab_icon::TabIconStatus::Installed => {
+            eprintln!("Installed DeepSeek Build tab icon for iTerm2.");
+        }
+        _ => {}
+    }
+
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;

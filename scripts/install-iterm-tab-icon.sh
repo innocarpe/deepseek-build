@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
-# Install the DeepSeek Build tab icon for iTerm2 (macOS).
+# DeepSeek Build tab icon for iTerm2 (macOS) — manual check/remove.
+#
+# The `dsb` CLI auto-installs this mapping on first launch (logo embedded in
+# the binary), so no setup is needed after install. This script is for:
+#   - `check`  — verify the iTerm2 mapping is present
+#   - `remove` — uninstall (only our files/entries; never touches other
+#                iTerm2 settings)
+#   - `install` — manual re-install (also useful before the first CLI run)
 #
 # iTerm2 (Tahoe tab style, macOS 15+) renders a per-process icon in each tab
 # from a process-name -> icon mapping (graphic_icons.json), colored by
 # graphic_colors.json. When the DeepSeek Build agent runs, its foreground
 # process name is `deepseek-build-agent`, so iTerm2 shows the official
-# DeepSeek whale logo in the tab — no border or background, matching how
-# Claude Code / Codex / Grok Build tabs are recognized.
+# DeepSeek whale logo in the tab — no border or background.
 #
-# This script writes three files under iTerm2's Application Support dir
-# (the same override mechanism iTerm2 documents for custom tab icons):
+# Files written under iTerm2's Application Support dir:
 #   ~/Library/Application Support/iTerm2/graphic_deepseek.png
 #   ~/Library/Application Support/iTerm2/graphic_icons.json   (merged)
 #   ~/Library/Application Support/iTerm2/graphic_colors.json  (merged)
-#
-# Idempotent: safe to re-run. `remove` deletes only the files/entries this
-# script created; it never touches unrelated iTerm2 settings.
 #
 # Usage:
 #   ./scripts/install-iterm-tab-icon.sh            # install (idempotent)
@@ -27,7 +29,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ASSET="$ROOT/npm/assets/graphic_deepseek.png"
+ASSET="$ROOT/crates/dsb-cli/assets/graphic_deepseek.png"
 
 APP_SUPPORT="${HOME}/Library/Application Support/iTerm2"
 ICON_FILE="graphic_deepseek.png"

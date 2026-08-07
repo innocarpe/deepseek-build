@@ -18,6 +18,7 @@ use dsb_tools::{AskChoice, Scope};
 mod agent_launch;
 mod banner;
 mod onboard;
+mod terminal_tab_icon;
 mod theme;
 use banner::{BannerInfo, prompt as styled_prompt, render_welcome};
 use theme::{Role, Theme};

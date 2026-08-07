@@ -195,6 +195,8 @@ api_backend = "chat_completions"
 base_url = "${BASE_URL}"
 api_key = "sk-scripted-path-a-r0"
 env_key = "DEEPSEEK_API_KEY"
+supports_reasoning_effort = true
+reasoning_effort = "high"
 
 [model.deepseek-v4-pro]
 model = "deepseek-v4-pro"
@@ -204,6 +206,8 @@ api_backend = "chat_completions"
 base_url = "${BASE_URL}"
 api_key = "sk-scripted-path-a-r0"
 env_key = "DEEPSEEK_API_KEY"
+supports_reasoning_effort = true
+reasoning_effort = "high"
 
 [endpoints]
 xai_api_base_url = "${BASE_URL}"
@@ -384,6 +388,7 @@ elif ! rg -q 'worker_epochs_match=true' "${L3_STAMP}" \
   FAIL=1
 fi
 # L2-20-1: default deepseek turns use Flash wire id
+# V2-30 / VC008: DeepSeek chat/completions bodies carry non-null reasoning_effort
 if [[ -s "${WIRE}" ]]; then
   if ! python3 - "${WIRE}" <<'PY'
 import json, sys
@@ -391,6 +396,8 @@ path = sys.argv[1]
 flash = 0
 pro = 0
 other = []
+effort_ok = 0
+effort_samples = []
 for line in open(path, encoding="utf-8"):
     o = json.loads(line)
     body = o.get("body", o)
@@ -409,18 +416,29 @@ for line in open(path, encoding="utf-8"):
     elif m and "deepseek" in m:
         other.append(m)
     # ignore session-title side model (grok-4.5)
+    if m and "deepseek" in m:
+        re = body.get("reasoning_effort")
+        if isinstance(re, str) and re.strip():
+            effort_ok += 1
+            effort_samples.append(f"{m}:{re}")
 if flash < 1:
     print(f"no deepseek-v4-flash on wire (flash={flash} pro={pro} other={other})", file=sys.stderr)
     sys.exit(1)
-print(f"wire_models flash={flash} pro={pro}")
+if effort_ok < 1:
+    print(
+        f"VC008: no non-null reasoning_effort on DeepSeek wire "
+        f"(flash={flash} pro={pro} samples={effort_samples})",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+print(f"wire_models flash={flash} pro={pro} effort_ok={effort_ok} samples={effort_samples}")
 sys.exit(0)
 PY
   then
-    warn "L2-20-1: expected deepseek-v4-flash on Path A wire"
+    warn "L2-20-1/V2-30: expected deepseek-v4-flash + reasoning_effort on Path A wire"
     FAIL=1
   fi
 fi
-
 if ! rg -q 'chat/completions' "${WIRE}" 2>/dev/null; then
   warn "wire missing chat/completions path"
   FAIL=1

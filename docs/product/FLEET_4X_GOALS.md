@@ -1,7 +1,7 @@
 # Ultragoal board — **`fleet-4x`** → **`4.0.0`**
 
 **Plan id:** `fleet-4x`  
-**Status:** **Active** after `v3.0.0`  
+**Status:** **Complete** — tag **`v4.0.0`** (PR #85); patches `4.0.1` / `4.0.2`  
 **DoD:** [PRD-v4.md](./PRD-v4.md)  
 **PR units:** [WAVE_4x_PR_DAG.md](./WAVE_4x_PR_DAG.md)  
 **Matrix:** [L3_CAPABILITY_MATRIX.md](./L3_CAPABILITY_MATRIX.md)  
@@ -9,6 +9,17 @@
 **Cold start:** [ULTRAGOAL_PROMPT_COLD_START_4.0.md](./ULTRAGOAL_PROMPT_COLD_START_4.0.md)
 
 ---
+
+
+## Train outcome
+
+| Story | Outcome |
+|-------|---------|
+| G001–G005 | Prep + train start — complete (docs / ready-for-impl) |
+| G006–G007 | L3 matrix + defaults — shipped with `4.0.0` cut |
+| G008 | Tag **`v4.0.0`** + npm — complete |
+
+Ledger: `omc ultragoal status --plan-id fleet-4x` (reconstruct with create-goals only if missing; never `--force` wipe progress).
 
 ## Stories (G001–G008)
 

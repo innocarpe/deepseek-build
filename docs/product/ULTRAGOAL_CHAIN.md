@@ -6,31 +6,21 @@
 
 ---
 
-## Active product chain (from 2026-08-07)
+## Active product chain
 
-**One ultragoal plate through product `4.0.0` — plan id `fleet-4x`.**
-
-| Order | Plan / stage | Role | Prompt / board |
-|-------|--------------|------|----------------|
-| **1** | **`fleet-4x`** | **Active** L3 productization → tag **`4.0.0`** | [ULTRAGOAL_PROMPT_COLD_START_4.0.md](./ULTRAGOAL_PROMPT_COLD_START_4.0.md) · [FLEET_4X_GOALS.md](./FLEET_4X_GOALS.md) · [WAVE_4x_PR_DAG.md](./WAVE_4x_PR_DAG.md) · [L3_CAPABILITY_MATRIX.md](./L3_CAPABILITY_MATRIX.md) · [PRD-v4.md](./PRD-v4.md) |
-
-```text
-G001–G004 prep (Lane B during 3.0 — complete)
-  → G005 TrainStart (ready-for-impl)
-  → G006 L3-Matrix
-  → G007 L3-Defaults
-  → G008 Cut 4.0.0 (tag v4.0.0)
-```
-
-**Do not** invent a second product plan-id mid-train; extend FLEET_4X_GOALS via docs PR only.
+**No active product ultragoal train.** Latest major cut: **`v4.0.0`** (L3). On-disk / npm: read root SemVer (may be `4.0.x` patches).
 
 ### Completed trains
 
 | Plan id | Role |
 |---------|------|
-| **`heart-3x`** | 3.0.0 heart fusion — **complete** (tag `v3.0.0`, npm 3.0.0) |
+| **`fleet-4x`** | 4.0.0 L3 productization — **complete** (tag `v4.0.0`, PR #85; install/UX `4.0.1`/`4.0.2`) |
+| **`heart-3x`** | 3.0.0 heart fusion — **complete** (tag `v3.0.0`) |
+| **`ship-3.0.0`** | 3.0.0 ship closeout (tag/release/npm verify) — **complete** |
 | **`l3-prep-lane-b`** | Parallel L3 prep during 3.0 — **complete** |
 | **`grokbase-2x`** | 2.x Grok base + DeepSeek shell |
+
+Cut evidence: [CUT_4_0_0_2026-08-07.md](./evidence/CUT_4_0_0_2026-08-07.md) · [CUT_3_0_0_2026-08-07.md](./evidence/CUT_3_0_0_2026-08-07.md)
 
 ---
 
@@ -42,19 +32,22 @@ G001–G004 prep (Lane B during 3.0 — complete)
 
 ---
 
-## Operator loop (until 8/8 fleet-4x)
+## Operator loop (post-cut)
 
 ```bash
 git fetch origin && git checkout main && git pull origin main
 ./scripts/test-product-offline.sh
 ./scripts/test-l3-smoke.sh --offline-only
-omc ultragoal status --plan-id fleet-4x
-omc ultragoal complete-goals --plan-id fleet-4x
+# hearts
+cargo test -p dsb-tools path_a
+# ledger (read-only unless a new train starts)
+omc ultragoal status --plan-id fleet-4x 2>/dev/null || true
 ```
 
 ## Continuity rules
 
-1. Final goal for this train: [PRD-v4.md](./PRD-v4.md) — keep Path A hearts.  
-2. PR planning: [ULTRAGOAL_PR_PLANNING.md](./ULTRAGOAL_PR_PLANNING.md).  
-3. Merge commits (squash disabled).  
-4. Full SemVer only; dual CLI names.  
+1. Do not reopen `fleet-4x` as active product SSOT; extend 4.x via minors or a new plan-id.  
+2. Keep Path A hearts (`yolo = false`).  
+3. PR planning: [ULTRAGOAL_PR_PLANNING.md](./ULTRAGOAL_PR_PLANNING.md).  
+4. Merge commits (squash disabled).  
+5. Full SemVer only; dual CLI names.  

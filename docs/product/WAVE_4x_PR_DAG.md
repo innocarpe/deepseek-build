@@ -1,6 +1,6 @@
 # Wave 4.x PR DAG — L3 productization → **`4.0.0`**
 
-**Status:** **ready-for-impl** (gate: **`v3.0.0`** shipped 2026-08-07)  
+**Status:** **complete for `4.0.0` cut** (tag **`v4.0.0`**, PR #85) — units historical; further 4.x work is minors or new plan-id  
 **Plan id:** `fleet-4x`  
 **PRD:** [PRD-v4.md](./PRD-v4.md)  
 **Matrix:** [L3_CAPABILITY_MATRIX.md](./L3_CAPABILITY_MATRIX.md)  
@@ -28,7 +28,7 @@ Merge: **merge commit** on this repo. Full SemVer only.
 
 | Gate | Requirement |
 |------|-------------|
-| **Start fleet-4x code** | **OPEN** — `v3.0.0` tagged; this DAG **ready-for-impl**; hearts green |
+| **Start fleet-4x code** | **CLOSED** — train cut at **`v4.0.0`** |
 | **Prep (done during 3.0)** | Units **4x-P0-1..4** landed (Lane B) |
 
 ---

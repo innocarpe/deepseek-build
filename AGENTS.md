@@ -4,7 +4,9 @@ This file is standing instructions for any coding agent working in this repo.
 
 ## Current phase
 
-**No active product ultragoal train.** Latest major: **`v5.0.0`** owner-bar complete (`owner-bar-5x`).
+**Active product ultragoal:** **`vision-complete-5x`** — close [VISION.md](docs/product/VISION.md) north star inside **`5.x.y`** (Deep Code + Reasonix + Grok throughput). Owner-bar **`v5.0.0`** is **done**; this train is residual close-out, not a re-tag of 5.0.0.
+
+**Board:** [`docs/product/VISION_COMPLETE_5X_GOALS.md`](docs/product/VISION_COMPLETE_5X_GOALS.md) · DAG [`WAVE_5x_VISION_PR_DAG.md`](docs/product/WAVE_5x_VISION_PR_DAG.md)
 
 **Completed trains:**  
 - **`owner-bar-5x`** → **`v5.0.0`** (owner-bar complete product)  
@@ -12,9 +14,8 @@ This file is standing instructions for any coding agent working in this repo.
 - **`heart-3x`** → **`v3.0.0`** heart fusion *attempt*  
 
 **Pointers:**  
-- Cut: [`docs/product/evidence/CUT_5_0_0_2026-08-07.md`](docs/product/evidence/CUT_5_0_0_2026-08-07.md)  
-- Board (archive): [`docs/product/OWNER_BAR_5X_GOALS.md`](docs/product/OWNER_BAR_5X_GOALS.md)  
-- Gate: `./scripts/test-owner-bar.sh` (green on cut) · `./scripts/check-path-a-linkage.sh`  
+- Owner-bar cut: [`docs/product/evidence/CUT_5_0_0_2026-08-07.md`](docs/product/evidence/CUT_5_0_0_2026-08-07.md)  
+- Gate: `./scripts/test-owner-bar.sh` (must stay green) · `./scripts/check-path-a-linkage.sh` · heart: `./scripts/test-heart-regression.sh`  
 - Chain: [`docs/product/ULTRAGOAL_CHAIN.md`](docs/product/ULTRAGOAL_CHAIN.md)  
 
 **Major product lines (PRDs):** [`docs/product/versions/README.md`](docs/product/versions/README.md)  
@@ -22,7 +23,7 @@ This file is standing instructions for any coding agent working in this repo.
 - **2.x shipped shell** — [PRD-v2](docs/product/PRD-v2.md)  
 - **3.x tagged hearts *attempt*** — [PRD-v3](docs/product/PRD-v3.md) (`3.0.0`) — **not owner-bar green**  
 - **4.x tagged L3 *attempt*** — [PRD-v4](docs/product/PRD-v4.md) (`4.0.0`+) — **not owner-bar green**  
-- **5.x owner-bar complete** — [PRD-v5](docs/product/PRD-v5.md) (`5.0.0`)  
+- **5.x** owner-bar **`5.0.0`** + active vision-complete train — [PRD-v5](docs/product/PRD-v5.md) · [VISION_COMPLETE_5X_GOALS](docs/product/VISION_COMPLETE_5X_GOALS.md)  
 
 
 **SSOT priority:** [`docs/product/SSOT.md`](docs/product/SSOT.md)  

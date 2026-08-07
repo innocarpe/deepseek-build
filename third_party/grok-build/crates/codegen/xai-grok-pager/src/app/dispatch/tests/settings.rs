@@ -3253,7 +3253,7 @@ fn set_auto_dark_theme_applies_when_theme_is_auto_and_system_is_dark() {
         assert!(crate::theme::cache::is_auto_mode());
         assert_eq!(
             crate::theme::cache::current_kind(),
-            crate::theme::ThemeKind::GrokNight,
+            crate::theme::ThemeKind::DeepSeekNightV2,
         );
         let _ = dispatch(Action::SetAutoDarkTheme("grokday".into()), &mut app);
         assert_eq!(

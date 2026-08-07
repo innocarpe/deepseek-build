@@ -466,7 +466,7 @@ mod tests {
             cmd.preview_arg("nonexistent-theme");
             assert_eq!(
                 Theme::current_kind(),
-                ThemeKind::GrokNight,
+                ThemeKind::DeepSeekNightV2,
                 "unknown theme name must NOT change Theme::current_kind",
             );
         });

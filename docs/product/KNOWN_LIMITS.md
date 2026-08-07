@@ -21,7 +21,7 @@
 | **5.4.0 (on-branch stack)** | L3 Path A R0A train cut (VC010–VC013) — **may be unmerged** relative to live main. |
 | **5.5.0 (on-branch freeze)** | Vision-complete freeze cut (VC015) — **on-branch only** until dual review + merge + human-gated publish; **not** live npm/GitHub Latest by itself. |
 
-**Floor rule:** live install from npm/GitHub Latest can still report **`5.2.2`** while this monorepo stack tip already carries **`5.4.0`**. Treat stack SemVer and registry SemVer as different until merge + human-gated publish.
+**Floor rule:** live install from npm/GitHub Latest can still report **`5.2.2`** while this monorepo stack tip already carries **`5.5.0`** (on-branch vision freeze packaging; L3 train history cut was **`5.4.0`** / VC013). Treat stack SemVer and registry SemVer as different until merge + human-gated publish.
 
 User-facing behavior for the vision stack is documented under [user-guide](../user-guide/README.md). Docs pass evidence: [VC014_USER_GUIDE_KNOWN_LIMITS_2026-08-08.md](./evidence/VC014_USER_GUIDE_KNOWN_LIMITS_2026-08-08.md).
 
@@ -124,7 +124,8 @@ Do **not** run vendor-full cargo as everyday gate (disk bomb).
 
 ## Explicit non-claims
 
-- **Not** vision-complete freeze (**5.5.0** / VC015) until dual adversarial review + CUT.
-- **Not** “residuals closed” for V3-60-3 or interactive worktree create without fresh Path A R0A.
+- **Not** vision-complete freeze shipped (**5.5.0** on npm / GitHub Latest) until dual adversarial review + merge + human-gated publish; on-branch freeze packaging ≠ live registry.
+- **Not** reopening **V3-60-3** as residual: it is **closed** by VC015 public Path A R0A (`snippet_stale` after implement-class same-path mutation). Still **not** claiming product-default parent table `expire_all` after every spawn as a separate sole green path (honesty residual above).
+- **Not** “interactive TTY worktree create sole green” closed without fresh Path A R0A — that remains an evidenced residual (VC012 / residual table).
 - **Not** claiming live npm/GitHub Latest already ships unmerged stack SemVers.
 - **Not** conflating thin Path B unit greens with Path A sole proof.

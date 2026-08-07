@@ -9,11 +9,13 @@
 >
 > | Line | Meaning |
 > |------|---------|
-> | **`3.0.0` (current product)** | **Heart fusion:** L1 snippet-safe / permissions + L2 prefix / repair / Flash-Pro under the **default Grok agent path** (Path A), on top of the 2.x shell. DoD: **[PRD-v3.md](docs/product/PRD-v3.md)**. Board: **[HEART_3X_GOALS.md](docs/product/HEART_3X_GOALS.md)**. |
+> | **`5.0.0` (active train)** | **Owner-bar complete product** — only when [OWNER_BAR_P0_LEDGER.md](docs/product/OWNER_BAR_P0_LEDGER.md) all PASS on Path A. PRD: **[PRD-v5.md](docs/product/PRD-v5.md)**. Board: **[OWNER_BAR_5X_GOALS.md](docs/product/OWNER_BAR_5X_GOALS.md)**. On-disk may still be `4.0.x` until cut. |
+> | **`4.0.x` (tagged attempt)** | L3 productization *attempt* — machinery + install UX; **owner-bar NOT MET**. [PRD-v4.md](docs/product/PRD-v4.md). |
+> | **`3.0.0` (tagged attempt)** | Heart fusion *attempt* — library / thin Path A claims; **owner-bar NOT MET**. [PRD-v3.md](docs/product/PRD-v3.md). |
 > | **`2.x` (shell cut)** | Full-screen DeepSeek agent TUI + vendor base + entry/UI/npm — **shell**, not full hearts. |
 > | **`1.x` (legacy scaffold)** | Thin clap agent / contracts — experiments only. |
 >
-> Honesty: **2.x was shell cut; 3.0.0 is heart fusion.** Residuals: [KNOWN_LIMITS.md](docs/product/KNOWN_LIMITS.md).
+> Honesty: **3.x/4.x tags are partial; complete product = `5.0.0` owner bar.** Gate: `./scripts/test-owner-bar.sh`. Residuals: [KNOWN_LIMITS.md](docs/product/KNOWN_LIMITS.md).
 Combines three first-class references:
 
 | Source | What we take |
@@ -73,11 +75,13 @@ Open a **new** terminal (or source your shell config), then:
 
 ```bash
 deepseek-build --version
-# → deepseek-build 3.0.0
+# → deepseek-build 4.0.2  (on-disk until owner-bar cut; not 5.0.0 complete)
 dsb --version
-# → dsb 3.0.0
+# → dsb 4.0.2
 ./scripts/check-semver.sh
-# → check-semver: ok (3.0.0)
+# → check-semver: ok (4.0.2)
+./scripts/test-owner-bar.sh || true
+# → RED until owner-bar-5x fusion (expected)
 ```
 
 Both commands must report the **same** full SemVer.

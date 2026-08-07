@@ -34,8 +34,9 @@
 - **Wave A dogfood** through **`0.7.0` npm package** shipped on `main` (install + tools + sessions + surface min + npm wrappers).  
 - **Registry `npm publish`** remains **human-gated** ([ADR 0007](adr/0007-npm-packaging.md)).  
 - Spec **40** is **ready-for-impl** (`docs/specs/40-core-tools-surface.md`); it is **not** a G-number gate (G3 remains 45+90).  
-- **2.x shell** (Grok base + DeepSeek entry) shipped; **L1/L2 hearts on the default agent path** are the **3.0.0** train (`heart-3x`), not re-opened G0–G6 numbers.  
-- Heart fusion evidence: [HEART_3X_SPEC_BINDING.md](architecture/HEART_3X_SPEC_BINDING.md) · [HEART_3X_P0_TEST_PLAN.md](product/HEART_3X_P0_TEST_PLAN.md) · [WAVE_3x_PR_DAG.md](product/WAVE_3x_PR_DAG.md).  
-  Spec-ready (this table) ≠ Path A enforced — flip 3.0.0 only when P0 cases on the **Grok agent path** are green.
+- **2.x shell** shipped. **3.x / 4.x tags exist** as heart/L3 *attempts* — **owner-bar NOT MET** (Path A fusion incomplete).  
+- Spec-ready (this table) ≠ Path A enforced. Historical heart evidence is archive only: [HEART_3X_SPEC_BINDING.md](architecture/HEART_3X_SPEC_BINDING.md) · [WAVE_3x_PR_DAG.md](product/WAVE_3x_PR_DAG.md).  
+- **Owner-bar complete product** is **`5.0.0`** only when [OWNER_BAR_P0_LEDGER.md](product/OWNER_BAR_P0_LEDGER.md) all PASS on Path A ([OWNER_BAR_ACCEPTANCE.md](product/OWNER_BAR_ACCEPTANCE.md)).
 
-**Ultragoal (product):** `heart-3x` → tag **`v3.0.0`** ([ULTRAGOAL_CHAIN.md](product/ULTRAGOAL_CHAIN.md)). Historical plans (`dogfood-0x`, `native-0x`, `grokbase-2x`) are not 3.x SSOT.
+**Ultragoal (product):** **`owner-bar-5x`** → tag **`v5.0.0`** ([ULTRAGOAL_CHAIN.md](product/ULTRAGOAL_CHAIN.md) · [OWNER_BAR_5X_GOALS.md](product/OWNER_BAR_5X_GOALS.md)).  
+Do **not** resume `heart-3x` / `fleet-4x` as product SSOT. Gate: `./scripts/test-owner-bar.sh` (RED until fusion).

@@ -231,4 +231,33 @@ mod tests {
         parent_after_worker(&mut parent, &out);
         assert!(parent.snippets.get(&snip.snippet_id).is_none());
     }
+
+    #[test]
+    fn unknown_kind_parse_none_and_kinds_stable() {
+        // Spec 60 T4: unknown kind is structured error at call site; parse is None.
+        assert!(WorkerKind::parse("unknown-kind-xyz").is_none());
+        assert_eq!(WorkerKind::parse("explore"), Some(WorkerKind::Explore));
+        assert_eq!(WorkerKind::parse("implement"), Some(WorkerKind::Implement));
+        assert_eq!(WorkerKind::Explore.as_str(), "explore");
+        assert_eq!(WorkerKind::Implement.as_str(), "implement");
+    }
+
+    #[test]
+    fn explore_worker_does_not_mutate() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("hit.txt"), "needle-token\n").unwrap();
+        let policy = default_coding_policy(true);
+        let out = run_worker(
+            WorkerKind::Explore,
+            dir.path(),
+            "grep:needle-token",
+            &policy,
+            None,
+        )
+        .unwrap();
+        assert!(!out.mutated);
+        assert_eq!(out.kind, WorkerKind::Explore);
+        // Cache law: epoch short is non-empty (stable prefix built).
+        assert!(!out.prefix_epoch_short.is_empty());
+    }
 }

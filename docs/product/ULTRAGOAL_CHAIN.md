@@ -25,7 +25,22 @@ G001 PrepOnMain (base_url + pre-3x harness)
 
 **Do not** restart A–D or `grokbase-2x` as product SSOT for new work.  
 **Do not** invent a second product plan-id mid-train; extend [HEART_3X_GOALS.md](./HEART_3X_GOALS.md) only via docs PR if the board must change.  
-**4.x** L3 productization is **after** 3.0.0 ([PRD-v4.md](./PRD-v4.md)) — separate plan later.
+
+### Parallel prep (not a second ultragoal)
+
+While `heart-3x` runs, **Lane B** may land **docs/research only** for 4.0 prep on `main`:
+
+- Ops plan: [PARALLEL_3X_4X_PLAN.md](./PARALLEL_3X_4X_PLAN.md)  
+- DAG draft: [WAVE_4x_PR_DAG.md](./WAVE_4x_PR_DAG.md)  
+- Future board: [FLEET_4X_GOALS.md](./FLEET_4X_GOALS.md)  
+
+**Do not** `omc ultragoal create-goals --plan-id fleet-4x` until **`v3.0.0`** and WAVE_4x is ready-for-impl.
+
+### Next product chain (after 3.0.0)
+
+| Order | Plan / stage | Role | Prompt / board |
+|-------|--------------|------|----------------|
+| **2** | **`fleet-4x`** | L3 productization → tag **`4.0.0`** | [ULTRAGOAL_PROMPT_COLD_START_4.0.md](./ULTRAGOAL_PROMPT_COLD_START_4.0.md) · [FLEET_4X_GOALS.md](./FLEET_4X_GOALS.md) · [WAVE_4x_PR_DAG.md](./WAVE_4x_PR_DAG.md) · [PRD-v4.md](./PRD-v4.md) · [PARALLEL_3X_4X_PLAN.md](./PARALLEL_3X_4X_PLAN.md) |
 
 ---
 

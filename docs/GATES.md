@@ -33,8 +33,9 @@
 
 - **Wave A dogfood** through **`0.7.0` npm package** shipped on `main` (install + tools + sessions + surface min + npm wrappers).  
 - **Registry `npm publish`** remains **human-gated** ([ADR 0007](adr/0007-npm-packaging.md)).  
-- **Wave B** (`native-0x`): Spec **40** tools surface (`0.8.0`); theme, full permissions UX, expand skills, MCP/plan — needs G6c/G6d for those runtimes.  
 - Spec **40** is **ready-for-impl** (`docs/specs/40-core-tools-surface.md`); it is **not** a G-number gate (G3 remains 45+90).  
-- **Wave C**: G4 then G5.  
+- **2.x shell** (Grok base + DeepSeek entry) shipped; **L1/L2 hearts on the default agent path** are the **3.0.0** train (`heart-3x`), not re-opened G0–G6 numbers.  
+- Heart fusion evidence: [HEART_3X_SPEC_BINDING.md](architecture/HEART_3X_SPEC_BINDING.md) · [HEART_3X_P0_TEST_PLAN.md](product/HEART_3X_P0_TEST_PLAN.md) · [WAVE_3x_PR_DAG.md](product/WAVE_3x_PR_DAG.md).  
+  Spec-ready (this table) ≠ Path A enforced — flip 3.0.0 only when P0 cases on the **Grok agent path** are green.
 
-**Ultragoal:** after `dogfood-0x` complete → `native-0x` ([ULTRAGOAL_CHAIN.md](product/ULTRAGOAL_CHAIN.md)).
+**Ultragoal (product):** `heart-3x` → tag **`v3.0.0`** ([ULTRAGOAL_CHAIN.md](product/ULTRAGOAL_CHAIN.md)). Historical plans (`dogfood-0x`, `native-0x`, `grokbase-2x`) are not 3.x SSOT.

@@ -46,8 +46,8 @@ Everyday regression (no vendor-full):
 
 | ID | Unit | Depends | Band | Evidence |
 |----|------|---------|------|----------|
-| **3x-H0-1** | Spec binding map: Spec 45/90/10/15/20 under **Grok tool + context path** (what adapts vs reimplements) | 3x-P0-2 | docs | `docs/architecture/` or `docs/specs/` map + GATES notes if needed |
-| **3x-H0-2** | Failure modes + test plan for each P0 heart (red→green checklist) | 3x-H0-1 | docs/spec | Written cases that 3.0.0 cut will require green |
+| **3x-H0-1** | Spec binding map: Spec 45/90/10/15/20 under **Grok tool + context path** (what adapts vs reimplements) | 3x-P0-2 | docs | [HEART_3X_SPEC_BINDING.md](../architecture/HEART_3X_SPEC_BINDING.md) + GATES heart note |
+| **3x-H0-2** | Failure modes + test plan for each P0 heart (red→green checklist) | 3x-H0-1 | docs/spec | [HEART_3X_P0_TEST_PLAN.md](./HEART_3X_P0_TEST_PLAN.md) |
 
 **H0 exit:** Implementers know **which file/crate** owns snippet, perms, prefix, repair, routing under the agent — no greenfield rewrite of Grok.
 

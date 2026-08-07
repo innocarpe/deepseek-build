@@ -31,6 +31,12 @@ const GREEN: Color = rgb(95, 211, 155); //    #5FD39B 10.37:1  success/insert
 const RED: Color = rgb(242, 112, 138); //     #F2708A  6.86:1  error/delete
 const AMBER: Color = rgb(232, 183, 95); //    #E8B75F 10.45:1  running/warning
 
+// Command accent — v1's YELLOW restored. It sits adjacent to AMBER on
+// purpose (v1 rendered command and warning in the same yellow), so it is
+// NOT part of the four status hues above. Path now lives in the blue ramp,
+// which removes the v1 yellow-orange collision that forced `command: FG`.
+const YELLOW: Color = rgb(230, 190, 110); //  #E6BE6E 10.99:1  command
+
 // Surfaces — even L* ladder, chroma held at 3-5.
 const BG_TERMINAL: Color = rgb(8, 9, 11); //  #08090B  L*  2.45
 #[allow(dead_code)]
@@ -57,8 +63,9 @@ const DIFF_DEL_BG: Color = rgb(69, 19, 31); // #45131F  RED reads 5.46:1
 impl Theme {
     /// DeepSeek Build product theme v2 — measured C-balanced palette.
     ///
-    /// Blue carries 10 roles; all of them are identity or "you can go here"
-    /// affordances. Everything else is the gray ramp plus four semantic hues.
+    /// Blue carries 12 roles: identity / "you can go here" affordances plus
+    /// the markdown hierarchy (h1·h2 hue-marked, code). Everything else is
+    /// the gray ramp, four semantic status hues, and the v1 command accent.
     pub const fn deepseeknight_v2() -> Self {
         Self {
             // Backgrounds
@@ -89,7 +96,7 @@ impl Theme {
             gray_bright: GRAY_BRIGHT,
 
             // Semantic
-            command: FG,
+            command: YELLOW,   // v1 YELLOW restore — path is BLUE_TEXT, no collision
             path: BLUE_TEXT,
             running: AMBER,
             warning: AMBER,
@@ -125,10 +132,13 @@ impl Theme {
             paste_fg: FG_DARK,
             paste_dim: GRAY_DIM,
 
-            // Markdown — h1 is hue-marked, h2..h6 dim monotonically
+            // Markdown — h1·h2 are hue-marked (brand blue ramp), h3..h6 dim
+            // monotonically. v1 had blue h2 and blue code; the AA-miss on
+            // #4D6BFE forced the neutral ladder, which read as "all white".
+            // BLUE_MID (5.60:1) and BLUE_TEXT (7.31:1) pass AA on both surfaces.
             md_heading_h1: BLUE_TEXT,
             md_heading_h1_mod: Modifier::BOLD,
-            md_heading_h2: FG,
+            md_heading_h2: BLUE_MID,
             md_heading_h2_mod: Modifier::BOLD,
             md_heading_h3: GRAY_BRIGHT,
             md_heading_h3_mod: Modifier::BOLD,
@@ -138,7 +148,7 @@ impl Theme {
             md_heading_h5_mod: Modifier::BOLD,
             md_heading_h6: GRAY,
             md_heading_h6_mod: Modifier::empty(),
-            md_code: FG_DARK,
+            md_code: BLUE_TEXT,
             md_code_bg: BG_RAISED,
             md_text: FG_DARK,
             md_task_checked: GREEN,
@@ -306,7 +316,7 @@ mod tests {
     fn semantic_roles_only_use_declared_palette() {
         let t = Theme::deepseeknight_v2();
         let allowed = [
-            BLUE_DIM, BLUE, BLUE_MID, BLUE_TEXT, VIOLET, GREEN, RED, AMBER, FG, FG_DARK,
+            BLUE_DIM, BLUE, BLUE_MID, BLUE_TEXT, VIOLET, GREEN, RED, AMBER, YELLOW, FG, FG_DARK,
             GRAY_BRIGHT, GRAY, GRAY_DIM, BORDER,
         ];
         let mut roles = text_roles(&t);
@@ -400,13 +410,14 @@ mod tests {
     // ---- I8 -------------------------------------------------------------
 
     #[test]
-    fn heading_ladder_is_non_increasing_below_h1() {
+    fn heading_ladder_is_non_increasing_below_h2() {
         let t = Theme::deepseeknight_v2();
-        // h1 is the single hue-marked heading; it is NOT part of the
-        // luminance ladder (BLUE_TEXT 7.31 sits below FG 15.04 on purpose).
+        // h1 and h2 are hue-marked (brand blue ramp); they are NOT part of
+        // the luminance ladder (BLUE_TEXT 7.31 / BLUE_MID 5.60 sit below
+        // FG 15.04 on purpose — hue, not brightness, marks the hierarchy).
         assert_eq!(t.md_heading_h1, BLUE_TEXT, "h1 must be the brand text blue");
+        assert_eq!(t.md_heading_h2, BLUE_MID, "h2 must be the brand mid blue");
         let tail = [
-            ("h2", t.md_heading_h2),
             ("h3", t.md_heading_h3),
             ("h4", t.md_heading_h4),
             ("h5", t.md_heading_h5),

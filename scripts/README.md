@@ -13,6 +13,24 @@
 | `test-grok-vendor-offline.sh` | T1 curated Grok vendor `cargo test` (not full workspace) |
 | `test-deepseek-live.sh` | T3 thin + **T4 agent** live DeepSeek API feature probes |
 | `lib/common.sh` | Shared helpers (key load, hermetic GROK_HOME, redaction) |
+| **`test-owner-bar.sh`** | **Owner-bar-5x aggregator** — RED until all P0 PASS (`--selftest` for gate substrate) |
+| `check-path-a-linkage.sh` | Fail-close dead wiring / missing mint / orphan `path_a_*` |
+| `check-forbidden-evidence.sh` | Fail if active 5.x evidence uses sole Path B cargo claims |
+| **`test-path-a-public-entry-e2e.sh`** | **Path A R0A** public CLI → agent_launch → scripted DeepSeek + wire |
+| `lib/scripted_deepseek_server.py` | Hermetic Chat Completions fixture (SSE + wire JSONL) |
+| `lib/owner-bar-common.sh` | Shared helpers for owner-bar gates |
+
+## Owner-bar-5x (active product train → `5.0.0`)
+
+Board: [`docs/product/OWNER_BAR_5X_GOALS.md`](../docs/product/OWNER_BAR_5X_GOALS.md).
+
+```bash
+./scripts/test-owner-bar.sh            # expect non-zero until late train
+./scripts/test-owner-bar.sh --selftest # gate substrate
+./scripts/test-path-a-public-entry-e2e.sh
+```
+
+Wire/meta: `docs/product/evidence/PATH_A_R0_*_last.*`
 
 ## Pre-3.0.0 baseline (required before heart fusion)
 

@@ -79,25 +79,26 @@ pub const PRODUCT_THEME: &str = "deepseeknight";
 /// Env override for product theme name (passed as GROK_THEME to the agent).
 pub const ENV_PRODUCT_THEME: &str = "DEEPSEEK_BUILD_THEME";
 
+/// Default DeepSeek OpenAI-compatible base URL (ADR 0005).
+///
+/// Must appear on each `[model.deepseek-*]` as `base_url`. Setting only
+/// `[endpoints].xai_api_base_url` is **not** enough — the agent still routes
+/// those models through the Grok CLI proxy (`cli-chat-proxy.grok.com`).
+pub const DEEPSEEK_API_BASE_URL: &str = "https://api.deepseek.com";
+
 /// Prepare product agent config under product home (DeepSeek defaults + theme).
 ///
-/// - Creates `config.toml` when missing.
-/// - If present but missing `[ui].theme` / `theme =`, appends DeepSeek theme.
+/// - Creates `config.toml` when missing (full DeepSeek product seed).
+/// - If present: inject missing theme; ensure DeepSeek model `base_url` is set
+///   so live agent turns hit `api.deepseek.com` (not Grok proxy).
 pub fn ensure_product_agent_config(home: &BuildHome) -> Result<()> {
     home.ensure_dir().context("ensure product home")?;
     let config_path = home.path().join("config.toml");
     if config_path.exists() {
         let body = std::fs::read_to_string(&config_path)
             .with_context(|| format!("read {}", config_path.display()))?;
-        if !body.contains("theme") {
-            let mut next = body;
-            if !next.ends_with('\n') {
-                next.push('\n');
-            }
-            if !next.contains("[ui]") {
-                next.push_str("\n[ui]\n");
-            }
-            next.push_str(&format!("theme = \"{PRODUCT_THEME}\"\n"));
+        let next = repair_product_agent_config(&body);
+        if next != body {
             std::fs::write(&config_path, next)
                 .with_context(|| format!("update {}", config_path.display()))?;
         }
@@ -110,6 +111,7 @@ pub fn ensure_product_agent_config(home: &BuildHome) -> Result<()> {
     };
 
     // Chat Completions backend for DeepSeek (not Grok Responses default).
+    // `base_url` on each model is load-bearing for OpenAI-compat providers.
     let body = format!(
         r#"# DeepSeek Build product defaults (auto-created).
 # Product chrome: DeepSeek Build + DeepSeekNight theme (#4D6BFE).
@@ -122,6 +124,7 @@ model = "deepseek-v4-flash"
 name = "DeepSeek V4 Flash"
 context_window = 128000
 api_backend = "chat_completions"
+base_url = "{DEEPSEEK_API_BASE_URL}"
 {api_key_line}env_key = "DEEPSEEK_API_KEY"
 
 [model.deepseek-v4-pro]
@@ -129,10 +132,11 @@ model = "deepseek-v4-pro"
 name = "DeepSeek V4 Pro"
 context_window = 128000
 api_backend = "chat_completions"
+base_url = "{DEEPSEEK_API_BASE_URL}"
 {api_key_line}env_key = "DEEPSEEK_API_KEY"
 
 [endpoints]
-xai_api_base_url = "https://api.deepseek.com"
+xai_api_base_url = "{DEEPSEEK_API_BASE_URL}"
 
 [ui]
 theme = "{PRODUCT_THEME}"
@@ -150,6 +154,101 @@ theme = "{PRODUCT_THEME}"
     }
 
     Ok(())
+}
+
+/// Best-effort repair of an existing product `config.toml`.
+///
+/// Idempotent. Does not rewrite unrelated user settings. Ensures:
+/// 1. DeepSeekNight theme when no `theme` key exists
+/// 2. `base_url` on DeepSeek model stanzas (or appends full model blocks)
+fn repair_product_agent_config(body: &str) -> String {
+    let mut next = body.to_string();
+    if !next.ends_with('\n') {
+        next.push('\n');
+    }
+
+    if !next.contains("theme") {
+        if !next.contains("[ui]") {
+            next.push_str("\n[ui]\n");
+        }
+        next.push_str(&format!("theme = \"{PRODUCT_THEME}\"\n"));
+    }
+
+    next = ensure_deepseek_model_base_url(next, "deepseek-v4-flash", "DeepSeek V4 Flash");
+    next = ensure_deepseek_model_base_url(next, "deepseek-v4-pro", "DeepSeek V4 Pro");
+
+    if !next.contains("xai_api_base_url") {
+        if !next.contains("[endpoints]") {
+            next.push_str("\n[endpoints]\n");
+        }
+        next.push_str(&format!("xai_api_base_url = \"{DEEPSEEK_API_BASE_URL}\"\n"));
+    }
+
+    next
+}
+
+/// Ensure `[model.<id>]` exists and contains `base_url = api.deepseek.com`.
+fn ensure_deepseek_model_base_url(body: String, model_id: &str, display_name: &str) -> String {
+    let header = format!("[model.{model_id}]");
+    if !body.contains(&header) {
+        let mut next = body;
+        next.push_str(&format!(
+            r#"
+{header}
+model = "{model_id}"
+name = "{display_name}"
+context_window = 128000
+api_backend = "chat_completions"
+base_url = "{DEEPSEEK_API_BASE_URL}"
+env_key = "DEEPSEEK_API_KEY"
+"#
+        ));
+        return next;
+    }
+
+    // Inject base_url into the model section if missing (section-scoped).
+    let lines: Vec<&str> = body.lines().collect();
+    let mut out: Vec<String> = Vec::with_capacity(lines.len() + 2);
+    let mut i = 0;
+    let mut patched = false;
+    while i < lines.len() {
+        let line = lines[i];
+        out.push(line.to_string());
+        if line.trim() == header {
+            // Scan this section for base_url; inject after header if absent.
+            let mut j = i + 1;
+            let mut has_base = false;
+            while j < lines.len() {
+                let t = lines[j].trim();
+                if t.starts_with('[') && !t.starts_with("[model.") {
+                    // end of contiguous model sections? any new table ends section
+                    break;
+                }
+                if t.starts_with('[') {
+                    break;
+                }
+                if t.starts_with("base_url") {
+                    has_base = true;
+                    break;
+                }
+                j += 1;
+            }
+            if !has_base {
+                out.push(format!("base_url = \"{DEEPSEEK_API_BASE_URL}\""));
+                patched = true;
+            }
+        }
+        i += 1;
+    }
+    if patched {
+        let mut s = out.join("\n");
+        if !s.ends_with('\n') {
+            s.push('\n');
+        }
+        s
+    } else {
+        body
+    }
 }
 
 fn escape_toml_basic(s: &str) -> String {
@@ -283,13 +382,52 @@ fn product_config_seed_contains_deepseek_defaults() {
     assert!(body.contains("chat_completions"));
     assert!(body.contains("DEEPSEEK_API_KEY"));
     assert!(body.contains("deepseeknight"));
+    // Load-bearing: model-level base_url (not only endpoints.xai_api_base_url).
+    assert!(
+        body.contains(&format!("base_url = \"{DEEPSEEK_API_BASE_URL}\"")),
+        "seed missing model base_url: {body}"
+    );
     // Existing file without theme gets theme injected (not full rewrite).
     std::fs::write(dir.path().join("config.toml"), "keep=1\n").unwrap();
     ensure_product_agent_config(&home).unwrap();
     let body2 = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
     assert!(body2.contains("keep=1"));
     assert!(body2.contains("theme = \"deepseeknight\""));
+    // Repair also adds DeepSeek model blocks with base_url.
+    assert!(body2.contains("[model.deepseek-v4-flash]"));
+    assert!(body2.contains("base_url = \"https://api.deepseek.com\""));
     ensure_product_agent_config(&home).unwrap();
     let body3 = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
     assert_eq!(body2, body3);
+}
+
+#[test]
+fn repair_injects_base_url_into_existing_deepseek_models() {
+    let raw = r#"
+[models]
+default = "deepseek-v4-flash"
+
+[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+api_backend = "chat_completions"
+env_key = "DEEPSEEK_API_KEY"
+
+[model.deepseek-v4-pro]
+model = "deepseek-v4-pro"
+api_backend = "chat_completions"
+
+[ui]
+theme = "deepseeknight"
+"#;
+    let fixed = repair_product_agent_config(raw);
+    assert!(fixed.contains("base_url = \"https://api.deepseek.com\""));
+    // Both model sections get base_url
+    let flash_idx = fixed.find("[model.deepseek-v4-flash]").unwrap();
+    let pro_idx = fixed.find("[model.deepseek-v4-pro]").unwrap();
+    let flash_sec = &fixed[flash_idx..pro_idx];
+    let pro_sec = &fixed[pro_idx..];
+    assert!(flash_sec.contains("base_url = \"https://api.deepseek.com\""));
+    assert!(pro_sec.contains("base_url = \"https://api.deepseek.com\""));
+    // Idempotent
+    assert_eq!(repair_product_agent_config(&fixed), fixed);
 }

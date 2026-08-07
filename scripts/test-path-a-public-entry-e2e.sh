@@ -477,15 +477,36 @@ PY
   fi
 fi
 
-# VC009: soft stamp check — hard-fail only when stamp exists but lacks cache fields
-if [[ -f "${CACHE_STAMP}" ]]; then
-  if ! rg -q 'path_a_cache_signal=present' "${CACHE_STAMP}" \
-    || ! rg -q 'cached_prompt_tokens=' "${CACHE_STAMP}"; then
-    warn "VC009: path_a_cache_signal.txt incomplete"
-    FAIL=1
-  else
-    ok "VC009 path_a_cache_signal stamp"
-  fi
+# VC009 / V2-cache: hard Path A stamp — proves agent consumed usage and mapped
+# cached_prompt_tokens (not fixture-only response_usage). Rebuild agent if missing.
+if [[ ! -f "${CACHE_STAMP}" ]]; then
+  warn "VC009: path_a_cache_signal.txt missing — rebuild agent binary for V2-cache stamp"
+  FAIL=1
+elif ! python3 - "${CACHE_STAMP}" <<'PY'
+import re, sys
+body = open(sys.argv[1], encoding="utf-8").read()
+if "path_a_cache_signal=present" not in body:
+    print("missing path_a_cache_signal=present", file=sys.stderr)
+    sys.exit(1)
+m = re.search(r"(?m)^cached_prompt_tokens=(\d+)\s*$", body)
+if not m:
+    print("missing cached_prompt_tokens=N", file=sys.stderr)
+    sys.exit(1)
+cached = int(m.group(1))
+if cached < 1:
+    print(f"cached_prompt_tokens must be >0 under hermetic fixture, got {cached}", file=sys.stderr)
+    sys.exit(1)
+if "cache_chip=cache " not in body:
+    print("missing cache_chip=cache N%", file=sys.stderr)
+    sys.exit(1)
+print(f"cache_stamp_ok cached_prompt_tokens={cached}")
+sys.exit(0)
+PY
+then
+  warn "VC009: path_a_cache_signal stamp incomplete or zero cache hit"
+  FAIL=1
+else
+  ok "VC009 path_a_cache_signal stamp"
 fi
 if ! rg -q 'chat/completions' "${WIRE}" 2>/dev/null; then
   warn "wire missing chat/completions path"

@@ -5,7 +5,7 @@
 | **Story** | **VC009** — user-visible **or** loggable cache-hit signal on product Path A; close V2-cache; package Reasonix residual honestly |
 | **Plan** | `vision-complete-5x` |
 | **Date** | 2026-08-08 |
-| **Status** | **PLAN** — unit plan locked; implementation in progress |
+| **Status** | **READY** — hermetic cache usage + Path A stamp + stream mapping green; unversioned; stacked on #140 |
 | **SemVer** | **none** (this story does **not** bump product version) |
 | **Depends on** | **VC008** `reasoning_effort` wire (open PR **#140** `vc008-reasoning-effort`) |
 | **Board** | [`VISION_COMPLETE_5X_GOALS.md`](../VISION_COMPLETE_5X_GOALS.md) · DAG [`WAVE_5x_VISION_PR_DAG.md`](../WAVE_5x_VISION_PR_DAG.md) |
@@ -150,10 +150,82 @@ Close the Reasonix L2 **V2-cache** gap: product Path A must surface a **user-vis
 
 ## 5. Implementation log
 
-_(filled as units land)_
+| Unit | Commit | Notes |
+|------|--------|-------|
+| 1 plan | `74e14ff` | Floor + acceptance matrix |
+| 2 fixture | `f3e0aa6` | `prompt_cache_hit_tokens` + `response_usage` wire |
+| 3 stamp + stream | `c5809f5` | `path_a_cache_signal` + chat_completions mapping test |
+| 4 e2e | `e4eb4b7` | Public-entry assert cache usage + stamp soft/hard |
+| 5 READY | this section | Evidence + review |
 
 ---
 
 ## 6. READY evidence
 
-_(filled at close)_
+### 6.1 Commands
+
+| Command | Result |
+|---------|--------|
+| `cargo test -p xai-grok-sampler deepseek_prompt_cache_hit` (vendor) | **PASS** |
+| `cargo test -p xai-grok-shell --lib path_a_cache_signal` (vendor) | **PASS** (2) |
+| `cargo test -p xai-grok-pager --lib cache_hit_pct` (vendor) | **PASS** (2) |
+| `cargo test -p dsb-provider-deepseek parses_prompt_cache` | **PASS** |
+| `./scripts/build-grok-pager.sh release` | **PASS** (agent with stamp) |
+| `cargo build -p dsb-cli --release` | **PASS** (CLI 5.3.0) |
+| `./scripts/test-path-a-public-entry-e2e.sh` | **PASS** (`cache_usage_ok=2`, `cache_stamp_ok cached_prompt_tokens=80`) |
+| `./scripts/check-path-a-linkage.sh` | **PASS** |
+| `./scripts/test-owner-bar.sh` | **PASS** (60/60; TSV restored) |
+| `./scripts/test-heart-regression.sh` | **PASS** (TSV restored; PATH_A_E2E SKIP default without `--with-e2e`) |
+
+### 6.2 Wire + stamp sample
+
+Slim capture: [`PATH_A_R0_VC009_CACHE_USAGE_last.jsonl`](./PATH_A_R0_VC009_CACHE_USAGE_last.jsonl)
+
+| n | model | reasoning_effort | response `prompt_cache_hit_tokens` |
+|---|-------|------------------|-------------------------------------|
+| 1 | `deepseek-v4-flash` | **high** | **80** / prompt 100 |
+| 2 | `deepseek-v4-flash` | **high** | **80** / prompt 100 |
+
+Path A stamp ([`PATH_A_CACHE_SIGNAL_last.txt`](./PATH_A_CACHE_SIGNAL_last.txt)):
+
+```text
+path_a_cache_signal=present
+prompt_tokens=100
+cached_prompt_tokens=80
+cache_hit_pct=80
+cache_chip=cache 80%
+source=path_a_turn_usage
+```
+
+### 6.3 What shipped
+
+1. Hermetic DeepSeek fixture emits **`prompt_cache_hit_tokens` / miss** and records **`response_usage`** wire lines.
+2. Path A turn completion **stamps** `path_a_cache_signal.txt` under `DEEPSEEK_BUILD_HOME` (loggable signal + chip string).
+3. Chat completions stream unit maps DeepSeek cache field → `TokenUsage.cached_prompt_tokens`.
+4. Public-entry e2e **hard-fails** without `response_usage` cache hits **and** without Path A stamp `cached_prompt_tokens>0` + `cache_chip`.
+5. User-visible status chip path remains the shipped pager `format_cache_hit_pct` (unit re-green; no re-implementation).
+6. **No SemVer bump** — packaging honesty: do not re-cut **`5.3.0`**.
+
+### 6.4 Independent review (Grok-only)
+
+| Field | Value |
+|-------|--------|
+| **Reviewer** | Independent Grok critic (`oh-my-claudecode:critic`, subagent `019fddd4-4c70-7491-a91b-601adbc62099`) |
+| **Initial verdict** | **NOT_READY** — READY claimed with gate placeholders; stamp gate soft/fixture-only hard path hollow |
+| **P0 closed** | owner-bar **60/60 PASS** + heart regression **PASS** recorded in §6.1 |
+| **P1 closed** | e2e hard-fails if stamp missing or `cached_prompt_tokens<1` or chip missing (Path A consumption, not fixture-only) |
+| **Close-out verdict** | **READY** after P0/P1 fixes + re-green e2e (`cache_stamp_ok cached_prompt_tokens=80`) |
+| **P2 residual** | stamp chip arithmetic is local (not calling pager `format_cache_hit_pct`); board SemVer text still stale |
+
+Implementer self-notes are **not** independent review. This section is the independent close-out after adversarial fixes.
+
+### 6.5 Residuals (honest)
+
+| Residual | Notes |
+|----------|--------|
+| Live DeepSeek cache hit rates | Server policy; hermetic fixture is not live proof |
+| TUI screenshot dogfood | Chip format unit + stamp; live UI shipped in #97 |
+| SemVer / npm / Release cut | Unversioned; board “5.3.0 Reasonix cut” is **stale** vs stack **5.3.0** from VC006 |
+| Dual-call substitute on Path A | ADR 0005 Path B / when fields absent — not this story |
+| Stamp chip vs pager formatter drift | P2; stamp uses integer round-half-up; pager uses f64 format — residual |
+| Agent binary without rebuild | Stamp missing → e2e **FAIL** (hard); rebuild agent with VC009 stamp code |

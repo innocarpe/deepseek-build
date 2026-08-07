@@ -1,0 +1,7 @@
+path_a_cache_signal=present
+prompt_tokens=100
+cached_prompt_tokens=80
+completion_tokens=1
+cache_hit_pct=80
+cache_chip=cache 80%
+source=path_a_turn_usage

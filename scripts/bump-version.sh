@@ -2,8 +2,14 @@
 # Bump the release version across the repo.
 #
 # Single source of truth: root Cargo.toml [workspace.package] version.
-# This script keeps Cargo.toml, package.json, Cargo.lock, CHANGELOG.md and the
-# docs/product/versions/README.md decision log in sync (ADR 0006 / versioning.md).
+# This script keeps Cargo.toml, package.json, Cargo.lock, CHANGELOG.md,
+# README.md version literals and the docs/product/versions/README.md decision
+# log in sync (ADR 0006 / versioning.md).
+#
+# CHANGELOG invariant (release-cycle.md): "# Changelog" -> "## Unreleased" at
+# the very top -> version sections newest-first. The new section is inserted
+# directly below Unreleased; if Unreleased drifted down it is moved back to
+# the top.
 #
 # Usage:
 #   ./scripts/bump-version.sh 4.0.4 [--desc "one-line release note"] [--dry-run]
@@ -53,7 +59,7 @@ fi
 
 if [[ "$DRY" -eq 1 ]]; then
   echo "bump-version (dry-run): $OLD -> $NEW"
-  echo "  would edit: Cargo.toml, package.json, Cargo.lock (via cargo check), CHANGELOG.md, docs/product/versions/README.md"
+  echo "  would edit: Cargo.toml, package.json, Cargo.lock (via cargo check), CHANGELOG.md, README.md (version literals), docs/product/versions/README.md"
   [[ -n "$DESC" ]] && echo "  desc: $DESC"
   exit 0
 fi
@@ -89,21 +95,56 @@ PY
 # Regenerate Cargo.lock (syncs the dsb-* workspace entries to the new version).
 cargo check -p dsb-cli >/dev/null
 
-# CHANGELOG section + versions README decision-log row.
+# CHANGELOG section + versions README decision-log row + README literals.
 python3 - "$NEW" "$(date +%Y-%m-%d)" "$OLD" "$DESC" <<'PY'
 import re, sys
 new, date, old, desc = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
-
-s = open('CHANGELOG.md').read()
-m = re.search(r'(?m)^## Unreleased[ \t]*\n', s)
-if not m:
-    sys.exit('error: no "## Unreleased" heading in CHANGELOG.md')
-nxt = re.search(r'(?m)^## ', s[m.end():])
-at = m.end() + (nxt.start() if nxt else len(s) - m.end())
 note = desc if desc else '_release notes: fill in before merge_'
 section = f'## {new} — {date}\n\n- {note}\n\n'
-open('CHANGELOG.md', 'w').write(s[:at] + section + s[at:])
 
+# --- CHANGELOG.md ---------------------------------------------------------
+# Invariant: "# Changelog" -> "## Unreleased" (top) -> versions newest-first.
+# Pull any drifted "## Unreleased" back to the top, then insert the new
+# section directly below it (above the previous newest version).
+s = open('CHANGELOG.md').read()
+unrel = ''
+rest = s
+m = re.search(r'(?m)^## Unreleased[ \t]*\n', s)
+if m:
+    nxt = re.search(r'(?m)^## ', s[m.end():])
+    stop = m.end() + (nxt.start() if nxt else len(s) - m.end())
+    unrel = s[m.start():stop]
+    rest = s[:m.start()] + s[stop:]
+if rest.startswith('# Changelog'):
+    rest = rest[len('# Changelog\n'):].lstrip('\n')
+out = '# Changelog\n\n' + unrel + section + rest
+out = re.sub(r'\n{3,}', '\n\n', out).rstrip('\n') + '\n'
+open('CHANGELOG.md', 'w').write(out)
+
+# Invariant check: version sections must remain newest-first after the insert.
+def vkey(v):
+    core, _, pre = v.partition('-')
+    maj, min_, pat = (int(x) for x in core.split('.'))
+    if not pre:
+        return (maj, min_, pat, 1, '')
+    base, _, num = pre.partition('.')
+    return (maj, min_, pat, 0, base, int(num) if num.isdigit() else 0)
+
+vers = re.findall(r'(?m)^## ([0-9]+\.[0-9]+\.[0-9]+)(?:-[0-9A-Za-z.\-]+)?[ \t]', out)
+if [vkey(v) for v in vers] != sorted((vkey(v) for v in vers), reverse=True):
+    sys.exit('error: CHANGELOG.md version sections are not newest-first — '
+             'run ./scripts/reorder-changelog.sh and commit before bumping')
+
+# --- README.md (pure version literals only; never the product-status banner) -
+s = open('README.md').read()
+s2 = re.sub(r'(?m)^(# → (?:deepseek-build|dsb) )[0-9]+\.[0-9]+\.[0-9]+',
+            rf'\g<1>{new}', s)
+s2 = re.sub(r'(# → check-semver: ok \()[0-9]+\.[0-9]+\.[0-9]+(\))',
+            rf'\g<1>{new}\g<2>', s2)
+if s2 != s:
+    open('README.md', 'w').write(s2)
+
+# --- docs/product/versions/README.md decision-log row ------------------------
 s = open('docs/product/versions/README.md').read()
 needle = f'**`{old}`**'
 lines = s.split('\n')

@@ -109,7 +109,12 @@ struct Cli {
     minimal: bool,
 
     /// Start the TUI fullscreen (bare `dsb` / `dsb agent` only).
-    #[arg(long, global = true, default_value_t = false, conflicts_with = "minimal")]
+    #[arg(
+        long,
+        global = true,
+        default_value_t = false,
+        conflicts_with = "minimal"
+    )]
     fullscreen: bool,
 
     /// Reasoning effort: low | high | max (default: from preset / model).
@@ -900,14 +905,20 @@ mod tests {
     fn tui_path_routing_skips_rejection() {
         // Bare / `agent` are TUI paths: the guard never calls reject_tui_only_flags.
         assert!(is_tui_path(&Cli::try_parse_from(["dsb"]).unwrap()));
-        assert!(is_tui_path(&Cli::try_parse_from(["dsb", "--resume"]).unwrap()));
+        assert!(is_tui_path(
+            &Cli::try_parse_from(["dsb", "--resume"]).unwrap()
+        ));
         assert!(is_tui_path(
             &Cli::try_parse_from(["dsb", "agent", "--resume", "sess-abc"]).unwrap()
         ));
         // Line-mode subcommands are not TUI paths → rejection applies.
-        assert!(!is_tui_path(&Cli::try_parse_from(["dsb", "run", "hi"]).unwrap()));
+        assert!(!is_tui_path(
+            &Cli::try_parse_from(["dsb", "run", "hi"]).unwrap()
+        ));
         assert!(!is_tui_path(&Cli::try_parse_from(["dsb", "chat"]).unwrap()));
-        assert!(!is_tui_path(&Cli::try_parse_from(["dsb", "sessions", "list"]).unwrap()));
+        assert!(!is_tui_path(
+            &Cli::try_parse_from(["dsb", "sessions", "list"]).unwrap()
+        ));
     }
 
     #[test]

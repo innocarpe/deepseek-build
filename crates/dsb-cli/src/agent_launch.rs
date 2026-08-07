@@ -74,8 +74,10 @@ pub fn find_agent_bin() -> Option<PathBuf> {
     None
 }
 
-/// Product default TUI theme (must match ThemeKind::DeepSeekNight display name).
-pub const PRODUCT_THEME: &str = "deepseeknight";
+/// Product default TUI theme (must match ThemeKind::DeepSeekNightNeutral display name).
+pub const PRODUCT_THEME: &str = "deepseeknight-neutral";
+/// Blue-tinted DeepSeek theme (original product skin; picker option 1).
+pub const PRODUCT_THEME_BLUE: &str = "deepseeknight";
 /// Env override for product theme name (passed as GROK_THEME to the agent).
 pub const ENV_PRODUCT_THEME: &str = "DEEPSEEK_BUILD_THEME";
 
@@ -92,12 +94,18 @@ pub const DEEPSEEK_API_BASE_URL: &str = "https://api.deepseek.com";
 /// - If present: inject missing theme; ensure DeepSeek model `base_url` is set
 ///   so live agent turns hit `api.deepseek.com` (not Grok proxy).
 pub fn ensure_product_agent_config(home: &BuildHome) -> Result<()> {
+    ensure_product_agent_config_with_theme(home, PRODUCT_THEME)
+}
+
+/// Same as [`ensure_product_agent_config`] but with an explicit theme canonical
+/// (used by the first-launch picker; defaults to `PRODUCT_THEME`).
+pub fn ensure_product_agent_config_with_theme(home: &BuildHome, theme: &str) -> Result<()> {
     home.ensure_dir().context("ensure product home")?;
     let config_path = home.path().join("config.toml");
     if config_path.exists() {
         let body = std::fs::read_to_string(&config_path)
             .with_context(|| format!("read {}", config_path.display()))?;
-        let next = repair_product_agent_config(&body);
+        let next = repair_product_agent_config_with_theme(&body, theme);
         if next != body {
             std::fs::write(&config_path, next)
                 .with_context(|| format!("update {}", config_path.display()))?;
@@ -114,7 +122,7 @@ pub fn ensure_product_agent_config(home: &BuildHome) -> Result<()> {
     // `base_url` on each model is load-bearing for OpenAI-compat providers.
     let body = format!(
         r#"# DeepSeek Build product defaults (auto-created).
-# Product chrome: DeepSeek Build + DeepSeekNight theme (#4D6BFE).
+# Product chrome: DeepSeek Build + DeepSeek Night theme (#4D6BFE).
 
 [models]
 default = "deepseek-v4-flash"
@@ -139,7 +147,7 @@ base_url = "{DEEPSEEK_API_BASE_URL}"
 xai_api_base_url = "{DEEPSEEK_API_BASE_URL}"
 
 [ui]
-theme = "{PRODUCT_THEME}"
+theme = "{theme}"
 # Product default: Spec 90 — not YOLO-only (G005 / Path A / 3.0.0).
 yolo = false
 
@@ -164,10 +172,15 @@ enabled = true
 /// Best-effort repair of an existing product `config.toml`.
 ///
 /// Idempotent. Does not rewrite unrelated user settings. Ensures:
-/// 1. DeepSeekNight theme when no `theme` key exists
+/// 1. DeepSeek Night theme when no `theme` key exists (default neutral skin)
 /// 2. `base_url` on DeepSeek model stanzas (or appends full model blocks)
 /// 3. Explicit `yolo = false` when the key is missing (Spec 90 product default)
 fn repair_product_agent_config(body: &str) -> String {
+    repair_product_agent_config_with_theme(body, PRODUCT_THEME)
+}
+
+/// Same as [`repair_product_agent_config`] but injects the given theme canonical.
+fn repair_product_agent_config_with_theme(body: &str, theme: &str) -> String {
     let mut next = body.to_string();
     if !next.ends_with('\n') {
         next.push('\n');
@@ -177,7 +190,7 @@ fn repair_product_agent_config(body: &str) -> String {
         if !next.contains("[ui]") {
             next.push_str("\n[ui]\n");
         }
-        next.push_str(&format!("theme = \"{PRODUCT_THEME}\"\n"));
+        next.push_str(&format!("theme = \"{theme}\"\n"));
     }
 
     // Product default is not YOLO. Only inject when the key is absent so we do
@@ -278,6 +291,60 @@ fn escape_toml_basic(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// First-launch theme picker (fresh product home + interactive tty only).
+///
+/// Asks the user to choose between the blue-tinted `deepseeknight` skin and
+/// the default neutral `deepseeknight-neutral` skin. Returns the chosen
+/// canonical name, or `None` when:
+/// - the home already has a `config.toml` (theme already chosen / configured)
+/// - stdin is not a terminal (scripted / CI launches)
+/// - the user hits EOF or keeps answering invalid input
+///
+/// `None` callers should fall back to [`PRODUCT_THEME`]. Prompt goes to stderr
+/// (splash precedent) so stdout stays clean for piped consumers.
+fn prompt_first_launch_theme(home: &BuildHome) -> Option<&'static str> {
+    use std::io::{self, IsTerminal, Write};
+
+    if home.path().join("config.toml").exists() || !io::stdin().is_terminal() {
+        return None;
+    }
+    let mut out = io::stderr();
+    for _ in 0..3 {
+        let _ = writeln!(out, "Choose your DeepSeek Build theme:");
+        let _ = writeln!(
+            out,
+            "  1) DeepSeek Night         — blue-tinted dark, original product skin"
+        );
+        let _ = writeln!(
+            out,
+            "  2) DeepSeek Night Neutral — neutral canvas, blue accents (default)"
+        );
+        let _ = write!(out, "Select [2]: ");
+        let _ = out.flush();
+        let mut line = String::new();
+        match io::stdin().read_line(&mut line) {
+            Ok(0) => return None, // EOF: keep product default
+            Ok(_) => {
+                if let Some(theme) = picker_answer_to_theme(line.trim()) {
+                    return Some(theme);
+                }
+                // Invalid input: re-prompt.
+            }
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
+/// Pure mapping from picker input to a theme canonical ("" => neutral default).
+fn picker_answer_to_theme(answer: &str) -> Option<&'static str> {
+    match answer.trim() {
+        "1" | PRODUCT_THEME_BLUE | "deepseek-night" | "dsb" => Some(PRODUCT_THEME_BLUE),
+        "2" | "" | PRODUCT_THEME | "deepseek-night-neutral" | "dsb-neutral" => Some(PRODUCT_THEME),
+        _ => None,
+    }
+}
+
 /// Print DeepSeek whale splash (DeepSeek blue) before handing off to the TUI.
 pub fn print_product_splash() {
     use std::io::{self, IsTerminal, Write};
@@ -309,7 +376,9 @@ pub fn print_product_splash() {
 pub fn exec_agent(args: &[String]) -> Result<()> {
     let home = BuildHome::resolve();
     // Best-effort product config; missing credentials still allow agent UI.
-    let _ = ensure_product_agent_config(&home);
+    // Fresh homes get the interactive theme picker before the seed is written.
+    let theme = prompt_first_launch_theme(&home).unwrap_or(PRODUCT_THEME);
+    let _ = ensure_product_agent_config_with_theme(&home, theme);
     print_product_splash();
 
     let Some(bin) = find_agent_bin() else {
@@ -333,14 +402,17 @@ pub fn exec_agent(args: &[String]) -> Result<()> {
     // Bridge product home into Grok path resolution without mutating process env globally
     // when not needed — Command env is sufficient for the child/exec image.
     cmd.env("GROK_HOME", home.path());
-    // Force product theme unless user already set GROK_THEME or DEEPSEEK_BUILD_THEME.
-    let theme = env::var(ENV_PRODUCT_THEME)
+    // Product theme lives in `[ui].theme` of the seeded product config, so
+    // in-pager `/theme` changes persist across launches. Only force a theme via
+    // env when the user explicitly asked (DEEPSEEK_BUILD_THEME / GROK_THEME).
+    if let Some(theme) = env::var(ENV_PRODUCT_THEME)
         .ok()
         .filter(|s| !s.trim().is_empty())
         .or_else(|| env::var("GROK_THEME").ok().filter(|s| !s.trim().is_empty()))
-        .unwrap_or_else(|| PRODUCT_THEME.to_string());
-    cmd.env("GROK_THEME", &theme);
-    cmd.env("LC_GROK_THEME", &theme);
+    {
+        cmd.env("GROK_THEME", &theme);
+        cmd.env("LC_GROK_THEME", &theme);
+    }
     // Brand the vendored resume hints: `dsb --resume <id>` instead of `grok --resume <id>`.
     cmd.env("GROK_INVOCATION_NAME", crate::invocation_name());
     if env::var_os(dsb_config::ENV_API_KEY).is_none() {
@@ -406,7 +478,10 @@ fn product_config_seed_contains_deepseek_defaults() {
     assert!(body.contains("api.deepseek.com"));
     assert!(body.contains("chat_completions"));
     assert!(body.contains("DEEPSEEK_API_KEY"));
-    assert!(body.contains("deepseeknight"));
+    assert!(
+        body.contains("theme = \"deepseeknight-neutral\""),
+        "seed missing neutral default theme: {body}"
+    );
     // Spec 90 / G005: product default is not YOLO.
     assert!(
         body.contains("yolo = false"),
@@ -427,7 +502,7 @@ fn product_config_seed_contains_deepseek_defaults() {
     ensure_product_agent_config(&home).unwrap();
     let body2 = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
     assert!(body2.contains("keep=1"));
-    assert!(body2.contains("theme = \"deepseeknight\""));
+    assert!(body2.contains("theme = \"deepseeknight-neutral\""));
     assert!(body2.contains("yolo = false"));
     // Repair also adds DeepSeek model blocks with base_url.
     assert!(body2.contains("[model.deepseek-v4-flash]"));
@@ -477,4 +552,58 @@ theme = "deepseeknight"
     assert!(pro_sec.contains("base_url = \"https://api.deepseek.com\""));
     // Idempotent
     assert_eq!(repair_product_agent_config(&fixed), fixed);
+}
+
+#[test]
+fn picker_maps_numbers_names_and_defaults() {
+    assert_eq!(picker_answer_to_theme("1"), Some(PRODUCT_THEME_BLUE));
+    assert_eq!(picker_answer_to_theme("2"), Some(PRODUCT_THEME));
+    assert_eq!(picker_answer_to_theme(""), Some(PRODUCT_THEME));
+    assert_eq!(picker_answer_to_theme("  "), Some(PRODUCT_THEME));
+    assert_eq!(
+        picker_answer_to_theme(PRODUCT_THEME_BLUE),
+        Some(PRODUCT_THEME_BLUE)
+    );
+    assert_eq!(picker_answer_to_theme(PRODUCT_THEME), Some(PRODUCT_THEME));
+    assert_eq!(
+        picker_answer_to_theme("deepseek-night"),
+        Some(PRODUCT_THEME_BLUE)
+    );
+    assert_eq!(
+        picker_answer_to_theme("deepseek-night-neutral"),
+        Some(PRODUCT_THEME)
+    );
+    assert_eq!(picker_answer_to_theme("bogus"), None);
+    assert_eq!(picker_answer_to_theme("0"), None);
+}
+
+#[test]
+fn picker_skipped_when_config_already_exists() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dsb_config::BuildHome::from_path(dir.path());
+    // No config yet -> would prompt (can't assert tty here, but the existence
+    // branch is covered by seeding first and confirming the skip below).
+    std::fs::write(dir.path().join("config.toml"), "keep=1\n").unwrap();
+    assert_eq!(prompt_first_launch_theme(&home), None);
+}
+
+#[test]
+fn seed_and_repair_honor_explicit_theme() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dsb_config::BuildHome::from_path(dir.path());
+    // Fresh seed with the blue skin.
+    ensure_product_agent_config_with_theme(&home, PRODUCT_THEME_BLUE).unwrap();
+    let body = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
+    assert!(
+        body.contains(&format!("theme = \"{PRODUCT_THEME_BLUE}\"")),
+        "seed should use the requested blue theme: {body}"
+    );
+    // Repair with a different theme does not clobber an existing choice.
+    ensure_product_agent_config_with_theme(&home, PRODUCT_THEME).unwrap();
+    let body2 = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
+    assert_eq!(body, body2, "repair must not overwrite an explicit theme");
+    // Repair on a theme-less file injects the requested theme.
+    let fixed = repair_product_agent_config_with_theme("keep=1\n", PRODUCT_THEME_BLUE);
+    assert!(fixed.contains(&format!("theme = \"{PRODUCT_THEME_BLUE}\"")));
+    assert!(fixed.contains("keep=1"));
 }

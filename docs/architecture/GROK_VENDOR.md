@@ -72,9 +72,16 @@ The tree ships "as upstream", but a small set of **deliberate local deviations**
 |------|-------|-----|
 | `crates/codegen/xai-grok-pager/src/app/mod.rs` | `print_exit_resume_hint` prints the command from env `GROK_INVOCATION_NAME` (default `grok`) via `invocation_name()` + pure `resume_hint_line()` | dsb-cli brands quit hints `dsb --resume <id>` so the printed command is pasteable |
 | `crates/codegen/xai-grok-pager/src/app/screen_mode_relaunch.rs` | `screen_mode_relaunch_resume_hint` uses `super::invocation_name()` (pure `_with` variant for tests) | Same branding for the screen-mode relaunch failure hint |
-| `crates/dsb-cli/src/agent_launch.rs` | `exec_agent` sets `GROK_INVOCATION_NAME` to the product command name | Wrapper side of the branding contract |
+| `crates/codegen/xai-grok-pager-render/src/theme/deepseeknight.rs` | Adds `deepseeknight_neutral()` (hue-neutral ramp, r≈g≈b) alongside `deepseeknight()` (blue ramp) via shared `deepseeknight_inner(neutral)` + ramp/blue-accent unit tests | Product ships two selectable DeepSeek skins |
+| `crates/codegen/xai-grok-pager-render/src/theme/mod.rs` | New `ThemeKind::DeepSeekNightNeutral = 7` (ALL / available / display_name / requires_truecolor / from_name / Default / current / clamp); product default = neutral; `"dark"` alias restored to GrokNight | Theme choice UX + neutral default skin; restores upstream `"dark"` alias |
+| `crates/codegen/xai-grok-pager-render/src/theme/cache.rs` | `CURRENT` + config/appearance resolution defaults → `DeepSeekNightNeutral` | Product default follows the neutral skin |
+| `crates/codegen/xai-grok-pager-render/src/theme/system_appearance.rs` | Dark appearance fallback → `DeepSeekNightNeutral` | Same default skin for auto dark mode |
+| `crates/codegen/xai-grok-pager-render/src/syntax.rs` | Night syntax group includes `DeepSeekNightNeutral` | Neutral skin keeps the same syntax palette |
+| `crates/codegen/xai-grok-pager/src/settings/defs.rs` | `THEME_CHOICES` / `CONCRETE_THEME_CHOICES` add `deepseeknight` + `deepseeknight-neutral` | Both skins selectable from `/theme` and the settings modal |
+| `crates/codegen/xai-grok-pager/src/views/settings_modal/tests.rs` | Exhaustive preview match adds `DeepSeekNightNeutral` arm | Compile + preview coverage for the new skin |
+| `crates/dsb-cli/src/agent_launch.rs` | First-launch picker writes the chosen skin into the seed config; `GROK_THEME`/`LC_GROK_THEME` only set from explicit env (`DEEPSEEK_BUILD_THEME`/`GROK_THEME`) so in-pager `/theme` persists | Two-skin onboarding + persistent theme changes |
 
-Tests: `resume_hint_line_brands_invocation_name` and `failed_relaunch_hint_brands_invocation_name` pin the `dsb` output; upstream default (`grok`) assertions keep passing.
+Tests: `resume_hint_line_brands_invocation_name` and `failed_relaunch_hint_brands_invocation_name` pin the `dsb` output; upstream default (`grok`) assertions keep passing. Theme tests pin the official `#4D6BFE` accent on both skins, the neutral ramp's hue neutrality, and the `deepseeknight-neutral` resolution default.
 
 ### Carried as patch files under `patches/grok-build/`
 

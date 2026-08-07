@@ -5,7 +5,7 @@
 | **Story** | **VC014** — `docs(product): user-guide + KNOWN_LIMITS vision pass` (vision **V4-docs**) |
 | **Plan** | `vision-complete-5x` |
 | **Date** | 2026-08-08 |
-| **Status** | **PLAN** — plan-first gate only; docs not yet updated |
+| **Status** | **READY** — user-guide + KNOWN_LIMITS vision pass landed; practical gates green; unversioned; stacked on #145 |
 | **SemVer** | **none** (docs-only; do **not** bump product version) |
 | **Depends on** | **VC013** L3 **5.4.0** cut (open PR **#145** `vc013-5-4-cut`) |
 | **Board** | [`VISION_COMPLETE_5X_GOALS.md`](../VISION_COMPLETE_5X_GOALS.md) · DAG [`WAVE_5x_VISION_PR_DAG.md`](../WAVE_5x_VISION_PR_DAG.md) |
@@ -210,39 +210,77 @@ This story is **one PR** (exactly one unmerged stacked PR). Internally:
 
 ## 6. READY evidence
 
-**Status: PLAN only** — filled after units 2–4 land.
+**Status: READY** (docs pass complete; independent review sibling).
 
-### 6.0 Provenance (to fill)
+### 6.0 Provenance
 
 | Field | Value |
 |-------|--------|
-| Plan-first commit | *(this commit SHA)* |
-| Docs source head (READY) | *(HEAD after unit 4)* |
+| Plan-first commit | **`2a20fb2`** (`docs(product): VC014 user-guide + KNOWN_LIMITS plan and floor`) |
+| User-guide unit | **`37347d7`** (`docs(user-guide): align Path A L1-L3 guides with 5.4.0 stack`) |
+| KNOWN_LIMITS unit | **`9f71e3e`** (`docs(product): refresh KNOWN_LIMITS for vision residuals`) |
+| Whitespace clean | **`f66067c`** (`docs: strip trailing whitespace for git diff --check`) |
+| Docs source head at gate run | **`f66067c`** (pre READY-file tip; READY commit is tip after this section) |
+| Product SemVer on stack | **`5.4.0`** (unchanged; no bump in this story) |
 | L3 behavior provenance (cited, not re-run) | VC013 cut head **`96a9b3c`** + META/WIRE re-prove |
 | Spec 45 provenance | VC006 READY **5.3.0** stack cut |
 | L2 provenance | VC007 / VC008 / VC009 READY |
+| Live floor at READY | `origin/main` / npm / GitHub Latest **`5.2.2`** |
 
-### 6.1 Gate table (to fill)
+**Provenance rule:** This story is docs-only. L3/L1/L2 behavior claims cite VC006–VC013 evidence. Fresh Path A R0A re-prove is **not** required unless agent/CLI sources change (they did not).
 
-| Command | Result |
-|---------|--------|
-| `git diff --check` | |
-| `./scripts/check-semver.sh` | |
-| `./scripts/check-path-a-linkage.sh` | |
-| `./scripts/test-owner-bar.sh` | |
-| `./scripts/test-heart-regression.sh` | |
+### 6.1 What changed (files)
 
-### 6.2 Residuals at READY (expected = allow-list)
+| Path | Role |
+|------|------|
+| `docs/product/evidence/VC014_USER_GUIDE_KNOWN_LIMITS_2026-08-08.md` | Plan + READY |
+| `docs/product/evidence/VC014_INDEPENDENT_REVIEW_2026-08-08.md` | Independent Grok review |
+| `docs/user-guide/README.md` | Dual CLI, layer map, quick start honesty |
+| `docs/user-guide/04-surface.md` | L2 effort / Spec 10 assembly / cache scope |
+| `docs/user-guide/10-tools.md` | Spec 45 Path A vs thin; parallel R0A pointer |
+| `docs/user-guide/11-subagents.md` | Path A dogfood + V3-60-3 residual |
+| `docs/user-guide/12-background-tasks.md` | Path A bg collect-by-id; drop 4.0.0 plan |
+| `docs/user-guide/13-worktrees.md` | Opt-in / headless / interactive residual |
+| `docs/user-guide/14-l3-throughput.md` | L3 V3 map + 5.4.0 stack honesty |
+| `docs/product/KNOWN_LIMITS.md` | Residual allow-list + stack vs live floor |
 
-Same as §2.1 — must not shrink without Path A proof.
+### 6.2 Gate table
 
-### 6.3 Artifact pointers
+| Command | Result | Notes |
+|---------|--------|-------|
+| `git diff --check` (base..HEAD) | **PASS** | After whitespace clean `f66067c` |
+| `./scripts/check-semver.sh` | **PASS** | cargo ≡ npm **5.4.0** (no bump) |
+| `./scripts/check-path-a-linkage.sh` | **PASS** | |
+| `./scripts/test-owner-bar.sh` | **PASS** | 60/60; `OWNER_BAR_STATUS.tsv` restored to HEAD |
+| `./scripts/test-heart-regression.sh` | **PASS** | PATH_A_E2E SKIP default; L3 offline PASS; TSV noise not committed |
+
+### 6.3 Residuals at READY (allow-list retained)
+
+| Residual | Status |
+|----------|--------|
+| **V3-60-3** Path A parent snippet expire after worker mutation | **Carry** — not closed |
+| Interactive TTY worktree **create** sole green | **Carry** — not closed |
+| Non-darwin packaging / assets (`darwin-arm64` only) | **Carry** |
+| Human-gated npm / GitHub publish | **Carry** |
+| On-branch **5.4.0** unmerged; live main/npm/GitHub Latest **5.2.2** | **Carry** (expected train lag) |
+| Vision freeze **5.5.0** / VC015 | **Out of story** |
+
+### 6.4 Explicit non-claims at READY
+
+- Not vision freeze / **5.5.0**
+- Not npm publish / GitHub Release for **5.4.0**
+- Not SemVer bump
+- Not closing V3-60-3 or interactive worktree create without fresh Path A proof
+- Not editing VC013 / PR **#145**
+- Not claiming live main already ships **5.3.0** / **5.4.0**
+
+### 6.5 Artifact pointers
 
 | Artifact | Role |
 |----------|------|
 | This file | Plan + READY |
 | `VC014_INDEPENDENT_REVIEW_2026-08-08.md` | Independent Grok review |
-| User-guide 10–14 + README + surface | Behavior honesty |
+| User-guide README + 04 + 10–14 | Behavior honesty |
 | `KNOWN_LIMITS.md` | Residual honesty |
 | VC013 / VC006–VC012 evidence | Cited Path A provenance |
 
@@ -252,10 +290,11 @@ Same as §2.1 — must not shrink without Path A proof.
 
 - [x] Floor re-check (`main` / npm / `gh release` / stack tip **5.4.0**)
 - [x] Plan written **before** user-guide / KNOWN_LIMITS edits
-- [ ] Unit 1 committed alone
-- [ ] Unit 2 user-guide updates
-- [ ] Unit 3 KNOWN_LIMITS refresh
-- [ ] Unit 4 READY + independent review
-- [ ] Practical gates green; TSV side-effects restored
+- [x] Unit 1 committed alone (`2a20fb2`)
+- [x] Unit 2 user-guide updates (`37347d7`)
+- [x] Unit 3 KNOWN_LIMITS refresh (`9f71e3e`)
+- [x] Whitespace clean for `git diff --check` (`f66067c`)
+- [x] Unit 4 READY + independent review (this commit)
+- [x] Practical gates green; TSV side-effects restored
 - [ ] Single stacked English PR base `vc013-5-4-cut` · Depends on #145 · labels verified
-- [ ] No merge / no publish / no SemVer bump / no VC013 edit
+- [x] No merge / no publish / no SemVer bump / no VC013 edit

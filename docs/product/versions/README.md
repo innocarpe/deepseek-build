@@ -72,6 +72,3 @@ Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** p
 | [REPLAN_2.0.md](../REPLAN_2.0.md) | Historical replan that defined 2.0.0 intent |
 | [KNOWN_LIMITS.md](../KNOWN_LIMITS.md) | Runtime honesty for current SemVer on disk |
 | [CHANGELOG.md](../../../CHANGELOG.md) | Per-release notes |
-
-
-

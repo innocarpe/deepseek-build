@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 5.0.0 — 2026-08-07
+
+- Owner-bar complete product cut (`owner-bar-5x`): Path A P0 ledger green, dual adversarial reviews, tag `v5.0.0`.
+
+
 ## 4.0.4 — 2026-08-07
 
 - **Image attachments** on text-only DeepSeek endpoints no longer 400: images persist to session assets with an agent-driven OCR hint (matches Reasonix/DeepCode preprocessing instead of silent drop)

@@ -4,34 +4,25 @@ This file is standing instructions for any coding agent working in this repo.
 
 ## Current phase
 
-**Active product ultragoal:** **`owner-bar-5x`** → tag **`v5.0.0`** (owner-bar complete product).
+**No active product ultragoal train.** Latest major: **`v5.0.0`** owner-bar complete (`owner-bar-5x`).
 
-On-disk / npm may still report **`4.0.x`** — that is **not** owner-bar complete.  
-Do **not** resume `heart-3x` / `fleet-4x` as product SSOT.
+**Completed trains:**  
+- **`owner-bar-5x`** → **`v5.0.0`** (owner-bar complete product)  
+- **`fleet-4x`** → **`v4.0.0`** L3 productization *attempt* · patches **`4.0.1`** / **`4.0.2`** / **`4.0.x`**  
+- **`heart-3x`** → **`v3.0.0`** heart fusion *attempt*  
 
-**Active train pointers:**  
-- Board: [`docs/product/OWNER_BAR_5X_GOALS.md`](docs/product/OWNER_BAR_5X_GOALS.md)  
-- PR DAG: [`docs/product/WAVE_5x_PR_DAG.md`](docs/product/WAVE_5x_PR_DAG.md)  
-- PRD: [`docs/product/PRD-v5.md`](docs/product/PRD-v5.md)  
-- Ledger: [`docs/product/OWNER_BAR_P0_LEDGER.md`](docs/product/OWNER_BAR_P0_LEDGER.md)  
-- Acceptance: [`docs/product/OWNER_BAR_ACCEPTANCE.md`](docs/product/OWNER_BAR_ACCEPTANCE.md)  
-- Cold start: [`docs/product/ULTRAGOAL_PROMPT_COLD_START_5.0.md`](docs/product/ULTRAGOAL_PROMPT_COLD_START_5.0.md)  
+**Pointers:**  
+- Cut: [`docs/product/evidence/CUT_5_0_0_2026-08-07.md`](docs/product/evidence/CUT_5_0_0_2026-08-07.md)  
+- Board (archive): [`docs/product/OWNER_BAR_5X_GOALS.md`](docs/product/OWNER_BAR_5X_GOALS.md)  
+- Gate: `./scripts/test-owner-bar.sh` (green on cut) · `./scripts/check-path-a-linkage.sh`  
 - Chain: [`docs/product/ULTRAGOAL_CHAIN.md`](docs/product/ULTRAGOAL_CHAIN.md)  
-- Gate: `./scripts/test-owner-bar.sh` (RED until fusion) · `./scripts/check-path-a-linkage.sh`
-
-**Superseded trains (tagged, owner-bar NOT MET):**  
-- **`fleet-4x`** → **`v4.0.0`** L3 productization *attempt* · patches **`4.0.1`** / **`4.0.2`**  
-- **`heart-3x`** → **`v3.0.0`** heart fusion *attempt* · **`l3-prep-lane-b`** · **`ship-3.0.0`**  
-
-Archive only: [`FLEET_4X_GOALS.md`](docs/product/FLEET_4X_GOALS.md) · [`WAVE_4x_PR_DAG.md`](docs/product/WAVE_4x_PR_DAG.md) · [`CUT_4_0_0_2026-08-07.md`](docs/product/evidence/CUT_4_0_0_2026-08-07.md).  
-**Do not** close owner-bar rows with only `cargo test -p dsb-* path_a` (Path B).
 
 **Major product lines (PRDs):** [`docs/product/versions/README.md`](docs/product/versions/README.md)  
 - **1.x** scaffold — [PRD-v1](docs/product/PRD-v1.md)  
 - **2.x shipped shell** — [PRD-v2](docs/product/PRD-v2.md)  
 - **3.x tagged hearts *attempt*** — [PRD-v3](docs/product/PRD-v3.md) (`3.0.0`) — **not owner-bar green**  
 - **4.x tagged L3 *attempt*** — [PRD-v4](docs/product/PRD-v4.md) (`4.0.0`+) — **not owner-bar green**  
-- **5.x active owner-bar** — [PRD-v5](docs/product/PRD-v5.md) (`5.0.0` when ledger all PASS)  
+- **5.x owner-bar complete** — [PRD-v5](docs/product/PRD-v5.md) (`5.0.0`)  
 
 
 **SSOT priority:** [`docs/product/SSOT.md`](docs/product/SSOT.md)  

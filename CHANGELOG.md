@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 5.4.0 — 2026-08-08
+
+- L3 Path A R0A train cut (multi-tool/bg, subagent/worker-cache, worktree dogfood) + optional live L3 matrix
+
 ## 5.3.0 — 2026-08-08
 
 - Spec 45 Path A Deep Code cut: public `deepseek-build`/`dsb` agent R0A multi-edit

@@ -1,17 +1,17 @@
-git_sha=33552fb5bf465b4b909d22c00b07a2b3ab483ed3
-cli=/Users/WooseongKim/Projects/deepseek-build/vc012-worktree-dogfood/target/release/deepseek-build
-dsb=/Users/WooseongKim/Projects/deepseek-build/vc012-worktree-dogfood/target/release/dsb
-agent_resolved=/Users/WooseongKim/.deepseek-build/bin/xai-grok-pager
+git_sha=96a9b3cb03ee5c2570146c6b0d96f49532fd35bc
+cli=/Users/WooseongKim/Projects/deepseek-build/vc013-5-4-cut/target/release/deepseek-build
+dsb=/Users/WooseongKim/Projects/deepseek-build/vc013-5-4-cut/target/release/dsb
+agent_resolved=/Users/WooseongKim/Projects/deepseek-build/vc013-5-4-cut/third_party/grok-build/target/release/xai-grok-pager
 DEEPSEEK_BUILD_AGENT_BIN_unset=yes
-DEEPSEEK_BUILD_HOME=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc012-r0a.7jKcCx/product-home
+DEEPSEEK_BUILD_HOME=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc012-r0a.o7qG3k/product-home
 scenario=worktree-headless-no-create
-scripted_base_url=http://127.0.0.1:59961
+scripted_base_url=http://127.0.0.1:64651
 agent_exit=0
-wire=/Users/WooseongKim/Projects/deepseek-build/vc012-worktree-dogfood/docs/product/evidence/PATH_A_R0_VC012_worktree-headless-no-create_WIRE_last.jsonl
+wire=/Users/WooseongKim/Projects/deepseek-build/vc013-5-4-cut/docs/product/evidence/PATH_A_R0_VC012_worktree-headless-no-create_WIRE_last.jsonl
 worktree_flag_name=vc012-headless-dogfood
 worktree_flag_source=product_top_level
 fixture_scenario=worker-cache-stamp
-repo=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc012-r0a.7jKcCx/repo
+repo=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc012-r0a.o7qG3k/repo
 claim_scope=headless_p_plus_product_worktree_no_git_worktree_create
 process_boundary_residual=interactive_tty_worktree_create_not_asserted
 wire_lines=6
@@ -31,13 +31,13 @@ l3_subagents_enabled_in_config=true
 l3_worktree_product=opt_in
 l3_bare_dsb_session=single
 worktree_list_before<<EOF
-worktree /private/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T/dsb-vc012-r0a.7jKcCx/repo
-HEAD 200c6df41f808fcb8321f9ad717c35b540166dd3
+worktree /private/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T/dsb-vc012-r0a.o7qG3k/repo
+HEAD dbbc2302ad3d2b95b8ee1a17562641c0c9c83476
 branch refs/heads/main
 EOF
 worktree_list_after<<EOF
-worktree /private/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T/dsb-vc012-r0a.7jKcCx/repo
-HEAD 200c6df41f808fcb8321f9ad717c35b540166dd3
+worktree /private/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T/dsb-vc012-r0a.o7qG3k/repo
+HEAD dbbc2302ad3d2b95b8ee1a17562641c0c9c83476
 branch refs/heads/main
 EOF
 agent_out_tail<<EOF

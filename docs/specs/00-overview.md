@@ -3,7 +3,8 @@
 Behavioral contracts for what DeepSeek Build **must** do when implemented.
 
 **Design spine:** [HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.md)  
-**Gates:** [GATES.md](../GATES.md)
+**Gates:** [GATES.md](../GATES.md)  
+**3.0.0 agent-path bind:** [HEART_3X_SPEC_BINDING.md](../architecture/HEART_3X_SPEC_BINDING.md) · [HEART_3X_P0_TEST_PLAN.md](../product/HEART_3X_P0_TEST_PLAN.md)
 
 ## Planned spec index
 

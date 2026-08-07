@@ -27,7 +27,7 @@
 |----|-------|---------------|------|-----------|
 | **G001** | PrepOnMain | 3x-P0-1 | `2.0.x` | Agent model `base_url` + pre-3x harness on `main`; T4.0 green |
 | **G002** | PlanOnMain | 3x-P0-2 | docs | WAVE_3x + this board + cold-start 3.0 on `main`; chain points here |
-| **G003** | SpecMap | 3x-H0-1, 3x-H0-2 | docs/spec | Spec binding map + red→green test plan for P0 hearts |
+| **G003** | SpecMap | 3x-H0-1, 3x-H0-2 | docs/spec | [HEART_3X_SPEC_BINDING.md](../architecture/HEART_3X_SPEC_BINDING.md) + [HEART_3X_P0_TEST_PLAN.md](./HEART_3X_P0_TEST_PLAN.md) |
 | **G004** | L1-Snippet | 3x-H1-1 | `3.0.0-alpha.N` | Spec 45 spirit enforced on default Grok edit path + tests |
 | **G005** | L1-Permissions | 3x-H1-2, 3x-H1-3 | alpha | Spec 90 matrix + dogfood evidence; H1 exit |
 | **G006** | L2-Prefix | 3x-H2-1 | `3.0.0-beta.N` | Prefix/epoch under agent context stack + tests |

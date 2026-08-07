@@ -265,7 +265,20 @@ Version: single SemVer in workspace (+ npm match when published).
 
 ---
 
-## 12. References
+## 12. Heart 3.x (Path A vs Path B)
+
+2.x ships the **Grok-derived full-screen agent** as the default `dsb` entry (Path A).  
+Thin crates (`dsb-agent` / `dsb-tools` / `dsb-context`) still own the **reference** Spec 45/90/10/15/20 implementations (Path B) but are **not** the default TUI tool path.
+
+**Normative binding for 3.0.0:** [HEART_3X_SPEC_BINDING.md](./HEART_3X_SPEC_BINDING.md)  
+**P0 red→green cases:** [HEART_3X_P0_TEST_PLAN.md](../product/HEART_3X_P0_TEST_PLAN.md)
+
+Until Path A enforces L1/L2 hearts, do not claim heart fusion complete ([PRD-v3.md](../product/PRD-v3.md)).
+
+---
+
+## 13. References
 
 - ADR 0004 toolchain · 0005 provider · 0006 CLI names + SemVer  
 - Specs 10, 15, 20, 30, 45, 90 (+ 40/50/60/70/80 later)  
+- Heart 3.x binding · test plan (links above)  

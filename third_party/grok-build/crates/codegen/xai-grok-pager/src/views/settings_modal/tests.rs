@@ -2291,8 +2291,8 @@ fn int_editing_value_click_on_value_text_is_noop() {
 #[test]
 fn picking_enum_esc_dispatches_preview_revert_for_each_key() {
     let cases: &[(&str, &str)] = &[
-        ("theme", "groknight"),
-        ("auto_dark_theme", "groknight"),
+        ("theme", "deepseeknight-v2"),
+        ("auto_dark_theme", "deepseeknight-v2"),
         ("auto_light_theme", "grokday"),
     ];
     for &(key, original) in cases {
@@ -2330,12 +2330,12 @@ fn picking_enum_esc_dispatches_preview_revert_for_each_key() {
 #[test]
 fn picking_enum_esc_returns_to_browse() {
     let mut s = make_state();
-    s.transition_to_picking_enum("theme", 0, SettingValue::Enum("groknight"), true);
+    s.transition_to_picking_enum("theme", 0, SettingValue::Enum("deepseeknight-v2"), true);
     let outcome = handle_settings_key(&mut s, &KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     match outcome {
         SettingsKeyOutcome::Action(Action::PreviewTheme(name)) => {
             assert_eq!(
-                name, "groknight",
+                name, "deepseeknight-v2",
                 "Esc revert must dispatch the original canonical"
             );
         }
@@ -6415,12 +6415,12 @@ fn click_settings_breadcrumb_collapses_picker_to_browse() {
     // For preview-supporting enums (theme), the breadcrumb-
     // click revert dispatches `Action::PreviewTheme(original)`.
     // The original canonical for the default theme is
-    // `"groknight"`. Tightened from the previous `Action(_) |
+    // `"deepseeknight-v2"`. Tightened from the previous `Action(_) |
     // Changed` to lock in the revert contract.
     match outcome {
         SettingsKeyOutcome::Action(Action::PreviewTheme(orig)) => {
             assert_eq!(
-                orig, "groknight",
+                orig, "deepseeknight-v2",
                 "breadcrumb-click revert must carry the original canonical",
             );
         }
@@ -6469,7 +6469,7 @@ fn click_settings_breadcrumb_ignores_close_on_picker_exit() {
     );
     match outcome {
         SettingsKeyOutcome::Action(Action::PreviewTheme(orig)) => {
-            assert_eq!(orig, "groknight");
+            assert_eq!(orig, "deepseeknight-v2");
         }
         other => panic!("expected preview revert Action, got {other:?}"),
     }
@@ -6574,11 +6574,10 @@ fn d_key_in_picking_enum_dispatches_open_reset_confirm() {
                 key, "theme",
                 "OpenResetConfirm key must be the active picker setting",
             );
-            // Default theme is `groknight`; entering the picker
-            // captures `original_value = current value = groknight`,
-            // so the revert dispatches with that canonical.
+            // Default theme is `deepseeknight-v2`; entering the picker
+            // captures original_value = current value = deepseeknight-v2.
             assert_eq!(
-                orig, "groknight",
+                orig, "deepseeknight-v2",
                 "PreviewTheme revert must carry the original canonical",
             );
         }
@@ -7161,6 +7160,7 @@ fn max_thoughts_width_preview_title_styling_distinguishes_from_content() {
         // Resolved via `Theme::current()` rather than a constructor
         // because `theme::oscura` is a private module.
         crate::theme::ThemeKind::OscuraMidnight => crate::theme::Theme::current(),
+        crate::theme::ThemeKind::DeepSeekNightV2 => crate::theme::Theme::deepseeknight_v2(),
         crate::theme::ThemeKind::DeepSeekNight => crate::theme::Theme::deepseeknight(),
         crate::theme::ThemeKind::DeepSeekNightNeutral => crate::theme::Theme::deepseeknight_neutral(),
         crate::theme::ThemeKind::Auto => crate::theme::Theme::groknight(),

@@ -74,8 +74,8 @@ pub fn find_agent_bin() -> Option<PathBuf> {
     None
 }
 
-/// Product default TUI theme (must match ThemeKind::DeepSeekNightNeutral display name).
-pub const PRODUCT_THEME: &str = "deepseeknight-neutral";
+/// Product default TUI theme (must match ThemeKind::DeepSeekNightV2 display name).
+pub const PRODUCT_THEME: &str = "deepseeknight-v2";
 /// Blue-tinted DeepSeek theme (original product skin; picker option 1).
 pub const PRODUCT_THEME_BLUE: &str = "deepseeknight";
 /// Env override for product theme name (passed as GROK_THEME to the agent).
@@ -321,7 +321,7 @@ fn escape_toml_basic(s: &str) -> String {
 /// First-launch theme picker (fresh product home + interactive tty only).
 ///
 /// Asks the user to choose between the blue-tinted `deepseeknight` skin and
-/// the default neutral `deepseeknight-neutral` skin. Returns the chosen
+/// the default measured `deepseeknight-v2` skin. Returns the chosen
 /// canonical name, or `None` when:
 /// - the home already has a `config.toml` (theme already chosen / configured)
 /// - stdin is not a terminal (scripted / CI launches)
@@ -367,7 +367,7 @@ fn prompt_first_launch_theme(home: &BuildHome) -> Option<&'static str> {
 fn picker_answer_to_theme(answer: &str) -> Option<&'static str> {
     match answer.trim() {
         "1" | PRODUCT_THEME_BLUE | "deepseek-night" | "dsb" => Some(PRODUCT_THEME_BLUE),
-        "2" | "" | PRODUCT_THEME | "deepseek-night-neutral" | "dsb-neutral" => Some(PRODUCT_THEME),
+        "2" | "" | PRODUCT_THEME | "deepseek-night-v2" | "deepseeknight-v2" | "dsb2" | "deepseek-night-neutral" | "dsb-neutral" => Some(PRODUCT_THEME),
         _ => None,
     }
 }
@@ -808,7 +808,7 @@ fn product_config_seed_contains_deepseek_defaults() {
     assert!(body.contains("chat_completions"));
     assert!(body.contains("DEEPSEEK_API_KEY"));
     assert!(
-        body.contains("theme = \"deepseeknight-neutral\""),
+        body.contains("theme = \"deepseeknight-v2\""),
         "seed missing neutral default theme: {body}"
     );
     // Spec 90 / G005: product default is not YOLO.
@@ -831,7 +831,7 @@ fn product_config_seed_contains_deepseek_defaults() {
     ensure_product_agent_config(&home).unwrap();
     let body2 = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
     assert!(body2.contains("keep=1"));
-    assert!(body2.contains("theme = \"deepseeknight-neutral\""));
+    assert!(body2.contains("theme = \"deepseeknight-v2\""));
     assert!(body2.contains("yolo = false"));
     // Repair also adds DeepSeek model blocks with base_url.
     assert!(body2.contains("[model.deepseek-v4-flash]"));

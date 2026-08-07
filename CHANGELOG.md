@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 5.1.0 — 2026-08-07
+
+### Changed
+- Default theme is now **DeepSeek Night v2**, a measured C-balanced palette:
+  six semantic hue families, zero hue collisions, and every text role at WCAG AA
+  or better on both the base and raised surfaces.
+- Hover and selection separate on different axes (lightness vs chroma).
+- Grok Night, classic DeepSeek Night, and DeepSeek Night Neutral are no longer
+  listed in theme pickers. Existing configs naming them keep working.
+
+### Fixed
+- Settings theme sheet now lists the shipped product theme, so users can switch
+  back without using `/theme`.
+- `oscura-midnight` renders as "Oscura Midnight" instead of a raw identifier.
+
 ## 5.0.1 — 2026-08-07
 
 - widen the DeepSeek whale logo to official terminal proportions

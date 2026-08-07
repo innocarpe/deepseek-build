@@ -1956,8 +1956,8 @@ fn defaults_round_trip_through_registry() {
             "remember_tool_approvals" => SettingValue::Bool(false),
             "toolset.ask_user_question.timeout_enabled" => SettingValue::Bool(true),
             "keep_text_selection" => SettingValue::Enum("flash"),
-            "theme" => SettingValue::Enum("groknight"),
-            "auto_dark_theme" => SettingValue::Enum("groknight"),
+            "theme" => SettingValue::Enum("deepseeknight-v2"),
+            "auto_dark_theme" => SettingValue::Enum("deepseeknight-v2"),
             "auto_light_theme" => SettingValue::Enum("grokday"),
             "render_mermaid" => SettingValue::Enum("auto"),
             "multiline_mode" => SettingValue::Bool(false),
@@ -7770,4 +7770,43 @@ fn collapsed_edit_blocks_renders_under_appearance_category_shell_owned() {
         "collapsed_edit_blocks must be immediately below group_tool_verbs; \
          Appearance order: {keys:?}"
     );
+}
+
+/// Regression: product default must appear in the settings theme picker.
+#[test]
+fn theme_picker_offers_the_product_default() {
+    let reg = SettingsRegistry::defaults();
+    let meta = reg.find("theme").expect("theme setting exists");
+    let SettingKind::Enum { default, choices, .. } = &meta.kind else {
+        panic!("theme must be an enum setting");
+    };
+    assert_eq!(*default, "deepseeknight-v2");
+    assert!(
+        choices.iter().any(|c| c.canonical == "deepseeknight-v2"),
+        "the default must be selectable in the picker"
+    );
+}
+
+#[test]
+fn every_theme_default_is_present_in_its_own_choice_list() {
+    let reg = SettingsRegistry::defaults();
+    for key in ["theme", "auto_dark_theme", "auto_light_theme"] {
+        let meta = reg.find(key).expect("setting exists");
+        let SettingKind::Enum { default, choices, .. } = &meta.kind else {
+            panic!("{key} must be an enum setting");
+        };
+        assert!(
+            choices.iter().any(|c| c.canonical == *default),
+            "{key}: default {default:?} is not in its own choice list"
+        );
+    }
+}
+
+#[test]
+fn a_retired_theme_stored_on_disk_still_applies() {
+    assert_eq!(
+        xai_grok_pager::theme::ThemeKind::from_name("groknight"),
+        Some(xai_grok_pager::theme::ThemeKind::GrokNight)
+    );
+    assert!(xai_grok_pager::theme::Theme::groknight().is_dark());
 }

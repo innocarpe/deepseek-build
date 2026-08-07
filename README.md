@@ -2,7 +2,7 @@
 
 <!-- Temporary hero source: deepseek-ai/DeepSeek-V2 figures/logo.svg, as used by DeepSeek-V3. -->
 <a href="https://github.com/deepseek-ai/DeepSeek-V3">
-  <img src="docs/assets/readme/deepseek-logo.svg" width="60%" alt="DeepSeek logo">
+  <img src="assets/deepseek-logo.svg" width="60%" alt="DeepSeek logo">
 </a>
 
 <h1>DeepSeek Build</h1>
@@ -29,6 +29,10 @@
 </p>
 
 </div>
+
+<p align="center">
+  <img src="assets/deepseek-build-welcome.png" alt="DeepSeek Build welcome screen — the full-screen DeepSeek agent TUI opened by dsb" width="85%">
+</p>
 
 > [!NOTE]
 > **Product status:** the `5.x` line is the owner-bar-complete product. The

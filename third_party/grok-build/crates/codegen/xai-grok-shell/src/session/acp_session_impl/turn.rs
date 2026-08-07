@@ -705,7 +705,7 @@ impl SessionActor {
         }
         self.drain_between_turn_completions().await;
         self.inject_workflow_status_reminder().await;
-        let user_message = if user_images.is_empty() {
+        let user_message = if user_images.is_empty() && extra_images.is_empty() {
             user_message
         } else if self.is_cursor_harness() {
             self.transcribe_user_images(user_message, &user_images)
@@ -716,9 +716,15 @@ impl SessionActor {
                     id: self.session_info.id.clone(),
                     cwd: self.session_info.cwd.clone(),
                 });
+            // Persist pasted images AND base64 images extracted from the query
+            // text. Text-only backends (official DeepSeek) cannot receive
+            // `image_url` blocks, so the on-disk paths prepended below are the
+            // only way the agent can still read/OCR the images with its tools.
+            let mut persisted_images = user_images.clone();
+            persisted_images.extend(extra_images.iter().cloned());
             crate::session::image_describe::persist_and_prepend_image_files(
                 &session_dir,
-                &user_images,
+                &persisted_images,
                 &user_message,
             )
             .map_err(|e| {

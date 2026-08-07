@@ -16,6 +16,7 @@ pub mod resources;
 pub mod schema;
 pub mod session_mode;
 pub mod skill_discovery_tracker;
+pub mod snippet_store;
 pub mod template_renderer;
 pub mod tool;
 pub mod tool_index;
@@ -33,5 +34,8 @@ pub use memory_backend::MemoryBackend;
 pub use process_manager::{KillOutcome, TaskSnapshot, format_system_time_rfc3339};
 pub use schema::GrokIntegerSchema;
 pub use session_mode::SessionMode;
+pub use snippet_store::{
+    SessionSnippet, SessionSnippetStore, is_valid_snippet_id, new_snippet_id, snippet_line_range,
+};
 pub use tool_index::{SearchSnapshot, ServerSummary, ToolIndex, ToolSearchIndex, ToolSearchResult};
 pub use tool_io::{MCPToolInput, ToolInput};

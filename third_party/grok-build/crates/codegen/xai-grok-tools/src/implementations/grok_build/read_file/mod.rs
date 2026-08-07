@@ -18,6 +18,9 @@ use crate::types::resources::{
     Cwd, DisplayCwd, FileSystem, GitignoreFilter, PathNotFoundHints, RespectGitignore,
     SharedResources, TruncationCfg, display_cwd_or_cwd, resolve_model_path,
 };
+use crate::types::snippet_store::{
+    SessionSnippet, SessionSnippetStore, is_valid_snippet_id, snippet_line_range,
+};
 use crate::types::template_renderer::TemplateRenderer;
 use crate::types::tool::{ToolKind, ToolNamespace};
 use std::sync::LazyLock;
@@ -461,26 +464,55 @@ pub(crate) async fn run_read_file(
         )));
     }
     // Owner-bar / Spec 45: mint full-file sha256 at read time (Path A).
+    // `file_version` remains the compatibility alias of snippet record `version`.
     let file_version = {
         use sha2::{Digest, Sha256};
         let mut h = Sha256::new();
         h.update(&file_bytes);
         Some(format!("{:x}", h.finalize()))
     };
-    let file_content = String::from_utf8_lossy(&file_bytes).into_owned();
+    // ADR 0010 / VC003: only **successful UTF-8** text is snippet-mint eligible.
+    // Invalid UTF-8 may still be shown via lossy decode for read UX, but must
+    // not receive a snippet_id (no silent mojibake edit contract).
+    let utf8_ok = std::str::from_utf8(&file_bytes).is_ok();
+    let file_content = if utf8_ok {
+        // SAFETY: just validated.
+        String::from_utf8(file_bytes).expect("utf-8 validated")
+    } else {
+        String::from_utf8_lossy(&file_bytes).into_owned()
+    };
     if file_content.is_empty() {
         let stored_offset = stored_read_offset(input.offset);
-        return Ok(ReadFileOutput::FileContent(FileContent {
-            content: String::new(),
-            content_concise: None,
-            absolute_path: path,
-            offset: stored_offset,
-            limit: input.limit,
-            raw_output: String::new(),
-            total_lines: 0,
-            extracted_images: Vec::new(),
-            file_version,
-        }));
+        let snippet = if utf8_ok {
+            Some(
+                mint_session_snippet(
+                    &resources,
+                    &path,
+                    file_version.as_deref().unwrap_or(""),
+                    0,
+                    stored_offset,
+                    input.limit,
+                    "",
+                )
+                .await,
+            )
+        } else {
+            None
+        };
+        return Ok(ReadFileOutput::FileContent(
+            file_content_with_optional_snippet(
+                String::new(),
+                None,
+                path,
+                stored_offset,
+                input.limit,
+                String::new(),
+                0,
+                Vec::new(),
+                file_version,
+                snippet,
+            ),
+        ));
     }
     let total_lines = file_content.matches('\n').count() + 1;
     let max_lines = {
@@ -503,6 +535,10 @@ pub(crate) async fn run_read_file(
         effective_limit,
         total_lines,
     );
+    // Capture whether the *effective* window returned any lines *before*
+    // cursor-rules append can make `content` non-empty. Past-EOF / zero
+    // windows must not mint (snippet range must match delivered text).
+    let window_returned_lines = !extracted.content.is_empty();
     let token_count = crate::util::truncate::estimate_tokens(&extracted.content);
     if !is_skill_markdown && token_count > MAX_NUM_TOKENS {
         let (grep_name, execute_name);
@@ -572,17 +608,111 @@ pub(crate) async fn run_read_file(
         &mut content_concise,
     )
     .await;
-    Ok(ReadFileOutput::FileContent(FileContent {
+    // VC003 / ADR 0010 §4: mint session-local snippet_id only for valid UTF-8
+    // text that actually returned a line window. Range must match the same
+    // effective window as `extract_file_content_lines` (incl. max_lines_read
+    // cap and resolved negative offsets) — not raw stored_limit / input.limit.
+    // FileContent.offset/limit stay the compatibility wire fields (unchanged).
+    let raw_output = extracted.raw_output;
+    let snippet = if utf8_ok && window_returned_lines {
+        // Same start resolution as extract_file_content_lines.
+        let start_line = resolve_read_start_line(&file_content, effective_offset);
+        Some(
+            mint_session_snippet(
+                &resources,
+                &path,
+                file_version.as_deref().unwrap_or(""),
+                total_lines,
+                Some(start_line),
+                // None = skill full-read (whole file from start); Some = capped window.
+                effective_limit,
+                &raw_output,
+            )
+            .await,
+        )
+    } else {
+        // invalid UTF-8, past-EOF, or zero-line window → no snippet_id
+        None
+    };
+    Ok(ReadFileOutput::FileContent(
+        file_content_with_optional_snippet(
+            content,
+            content_concise,
+            path,
+            stored_offset,
+            stored_limit,
+            raw_output,
+            total_lines,
+            extracted_images,
+            file_version,
+            snippet,
+        ),
+    ))
+}
+
+/// Mint into the **session** `Resources` bag behind `SharedResources`.
+/// Callers must only invoke this for successful UTF-8 text reads with a
+/// non-empty returned window. `range_start` / `range_limit` describe that
+/// effective window (1-based start; `None` limit = to end of file).
+async fn mint_session_snippet(
+    resources: &SharedResources,
+    path: &std::path::Path,
+    version: &str,
+    total_lines: usize,
+    range_start: Option<usize>,
+    range_limit: Option<usize>,
+    scope_preview: &str,
+) -> SessionSnippet {
+    let (start_line, end_line) = snippet_line_range(total_lines, range_start, range_limit);
+    let mut res = resources.lock().await;
+    // Per-session store only — inserted on this Resources instance, never static.
+    let store = res.get_or_default::<SessionSnippetStore>();
+    store.issue(
+        path,
+        start_line,
+        end_line,
+        version.to_string(),
+        scope_preview,
+        total_lines,
+    )
+}
+
+fn file_content_with_optional_snippet(
+    content: String,
+    content_concise: Option<String>,
+    absolute_path: std::path::PathBuf,
+    offset: Option<usize>,
+    limit: Option<usize>,
+    raw_output: String,
+    total_lines: usize,
+    extracted_images: Vec<crate::util::base64_images::ExtractedImage>,
+    file_version: Option<String>,
+    snippet: Option<SessionSnippet>,
+) -> FileContent {
+    let (snippet_id, snippet_start_line, snippet_end_line, snippet_scope) = match snippet {
+        Some(s) => (
+            Some(s.snippet_id),
+            Some(s.start_line),
+            Some(s.end_line),
+            Some(s.scope),
+        ),
+        None => (None, None, None, None),
+    };
+    FileContent {
         content,
         content_concise,
-        absolute_path: path,
-        offset: stored_offset,
-        limit: stored_limit,
-        raw_output: extracted.raw_output,
+        absolute_path,
+        offset,
+        limit,
+        raw_output,
         total_lines,
         extracted_images,
         file_version,
-    }))
+        snippet_id,
+        snippet_start_line,
+        snippet_end_line,
+        snippet_scope,
+    }
 }
 /// New-architecture `ReadFile` tool.
 ///
@@ -733,8 +863,9 @@ mod tests {
     use crate::implementations::read_file::MAX_PDF_BYTES;
     use crate::implementations::read_file::compress_image_for_conversation;
     use crate::notification::types::ToolNotificationHandle;
+    use crate::types::context::TruncationConfig;
     #[allow(unused_imports)]
-    use crate::types::resources::{NotificationHandle, Resources};
+    use crate::types::resources::{NotificationHandle, Resources, TruncationCfg};
     use crate::types::tool_metadata::test_ctx;
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -744,6 +875,14 @@ mod tests {
         resources.insert(Cwd(cwd.to_path_buf()));
         resources.insert(FileSystem(Arc::new(LocalFs)));
         resources.insert(NotificationHandle(ToolNotificationHandle::noop()));
+        resources
+    }
+    fn test_resources_with_max_lines(cwd: &std::path::Path, max_lines: usize) -> Resources {
+        let mut resources = test_resources(cwd);
+        resources.insert(TruncationCfg(TruncationConfig {
+            max_lines_read: Some(max_lines),
+            ..Default::default()
+        }));
         resources
     }
     #[tokio::test]
@@ -863,6 +1002,437 @@ mod tests {
                 );
             }
             other => panic!("Expected FileContent, got {other:?}"),
+        }
+    }
+
+    /// VC003-A1/A4/A6: successful text read mints snippet_id + keeps file_version.
+    #[tokio::test]
+    async fn vc003_current_read_file_mints_snippet_id() {
+        use sha2::{Digest, Sha256};
+        let tmp = TempDir::new().unwrap();
+        let body = b"vc003 mint body\nline2\n";
+        std::fs::write(tmp.path().join("mint.txt"), body).unwrap();
+        let mut h = Sha256::new();
+        h.update(body);
+        let expected_ver = format!("{:x}", h.finalize());
+        let tool = ReadFileTool;
+        let shared = test_resources(tmp.path()).into_shared();
+        let input = ReadFileInput {
+            path: "mint.txt".to_string(),
+            offset: None,
+            limit: None,
+            pages: None,
+            format: None,
+        };
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(shared.clone()), input)
+            .await
+            .unwrap();
+        match result {
+            ReadFileOutput::FileContent(fc) => {
+                let id = fc
+                    .snippet_id
+                    .as_deref()
+                    .expect("snippet_id must be minted on text read");
+                assert!(
+                    is_valid_snippet_id(id),
+                    "ADR 0010 requires snp_ + Crockford ULID; got {id}"
+                );
+                let suffix = id.strip_prefix("snp_").expect("snp_");
+                assert_eq!(suffix.len(), 26, "got {id}");
+                assert!(
+                    suffix.bytes().all(|b| {
+                        crate::types::snippet_store::CROCKFORD_ALPHABET
+                            .as_bytes()
+                            .contains(&b)
+                    }),
+                    "suffix must be Crockford-only; got {id}"
+                );
+                assert_eq!(fc.file_version.as_deref(), Some(expected_ver.as_str()));
+                assert_eq!(fc.snippet_scope.as_deref(), Some("whole_file"));
+                assert_eq!(fc.snippet_start_line, Some(1));
+                let prompt = crate::types::output::ToolOutput::ReadFile(
+                    ReadFileOutput::FileContent(fc.clone()),
+                )
+                .to_prompt_format();
+                assert!(
+                    prompt.contains(&format!("snippet_id: {id}")),
+                    "model-visible prompt must include snippet_id; got: {prompt}"
+                );
+                assert!(
+                    prompt.contains(&format!("file_version: {expected_ver}")),
+                    "model-visible prompt must keep file_version; got: {prompt}"
+                );
+                let res = shared.lock().await;
+                let store = res
+                    .get::<SessionSnippetStore>()
+                    .expect("session store after mint");
+                assert!(store.contains(id));
+                let rec = store.get(id).unwrap();
+                assert_eq!(rec.version, expected_ver);
+            }
+            other => panic!("Expected FileContent, got {other:?}"),
+        }
+    }
+
+    /// VC003-A2: repeated reads mint distinct snippet IDs.
+    #[tokio::test]
+    async fn vc003_repeated_reads_mint_distinct_snippet_ids() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("a.txt"), b"same body\n").unwrap();
+        let tool = ReadFileTool;
+        let shared = test_resources(tmp.path()).into_shared();
+        let mk_input = || ReadFileInput {
+            path: "a.txt".to_string(),
+            offset: None,
+            limit: None,
+            pages: None,
+            format: None,
+        };
+        let r1 = xai_tool_runtime::Tool::run(&tool, test_ctx(shared.clone()), mk_input())
+            .await
+            .unwrap();
+        let r2 = xai_tool_runtime::Tool::run(&tool, test_ctx(shared.clone()), mk_input())
+            .await
+            .unwrap();
+        let id1 = match r1 {
+            ReadFileOutput::FileContent(fc) => fc.snippet_id.expect("id1"),
+            other => panic!("expected FileContent: {other:?}"),
+        };
+        let id2 = match r2 {
+            ReadFileOutput::FileContent(fc) => fc.snippet_id.expect("id2"),
+            other => panic!("expected FileContent: {other:?}"),
+        };
+        assert_ne!(id1, id2);
+        let res = shared.lock().await;
+        let store = res.get::<SessionSnippetStore>().unwrap();
+        assert_eq!(store.len(), 2);
+        assert!(store.contains(&id1) && store.contains(&id2));
+    }
+
+    /// VC003-A3: separate Resources sessions do not share snippet tables.
+    #[tokio::test]
+    async fn vc003_snippet_store_is_session_local_not_process_global() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("a.txt"), b"body\n").unwrap();
+        let tool = ReadFileTool;
+        let session_a = test_resources(tmp.path()).into_shared();
+        let session_b = test_resources(tmp.path()).into_shared();
+        let input = ReadFileInput {
+            path: "a.txt".to_string(),
+            offset: None,
+            limit: None,
+            pages: None,
+            format: None,
+        };
+        let r = xai_tool_runtime::Tool::run(&tool, test_ctx(session_a.clone()), input)
+            .await
+            .unwrap();
+        let id = match r {
+            ReadFileOutput::FileContent(fc) => fc.snippet_id.expect("id"),
+            other => panic!("expected FileContent: {other:?}"),
+        };
+        {
+            let res = session_a.lock().await;
+            assert!(res.get::<SessionSnippetStore>().unwrap().contains(&id));
+        }
+        {
+            let res = session_b.lock().await;
+            assert!(
+                res.get::<SessionSnippetStore>().is_none()
+                    || !res.get::<SessionSnippetStore>().unwrap().contains(&id),
+                "session B must not see session A snippet ids"
+            );
+        }
+    }
+
+    /// VC003-A5: not-found path remains structured error without snippet_id mint.
+    #[tokio::test]
+    async fn vc003_not_found_does_not_mint_snippet_id() {
+        let tmp = TempDir::new().unwrap();
+        let tool = ReadFileTool;
+        let shared = test_resources(tmp.path()).into_shared();
+        let input = ReadFileInput {
+            path: "missing-vc003.txt".to_string(),
+            offset: None,
+            limit: None,
+            pages: None,
+            format: None,
+        };
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(shared.clone()), input)
+            .await
+            .unwrap();
+        match result {
+            ReadFileOutput::FileNotFound(_) => {}
+            other => panic!("Expected FileNotFound, got {other:?}"),
+        }
+        let res = shared.lock().await;
+        assert!(
+            res.get::<SessionSnippetStore>().is_none()
+                || res.get::<SessionSnippetStore>().unwrap().is_empty(),
+            "failed reads must not leave snippet ids"
+        );
+    }
+
+    /// VC003: invalid UTF-8 text path does not mint (ADR encoding fail-closed).
+    #[tokio::test]
+    async fn vc003_invalid_utf8_does_not_mint_snippet_id() {
+        let tmp = TempDir::new().unwrap();
+        // Not binary (no NUL / low control ratio) but invalid UTF-8 sequence.
+        let bytes = b"hello\xffworld\n";
+        std::fs::write(tmp.path().join("bad.txt"), bytes).unwrap();
+        let tool = ReadFileTool;
+        let shared = test_resources(tmp.path()).into_shared();
+        let input = ReadFileInput {
+            path: "bad.txt".to_string(),
+            offset: None,
+            limit: None,
+            pages: None,
+            format: None,
+        };
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(shared.clone()), input)
+            .await
+            .unwrap();
+        match result {
+            ReadFileOutput::FileContent(fc) => {
+                assert!(
+                    fc.snippet_id.is_none(),
+                    "invalid UTF-8 must not mint snippet_id; got {:?}",
+                    fc.snippet_id
+                );
+                // Owner-bar hash alias may still be present (content versioning).
+                assert!(fc.file_version.is_some());
+            }
+            other => panic!("expected FileContent (lossy read), got {other:?}"),
+        }
+        let res = shared.lock().await;
+        assert!(
+            res.get::<SessionSnippetStore>().is_none()
+                || res.get::<SessionSnippetStore>().unwrap().is_empty()
+        );
+    }
+
+    /// VC003-A5: binary rejection has no FileContent snippet_id.
+    #[tokio::test]
+    async fn vc003_binary_read_does_not_mint_snippet_id() {
+        let tmp = TempDir::new().unwrap();
+        // High ratio of NUL bytes → content inspection binary reject (not image).
+        let bytes = vec![0u8; 128];
+        std::fs::write(tmp.path().join("blob.dat"), &bytes).unwrap();
+        let tool = ReadFileTool;
+        let shared = test_resources(tmp.path()).into_shared();
+        let input = ReadFileInput {
+            path: "blob.dat".to_string(),
+            offset: None,
+            limit: None,
+            pages: None,
+            format: None,
+        };
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(shared.clone()), input)
+            .await
+            .unwrap();
+        match result {
+            ReadFileOutput::FileReadError(msg) => {
+                assert!(
+                    msg.contains("binary") || msg.contains("Cannot read"),
+                    "got: {msg}"
+                );
+            }
+            ReadFileOutput::FileContent(fc) => {
+                panic!("binary must not yield text FileContent with snippet; got {fc:?}");
+            }
+            other => panic!("unexpected binary outcome: {other:?}"),
+        }
+        let res = shared.lock().await;
+        assert!(
+            res.get::<SessionSnippetStore>().is_none()
+                || res.get::<SessionSnippetStore>().unwrap().is_empty()
+        );
+    }
+
+    /// Default max_lines_read truncation: mint range is capped, scope=`lines`.
+    #[tokio::test]
+    async fn vc003_default_max_lines_truncation_records_capped_range() {
+        let tmp = TempDir::new().unwrap();
+        let body: String = (1..=20).map(|i| format!("line{i}\n")).collect();
+        std::fs::write(tmp.path().join("big.txt"), &body).unwrap();
+        let tool = ReadFileTool;
+        let max_lines = 5usize;
+        let shared = test_resources_with_max_lines(tmp.path(), max_lines).into_shared();
+        let input = ReadFileInput {
+            path: "big.txt".to_string(),
+            offset: None,
+            limit: None, // product default → effective_limit = max_lines
+            pages: None,
+            format: None,
+        };
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(shared.clone()), input)
+            .await
+            .unwrap();
+        match result {
+            ReadFileOutput::FileContent(fc) => {
+                // Compatibility fields: omit still means no wire limit.
+                assert!(fc.limit.is_none());
+                assert!(fc.snippet_id.is_some());
+                assert_eq!(fc.snippet_start_line, Some(1));
+                assert_eq!(fc.snippet_end_line, Some(max_lines));
+                assert_eq!(fc.snippet_scope.as_deref(), Some("lines"));
+                assert!(fc.file_version.is_some());
+                let res = shared.lock().await;
+                let snip = res
+                    .get::<SessionSnippetStore>()
+                    .unwrap()
+                    .get(fc.snippet_id.as_deref().unwrap())
+                    .unwrap();
+                assert_eq!(snip.end_line, max_lines);
+                assert_eq!(snip.scope, "lines");
+            }
+            other => panic!("expected FileContent, got {other:?}"),
+        }
+    }
+
+    /// Explicit offset+limit records the exact inclusive range.
+    #[tokio::test]
+    async fn vc003_explicit_offset_limit_records_exact_range() {
+        let tmp = TempDir::new().unwrap();
+        let body: String = (1..=10).map(|i| format!("L{i}\n")).collect();
+        std::fs::write(tmp.path().join("win.txt"), &body).unwrap();
+        let tool = ReadFileTool;
+        let shared = test_resources(tmp.path()).into_shared();
+        let input = ReadFileInput {
+            path: "win.txt".to_string(),
+            offset: Some(3),
+            limit: Some(2),
+            pages: None,
+            format: None,
+        };
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(shared), input)
+            .await
+            .unwrap();
+        match result {
+            ReadFileOutput::FileContent(fc) => {
+                assert_eq!(fc.offset, Some(3));
+                assert_eq!(fc.limit, Some(2));
+                assert_eq!(fc.snippet_start_line, Some(3));
+                assert_eq!(fc.snippet_end_line, Some(4));
+                assert_eq!(fc.snippet_scope.as_deref(), Some("lines"));
+                assert!(fc.snippet_id.is_some());
+            }
+            other => panic!("expected FileContent, got {other:?}"),
+        }
+    }
+
+    /// Negative offset: mint start uses resolve_read_start_line (actual 1-based line).
+    #[tokio::test]
+    async fn vc003_negative_offset_records_resolved_start() {
+        let tmp = TempDir::new().unwrap();
+        // 5 lines with trailing newline → resolve(-2) = 5 (see resolve_read_start_line tests).
+        std::fs::write(tmp.path().join("neg.txt"), b"a\nb\nc\nd\ne\n").unwrap();
+        let expected_start = resolve_read_start_line("a\nb\nc\nd\ne\n", Some(-2));
+        assert_eq!(expected_start, 5);
+        let tool = ReadFileTool;
+        let shared = test_resources(tmp.path()).into_shared();
+        let input = ReadFileInput {
+            path: "neg.txt".to_string(),
+            offset: Some(-2),
+            limit: Some(2),
+            pages: None,
+            format: None,
+        };
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(shared), input)
+            .await
+            .unwrap();
+        match result {
+            ReadFileOutput::FileContent(fc) => {
+                // Compatibility: negatives are not stored as FileContent.offset.
+                assert_eq!(fc.offset, None);
+                assert_eq!(
+                    fc.snippet_start_line,
+                    Some(expected_start),
+                    "mint start must use resolve_read_start_line, not wire None"
+                );
+                let end = fc.snippet_end_line.expect("end");
+                assert!(
+                    end >= expected_start,
+                    "end_line {end} < start {expected_start}"
+                );
+                assert!(fc.snippet_id.is_some());
+            }
+            other => panic!("expected FileContent, got {other:?}"),
+        }
+    }
+
+    /// Past-EOF / empty window: no snippet mint; file_version still present.
+    #[tokio::test]
+    async fn vc003_past_eof_does_not_mint_snippet() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("short.txt"), b"only\nthree\nlines\n").unwrap();
+        let tool = ReadFileTool;
+        let shared = test_resources(tmp.path()).into_shared();
+        let input = ReadFileInput {
+            path: "short.txt".to_string(),
+            offset: Some(100),
+            limit: Some(10),
+            pages: None,
+            format: None,
+        };
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(shared.clone()), input)
+            .await
+            .unwrap();
+        match result {
+            ReadFileOutput::FileContent(fc) => {
+                assert!(
+                    fc.content.is_empty()
+                        || fc.content.contains("no lines")
+                        || fc.raw_output.is_empty(),
+                    "past-EOF should return no lines; got content={:?}",
+                    fc.content
+                );
+                assert!(
+                    fc.snippet_id.is_none(),
+                    "past-EOF must not mint; got {:?}",
+                    fc.snippet_id
+                );
+                assert_eq!(fc.snippet_start_line, None);
+                assert_eq!(fc.snippet_end_line, None);
+                assert!(fc.file_version.is_some(), "file_version kept");
+            }
+            other => panic!("expected FileContent, got {other:?}"),
+        }
+        let res = shared.lock().await;
+        assert!(
+            res.get::<SessionSnippetStore>().is_none()
+                || res.get::<SessionSnippetStore>().unwrap().is_empty()
+        );
+    }
+
+    /// Empty UTF-8 file still mints whole_file scope (documented policy).
+    #[tokio::test]
+    async fn vc003_empty_utf8_file_mints_whole_file_snippet() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("empty.txt"), b"").unwrap();
+        let tool = ReadFileTool;
+        let shared = test_resources(tmp.path()).into_shared();
+        let input = ReadFileInput {
+            path: "empty.txt".to_string(),
+            offset: None,
+            limit: None,
+            pages: None,
+            format: None,
+        };
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(shared), input)
+            .await
+            .unwrap();
+        match result {
+            ReadFileOutput::FileContent(fc) => {
+                assert_eq!(fc.total_lines, 0);
+                assert!(fc.snippet_id.is_some());
+                assert!(is_valid_snippet_id(fc.snippet_id.as_deref().unwrap()));
+                assert_eq!(fc.snippet_start_line, Some(1));
+                assert_eq!(fc.snippet_end_line, Some(1));
+                assert_eq!(fc.snippet_scope.as_deref(), Some("whole_file"));
+                assert!(fc.file_version.is_some());
+            }
+            other => panic!("expected FileContent, got {other:?}"),
         }
     }
     #[tokio::test]

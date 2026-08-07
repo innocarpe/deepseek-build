@@ -28,6 +28,7 @@ dsb-provider-deepseek = { path = "../dsb-provider-deepseek" }
 dsb-tools = { path = "../dsb-tools" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util"] }
 anyhow = "1"
+serde_json = "1"
 
 [dev-dependencies]
 tempfile = "3"

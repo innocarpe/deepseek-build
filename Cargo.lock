@@ -321,6 +321,7 @@ dependencies = [
  "dsb-context",
  "dsb-provider-deepseek",
  "dsb-tools",
+ "serde_json",
  "tempfile",
  "tokio",
 ]

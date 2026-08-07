@@ -5,7 +5,7 @@
 | **Story** | **VC012** — public **Path A** worktree dogfood + bare `deepseek-build`/`dsb` session honesty (vision **V3-WT**) |
 | **Plan** | `vision-complete-5x` |
 | **Date** | 2026-08-08 |
-| **Status** | **PLAN** (implementation follows this commit) |
+| **Status** | **READY** — Path A worktree CLI dogfood + opt-in stamp + headless no-create green; gates green; unversioned; stacked on #143 |
 | **SemVer** | **none** (this story does **not** bump product version) |
 | **Depends on** | **VC011** subagent + worker cache Path A R0A (open PR **#143** `vc011-subagent-worker-cache`) |
 | **Board** | [`VISION_COMPLETE_5X_GOALS.md`](../VISION_COMPLETE_5X_GOALS.md) · DAG [`WAVE_5x_VISION_PR_DAG.md`](../WAVE_5x_VISION_PR_DAG.md) |
@@ -199,42 +199,73 @@ Restore any generated TSV side-effects to HEAD if gates rewrite them. Clean vend
 
 ## 6. READY evidence
 
-**Status: PLAN** — fill after implementation.
+**Status: READY** (implementation complete; independent review file sibling).
 
 ### 6.1 Commands
 
 | Command | Result |
 |---------|--------|
-| `./scripts/test-path-a-vc012-r0a.sh` | pending |
-| `./scripts/check-path-a-linkage.sh` | pending |
-| `./scripts/test-owner-bar.sh` | pending |
-| `./scripts/test-heart-regression.sh` | pending |
-| SemVer on branch | **`5.3.0`** (must stay) |
+| `./scripts/test-path-a-vc012-r0a.sh --skip-build` | **PASS** (worktree-cli-surface, worktree-opt-in-stamp, worktree-headless-no-create) |
+| `cargo test -p dsb-cli tui_forward_flags_worktree` | **PASS** (support) |
+| `cargo test -p dsb-cli reject_worktree_flags_on_line_mode` | **PASS** (support) |
+| `cargo test -p dsb-cli stamp_path_a_l3` | **PASS** (support) |
+| `./scripts/check-path-a-linkage.sh` | **PASS** |
+| `./scripts/test-owner-bar.sh` | **PASS** (60/60; TSV side-effect restored) |
+| `./scripts/test-heart-regression.sh` | **PASS** (PATH_A_E2E SKIP default; L3 offline PASS) |
+| SemVer on branch | **`5.3.0`** unchanged (no bump) |
 
-### 6.2 Artifacts (planned)
+### 6.2 Wire + stamp sample
+
+| Scenario | Proof |
+|----------|-------|
+| `worktree-cli-surface` | Product `--help` lists `--worktree`; `agent -- --help` lists agent worktree flags; `agent worktree --help` + `list --json` via `deepseek-build` and `dsb` |
+| `worktree-opt-in-stamp` | Public `-p` launch writes `path_a_l3` with `worktree_product=opt_in` + `bare_dsb_session=single` + `worker_epochs_match=true` |
+| `worktree-headless-no-create` | Public `-p --worktree=vc012-headless-dogfood` completes scripted turn; git worktree count unchanged; name not present |
+
+Artifacts:
 
 | Path | Role |
 |------|------|
-| `PATH_A_R0_VC012_worktree-cli-surface_META_last.txt` | Public CLI worktree help/list |
-| `PATH_A_R0_VC012_worktree-opt-in-stamp_{WIRE,META}_last.*` | Stamp honesty from public launch |
-| `PATH_A_R0_VC012_worktree-headless-no-create_{WIRE,META}_last.*` | Headless no-create proof |
-| `PATH_A_R0_VC012_L3_last.txt` | L3 stamp sample |
-| `VC012_INDEPENDENT_REVIEW_2026-08-08.md` | Independent review |
+| [`PATH_A_R0_VC012_worktree-cli-surface_META_last.txt`](./PATH_A_R0_VC012_worktree-cli-surface_META_last.txt) | Public CLI worktree help/list |
+| [`PATH_A_R0_VC012_worktree-opt-in-stamp_WIRE_last.jsonl`](./PATH_A_R0_VC012_worktree-opt-in-stamp_WIRE_last.jsonl) + META | Stamp honesty from public launch |
+| [`PATH_A_R0_VC012_worktree-headless-no-create_WIRE_last.jsonl`](./PATH_A_R0_VC012_worktree-headless-no-create_WIRE_last.jsonl) + META | Headless no-create proof |
+| [`PATH_A_R0_VC012_L3_last.txt`](./PATH_A_R0_VC012_L3_last.txt) | L3 stamp sample |
+| [`VC012_INDEPENDENT_REVIEW_2026-08-08.md`](./VC012_INDEPENDENT_REVIEW_2026-08-08.md) | Independent review |
 
-### 6.3 Explicit residuals at PLAN time
+Path A L3 stamp sample:
 
-- Interactive TTY worktree create not sole Path A claim.
-- Optional `spawn_subagent` `isolation=worktree` live create remains residual (not mandatory).
+```text
+worker_epochs_match=true
+subagents_enabled_in_config=true
+worktree_product=opt_in
+bare_dsb_session=single
+```
+
+### 6.3 What shipped
+
+1. Product CLI **`--worktree` / `-w` / `--worktree-ref`** forward on bare TTY + `agent` paths (opt-in; rejected on line-mode).
+2. Public R0A harness `scripts/test-path-a-vc012-r0a.sh` (three scenarios).
+3. User-guide **13** + **KNOWN_LIMITS** honesty: bare single-session; headless no-create; implement workers not forced into worktree isolation.
+4. Honest non-claims: no SemVer, no interactive TTY create sole green, no mandatory implement worktree, no **5.4.0** cut.
+
+### 6.4 Explicit residuals at READY
+
+- Interactive TTY worktree **create** success is not the sole Path A claim (flag forwarding + docs + headless honesty are).
+- Optional `spawn_subagent` `isolation=worktree` live create remains residual (Spec 60: not mandatory).
 - SemVer **5.4.0** → **VC013**.
 - V3-60-3 Path A parent snippet expire residual stays from VC011.
+
+### 6.5 Independent review
+
+See [`VC012_INDEPENDENT_REVIEW_2026-08-08.md`](./VC012_INDEPENDENT_REVIEW_2026-08-08.md).
 
 ---
 
 ## 7. Stack / PR open checklist
 
 - [x] Branch `vc012-worktree-dogfood` based on `vc011-subagent-worker-cache`
-- [ ] First commit = this plan (before source edits)
-- [ ] Atomic commits as §3 (plus READY docs)
+- [x] First commit = this plan (before source edits)
+- [x] Atomic commits as §3 (plus READY docs)
 - [ ] `gh pr create --base vc011-subagent-worker-cache` with **English** body + labels (`test` or `docs` + area label)
 - [ ] Body includes **Depends on #143**
 - [ ] `gh pr view --json title,labels,url` shows ≥1 kind label

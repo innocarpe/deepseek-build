@@ -466,15 +466,13 @@ impl MvpAgent {
             plugin_registry: self.plugin_registry_handle.snapshot(),
             models_manager: self.models_manager.clone(),
             file_tool_overrides: {
+                // Owner-bar G004: Standard must also apply snippet_safe configs
+                // (same dead-wiring fix as agent_ops Path A default path).
                 let cfg = self.cfg.borrow();
                 let effective = cfg
                     .toolset
                     .resolve_file_toolset(cfg.remote_settings.as_ref());
-                if effective != crate::tools::FileToolset::Standard {
-                    effective.tool_configs(&cfg.toolset.hashline).ok()
-                } else {
-                    None
-                }
+                effective.tool_configs(&cfg.toolset.hashline).ok()
             },
             gcs_bucket_url,
             agent_config: Some(self.cfg.borrow().clone()),

@@ -292,9 +292,13 @@ This plan document is “working” when:
 - [x] [WAVE_4x_PR_DAG.md](./WAVE_4x_PR_DAG.md) draft on `main`  
 - [x] L3 gap inventory + code pointers  
 - [x] User guides 11–14 (subagent / bg / worktree / throughput)  
-- [x] `./scripts/test-l3-smoke.sh` (live when API key present)  
-- [ ] Re-run live L3 smoke after restoring `credentials.json`  
-- [ ] Optional: cold-start 4.0 full text at Phase 2  
+- [x] `./scripts/test-l3-smoke.sh`  
+- [x] [LANE_B_L3_PREP_GOALS.md](./LANE_B_L3_PREP_GOALS.md) + cold-start [ULTRAGOAL_PROMPT_LANE_B_L3.md](./ULTRAGOAL_PROMPT_LANE_B_L3.md)  
+- [x] Offline smoke green (`--offline-only`)  
+- [x] Live smoke: **BLOCKED** until owner restores `~/.deepseek-build/credentials.json` or `DEEPSEEK_API_KEY` (not a code gap)  
+- [ ] Phase 2 only: full cold-start 4.0 text after `v3.0.0`  
+
+**Lane B prep train status:** closable at **B008** once this checklist and ledger match (live deferred as blocked, not incomplete code).
 
 ### Lane C
 

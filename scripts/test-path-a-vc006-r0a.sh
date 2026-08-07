@@ -395,7 +395,7 @@ PY
       fi
       # Count successful edits from tool results in last request
       if ! python3 - "${WIRE}" <<'PY'
-import json, sys
+import json, re, sys
 path = sys.argv[1]
 last = None
 for line in open(path, encoding="utf-8"):
@@ -411,20 +411,47 @@ ok_edits = sum(
     if isinstance(m, dict) and m.get("role") in ("tool", "function")
     and "updated successfully" in str(m.get("content") or "").lower()
 )
-print(f"successful_edits_visible={ok_edits}")
+# Stronger A4: assistant history must show search_replace tool_calls with snippet_id args
+sid_re = re.compile(r"snp_[0-9A-HJKMNP-TV-Z]{26}")
+edits_with_sid = 0
+for line in open(path, encoding="utf-8"):
+    o = json.loads(line)
+    b = o.get("body", o)
+    if isinstance(b, str):
+        try:
+            b = json.loads(b)
+        except Exception:
+            continue
+    if not isinstance(b, dict):
+        continue
+    for m in b.get("messages") or []:
+        if not isinstance(m, dict):
+            continue
+        for tc in m.get("tool_calls") or []:
+            if not isinstance(tc, dict):
+                continue
+            fn = tc.get("function") or {}
+            if fn.get("name") != "search_replace":
+                continue
+            args = str(fn.get("arguments") or "")
+            if "snippet_id" in args and sid_re.search(args):
+                edits_with_sid += 1
+print(f"successful_edits_visible={ok_edits} search_replace_with_snippet_id={edits_with_sid}")
 if ok_edits < 3:
     print(f"need ≥3 successful edits, got {ok_edits}", file=sys.stderr)
+    sys.exit(1)
+if edits_with_sid < 3:
+    print(
+        f"need ≥3 search_replace tool_calls with snippet_id, got {edits_with_sid}",
+        file=sys.stderr,
+    )
     sys.exit(1)
 sys.exit(0)
 PY
       then
-        warn "${SCENARIO}: wire missing ≥3 successful edits"
+        warn "${SCENARIO}: wire missing ≥3 successful edits with snippet_id args"
         FAIL=1
       fi
-      # Prove search_replace args included snippet_id by replaying server log / wire analysis:
-      # scripted server embeds snippet_id in tool_args; those appear only in responses.
-      # We verify by ensuring agent applied edits that require snippet_id under product
-      # Standard (disk golden + successful edit messages). Additional: grep agent.out.
       echo "MULTIEDIT_PASS disk_a=$(printf '%q' "${A_CONTENT}") disk_b=$(printf '%q' "${B_CONTENT}")" >>"${EVIDENCE_META}"
       ;;
     snippet-stale-id)

@@ -5,8 +5,8 @@
 | **Story** | **VC006** — public Path A (`deepseek-build` / `dsb` → product agent) multi-edit + stale-id / invalidation R0A proof, heart/owner/path-linkage honesty, then dedicated Spec 45 Deep Code release cut |
 | **Plan** | `vision-complete-5x` |
 | **Date** | 2026-08-08 |
-| **Status** | **IMPLEMENTATION** — Path A R0A multi-edit + stale-id green; gates green; dedicated cut **`5.3.0`** justified |
-| **SemVer** | cut target **`5.3.0`** (unit 4) under live floor — do **not** reuse **5.2.0 / 5.2.1 / 5.2.2** |
+| **Status** | **READY** — Path A R0A multi-edit + stale-id green; gates green; on-branch cut **`5.3.0`** landed; PR not merged |
+| **SemVer** | on-branch **`5.3.0`** (unit 4) under live floor — do **not** reuse **5.2.0 / 5.2.1 / 5.2.2**; npm/GitHub publish is a separate lane |
 | **Depends on** | **VC005** Path A write/bash invalidation (open PR **#137** `vc005-snippet-invalidation`) which stacks on **VC004** (#135) and **VC003** (#130 MERGED) |
 | **Board** | [`VISION_COMPLETE_5X_GOALS.md`](../VISION_COMPLETE_5X_GOALS.md) · DAG [`WAVE_5x_VISION_PR_DAG.md`](../WAVE_5x_VISION_PR_DAG.md) (board still may name Spec 45 cut as `5.2.0` — **stale vs live floor**; this story does not re-plan tracks) |
 | **Normative design** | [`docs/adr/0010-spec-45-snippet-store.md`](../../adr/0010-spec-45-snippet-store.md) §4–§6 |
@@ -314,8 +314,9 @@ git checkout HEAD -- docs/product/evidence/OWNER_BAR_STATUS.tsv \
 |------:|--------------|---------|------------------|
 | 1 | `4642a3d` | `docs(product): VC006 Path A heart R0A plan + evidence` | Plan only (this file first) |
 | 2 | `97171b4` | `test(scripts): Path A R0A multi-edit + stale-id snippet_id harness` | Scripted scenarios + public driver + wire/meta |
-| 3 | tip (`git log -1`) | `docs(product): record VC006 Path A R0A + gate evidence` | Validation fill + refreshed wire @ harness SHA |
-| 4 | _(follows unit 3)_ | `chore(release): bump product to 5.3.0` | Dedicated cut only after R0A + gates |
+| 3 | `f25fd6c` | `docs(product): record VC006 Path A R0A + gate evidence` | Validation fill + refreshed wire @ harness SHA |
+| 4 | `95ad990` | `chore(release): bump product to 5.3.0` | Dedicated cut after R0A + gates |
+| 5 | tip (`git log -1`) | `docs(product): record VC006 adversarial READY + harness harden` | Review fill + multi-edit wire assert |
 
 **No VC007–VC015 behavior** in these commits: no Reasonix effort wire, no L3 dogfood R0A, no freeze cut.
 
@@ -346,7 +347,7 @@ git checkout HEAD -- docs/product/evidence/OWNER_BAR_STATUS.tsv \
 | VC004 unit regressions | **PASS** — **9** tests | unit |
 | VC005 unit regressions | **PASS** — **20** tests | unit |
 | Thin oracle | **PASS** — snippets **9** + path_a_edit **8** | thin oracle (**not** Path A proof) |
-| SemVer **5.3.0** cut | **JUSTIFIED** after A2–A8 (unit 4) | release |
+| SemVer **5.3.0** cut | **LANDED** on branch — `95ad990` (`Cargo.toml` / `package.json` / lock / CHANGELOG); **not** npm/GitHub packaged in this story | release |
 
 ### 7.4 Artifacts (R0A)
 
@@ -438,7 +439,13 @@ git checkout HEAD -- docs/product/evidence/OWNER_BAR_STATUS.tsv \
 |-------|--------|
 | Reviewer | Separate read-only Grok code-reviewer lane (not the implementer self-approve) |
 | Scope | Branch `vc006-heart-r0a` / R0A harness + wire honesty + gates + SemVer cut discipline |
-| Verdict | **PENDING** (filled after review pass) |
+| **Verdict** | **READY** |
+| **P0** | **none** |
+| **P1 (addressed before PR)** | (1) Evidence lag after unit 4 cut → filled SHAs / LANDED / READY here; (2) multi-edit harness now asserts ≥3 `search_replace` tool_calls with `snippet_id` on wire; (3) board WAVE SemVer residual → PR body only, not authority; (4) CHANGELOG missing `5.2.2` on stack → reconcile on rebase after #137/main |
+| **P2 residuals (non-blocking)** | META git_sha at harness `97171b4` not tip; dual CLI R0A via `deepseek-build` (`dsb --version` soft); scripted non-stream path latent; live L3 R0A out of scope; resume/fork table residual |
+| SemVer / packaging | No false claim of npm/GitHub publish; on-branch **5.3.0** only; no reuse of **5.2.0–5.2.2** |
+| VC007+ smuggling | **none** found |
+| R0A residual blocking cut | **none** |
 
 ---
 

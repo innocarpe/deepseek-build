@@ -5,7 +5,7 @@
 | **Story** | **VC010** — hermetic Path A R0A for multi-tool RO parallel, mutate serial, bg collect-by-id |
 | **Branch / worktree** | `vc010-l3-parallel-bg` @ `/Users/WooseongKim/Projects/deepseek-build/vc010-l3-parallel-bg` |
 | **Reviewed code head** | `c5a402041cd393c397e998211e942a36ba281216` — `docs(product): VC010 READY evidence` (includes prior test/fixture commits) |
-| **Base** | `vc009-cache-visibility` @ `3e8a5b5a2f1d0c03f724c9ba73727e93f54fd89f` (open PR **#141**) |
+| **Base** | `vc009-cache-visibility` @ `3e8a5b5379a2d8997f0999868d5f697e67f5d4ec` (open PR **#141**) |
 | **Reviewer** | Independent Grok review (separate lane from implementer) |
 | **Date** | 2026-08-08 |
 | **Verdict** | **READY** |
@@ -15,9 +15,9 @@
 
 | Commit | Kind | Covered by this review |
 |--------|------|------------------------|
-| `2f6d15e` | plan doc | Scope / non-claims / matrix |
-| `f6a8265` … `46a0c78` | fixture + R0A harness + agent unit + fixups | Product/test behavior under review |
-| **`c5a4020`** | READY evidence package | Wire/META samples + gate claims; this report lands as sibling close-out |
+| `dd0d51d` | plan doc | Scope / non-claims / matrix |
+| `71c8719` … `c5a4020` | fixture + R0A harness + agent unit + fixups | Product/test behavior under review |
+| `1ae5a7f` | READY evidence package (after this review draft) | Wire/META samples + gate claims; review file co-lands |
 
 Docs-only tips after this file that only point at the review do **not** require a second code review.
 

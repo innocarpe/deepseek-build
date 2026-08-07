@@ -220,6 +220,17 @@ test -f docs/adr/0010-spec-45-snippet-store.md
 | Public Path A R0A wire | **not run / not claimed** | — |
 | SemVer bump | **none** | cargo version still `5.1.0` |
 
+### Required project gates (verified on branch HEAD `82bbdb2`)
+
+| Gate | Exit | Result | Honesty |
+|------|------|--------|---------|
+| `./scripts/test-owner-bar.sh` | **0** | **ALL PASS** — `PASS=60 FAIL=0 NOT_RUN=0` (linkage + forbidden-evidence green) | Owner-bar green on this SHA |
+| `./scripts/check-path-a-linkage.sh` | **0** | **PASS** (`check-path-a-linkage: PASS`) | NOTE: third_party/grok-build has no dsb-* Cargo dep (expected until F1) |
+| `./scripts/test-heart-regression.sh` | **0** | **PASS** (`test-heart-regression: PASS`) | Live L3.1–L3.5 **SKIP** (no API key / credentials); `PATH_A_E2E` **SKIP** (needs `--with-e2e`); offline L3 smoke + core Path A unit stamps **PASS** |
+| `cargo fmt --manifest-path third_party/grok-build/Cargo.toml -p xai-grok-tools -- --check` | **0** | clean (no rustfmt diffs) | VC003 vendor crate only |
+| `git diff --check spec/vc002-snippet-store...HEAD` | **0** | no trailing whitespace / conflict markers | branch range |
+| `git status --short --branch` | **0** | `## feat/vc003-path-a-snippet-id` (clean working tree at gate run) | post-gate scripts may rewrite evidence TSV side-effects; those are not VC003 source |
+
 ### Design that shipped (code)
 
 | Piece | Location |
@@ -249,22 +260,38 @@ cargo test -p xai-grok-tools --lib current_read_file_mints_file_version_sha256
 cargo test -p xai-grok-tools --lib 'snippet_store::'
 # ok — 9 passed (Crockford 26-char alphabet exact + UUID-v7-simple rejected)
 
-cargo fmt -p xai-grok-tools -- --check
+cargo fmt --manifest-path third_party/grok-build/Cargo.toml -p xai-grok-tools -- --check
 # ok — exit 0
 
 # Thin oracle (not Path A proof)
 cargo test -p dsb-tools snippets
 # ok — 9 passed
 
-# Docs / whitespace
-git diff --check
-# ok — exit 0
+# Required project gates (fresh verification on HEAD 82bbdb2)
+./scripts/test-owner-bar.sh
+# exit 0 — ALL PASS (PASS=60 FAIL=0 NOT_RUN=0)
+
+./scripts/check-path-a-linkage.sh
+# exit 0 — PASS
+
+./scripts/test-heart-regression.sh
+# exit 0 — PASS
+# SKIPs (documented, not green-washed): live L3.1–L3.5 (no credentials);
+# PATH_A_E2E (not requested; needs --with-e2e)
+
+git diff --check spec/vc002-snippet-store...HEAD
+# exit 0
+
+git status --short --branch
+# ## feat/vc003-path-a-snippet-id  (clean at gate run)
+
+# Docs presence + floor
 test -f docs/product/evidence/VC003_PATH_A_SNIPPET_ID_2026-08-08.md
 test -f docs/adr/0010-spec-45-snippet-store.md
 # product SemVer still 5.1.0 (no bump)
 ```
 
-**Honesty:** All Path A mint claims above are **unit/integration tests inside `xai-grok-tools`**. No public `deepseek-build`/`dsb` agent wire harness (R0A) was run for this story.
+**Honesty:** All Path A mint claims above are **unit/integration tests inside `xai-grok-tools`**. No public `deepseek-build`/`dsb` agent wire harness (R0A) was run for this story. Required gates (owner-bar / path-a-linkage / heart-regression offline) are green as tabulated; live L3 and Path A E2E remain **SKIP**, not claimed.
 
 ---
 

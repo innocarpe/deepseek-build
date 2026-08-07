@@ -3,14 +3,14 @@
 | Field | Value |
 |-------|--------|
 | **SemVer line** | **`4.0.0` – `4.x.y`** (after 3.x heart fusion) |
-| Status | **Active train `fleet-4x`** (after `v3.0.0` shipped) |
+| Status | **`4.0.0` cut shipped** (`fleet-4x` complete; patches `4.0.1`+ install/UX) |
 | Owner | @innocarpe |
 | Last updated | 2026-08-07 |
 | Index | [versions/README.md](./versions/README.md) |
 | Depends on | [PRD-v3.md](./PRD-v3.md) heart fusion P0 (`v3.0.0`) |
 | Parallel ops | [PARALLEL_3X_4X_PLAN.md](./PARALLEL_3X_4X_PLAN.md) |
 | PR DAG | [WAVE_4x_PR_DAG.md](./WAVE_4x_PR_DAG.md) |
-| Future board | [FLEET_4X_GOALS.md](./FLEET_4X_GOALS.md) (`fleet-4x`) |
+| Board | [FLEET_4X_GOALS.md](./FLEET_4X_GOALS.md) (`fleet-4x` — complete) |
 
 ---
 
@@ -62,9 +62,9 @@ After 3.0.0, L1/L2 hearts should hold under the Grok-derived shell. Remaining ga
 | When | Plan | What |
 |------|------|------|
 | During 3.0 | *no fleet ultragoal* | Parallel plan + WAVE_4x draft + gap inventory on `main` |
-| After `v3.0.0` | **`fleet-4x`** | [FLEET_4X_GOALS.md](./FLEET_4X_GOALS.md) G001–G008 · execute WAVE_4x H1–H3 |
+| After `v3.0.0` | **`fleet-4x`** | G001–G008 → tag **`v4.0.0`** — **complete** |
 
-Cold start (after finalize): [ULTRAGOAL_PROMPT_COLD_START_4.0.md](./ULTRAGOAL_PROMPT_COLD_START_4.0.md) (stub until Phase 2).
+Cold start (historical): [ULTRAGOAL_PROMPT_COLD_START_4.0.md](./ULTRAGOAL_PROMPT_COLD_START_4.0.md).
 
 ---
 
@@ -72,6 +72,16 @@ Cold start (after finalize): [ULTRAGOAL_PROMPT_COLD_START_4.0.md](./ULTRAGOAL_PR
 
 | Item | State |
 |------|-------|
-| 4.x ultragoal train | **Active** `fleet-4x` (gate passed: `v3.0.0` + ready-for-impl) |
-| Prep on main | **Complete** (Lane B + 4x-P0-1..4) |
-| Code defaults for fleet | **In train** — must keep `yolo = false` / Path A hearts |
+| 4.x ultragoal train | **Complete** `fleet-4x` → tag **`v4.0.0`** (PR #85) |
+| Prep on main | **Complete** (Lane B + 4x-P0-1..5) |
+| Code defaults for fleet | **Shipped** at `4.0.0` — keep `yolo = false` / Path A hearts |
+| Install DX patches | **`4.0.1`** prebuilt npm (ADR 0009) · **`4.0.2`** setup → bare `dsb` |
+| Evidence | [CUT_4_0_0_2026-08-07.md](./evidence/CUT_4_0_0_2026-08-07.md) |
+
+### Residual after 4.0.0 (not blockers for the cut)
+
+| Topic | Notes |
+|-------|--------|
+| Live L3 extended smoke | Env-gated (API key) |
+| Prebuilt platforms beyond darwin-arm64 | CI `release-prebuilt.yml` + assets on tag |
+| Full Spec 45 snippet_id mint | 3.x residual (file_version equivalent) |

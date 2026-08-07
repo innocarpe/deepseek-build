@@ -45,8 +45,9 @@ Binding map: [HEART_3X_SPEC_BINDING.md](../architecture/HEART_3X_SPEC_BINDING.md
 
 ### Install / packaging
 
-- First agent build is large/slow (vendor + protoc/dotslash).
-- npm postinstall needs Rust (+ protoc or dotslash) for TUI agent.
+- **`4.0.1`+:** `npm i -g` downloads **prebuilt** natives from GitHub Releases (ADR 0009) — seconds, no Rust on default path.
+- Source compile only with `DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD=1` or `./scripts/install.sh` (dev).
+- Prebuilt platforms: attach assets per tag (`darwin-arm64` shipped; CI matrix for others).
 - **npm registry publish** remains **human-gated** (ADR 0007).
 
 ### Auth / network

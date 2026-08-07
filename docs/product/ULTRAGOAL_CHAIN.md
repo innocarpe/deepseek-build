@@ -8,11 +8,11 @@
 
 ## Active product chain (from 2026-08-07)
 
-**One ultragoal plate through product `3.0.0` — plan id `heart-3x` (8 stories).**
+**`heart-3x` complete** — tag **`v3.0.0`**. Next product plate: **`fleet-4x`** (after WAVE_4x ready).
 
 | Order | Plan / stage | Role | Prompt / board |
 |-------|--------------|------|----------------|
-| **1** | **`heart-3x`** | **Active product plan** G001→G008 → tag **`3.0.0`** | [ULTRAGOAL_PROMPT_COLD_START_3.0.md](./ULTRAGOAL_PROMPT_COLD_START_3.0.md) · [HEART_3X_GOALS.md](./HEART_3X_GOALS.md) · [WAVE_3x_PR_DAG.md](./WAVE_3x_PR_DAG.md) · [PRD-v3.md](./PRD-v3.md) · [PRE_3X_TEST_MATRIX.md](./PRE_3X_TEST_MATRIX.md) |
+| **1** | **`heart-3x`** | **Complete** G001→G008 → tag **`v3.0.0`** | [ULTRAGOAL_PROMPT_COLD_START_3.0.md](./ULTRAGOAL_PROMPT_COLD_START_3.0.md) · [HEART_3X_GOALS.md](./HEART_3X_GOALS.md) · cut [evidence/CUT_3_0_0_2026-08-07.md](./evidence/CUT_3_0_0_2026-08-07.md) |
 
 ```text
 G001 PrepOnMain (base_url + pre-3x harness)

@@ -1,7 +1,8 @@
 //! First-run / setup onboarding (API key + config home).
 //!
-//! Natural entry: missing credentials on TTY `chat`/`run`/`setup` prompts once,
-//! saves `~/.deepseek-build/credentials.json` (0600), then continues.
+//! Product contract: bare `{inv}` opens the full-screen DeepSeek agent TUI
+//! (Grok Build–class). `chat` is **legacy line-mode only** — never the
+//! primary post-setup path.
 
 use std::io::{self, IsTerminal, Write};
 
@@ -14,7 +15,7 @@ pub fn run_setup_wizard(home: &BuildHome) -> Result<Credentials> {
     let path = home.credentials_path();
     println!();
     println!("Welcome to DeepSeek Build ({inv}).");
-    println!("First-time setup — store a DeepSeek API key so chat/run can call the API.");
+    println!("First-time setup — store a DeepSeek API key for the agent.");
     println!();
     println!("  1. Create a key: https://platform.deepseek.com/api_keys");
     println!("  2. Paste it below (stored only in {})", path.display());
@@ -47,10 +48,12 @@ pub fn run_setup_wizard(home: &BuildHome) -> Result<Credentials> {
     println!("Saved credentials → {}", path.display());
     println!("Source: credentials file · key: {}", creds.masked_key());
     println!();
-    println!("Next:");
-    println!("  {inv} chat");
-    println!("  {inv} --dogfood --session work chat");
-    println!("  {inv} auth status");
+    println!("Next (product entry — same idea as `grok`):");
+    println!("  {inv}");
+    println!();
+    println!("  # full-screen DeepSeek agent TUI (default)");
+    println!("  # optional: {inv} auth status");
+    println!("  # legacy line-mode only (not the product): {inv} chat");
     println!();
     Ok(creds)
 }

@@ -141,6 +141,7 @@ mod tests {
             new_string: new.to_string(),
             replace_all: false,
             file_version: None,
+            snippet_id: None,
         }
     }
 
@@ -184,6 +185,7 @@ mod tests {
             new_string: "ccc".to_string(),
             replace_all: true,
             file_version: None,
+            snippet_id: None,
         };
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
             .await

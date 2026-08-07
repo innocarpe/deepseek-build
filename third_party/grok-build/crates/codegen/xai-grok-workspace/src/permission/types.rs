@@ -609,6 +609,8 @@ mod tests {
             old_string: "old".into(),
             new_string: "new".into(),
             replace_all: false,
+            file_version: None,
+            snippet_id: None,
         });
         let access = AccessKind::from(&input);
         assert!(

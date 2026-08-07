@@ -18,6 +18,7 @@ use crate::types::output::{
     SearchReplaceEditContextInformation, SearchReplaceEditDetail, SearchReplaceEditsApplied,
     SearchReplaceOutput,
 };
+use crate::types::snippet_store::{SessionSnippetStore, is_valid_snippet_id};
 use crate::types::requirements::{Expr, ToolParamsRequirement, ToolRequirement};
 #[allow(unused_imports)]
 use crate::types::resources::{
@@ -94,9 +95,23 @@ pub struct SearchReplaceInput {
     /// Required when `SearchReplaceParams.snippet_safe` is true for non-create edits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Full-file content hash (sha256 hex) from a prior read. Required when snippet_safe mode is on."
+        description = "Full-file content hash (sha256 hex) from a prior read. Optional compatibility alias of the session snippet version; when snippet_safe mode is on, a valid snippet_id is required and its stored version is authoritative."
     )]
     pub file_version: Option<String>,
+    /// Spec 45 (DeepSeek Build Path A): session-local snippet id from a prior
+    /// text `read_file`. Required when `SearchReplaceParams.snippet_safe` is
+    /// true for non-create edits (VC004).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Session-local snippet_id from a prior read_file. Required when snippet_safe mode is on for edits of existing files."
+    )]
+    pub snippet_id: Option<String>,
+}
+/// Inclusive line range authorized by a validated session snippet (1-based).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AuthorizedSnippetScope {
+    start_line: usize,
+    end_line: usize,
 }
 fn default_true() -> bool {
     true
@@ -138,7 +153,10 @@ pub struct SearchReplaceParams {
     ///
     /// When true:
     /// - empty `old_string` cannot overwrite a non-empty existing file
-    /// - non-create edits require `file_version` matching sha256(file)
+    /// - non-create edits require a valid session-local `snippet_id` authorizing
+    ///   the recorded path / inclusive line range / full-file version
+    /// - optional wire `file_version`, when supplied, must also match current
+    ///   full-file sha256 (compatibility alias; store version is authoritative)
     /// Free-form whole-file primary overwrite is fail-closed.
     #[serde(default)]
     pub snippet_safe: bool,
@@ -241,35 +259,16 @@ pub(crate) async fn run_search_replace(
             .unwrap_or(true);
         snippet_safe = snippet_safe_flag;
     }
-    // Spec 45 spirit: snippet_safe requires file_version for edits of existing files.
-    if snippet_safe && !input.old_string.is_empty() {
-        match fs.read_file(&path).await {
-            Ok(bytes) => {
-                use sha2::{Digest, Sha256};
-                let mut h = Sha256::new();
-                h.update(&bytes);
-                let current = format!("{:x}", h.finalize());
-                match input.file_version.as_deref() {
-                    None => {
-                        return Ok(SearchReplaceOutput::InvalidInput(
-                            "snippet_safe mode requires file_version (sha256 of file at read time); free-form primary edit is rejected"
-                                .to_owned(),
-                        ));
-                    }
-                    Some(v) if v != current => {
-                        return Ok(SearchReplaceOutput::InvalidInput(
-                            "snippet_stale: file_version does not match current file content; re-read before edit"
-                                .to_owned(),
-                        ));
-                    }
-                    Some(_) => {}
-                }
-            }
-            Err(_) => {
-                // Missing file with non-empty old_string falls through to normal FileNotFound.
-            }
+    // VC004 / Spec 45: snippet_safe requires a valid session-local snippet_id
+    // for edits of existing files (hard require; file_version alone is not enough).
+    let authorized_scope = if snippet_safe && !input.old_string.is_empty() {
+        match authorize_snippet_safe_edit(&resources, &fs, &path, &input).await {
+            Ok(scope) => Some(scope),
+            Err(err) => return Ok(err),
         }
-    }
+    } else {
+        None
+    };
     let result = if input.old_string.is_empty() {
         handle_new_file_creation(
             &input,
@@ -297,6 +296,7 @@ pub(crate) async fn run_search_replace(
             hints_enabled,
             is_legacy,
             include_user_edit_hint,
+            authorized_scope,
         )
         .await?
     };
@@ -567,6 +567,143 @@ fn build_confusable_hint(
         line_summary, read_qualifier, old_string_param, terminal_fallback
     ))
 }
+/// VC004: authorize a `snippet_safe` non-create edit against the session store.
+///
+/// Fail-closed cases return `Err(SearchReplaceOutput::InvalidInput(_))` with
+/// **no disk write**. On success returns the recorded inclusive line range.
+async fn authorize_snippet_safe_edit(
+    resources: &SharedResources,
+    fs: &std::sync::Arc<dyn crate::computer::types::AsyncFileSystem>,
+    path: &std::path::Path,
+    input: &SearchReplaceInput,
+) -> Result<AuthorizedSnippetScope, SearchReplaceOutput> {
+    let snippet_id = match input.snippet_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
+    {
+        None => {
+            return Err(SearchReplaceOutput::InvalidInput(
+                "snippet_safe mode requires snippet_id from a prior read_file; free-form primary edit is rejected"
+                    .to_owned(),
+            ));
+        }
+        Some(id) => id.to_string(),
+    };
+    if !is_valid_snippet_id(&snippet_id) {
+        return Err(SearchReplaceOutput::InvalidInput(
+            "snippet_not_found: malformed snippet_id (expected snp_ + Crockford ULID); re-read before edit"
+                .to_owned(),
+        ));
+    }
+    let snippet = {
+        let res = resources.lock().await;
+        let store = res.get::<SessionSnippetStore>();
+        match store.and_then(|s| s.get(&snippet_id)).cloned() {
+            Some(s) => s,
+            None => {
+                return Err(SearchReplaceOutput::InvalidInput(
+                    "snippet_not_found: unknown snippet_id for this session; re-read before edit"
+                        .to_owned(),
+                ));
+            }
+        }
+    };
+    if !snippet_paths_match(path, &snippet.path) {
+        return Err(SearchReplaceOutput::InvalidInput(
+            "snippet_path_mismatch: snippet_id is bound to a different path; re-read the target file"
+                .to_owned(),
+        ));
+    }
+    // Version check against current file bytes. Missing file falls through to
+    // handle_replacement FileNotFound (no partial write possible here).
+    let bytes = match fs.read_file(path).await {
+        Ok(b) => b,
+        Err(_) => {
+            return Ok(AuthorizedSnippetScope {
+                start_line: snippet.start_line,
+                end_line: snippet.end_line,
+            });
+        }
+    };
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(&bytes);
+    let current = format!("{:x}", h.finalize());
+    if snippet.version != current {
+        return Err(SearchReplaceOutput::InvalidInput(
+            "snippet_stale: snippet version does not match current file content; re-read before edit"
+                .to_owned(),
+        ));
+    }
+    // Optional wire file_version: when supplied, must match current (compat alias).
+    if let Some(fv) = input.file_version.as_deref() {
+        if fv != current {
+            return Err(SearchReplaceOutput::InvalidInput(
+                "snippet_stale: file_version does not match current file content; re-read before edit"
+                    .to_owned(),
+            ));
+        }
+    }
+    Ok(AuthorizedSnippetScope {
+        start_line: snippet.start_line,
+        end_line: snippet.end_line,
+    })
+}
+
+/// Compare resolved edit path to the path recorded on the session snippet.
+fn snippet_paths_match(edit_path: &std::path::Path, snippet_path: &std::path::Path) -> bool {
+    if edit_path == snippet_path {
+        return true;
+    }
+    // Best-effort canonicalize both sides (symlink / relative residual).
+    let a = std::fs::canonicalize(edit_path).unwrap_or_else(|_| edit_path.to_path_buf());
+    let b = std::fs::canonicalize(snippet_path).unwrap_or_else(|_| snippet_path.to_path_buf());
+    a == b
+}
+
+/// Inclusive 1-based line range → half-open byte range `[start, end)` in
+/// newline-normalized text. Matches must lie entirely inside this range.
+fn scope_byte_range(text: &str, start_line: usize, end_line: usize) -> (usize, usize) {
+    let start_line = start_line.max(1);
+    let end_line = end_line.max(start_line);
+    let mut starts: Vec<usize> = vec![0];
+    for (idx, ch) in text.char_indices() {
+        if ch == '\n' {
+            starts.push(idx + ch.len_utf8());
+        }
+    }
+    // Line count for content lines (trailing empty after final \n is not a line).
+    let line_count = if text.is_empty() {
+        1
+    } else if text.ends_with('\n') {
+        starts.len().saturating_sub(1).max(1)
+    } else {
+        starts.len()
+    };
+    if start_line > line_count {
+        return (text.len(), text.len());
+    }
+    let s_idx = (start_line - 1).min(line_count.saturating_sub(1));
+    let e_idx = (end_line - 1).min(line_count.saturating_sub(1));
+    let start_byte = starts.get(s_idx).copied().unwrap_or(0);
+    let end_byte = starts.get(e_idx + 1).copied().unwrap_or(text.len());
+    (start_byte, end_byte.min(text.len()).max(start_byte))
+}
+
+fn filter_positions_to_scope(
+    positions: Vec<usize>,
+    old_len: usize,
+    scope: AuthorizedSnippetScope,
+    match_text: &str,
+) -> Vec<usize> {
+    let (lo, hi) = scope_byte_range(match_text, scope.start_line, scope.end_line);
+    positions
+        .into_iter()
+        .filter(|p| {
+            let end = p.saturating_add(old_len);
+            *p >= lo && end <= hi
+        })
+        .collect()
+}
+
 /// Handle replacement in existing file.
 async fn handle_replacement(
     input: &SearchReplaceInput,
@@ -580,6 +717,7 @@ async fn handle_replacement(
     hints_enabled: bool,
     is_legacy: bool,
     include_user_edit_hint: bool,
+    authorized_scope: Option<AuthorizedSnippetScope>,
 ) -> Result<SearchReplaceOutput, xai_tool_runtime::ToolError> {
     let bytes = match fs.read_file(path).await {
         Ok(bytes) => bytes,
@@ -631,6 +769,14 @@ async fn handle_replacement(
         .match_indices(&input.old_string)
         .map(|(index, _)| index)
         .collect();
+    if let Some(scope) = authorized_scope {
+        positions = filter_positions_to_scope(
+            positions,
+            input.old_string.len(),
+            scope,
+            match_text.as_ref(),
+        );
+    }
     let mut used_normalized_fallback = false;
     if positions.is_empty() {
         let fallback_enabled = {
@@ -641,7 +787,23 @@ async fn handle_replacement(
         if fallback_enabled {
             match find_normalized_match_positions(&match_text, &input.old_string) {
                 NormalizedMatchResult::Matches(normalized_matches) => {
-                    if normalized_matches.len() > 1 && !input.replace_all {
+                    let mut norm_positions: Vec<usize> = normalized_matches
+                        .iter()
+                        .map(|m| m.original_start)
+                        .collect();
+                    if let Some(scope) = authorized_scope {
+                        // Approximate length filter using old_string bytes; norm
+                        // spans may differ slightly but stay within line scope.
+                        norm_positions = filter_positions_to_scope(
+                            norm_positions,
+                            input.old_string.len(),
+                            scope,
+                            match_text.as_ref(),
+                        );
+                    }
+                    if norm_positions.is_empty() {
+                        // fall through to NoMatchesFound
+                    } else if norm_positions.len() > 1 && !input.replace_all {
                         let replace_all_name =
                             TemplateRenderer::resolve(&resources, "${{ params.edit.replace_all }}")
                                 .await?;
@@ -651,12 +813,10 @@ async fn handle_replacement(
                              or include more context to only edit one occurrence.",
                             replace_all_name
                         )));
+                    } else {
+                        positions = norm_positions;
+                        used_normalized_fallback = true;
                     }
-                    positions = normalized_matches
-                        .iter()
-                        .map(|m| m.original_start)
-                        .collect();
-                    used_normalized_fallback = true;
                 }
                 NormalizedMatchResult::Ambiguous => {
                     let old_string_name =
@@ -731,7 +891,7 @@ async fn handle_replacement(
         )));
     }
     let (new_text, new_positions) = if used_normalized_fallback {
-        let normalized_matches =
+        let mut normalized_matches =
             match find_normalized_match_positions(&match_text, &input.old_string) {
                 NormalizedMatchResult::Matches(m) => m,
                 _ => {
@@ -746,6 +906,24 @@ async fn handle_replacement(
                     ));
                 }
             };
+        if let Some(scope) = authorized_scope {
+            let (lo, hi) = scope_byte_range(match_text.as_ref(), scope.start_line, scope.end_line);
+            normalized_matches.retain(|m| {
+                m.original_start >= lo
+                    && m.original_start.saturating_add(input.old_string.len()) <= hi
+            });
+        }
+        // Only replace the positions we already authorized (order preserved).
+        if !input.replace_all && normalized_matches.len() > 1 {
+            // Keep first match only when single-replace mode (positions already filtered).
+            if let Some(first) = positions.first().copied() {
+                normalized_matches.retain(|m| m.original_start == first);
+            }
+        } else if input.replace_all {
+            normalized_matches.retain(|m| positions.contains(&m.original_start));
+        } else {
+            normalized_matches.retain(|m| positions.contains(&m.original_start));
+        }
         replace_normalized_matches(&match_text, &normalized_matches, &input.new_string)
     } else {
         replace_using_positions(
@@ -977,7 +1155,35 @@ mod tests {
             new_string: new_string.to_string(),
             replace_all: false,
             file_version: None,
+            snippet_id: None,
         }
+    }
+
+    fn sha256_hex(bytes: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(bytes);
+        format!("{:x}", h.finalize())
+    }
+
+    /// Mint a session snippet bound to `abs_path` into `resources` and return its id.
+    fn mint_snippet(
+        resources: &mut Resources,
+        abs_path: &std::path::Path,
+        body: &str,
+        start_line: usize,
+        end_line: usize,
+    ) -> String {
+        use crate::types::snippet_store::SessionSnippetStore;
+        let ver = sha256_hex(body.as_bytes());
+        let total_lines = if body.is_empty() {
+            1
+        } else {
+            body.lines().count().max(1)
+        };
+        let store = resources.get_or_default::<SessionSnippetStore>();
+        let snip = store.issue(abs_path, start_line, end_line, ver, body, total_lines);
+        snip.snippet_id
     }
     fn description_renderer() -> TemplateRenderer {
         let edit_params = std::collections::HashMap::from([
@@ -1314,6 +1520,7 @@ mod tests {
             new_string: "ccc".to_string(),
             replace_all: true,
             file_version: None,
+            snippet_id: None,
         };
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
             .await
@@ -1539,7 +1746,7 @@ mod tests {
         }
     }
     #[tokio::test]
-    async fn snippet_safe_rejects_edit_without_file_version() {
+    async fn snippet_safe_rejects_edit_without_snippet_id() {
         let tmp = TempDir::new().unwrap();
         std::fs::write(tmp.path().join("f.txt"), "hello world\n").unwrap();
         let tool = SearchReplaceTool;
@@ -1556,7 +1763,7 @@ mod tests {
         match result {
             SearchReplaceOutput::InvalidInput(msg) => {
                 assert!(
-                    msg.contains("file_version") || msg.contains("free-form"),
+                    msg.contains("snippet_id") || msg.contains("free-form"),
                     "unexpected msg: {msg}"
                 );
                 let content = std::fs::read_to_string(tmp.path().join("f.txt")).unwrap();
@@ -1567,14 +1774,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn snippet_safe_accepts_matching_file_version() {
-        use sha2::{Digest, Sha256};
+    async fn snippet_safe_accepts_valid_snippet_id() {
         let tmp = TempDir::new().unwrap();
-        let body = b"hello world\n";
-        std::fs::write(tmp.path().join("f.txt"), body).unwrap();
-        let mut h = Sha256::new();
-        h.update(body);
-        let ver = format!("{:x}", h.finalize());
+        let body = "hello world\n";
+        let path = tmp.path().join("f.txt");
+        std::fs::write(&path, body).unwrap();
+        let abs = std::fs::canonicalize(&path).unwrap_or(path.clone());
         let tool = SearchReplaceTool;
         let mut resources = test_resources(tmp.path());
         resources.insert(Params(SearchReplaceParams {
@@ -1582,8 +1787,9 @@ mod tests {
             empty_old_string_does_not_override: true,
             ..Default::default()
         }));
+        let id = mint_snippet(&mut resources, &abs, body, 1, 1);
         let mut input = make_input("f.txt", "hello", "hi");
-        input.file_version = Some(ver);
+        input.snippet_id = Some(id);
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
             .await
             .unwrap();
@@ -1597,23 +1803,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn snippet_safe_stale_file_version_rejected() {
+    async fn snippet_safe_stale_snippet_version_rejected() {
         let tmp = TempDir::new().unwrap();
-        std::fs::write(tmp.path().join("f.txt"), "hello world\n").unwrap();
+        let path = tmp.path().join("f.txt");
+        std::fs::write(&path, "hello world\n").unwrap();
+        let abs = std::fs::canonicalize(&path).unwrap_or(path.clone());
         let tool = SearchReplaceTool;
         let mut resources = test_resources(tmp.path());
         resources.insert(Params(SearchReplaceParams {
             snippet_safe: true,
             ..Default::default()
         }));
-        let mut input = make_input("f.txt", "hello", "hi");
-        input.file_version = Some("00".repeat(32));
+        let id = mint_snippet(&mut resources, &abs, "hello world\n", 1, 1);
+        // External mutation after mint → version drift.
+        std::fs::write(&path, "changed world\n").unwrap();
+        let mut input = make_input("f.txt", "changed", "hi");
+        input.snippet_id = Some(id);
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
             .await
             .unwrap();
         match result {
             SearchReplaceOutput::InvalidInput(msg) => {
                 assert!(msg.contains("snippet_stale"), "msg={msg}");
+                let content = std::fs::read_to_string(&path).unwrap();
+                assert_eq!(content, "changed world\n");
             }
             other => panic!("Expected InvalidInput, got {other:?}"),
         }
@@ -2753,6 +2966,7 @@ neutTest_set);
             new_string: "qux".to_string(),
             replace_all: true,
             file_version: None,
+            snippet_id: None,
         };
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
             .await

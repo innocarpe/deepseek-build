@@ -2,8 +2,8 @@
 
 | Field | Value |
 |-------|--------|
-| **SemVer line** | **`3.0.0` – `3.x.y`** (not yet cut) |
-| Status | **Active plan** — next product major after 2.x |
+| **SemVer line** | **`3.0.0` – `3.x.y`** |
+| Status | **`3.0.0` cut** — L1+L2 P0 heart fusion (see §3 + evidence) |
 | Owner | @innocarpe |
 | Last updated | 2026-08-07 |
 | Index | [versions/README.md](./versions/README.md) |

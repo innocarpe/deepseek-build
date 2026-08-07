@@ -4,15 +4,14 @@ This file is standing instructions for any coding agent working in this repo.
 
 ## Current phase
 
-**Active ultragoal:** plan id **`heart-3x`** → tag **`3.0.0`** (L1/L2 heart fusion).  
+**Completed ultragoal:** plan id **`heart-3x`** → tag **`v3.0.0`** (L1/L2 heart fusion).  
 - Board: [`docs/product/HEART_3X_GOALS.md`](docs/product/HEART_3X_GOALS.md) (G001–G008)  
 - PR DAG: [`docs/product/WAVE_3x_PR_DAG.md`](docs/product/WAVE_3x_PR_DAG.md)  
-- Cold start: [`docs/product/ULTRAGOAL_PROMPT_COLD_START_3.0.md`](docs/product/ULTRAGOAL_PROMPT_COLD_START_3.0.md)  
+- Cut evidence: [`docs/product/evidence/CUT_3_0_0_2026-08-07.md`](docs/product/evidence/CUT_3_0_0_2026-08-07.md)  
 - Chain: [`docs/product/ULTRAGOAL_CHAIN.md`](docs/product/ULTRAGOAL_CHAIN.md)  
 - Baseline: [`docs/product/PRE_3X_TEST_MATRIX.md`](docs/product/PRE_3X_TEST_MATRIX.md) · `./scripts/test-pre3x-baseline.sh --live`  
-- Ledger: `omc ultragoal status --plan-id heart-3x` (no `--force` recreate)  
-- **Parallel through 4.0.0:** [`docs/product/PARALLEL_3X_4X_PLAN.md`](docs/product/PARALLEL_3X_4X_PLAN.md) (Lane B docs prep only during 3.0; no `fleet-4x` train until `v3.0.0`)
-
+- Ledger: `omc ultragoal status --plan-id heart-3x`  
+- **Next product train:** **`fleet-4x`** → **`4.0.0`** — [`docs/product/PARALLEL_3X_4X_PLAN.md`](docs/product/PARALLEL_3X_4X_PLAN.md)
 **Major product lines (PRDs):** [`docs/product/versions/README.md`](docs/product/versions/README.md)  
 - **1.x** scaffold — [PRD-v1](docs/product/PRD-v1.md)  
 - **2.x shipped base** — [PRD-v2](docs/product/PRD-v2.md) (Grok shell + DeepSeek entry/UI)  

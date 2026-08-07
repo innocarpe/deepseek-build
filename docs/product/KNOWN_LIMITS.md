@@ -1,71 +1,64 @@
 # Known limitations
 
 **On-disk SemVer:** read root `Cargo.toml` (do not hardcode).  
-**Major line PRDs:** [versions/README.md](./versions/README.md) · current ship **[PRD-v2.md](./PRD-v2.md)** · next **[PRD-v3.md](./PRD-v3.md)**  
-**Legacy:** `1.x` scaffold — [PRD-v1.md](./PRD-v1.md)
+**Major line PRDs:** [versions/README.md](./versions/README.md) · current ship **[PRD-v3.md](./PRD-v3.md)** · next L3 max **[PRD-v4.md](./PRD-v4.md)**  
+**Legacy:** `2.x` shell — [PRD-v2.md](./PRD-v2.md) · `1.x` scaffold — [PRD-v1.md](./PRD-v1.md)
 
-## What 2.x delivers
+## Honesty: 2.x vs 3.0.0
 
-- No-args TTY `dsb` / `deepseek-build` → DeepSeek full-screen agent TUI (`deepseek-build-agent`)
-- Base runtime vendored at `third_party/grok-build/` (ADR-0008)
-- DeepSeek default models / API (`api.deepseek.com`, chat completions)
-- Product chrome: DeepSeek Build name, DeepSeekNight (`#4D6BFE`), whale
-- npm `postinstall` (2.0.3+) builds wrapper **and** agent when Rust/protoc available
+| Cut | Meaning |
+|-----|---------|
+| **2.x** | **Shell cut** — Grok-derived full-screen agent + DeepSeek entry/UI/npm. Hearts residual. |
+| **3.0.0** | **Heart fusion** — L1 + L2 P0 contracts on the **default agent path** (Path A). |
 
-## Honest residual → **3.0.0** (not “done in 2.x”)
+## What 3.0.0 delivers (P0)
 
-| Topic | 2.x reality | Target |
-|-------|-------------|--------|
-| L1 snippet-safe edit on **Grok tool path** | Partial — strong on thin `dsb chat`/`run`; not full Spec 45 on default agent tools | [PRD-v3.md](./PRD-v3.md) |
-| L1 permissions fail-closed on agent path | Partial / Grok capability modes | 3.0.0 |
-| L2 prefix/epoch under **agent context stack** | Thin-path `dsb-context` proven; Grok stack not fully fused | 3.0.0 |
-| Flash/Pro / repair as controlling loop | Thin path / partial | 3.0.0 |
-| L3 worktree/subagent as product identity | Machine present; **docs + smoke prep landed** (Lane B); not productized defaults | [PRD-v4.md](./PRD-v4.md) · [14-l3-throughput](../user-guide/14-l3-throughput.md) |
+| Heart | Shipped | Evidence |
+|-------|---------|----------|
+| L1 snippet-safe (Spec 45 spirit) | Grok `search_replace` **snippet_safe** + `file_version`; free-form primary fail-closed; product `path_a_edit` | [H45_PATH_A_SNIPPET_2026-08-07.md](./evidence/H45_PATH_A_SNIPPET_2026-08-07.md) |
+| L1 permissions (Spec 90 spirit) | Headless Ask→Deny; TTY Ask; product `yolo = false` default; capability×policy matrix | [H90_PATH_A_PERMS_2026-08-07.md](./evidence/H90_PATH_A_PERMS_2026-08-07.md) |
+| L2 prefix/epoch (Spec 10 spirit) | `assemble_path_a_context` hash-stable prefix + volatile isolation | [H10_PATH_A_PREFIX_2026-08-07.md](./evidence/H10_PATH_A_PREFIX_2026-08-07.md) |
+| L2 repair + Flash/Pro (15/20) | `prepare_path_a_tool_call` + Flash-default router / Pro once | [H15_H20_PATH_A_2026-08-07.md](./evidence/H15_H20_PATH_A_2026-08-07.md) |
 
-## Remaining limits (2.x ops)
+Binding map: [HEART_3X_SPEC_BINDING.md](../architecture/HEART_3X_SPEC_BINDING.md).
+
+## Honest residual after 3.0.0
+
+| Topic | Reality | Where next |
+|-------|---------|------------|
+| Full Spec 45 **snippet_id** mint inside Grok `read_file` | 3.0.0 uses **file_version (sha256) equivalent** + product `SnippetStore` adapter | 3.x minor polish if needed |
+| Every Grok compaction path byte-identical to `assemble_path_a_context` | Contract + tests on product assembly API; deep shell prompt paths may still differ | dogfood / minor |
+| Live agent dogfood without API key / agent binary | Contract tests green offline; live T4/T5 env-gated | ops |
+| L3 worktree/subagent as product identity | Machine present; docs/smoke prep; not productized defaults | [PRD-v4.md](./PRD-v4.md) |
+| Skills thrash-free full (Spec 70) | Index in stable prefix; thrash-free body load polish | 3.x minor if non-breaking |
+
+## What 2.x still is (shell)
+
+- No-args TTY `dsb` → `deepseek-build-agent`
+- Vendor tree `third_party/grok-build/` (ADR-0008)
+- DeepSeek models + `base_url = https://api.deepseek.com` (load-bearing)
+- Product chrome DeepSeekNight / dual CLI names
+
+## Ops limits (carry forward)
 
 ### Install / packaging
 
-- **First agent build is large/slow** (vendor tree + protoc/dotslash).
-- **npm postinstall** needs **Rust** (+ protoc or dotslash) for TUI agent.
-- Linux + macOS primary; Windows best-effort.
+- First agent build is large/slow (vendor + protoc/dotslash).
+- npm postinstall needs Rust (+ protoc or dotslash) for TUI agent.
+- **npm registry publish** remains **human-gated** (ADR 0007).
 
 ### Auth / network
 
-- Requires DeepSeek API key for live turns (`DEEPSEEK_API_KEY` or credentials.json 0600).
-- Some upstream strings may remain in deep code paths (product chrome is DeepSeek).
-- **Agent routing (fixed 2026-08-07):** each `[model.deepseek-*]` **must** set  
-  `base_url = "https://api.deepseek.com"`. Setting only `[endpoints].xai_api_base_url`  
-  still sent traffic to **`cli-chat-proxy.grok.com`** (401). Product seed +  
-  `ensure_product_agent_config` repair now inject model-level `base_url`.  
-  Re-launch `dsb` once so existing homes get repaired.
+- Requires DeepSeek API key for live turns.
+- Each `[model.deepseek-*]` must set `base_url = "https://api.deepseek.com"`.
 
-### Tools / safety
+### Everyday tests
 
-- Thin path (`run` / `chat`) uses `dsb-tools` snippet + permission policy.
-- Full-screen agent uses Grok native tools; **L1 fusion is 3.x**.
-- Headless fail-closed on thin path: ask → deny unless TTY / explicit flags.
-- **Pre-3.x live matrix** verifies agent tools against DeepSeek (read/list/grep/shell/edit)  
-  when API key present — see [PRE_3X_TEST_MATRIX.md](./PRE_3X_TEST_MATRIX.md).  
-  That is **capability smoke**, not Spec 45 heart fusion.
+```bash
+./scripts/test-pre3x-baseline.sh --live   # when key present
+cargo test -p dsb-tools path_a
+cargo test -p dsb-context path_a
+cargo test -p dsb-agent path_a
+```
 
-### Cache / cost
-
-- Thin path: stable prefix epoch via `dsb-context`.
-- Agent-stack L2 fusion: **3.x**.
-
-### Dogfood / baseline
-
-- Quick offline: `./scripts/smoke-dogfood.sh`
-- **Pre-3.0.0 baseline:** `./scripts/test-pre3x-baseline.sh` (`--vendor` / `--live` / `--all`)
-- Matrix SSOT: [PRE_3X_TEST_MATRIX.md](./PRE_3X_TEST_MATRIX.md)
-- **L3 prep smoke (4.0 Lane B):** `./scripts/test-l3-smoke.sh` (`--offline-only` without key; full when `DEEPSEEK_API_KEY` set)
-- Parallel ops: [PARALLEL_3X_4X_PLAN.md](./PARALLEL_3X_4X_PLAN.md) · prep board [LANE_B_L3_PREP_GOALS.md](./LANE_B_L3_PREP_GOALS.md)
-- Evidence: `docs/product/evidence/`
-
-## Not in product identity
-
-- Multi-vendor “works equally on Claude/GPT” as identity  
-- Gajae multi-stage planning harness as core loop  
-- Claiming 1.x thin REPL is the product DoD  
-- Claiming 2.x completed heart fusion (L1+L2 under Grok shell)  
+Do **not** run vendor-full cargo as everyday gate (disk bomb).

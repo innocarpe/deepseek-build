@@ -9,11 +9,11 @@
 >
 > | Line | Meaning |
 > |------|---------|
-> | **`2.0.0` (current product)** | **`dsb` / `deepseek-build` opens a Grok Build–class coding agent** (full-screen TUI + agent loop), base runtime vendored from open-source Grok Build, **DeepSeek** default provider. |
-> | **`1.x` (legacy scaffold)** | Thin clap agent / contracts — still installable for experiments; **not** the product DoD. |
+> | **`3.0.0` (current product)** | **Heart fusion:** L1 snippet-safe / permissions + L2 prefix / repair / Flash-Pro under the **default Grok agent path** (Path A), on top of the 2.x shell. DoD: **[PRD-v3.md](docs/product/PRD-v3.md)**. Board: **[HEART_3X_GOALS.md](docs/product/HEART_3X_GOALS.md)**. |
+> | **`2.x` (shell cut)** | Full-screen DeepSeek agent TUI + vendor base + entry/UI/npm — **shell**, not full hearts. |
+> | **`1.x` (legacy scaffold)** | Thin clap agent / contracts — experiments only. |
 >
-> Replan / DoD: **[docs/product/REPLAN_2.0.md](docs/product/REPLAN_2.0.md)**. Ultragoal board: **[GROKBASE_2X_GOALS.md](docs/product/GROKBASE_2X_GOALS.md)**.
-
+> Honesty: **2.x was shell cut; 3.0.0 is heart fusion.** Residuals: [KNOWN_LIMITS.md](docs/product/KNOWN_LIMITS.md).
 Combines three first-class references:
 
 | Source | What we take |
@@ -73,11 +73,11 @@ Open a **new** terminal (or source your shell config), then:
 
 ```bash
 deepseek-build --version
-# → deepseek-build 2.0.0
+# → deepseek-build 3.0.0
 dsb --version
-# → dsb 2.0.0
+# → dsb 3.0.0
 ./scripts/check-semver.sh
-# → check-semver: ok (2.0.0)
+# → check-semver: ok (3.0.0)
 ```
 
 Both commands must report the **same** full SemVer.

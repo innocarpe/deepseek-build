@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 3.0.0 — 2026-08-07
+
+### Heart fusion (product major)
+
+- **2.x was shell cut; 3.0.0 is heart fusion** (PRD-v3 P0)
+- L1: Path A snippet_safe edit + Spec 90 permissions matrix (not YOLO default)
+- L2: Path A prefix assembly + tool-call repair + Flash-first / Pro escalate
+- Honesty docs: README, KNOWN_LIMITS, cut evidence
+- Tag **`v3.0.0`** (full SemVer only)
+
+### Residual (honest)
+
+- Spec 45 **file_version** equivalent on Grok path (full snippet_id mint polish → 3.x minor)
+- Live dogfood env-gated; L3 product identity → 4.x
+
+
 ## 3.0.0-beta.2 — 2026-08-07
 
 ### L2 repair + Flash/Pro (Path A)

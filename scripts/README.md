@@ -37,6 +37,19 @@ rm -rf third_party/grok-build/target
 Results TSV: `docs/product/evidence/_last_pre3x_results.tsv`  
 Durable report: `docs/product/evidence/PRE3X_BASELINE_YYYY-MM-DD.md`
 
+## L3 smoke (4.0 prep, parallel-safe)
+
+Does **not** change product defaults. Uses installed `deepseek-build-agent` +
+DeepSeek API. Safe while **heart-3x** develops (separate worktree recommended).
+
+```bash
+./scripts/test-l3-smoke.sh              # CLI + headless + bg shell + worktree help
+./scripts/test-l3-smoke.sh --extended   # + spawn_subagent (slower)
+```
+
+Results: `docs/product/evidence/_last_l3_smoke.tsv`  
+Ops plan: [PARALLEL_3X_4X_PLAN.md](../docs/product/PARALLEL_3X_4X_PLAN.md)
+
 ## Install (product)
 
 ```bash

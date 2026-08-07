@@ -27,7 +27,10 @@ Answer, while **3.0.0 is mid-flight**:
 3. What may land on **`main` now** vs what must wait.  
 4. Worktree / PR / merge rules (this repo: **merge commits**, squash disabled).
 
-This is **planning only**. It does **not** start a second full ultragoal code train until gates in §6 pass.
+This plan defines **how to execute Lane B in parallel** (docs, smoke scripts, evidence)
+while heart-3x runs. It does **not** start a second full ultragoal **code** train
+(`fleet-4x`) until gates in §6 pass — but Lane B is **not** “docs forever later”;
+build those assets **now** in a **separate worktree**, never by stashing 3.0 WIP.
 
 ---
 
@@ -64,8 +67,8 @@ Grok Build machine (L3)
                     └─────────────────────────────────────┘
                                       │
                     ┌─────────────────┴───────────────────┐
-  Lane B (parallel) │  PRs → main (docs/research/evidence)│
-  bandwidth ★★☆     │  WAVE_4x draft, L3 gap map, dogfood │
+  Lane B (parallel) │  worktree → PRs to main             │
+  bandwidth ★★☆     │  guides, test-l3-smoke, gap, evidence│
                     └─────────────────────────────────────┘
                                       │
                     ┌─────────────────┴───────────────────┐
@@ -283,12 +286,15 @@ This plan document is “working” when:
 - [ ] PR units only from WAVE_3x  
 - [ ] Keep `./scripts/test-pre3x-baseline.sh --live` green on heart-impacting PRs  
 
-### Lane B (this plan’s first landings)
+### Lane B (execute in **separate worktree**, never stash 3.0 WIP)
 
 - [x] This file (`PARALLEL_3X_4X_PLAN.md`)  
-- [ ] [WAVE_4x_PR_DAG.md](./WAVE_4x_PR_DAG.md) draft on `main`  
-- [ ] L3 gap inventory note under `docs/research/` or `docs/product/evidence/`  
-- [ ] Optional: draft cold-start 4.0 stub (non-active until Phase 2)  
+- [x] [WAVE_4x_PR_DAG.md](./WAVE_4x_PR_DAG.md) draft on `main`  
+- [x] L3 gap inventory + code pointers  
+- [x] User guides 11–14 (subagent / bg / worktree / throughput)  
+- [x] `./scripts/test-l3-smoke.sh` (live when API key present)  
+- [ ] Re-run live L3 smoke after restoring `credentials.json`  
+- [ ] Optional: cold-start 4.0 full text at Phase 2  
 
 ### Lane C
 

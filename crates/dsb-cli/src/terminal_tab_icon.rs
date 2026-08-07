@@ -91,7 +91,11 @@ fn ensure_in_dir(dir: &Path) -> TabIconStatus {
             LOGICAL_NAME,
             serde_json::json!(COMMANDS),
         )
-        && merge_json_key(&dir.join(COLORS_JSON), LOGICAL_NAME, serde_json::json!(BRAND_BLUE));
+        && merge_json_key(
+            &dir.join(COLORS_JSON),
+            LOGICAL_NAME,
+            serde_json::json!(BRAND_BLUE),
+        );
     if ok {
         TabIconStatus::Installed
     } else {
@@ -122,11 +126,12 @@ fn already_installed(dir: &Path) -> bool {
 /// commas (invalid strict JSON), so strip them before parsing.
 fn load_json_object(path: &Path) -> serde_json::Map<String, serde_json::Value> {
     match fs::read_to_string(path) {
-        Ok(text) => match serde_json::from_str::<serde_json::Value>(&strip_trailing_commas(&text))
-        {
-            Ok(serde_json::Value::Object(map)) => map,
-            _ => serde_json::Map::new(),
-        },
+        Ok(text) => {
+            match serde_json::from_str::<serde_json::Value>(&strip_trailing_commas(&text)) {
+                Ok(serde_json::Value::Object(map)) => map,
+                _ => serde_json::Map::new(),
+            }
+        }
         Err(_) => serde_json::Map::new(),
     }
 }
@@ -245,7 +250,11 @@ mod tests {
         let icons = dir.join(ICONS_JSON);
         fs::write(&icons, "{\n  \"claude_code\": [\"claude\",],\n}\n").unwrap();
 
-        assert!(merge_json_key(&icons, LOGICAL_NAME, serde_json::json!(COMMANDS)));
+        assert!(merge_json_key(
+            &icons,
+            LOGICAL_NAME,
+            serde_json::json!(COMMANDS)
+        ));
 
         let map = load_json_object(&icons);
         assert_eq!(map["claude_code"][0], "claude", "existing key preserved");

@@ -13,7 +13,7 @@
 | **Semantics SSOT** | [`docs/specs/45-snippet-edit.md`](../../specs/45-snippet-edit.md) |
 | **Binding** | [`HEART_3X_SPEC_BINDING.md`](../../architecture/HEART_3X_SPEC_BINDING.md) · [`HARNESS_PHILOSOPHY.md`](../../architecture/HARNESS_PHILOSOPHY.md) §4.1 |
 
-**This file is the mandatory ultragoal PR unit plan for VC003 plus implementation evidence.**  
+**This file is the mandatory ultragoal PR unit plan for VC003 plus implementation evidence.**
 It does **not** claim VISION L1 complete, owner-bar re-cut, Path A multi-edit R0A with required `snippet_id`, write/bash invalidation, resume/fork, or any **`5.2.0`** ship.
 
 ---
@@ -122,8 +122,8 @@ test(tools): VC003 snippet_id mint and session-local regressions
 | **Merge order** | Bottom-up: #125 → VC003 → VC004 → … |
 | **Conflict lock** | Path A `read_file` + `FileContent` + session snippet store owned by VC003; edit path reserved for VC004 |
 
-**Planned PR title (when leader opens later):** `feat(tools): mint snippet_id on Path A read_file`  
-**Label kind:** `feat`  
+**Planned PR title (when leader opens later):** `feat(tools): mint snippet_id on Path A read_file`
+**Label kind:** `feat`
 **Body:** Problem / What changed / Testing honesty / AI review / Security / Notes; `Depends on #125`.
 
 ---

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 3.0.0-beta.2 — 2026-08-07
+
+### L2 repair + Flash/Pro (Path A)
+
+- `dsb-agent` `path_a_turn`: Spec 15 prep-before-execute + Spec 20 Flash default / Pro once under agent defaults
+- H15.* / H20.* contract tests; H2 exit band
+
+
 ## 3.0.0-beta.1 — 2026-08-07
 
 ### L2 prefix (Path A agent context)

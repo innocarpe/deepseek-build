@@ -107,9 +107,9 @@ pub fn apply_path_a_edit(
 
     if is_create {
         // Create-new is write_new territory; still not free-form overwrite.
-        store.write_new(path, &req.new_string).map_err(|e| {
-            PathAEditError::Snippet(EditError::Io(e.to_string()))
-        })?;
+        store
+            .write_new(path, &req.new_string)
+            .map_err(|e| PathAEditError::Snippet(EditError::Io(e.to_string())))?;
         return Ok(req.new_string.clone());
     }
 
@@ -157,11 +157,9 @@ fn replace_all_in_snippet(
     old: &str,
     new: &str,
 ) -> Result<String, PathAEditError> {
-    let snippet = store
-        .get(snippet_id)
-        .cloned()
-        .ok_or(EditError::NotFound)?;
-    let content = std::fs::read_to_string(&snippet.path).map_err(|e| EditError::Io(e.to_string()))?;
+    let snippet = store.get(snippet_id).cloned().ok_or(EditError::NotFound)?;
+    let content =
+        std::fs::read_to_string(&snippet.path).map_err(|e| EditError::Io(e.to_string()))?;
     let current = file_version(&snippet.path)?;
     if current != snippet.version {
         return Err(PathAEditError::Snippet(EditError::Stale));
@@ -217,10 +215,13 @@ mod tests {
             snippet_id: None,
             file_version: None,
         };
-        let err = apply_path_a_edit(&mut store, PathAEditPolicy::product_default(), &req)
-            .unwrap_err();
+        let err =
+            apply_path_a_edit(&mut store, PathAEditPolicy::product_default(), &req).unwrap_err();
         assert_eq!(err, PathAEditError::FreeFormPrimaryRejected);
-        assert!(reject_free_form_primary(PathAEditPolicy::product_default(), false));
+        assert!(reject_free_form_primary(
+            PathAEditPolicy::product_default(),
+            false
+        ));
     }
 
     #[test]
@@ -237,8 +238,8 @@ mod tests {
             snippet_id: Some(snip.snippet_id),
             file_version: None,
         };
-        let err = apply_path_a_edit(&mut store, PathAEditPolicy::product_default(), &req)
-            .unwrap_err();
+        let err =
+            apply_path_a_edit(&mut store, PathAEditPolicy::product_default(), &req).unwrap_err();
         assert_eq!(err, PathAEditError::EmptyOldOverwriteRejected);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "keep me\n");
     }
@@ -260,7 +261,10 @@ mod tests {
             file_version: Some(ver),
         };
         apply_path_a_edit(&mut store, PathAEditPolicy::product_default(), &req).unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "ALPHA\nbeta\nalpha\n");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "ALPHA\nbeta\nalpha\n"
+        );
     }
 
     #[test]
@@ -277,8 +281,8 @@ mod tests {
             snippet_id: Some(snip.snippet_id),
             file_version: None,
         };
-        let err = apply_path_a_edit(&mut store, PathAEditPolicy::product_default(), &req)
-            .unwrap_err();
+        let err =
+            apply_path_a_edit(&mut store, PathAEditPolicy::product_default(), &req).unwrap_err();
         assert!(matches!(err, PathAEditError::Snippet(EditError::Ambiguous)));
     }
 
@@ -297,8 +301,8 @@ mod tests {
             snippet_id: Some(snip.snippet_id),
             file_version: None,
         };
-        let err = apply_path_a_edit(&mut store, PathAEditPolicy::product_default(), &req)
-            .unwrap_err();
+        let err =
+            apply_path_a_edit(&mut store, PathAEditPolicy::product_default(), &req).unwrap_err();
         assert!(matches!(err, PathAEditError::Snippet(EditError::Stale)));
     }
 
@@ -316,8 +320,8 @@ mod tests {
             snippet_id: Some(snip.snippet_id),
             file_version: Some("deadbeef".into()),
         };
-        let err = apply_path_a_edit(&mut store, PathAEditPolicy::product_default(), &req)
-            .unwrap_err();
+        let err =
+            apply_path_a_edit(&mut store, PathAEditPolicy::product_default(), &req).unwrap_err();
         assert_eq!(err, PathAEditError::FileVersionMismatch);
     }
 
@@ -340,8 +344,17 @@ mod tests {
 
     #[test]
     fn product_policy_rejects_free_form_primary_flag() {
-        assert!(reject_free_form_primary(PathAEditPolicy::product_default(), false));
-        assert!(!reject_free_form_primary(PathAEditPolicy::product_default(), true));
-        assert!(!reject_free_form_primary(PathAEditPolicy::legacy_free_form(), false));
+        assert!(reject_free_form_primary(
+            PathAEditPolicy::product_default(),
+            false
+        ));
+        assert!(!reject_free_form_primary(
+            PathAEditPolicy::product_default(),
+            true
+        ));
+        assert!(!reject_free_form_primary(
+            PathAEditPolicy::legacy_free_form(),
+            false
+        ));
     }
 }

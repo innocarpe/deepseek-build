@@ -12,6 +12,10 @@
 
 ## Unreleased
 
+## 4.0.4 — 2026-08-07
+
+- Image attachments on text-only DeepSeek endpoints (persist to session assets + OCR hint); DeepSeek status line with account balance & cache hit rate; G003 mint file_version on Path A read_file
+
 ## 4.0.3 — 2026-08-07
 
 ### CLI

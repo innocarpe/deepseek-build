@@ -1,9 +1,9 @@
 //! Theming for the pager.
 //!
 //! All colors come from the `Theme` struct. No hardcoded colors elsewhere.
-//! The default **product** theme is DeepSeek Night v2 (DeepSeek blue `#4D6BFE`
-//! on a measured C-balanced palette). The original DeepSeek Night is
-//! selectable as **DeepSeek Night (classic)**. Retired names
+//! The default **product** theme is DeepSeek Night (classic) (DeepSeek blue
+//! `#4D6BFE` on a blue-tinted ramp). The measured C-balanced palette is
+//! selectable as **DeepSeek Night v2**. Retired names
 //! (`deepseeknight-neutral`, `groknight`) still parse for config back-compat.
 //!
 //! ## Color support
@@ -192,7 +192,7 @@ pub fn display_name_for_canonical(value: &str) -> &str {
 
 impl Default for Theme {
     fn default() -> Self {
-        Self::deepseeknight_v2()
+        Self::deepseeknight()
     }
 }
 
@@ -319,7 +319,7 @@ impl Theme {
             ThemeKind::OscuraMidnight => Self::oscura_midnight(),
             // Auto is resolved to a concrete theme before being stored;
             // if reached, fall back to product default.
-            ThemeKind::Auto => Self::deepseeknight_v2(),
+            ThemeKind::Auto => Self::deepseeknight(),
         };
         // Sample polarity pre-quantization — post-quantize `bg_base` may
         // land on a named/indexed entry whose luminance is host-palette-
@@ -384,7 +384,7 @@ impl Theme {
     /// Clamp a theme kind to what the terminal supports.
     fn clamp_to_terminal(kind: ThemeKind) -> ThemeKind {
         if kind.requires_truecolor() && !color_support::detect().has_truecolor() {
-            ThemeKind::DeepSeekNightV2
+            ThemeKind::DeepSeekNight
         } else {
             kind
         }
@@ -746,7 +746,7 @@ mod tests {
 
     #[test]
     fn default_theme_is_v2() {
-        assert_eq!(Theme::default().bg_base, Theme::deepseeknight_v2().bg_base);
+        assert_eq!(Theme::default().bg_base, Theme::deepseeknight().bg_base);
     }
 
     #[test]

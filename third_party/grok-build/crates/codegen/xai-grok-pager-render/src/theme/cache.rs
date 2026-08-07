@@ -20,7 +20,7 @@ use super::system_appearance;
 /// In-memory theme kind, encoded as a `u8` matching the
 /// `ThemeKind` discriminants. Loaded from disk once at startup via
 /// `load_from_disk()`, then kept in sync by `set()`.
-static CURRENT: AtomicU8 = AtomicU8::new(ThemeKind::DeepSeekNightV2 as u8);
+static CURRENT: AtomicU8 = AtomicU8::new(ThemeKind::DeepSeekNight as u8);
 static LOADED: AtomicBool = AtomicBool::new(false);
 #[cfg(any(test, feature = "test-support"))]
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -37,7 +37,7 @@ static AUTO_MODE: AtomicBool = AtomicBool::new(false);
 static TERMINAL_NATIVE_LOCK: AtomicBool = AtomicBool::new(false);
 
 /// Decode the u8 stored in `CURRENT` back to a `ThemeKind`. Falls
-/// back to `DeepSeekNightV2` if the byte is somehow out of range (which
+/// back to `DeepSeekNight` if the byte is somehow out of range (which
 /// can't happen via `set` — the discriminant is always a valid
 /// variant — but defends against a future variant addition that
 /// forgot to extend this match).
@@ -52,7 +52,7 @@ fn theme_kind_from_u8(byte: u8) -> ThemeKind {
         x if x == ThemeKind::RosePineMoon as u8 => ThemeKind::RosePineMoon,
         x if x == ThemeKind::OscuraMidnight as u8 => ThemeKind::OscuraMidnight,
         x if x == ThemeKind::Auto as u8 => ThemeKind::Auto,
-        _ => ThemeKind::DeepSeekNightV2,
+        _ => ThemeKind::DeepSeekNight,
     }
 }
 
@@ -170,7 +170,7 @@ pub fn invalidate_auto_theme_config() {
 /// Precedence:
 /// 1. Environment variable (`GROK_THEME` / `LC_GROK_THEME`)
 /// 2. Config file (`[ui].theme`)
-/// 3. Default: `DeepSeekNightV2` (DeepSeek Build product skin)
+/// 3. Default: `DeepSeekNight` (DeepSeek Build product skin)
 #[must_use]
 pub fn resolve_initial_theme() -> ThemeKind {
     resolve_initial_theme_from(env_theme_name().as_deref(), load_from_disk(), true)
@@ -230,7 +230,7 @@ fn resolve_from_config(config_theme: Option<ThemeKind>, osc11_fallback: bool) ->
     }
 
     // Default: DeepSeek Build product theme
-    ThemeKind::DeepSeekNightV2
+    ThemeKind::DeepSeekNight
 }
 
 /// Map an optional appearance detection result to a concrete `ThemeKind`.
@@ -238,7 +238,7 @@ fn resolve_from_appearance(appearance: Option<system_appearance::SystemAppearanc
     let config = auto_theme_config();
     appearance
         .map(|a| system_appearance::to_theme_kind(a, config.dark_theme, config.light_theme))
-        .unwrap_or(ThemeKind::DeepSeekNightV2)
+        .unwrap_or(ThemeKind::DeepSeekNight)
 }
 
 /// Resolve "auto" by detecting system appearance and mapping via config.
@@ -311,7 +311,7 @@ fn load_auto_theme_config() -> AutoThemeConfig {
 pub fn reset_for_test() {
     // Tests are serialized via TEST_LOCK so the AtomicU8/AtomicBool
     // pair is safe to reset without any cross-thread coordination.
-    CURRENT.store(ThemeKind::DeepSeekNightV2 as u8, Ordering::Relaxed);
+    CURRENT.store(ThemeKind::DeepSeekNight as u8, Ordering::Relaxed);
     LOADED.store(false, Ordering::Release);
     AUTO_MODE.store(false, Ordering::Relaxed);
     set_terminal_native_lock(false);

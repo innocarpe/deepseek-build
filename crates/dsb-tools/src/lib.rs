@@ -10,6 +10,7 @@ mod bg_shell;
 mod grants;
 mod mcp;
 mod path_a_edit;
+mod path_a_permissions;
 mod permissions;
 mod plan;
 mod snippets;
@@ -24,6 +25,10 @@ pub use mcp::{
 pub use path_a_edit::{
     GrokPathEditRequest, PathAEditError, PathAEditPolicy, apply_path_a_edit, path_file_version,
     reject_free_form_primary,
+};
+pub use path_a_permissions::{
+    PathAActionClass, PathACapabilityMode, PathAPermissionSettings, config_enables_yolo,
+    product_yolo_default,
 };
 pub use permissions::{
     Decision, PermissionError, PermissionPolicy, Scope, classify_bash, decide,

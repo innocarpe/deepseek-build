@@ -99,6 +99,7 @@ xai_api_base_url = "https://api.deepseek.com"
 
 [ui]
 theme = "deepseeknight"
+# Spec 90 product default — not YOLO-only (G005)
 yolo = false
 EOF
   chmod 600 "$dir/config.toml"

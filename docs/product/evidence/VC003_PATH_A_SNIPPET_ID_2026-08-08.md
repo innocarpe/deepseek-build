@@ -208,10 +208,13 @@ test -f docs/adr/0010-spec-45-snippet-store.md
 | Store + FileContent fields | **yes** — `73b0bc8` | commit |
 | Path A text mint | **yes** — `89564c8` | commit |
 | Text UTF-8 read mints `snippet_id` | **PASS** (`vc003_current_read_file_mints_snippet_id`) | **unit** |
-| ID shape ADR 0010 §2 exact | **PASS** — `snp_` + 26 Crockford-base32 ULID; alphabet `0123456789ABCDEFGHJKMNPQRSTVWXYZ`; UUID-v7-simple rejected (`uuid_v7_simple_is_not_valid_snippet_id_shape`) | **unit** |
+| ID shape ADR 0010 §2 exact | **PASS** — `snp_` + 26 Crockford-base32 ULID; alphabet `0123456789ABCDEFGHJKMNPQRSTVWXYZ`; UUID-v7-simple rejected | **unit** |
+| Mint range = effective extract window | **PASS** — default `max_lines_read` cap → `end_line=max`, `scope=lines` (`vc003_default_max_lines_truncation_records_capped_range`); explicit offset+limit exact; negative offset uses `resolve_read_start_line` | **unit** |
+| Past-EOF / zero window no mint | **PASS** (`vc003_past_eof_does_not_mint_snippet`); `file_version` kept | **unit** |
+| Empty UTF-8 file mints whole_file | **PASS** (`vc003_empty_utf8_file_mints_whole_file_snippet`) | **unit** |
 | Repeated reads differ | **PASS** (`vc003_repeated_reads_mint_distinct_snippet_ids`) | **unit** |
 | Session-local store | **PASS** (`vc003_snippet_store_is_session_local_not_process_global` + store unit; no static/global) | **unit** |
-| `file_version` sha256 preserved | **PASS** (`current_read_file_mints_file_version_sha256` + VC003 mint test) | **unit** |
+| `file_version` sha256 preserved | **PASS** (`current_read_file_mints_file_version_sha256` + VC003 mint tests) | **unit** |
 | Non-text / invalid UTF-8 / error no-id | **PASS** (binary, not-found, `vc003_invalid_utf8_does_not_mint_snippet_id`) | **unit** |
 | Thin Path B oracle still green | **PASS** (`cargo test -p dsb-tools snippets` — 9 ok) | thin oracle (**not** Path A proof) |
 | Public Path A R0A wire | **not run / not claimed** | — |
@@ -223,9 +226,10 @@ test -f docs/adr/0010-spec-45-snippet-store.md
 |-------|----------|
 | Session store | `third_party/grok-build/.../types/snippet_store.rs` — ephemeral `SessionSnippetStore` via `SharedResources` → `Resources::get_or_default` (**not** static, **not** process-global, **not** Spec 10 persistence) |
 | Output fields | `FileContent.{snippet_id,snippet_start_line,snippet_end_line,snippet_scope}` + existing `file_version` |
-| Mint path | Successful **UTF-8** text only (incl. empty UTF-8 file); invalid UTF-8 may lossy-display but **no** id; PDF/PPTX/image/binary/error unchanged (no id) |
+| Mint path | Successful **UTF-8** text with a **non-empty returned window** only; empty UTF-8 file still mints `whole_file` 1–1; invalid UTF-8 may lossy-display but **no** id; past-EOF/zero window **no** id; PDF/PPTX/image/binary/error unchanged |
+| Mint range | Same effective window as `extract_file_content_lines`: `resolve_read_start_line` + `effective_limit` (incl. `TruncationCfg.max_lines_read` cap). `FileContent.offset`/`limit` remain compatibility wire fields (not rewritten) |
 | Model-visible | `to_prompt_format` appends `snippet_id`, optional range/scope, and `file_version` |
-| ID shape | **ADR 0010 §2 exact:** `snp_` + Crockford-base32 ULID (26 chars). Local encoder (no new crate); 48-bit ms timestamp + 80-bit entropy from existing `uuid` randomness |
+| ID shape | **ADR 0010 §2 exact:** `snp_` + Crockford-base32 ULID (26 chars). Local encoder (no new crate) |
 
 ### Commands actually run
 
@@ -236,7 +240,8 @@ git checkout -b feat/vc003-path-a-snippet-id   # from clean spec/vc002-snippet-s
 # Path A unit (xai-grok-tools)
 cd third_party/grok-build
 cargo test -p xai-grok-tools --lib vc003
-# ok — 6 passed (mint+ULID shape, multi-id, session-local, not-found, binary, invalid-utf8)
+# ok — 11 passed (mint, ULID, multi-id, session-local, not-found, binary, invalid-utf8,
+#                 max_lines truncation range, explicit range, negative offset, past-EOF, empty file)
 
 cargo test -p xai-grok-tools --lib current_read_file_mints_file_version_sha256
 # ok — 1 passed
@@ -244,8 +249,8 @@ cargo test -p xai-grok-tools --lib current_read_file_mints_file_version_sha256
 cargo test -p xai-grok-tools --lib 'snippet_store::'
 # ok — 9 passed (Crockford 26-char alphabet exact + UUID-v7-simple rejected)
 
-cargo test -p xai-grok-tools --lib read_empty_file_prompt
-# ok — 1 passed
+cargo fmt -p xai-grok-tools -- --check
+# ok — exit 0
 
 # Thin oracle (not Path A proof)
 cargo test -p dsb-tools snippets
@@ -253,9 +258,10 @@ cargo test -p dsb-tools snippets
 
 # Docs / whitespace
 git diff --check
+# ok — exit 0
 test -f docs/product/evidence/VC003_PATH_A_SNIPPET_ID_2026-08-08.md
 test -f docs/adr/0010-spec-45-snippet-store.md
-rg -n 'version' Cargo.toml | head -1   # 5.1.0
+# product SemVer still 5.1.0 (no bump)
 ```
 
 **Honesty:** All Path A mint claims above are **unit/integration tests inside `xai-grok-tools`**. No public `deepseek-build`/`dsb` agent wire harness (R0A) was run for this story.

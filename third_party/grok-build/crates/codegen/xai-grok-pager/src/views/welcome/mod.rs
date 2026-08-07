@@ -459,20 +459,16 @@ pub(super) fn render_version_badge(
                     .fg(theme.text_primary)
                     .add_modifier(Modifier::BOLD),
             ));
+            // Product SemVer via installed() (DEEPSEEK_BUILD_VERSION / compile-time),
+            // not the vendored pager crate version alone.
             spans.push(Span::styled(
-                format!("{}{}", xai_grok_version::VERSION, channel),
+                format!("{}{}", xai_grok_version::installed(), channel),
                 Style::default().fg(theme.gray),
-            ));
-            spans.push(Span::styled(
-                " Beta",
-                Style::default()
-                    .fg(theme.text_primary)
-                    .add_modifier(Modifier::BOLD),
             ));
         }
         VersionBadgeMode::HeroFooter => {
             let channel_display = if channel.is_empty() {
-                "Beta"
+                ""
             } else {
                 channel.trim()
             };
@@ -489,7 +485,7 @@ pub(super) fn render_version_badge(
                     .add_modifier(Modifier::BOLD),
             ));
             spans.push(Span::styled(
-                xai_grok_version::VERSION,
+                xai_grok_version::installed(),
                 Style::default().fg(theme.gray),
             ));
         }

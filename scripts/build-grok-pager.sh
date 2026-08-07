@@ -11,6 +11,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENDOR="${ROOT}/third_party/grok-build"
+# Binary package (lib crate is xai-grok-pager; do not build that alone).
 PKG="xai-grok-pager-bin"
 CMD="${1:-check}"
 
@@ -41,6 +42,22 @@ if ! command -v protoc >/dev/null 2>&1 && ! command -v dotslash >/dev/null 2>&1;
 fi
 
 cd "$VENDOR"
+
+# Product SemVer from monorepo root (not vendor crate 0.2.x).
+PRODUCT_VER="$(
+  python3 - <<'PY' 2>/dev/null || true
+import re
+s = open("../../Cargo.toml").read()
+i = s.index("[workspace.package]")
+m = re.search(r'(?m)^version = "([^"]+)"', s[i:])
+print(m.group(1) if m else "")
+PY
+)"
+if [[ -n "${PRODUCT_VER}" ]]; then
+  export DEEPSEEK_BUILD_VERSION="${PRODUCT_VER}"
+  export GROK_VERSION="${PRODUCT_VER}"
+  echo "build-grok-pager: product version ${PRODUCT_VER} (DEEPSEEK_BUILD_VERSION/GROK_VERSION)"
+fi
 
 case "$CMD" in
   check)

@@ -1,17 +1,33 @@
-//! Installed grok CLI version, lockstepped with shipping binaries.
+//! Installed CLI version, lockstepped with shipping binaries.
+//!
+//! DeepSeek Build product: prefer `DEEPSEEK_BUILD_VERSION` (runtime, set by
+//! `dsb` / npm wrapper) so the TUI shows product SemVer (`5.0.0`) instead of
+//! the vendored pager crate version (`0.2.x`).
 
 use semver::Version;
 
 pub const TEST_VERSION_ENV: &str = "GROK_TEST_VERSION";
+/// Product SemVer override (DeepSeek Build). Preferred over Grok-internal env.
+pub const PRODUCT_VERSION_ENV: &str = "DEEPSEEK_BUILD_VERSION";
 
-pub const VERSION: &str = match option_env!("GROK_VERSION") {
+pub const VERSION: &str = match option_env!("DEEPSEEK_BUILD_VERSION") {
     Some(v) => v,
-    None => env!("CARGO_PKG_VERSION"),
+    None => match option_env!("GROK_VERSION") {
+        Some(v) => v,
+        None => env!("CARGO_PKG_VERSION"),
+    },
 };
 
-/// [`TEST_VERSION_ENV`] override first, then [`VERSION`]. Trimmed so
-/// non-semver-aware callers can pass the result straight into parsing.
+/// Runtime product version, then test override, then compiled [`VERSION`].
+///
+/// Trimmed so non-semver-aware callers can pass the result straight into parsing.
 pub fn installed() -> String {
+    if let Ok(v) = std::env::var(PRODUCT_VERSION_ENV) {
+        let t = v.trim();
+        if !t.is_empty() {
+            return t.to_string();
+        }
+    }
     std::env::var(TEST_VERSION_ENV)
         .map(|v| v.trim().to_string())
         .unwrap_or_else(|_| VERSION.to_string())
@@ -71,5 +87,19 @@ mod tests {
         // display_version uses compiled VERSION — just verify the label appends
         assert_eq!(display_version(""), VERSION);
         assert!(display_version(" [stable]").ends_with("[stable]"));
+    }
+
+    /// DeepSeek Build: product env must win over compiled vendor crate version.
+    #[test]
+    fn product_version_env_overrides_compiled() {
+        // SAFETY: test-only env mutation in serial unit test.
+        unsafe {
+            std::env::set_var(PRODUCT_VERSION_ENV, "5.0.0");
+            std::env::remove_var(TEST_VERSION_ENV);
+        }
+        assert_eq!(installed(), "5.0.0");
+        unsafe {
+            std::env::remove_var(PRODUCT_VERSION_ENV);
+        }
     }
 }

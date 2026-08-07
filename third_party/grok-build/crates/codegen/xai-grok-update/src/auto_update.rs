@@ -38,9 +38,11 @@ fn manual_install_cmd() -> &'static str {
 /// Build a reinstall hint for a known installer type.
 fn reinstall_hint(installer: &str) -> String {
     match installer {
-        "npm" => "Please reinstall via npm:\n  npm i -g @xai-official/grok".to_string(),
-        "gh-release" => "Please reinstall via GitHub Releases:\n  gh release download --repo xai-org-shared/grok-build --pattern 'grok-*' --output grok && chmod +x grok".to_string(),
-        _ => format!("Please reinstall via:\n  {}", manual_install_cmd()),
+        "npm" => {
+            "Please reinstall via npm:\n  npm i -g @innocarpe/deepseek-build@latest".to_string()
+        }
+        "gh-release" => "Please reinstall via GitHub Releases:\n  gh release download --repo innocarpe/deepseek-build --pattern 'deepseek-build-*' --clobber".to_string(),
+        _ => "Please reinstall via:\n  npm i -g @innocarpe/deepseek-build@latest".to_string(),
     }
 }
 
@@ -2271,7 +2273,7 @@ fn install_npm(target: Option<&str>, channel: &str, npm_registry: Option<&str>) 
     warn_if_other_grok_processes_running();
 
     let version_arg = match target {
-        Some(ver) => format!("@xai-official/grok@{ver}"),
+        Some(ver) => format!("@innocarpe/deepseek-build@{ver}"),
         None => {
             // All current callers resolve the version via get_latest_version
             // (which applies max(stable, alpha) for the alpha channel) before
@@ -2282,7 +2284,7 @@ fn install_npm(target: Option<&str>, channel: &str, npm_registry: Option<&str>) 
                 "install_npm called without a resolved version, falling back to dist-tag"
             );
             format!(
-                "@xai-official/grok@{}",
+                "@innocarpe/deepseek-build@{}",
                 if channel == "alpha" {
                     "alpha"
                 } else {
@@ -3563,7 +3565,7 @@ mod tests {
         let hint = reinstall_hint("npm");
         assert!(hint.contains("npm i -g"), "should suggest npm i -g: {hint}");
         assert!(
-            hint.contains("@xai-official/grok"),
+            hint.contains("@innocarpe/deepseek-build"),
             "should name the package: {hint}"
         );
     }
@@ -3576,27 +3578,19 @@ mod tests {
             "should suggest gh release download: {hint}"
         );
         assert!(
-            hint.contains("xai-org-shared/grok-build"),
+            hint.contains("innocarpe/deepseek-build"),
             "should name the repo: {hint}"
         );
     }
 
     #[test]
-    fn test_reinstall_hint_internal_mentions_platform_installer() {
+    fn test_reinstall_hint_internal_mentions_product_npm() {
         let hint = reinstall_hint("internal");
-        if cfg!(windows) {
-            assert!(hint.contains("irm"), "should suggest irm install: {hint}");
-            assert!(
-                hint.contains("install.ps1"),
-                "should reference install.ps1: {hint}"
-            );
-        } else {
-            assert!(hint.contains("curl"), "should suggest curl install: {hint}");
-            assert!(
-                hint.contains("install.sh"),
-                "should reference install.sh: {hint}"
-            );
-        }
+        assert!(
+            hint.contains("@innocarpe/deepseek-build"),
+            "product reinstall should point at npm package: {hint}"
+        );
+        assert!(hint.contains("npm i -g"), "should suggest npm install: {hint}");
     }
 
     #[test]

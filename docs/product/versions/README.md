@@ -14,7 +14,7 @@ When agents or humans start a train, **pick the major line first**, then the PRD
 |------|-----|--------|-------------------|
 | **1.x** | [PRD-v1.md](../PRD-v1.md) | **Shipped / legacy scaffold** | Thin clap agent + contracts (`1.0.0`–`1.1.0`) — **not** final product DoD |
 | **2.x** | [PRD-v2.md](../PRD-v2.md) | **Shipped product base** | Grok-derived full-screen agent + DeepSeek entry/UI/npm (`2.0.0`–`2.0.3+`) |
-| **3.x** | [PRD-v3.md](../PRD-v3.md) | **Next major (active plan)** | **Heart fusion:** Deep Code L1 + Reasonix L2 **inside** Grok shell |
+| **3.x** | [PRD-v3.md](../PRD-v3.md) | **Next major (active plan `heart-3x`)** | **Heart fusion:** Deep Code L1 + Reasonix L2 **inside** Grok shell — [HEART_3X_GOALS.md](../HEART_3X_GOALS.md) · [WAVE_3x_PR_DAG.md](../WAVE_3x_PR_DAG.md) |
 | **4.x** | [PRD-v4.md](../PRD-v4.md) | Planned later | L3 productization + optional platform polish |
 
 Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** product major PRDs.

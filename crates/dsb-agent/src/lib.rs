@@ -20,7 +20,9 @@ pub use path_a_turn::{
     prepare_path_a_tool_call, route_path_a_turn,
 };
 pub use repair::{RepairError, RepairOutcome, repair_tool_arguments};
-pub use routing::{ModelRouter, Preset, RouteDecision, RouteSource, TurnModelOverride};
+pub use routing::{
+    ModelRouter, Preset, RouteDecision, RouteSource, TurnModelOverride, apply_routing_command,
+};
 pub use session::{SessionError, SessionRecord, SessionStore, SessionSummary};
 pub use subagent::{
     SubagentError, WorkerKind, WorkerOutcome, parent_after_worker, run_worker, worker_stable_prefix,

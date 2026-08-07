@@ -48,33 +48,8 @@ if [[ -n "${DEEPSEEK_BUILD_AGENT_BIN:-}" ]]; then
 fi
 
 # --- resolve public CLI ---
-CLI=""
-for c in \
-  "${ROOT}/target/release/deepseek-build" \
-  "${ROOT}/target/debug/deepseek-build" \
-  "${DEEPSEEK_BUILD_HOME:-$HOME/.deepseek-build}/bin/deepseek-build" \
-  "${CARGO_HOME:-$HOME/.cargo}/bin/deepseek-build" \
-  "$(command -v deepseek-build 2>/dev/null || true)"
-do
-  if [[ -n "${c}" && -x "${c}" ]]; then
-    CLI="${c}"
-    break
-  fi
-done
-if [[ -z "${CLI}" ]]; then
-  fail "NO_CLI: deepseek-build binary not found — build cargo -p dsb-cli or copy stack release first"
-fi
-log "cli=${CLI}"
-
-CLI_DIR="$(cd "$(dirname "${CLI}")" && pwd)"
-DSB_BIN=""
-if [[ -x "${CLI_DIR}/dsb" ]]; then
-  DSB_BIN="${CLI_DIR}/dsb"
-elif command -v dsb >/dev/null 2>&1; then
-  DSB_BIN="$(command -v dsb)"
-fi
-log "dsb=${DSB_BIN:-missing (optional)}"
-
+# Prefer explicit staged pair (PATH_A_R0A_CLI / PATH_A_R0A_AGENT or PATH_A_R0A_BIN_DIR).
+# On --skip-build, never fall back to $HOME/.deepseek-build (may be older 5.2.x/5.3.0).
 agent_runs() {
   local bin="$1"
   [[ -x "${bin}" ]] || return 1
@@ -86,6 +61,50 @@ agent_runs() {
     "${bin}" --version >/dev/null 2>&1
   fi
 }
+
+CLI=""
+if [[ -n "${PATH_A_R0A_CLI:-}" && -x "${PATH_A_R0A_CLI}" ]]; then
+  CLI="${PATH_A_R0A_CLI}"
+elif [[ -n "${PATH_A_R0A_BIN_DIR:-}" && -x "${PATH_A_R0A_BIN_DIR}/deepseek-build" ]]; then
+  CLI="${PATH_A_R0A_BIN_DIR}/deepseek-build"
+fi
+if [[ -z "${CLI}" ]]; then
+  for c in \
+    "${ROOT}/target/release/deepseek-build" \
+    "${ROOT}/target/debug/deepseek-build"
+  do
+    if [[ -n "${c}" && -x "${c}" ]]; then
+      CLI="${c}"
+      break
+    fi
+  done
+fi
+if [[ -z "${CLI}" && "${SKIP_BUILD}" -eq 0 ]]; then
+  for c in \
+    "${DEEPSEEK_BUILD_HOME:-$HOME/.deepseek-build}/bin/deepseek-build" \
+    "${CARGO_HOME:-$HOME/.cargo}/bin/deepseek-build" \
+    "$(command -v deepseek-build 2>/dev/null || true)"
+  do
+    if [[ -n "${c}" && -x "${c}" ]]; then
+      CLI="${c}"
+      break
+    fi
+  done
+fi
+if [[ -z "${CLI}" ]]; then
+  fail "NO_CLI: set PATH_A_R0A_CLI or PATH_A_R0A_BIN_DIR to a staged VC013 (or stack) deepseek-build; do not rely on ~/.deepseek-build under --skip-build"
+fi
+log "cli=${CLI}"
+log "cli_version=$("${CLI}" --version 2>&1 | head -1 || true)"
+
+CLI_DIR="$(cd "$(dirname "${CLI}")" && pwd)"
+DSB_BIN=""
+if [[ -x "${CLI_DIR}/dsb" ]]; then
+  DSB_BIN="${CLI_DIR}/dsb"
+elif [[ -n "${PATH_A_R0A_BIN_DIR:-}" && -x "${PATH_A_R0A_BIN_DIR}/dsb" ]]; then
+  DSB_BIN="${PATH_A_R0A_BIN_DIR}/dsb"
+fi
+log "dsb=${DSB_BIN:-missing (optional)}"
 
 GROK_ROOT="${ROOT}/third_party/grok-build"
 AGENT_BUILD="${GROK_ROOT}/target/release/xai-grok-pager"
@@ -103,31 +122,30 @@ if [[ "${SKIP_BUILD}" -eq 0 ]]; then
   AGENT_RESOLVED="${AGENT_BUILD}"
 else
   AGENT_RESOLVED=""
+  # Explicit staged agent first; then tree release; never $HOME/.deepseek-build.
   for c in \
+    "${PATH_A_R0A_AGENT:-}" \
+    "${PATH_A_R0A_BIN_DIR:+${PATH_A_R0A_BIN_DIR}/deepseek-build-agent}" \
+    "${PATH_A_R0A_BIN_DIR:+${PATH_A_R0A_BIN_DIR}/xai-grok-pager}" \
     "${AGENT_BUILD}" \
-    "${DEEPSEEK_BUILD_HOME:-$HOME/.deepseek-build}/bin/xai-grok-pager" \
-    "${DEEPSEEK_BUILD_HOME:-$HOME/.deepseek-build}/bin/deepseek-build-agent" \
     "${CLI_DIR}/deepseek-build-agent" \
     "${CLI_DIR}/xai-grok-pager"
   do
-    if agent_runs "${c}"; then
+    if [[ -n "${c}" ]] && agent_runs "${c}"; then
       AGENT_RESOLVED="${c}"
       break
     fi
   done
   if [[ -z "${AGENT_RESOLVED}" ]]; then
-    fail "NO_AGENT: no runnable agent; drop --skip-build to compile from stack"
+    fail "NO_AGENT: set PATH_A_R0A_AGENT or PATH_A_R0A_BIN_DIR (staged VC013 xai-grok-pager); --skip-build does not use ~/.deepseek-build"
   fi
 fi
 log "agent_resolved=${AGENT_RESOLVED}"
 if command -v shasum >/dev/null 2>&1; then
   log "agent_sha256=$(shasum -a 256 "${AGENT_RESOLVED}" | awk '{print $1}')"
 fi
-
-if [[ ! -x "${ROOT}/target/release/deepseek-build" && ! -x "${CLI}" ]]; then
-  log "building dsb-cli release for public entry"
-  cargo build --release -p dsb-cli 2>&1 | tail -20
-  CLI="${ROOT}/target/release/deepseek-build"
+if agent_runs "${AGENT_RESOLVED}"; then
+  log "agent_version=$("${AGENT_RESOLVED}" --version 2>&1 | head -1 || true)"
 fi
 
 SERVER_PY="${ROOT}/scripts/lib/scripted_deepseek_server.py"
@@ -300,9 +318,18 @@ SEED_CONTENT="$(cat "${WS}/parent_seed.txt" 2>/dev/null || true)"
 
 {
   echo "git_sha=$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+  echo "skip_build=${SKIP_BUILD}"
   echo "cli=${CLI}"
+  echo "cli_version=$("${CLI}" --version 2>&1 | head -1 || true)"
   echo "dsb=${DSB_BIN:-}"
   echo "agent_resolved=${AGENT_RESOLVED}"
+  if command -v shasum >/dev/null 2>&1; then
+    echo "agent_sha256=$(shasum -a 256 "${AGENT_RESOLVED}" | awk '{print $1}')"
+  fi
+  echo "agent_version=$("${AGENT_RESOLVED}" --version 2>&1 | head -1 || true)"
+  echo "PATH_A_R0A_CLI=${PATH_A_R0A_CLI:-}"
+  echo "PATH_A_R0A_AGENT=${PATH_A_R0A_AGENT:-}"
+  echo "PATH_A_R0A_BIN_DIR=${PATH_A_R0A_BIN_DIR:-}"
   echo "DEEPSEEK_BUILD_AGENT_BIN_unset=yes"
   echo "DEEPSEEK_BUILD_HOME=${HOME_DIR}"
   echo "scripted_base_url=${BASE_URL}"

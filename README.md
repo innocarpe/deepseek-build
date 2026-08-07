@@ -30,6 +30,10 @@
 
 </div>
 
+<p align="center">
+  <img src="assets/deepseek-build-welcome.png" alt="DeepSeek Build welcome screen — the full-screen DeepSeek agent TUI opened by dsb" width="85%">
+</p>
+
 > [!NOTE]
 > **Product status:** the `5.x` line is the owner-bar-complete product. The
 > [`5.0.0` cut](docs/product/evidence/CUT_5_0_0_2026-08-07.md) passed the Path A

@@ -38,8 +38,11 @@ This board still holds scaffold history. **Product SSOT for major targets is ver
 | [ULTRAGOAL_CHAIN.md](./ULTRAGOAL_CHAIN.md) | How to chain plans overnight |
 | [ULTRAGOAL_PR_PLANNING.md](./ULTRAGOAL_PR_PLANNING.md) | **Mandatory:** PR units, parallel/sequential DAG, atomic commits, stacking |
 | [SSOT.md](./SSOT.md) | Conflict priority when docs disagree |
-| [GROKBASE_2X_GOALS.md](./GROKBASE_2X_GOALS.md) | **Product ultragoal board** G001–G012 → 2.0.0 |
-| [WAVE_2x_PR_DAG.md](./WAVE_2x_PR_DAG.md) | **Product** fixed units W0–W4 (Grok base) |
+| [HEART_3X_GOALS.md](./HEART_3X_GOALS.md) | **Active product ultragoal board** G001–G008 → **3.0.0** |
+| [WAVE_3x_PR_DAG.md](./WAVE_3x_PR_DAG.md) | **Active product** PR units (heart fusion) |
+| [ULTRAGOAL_PROMPT_COLD_START_3.0.md](./ULTRAGOAL_PROMPT_COLD_START_3.0.md) | Cold-start paste for `heart-3x` |
+| [GROKBASE_2X_GOALS.md](./GROKBASE_2X_GOALS.md) | **Completed** 2.x board G001–G012 → 2.0.0 |
+| [WAVE_2x_PR_DAG.md](./WAVE_2x_PR_DAG.md) | **Completed** 2.x units W0–W4 (Grok base) |
 | [WAVE_A_PR_DAG.md](./WAVE_A_PR_DAG.md) / [WAVE_B_PR_DAG.md](./WAVE_B_PR_DAG.md) | Historical scaffold unit DAGs |
 | [stack-merge-runbook.md](../contributing/stack-merge-runbook.md) | Squash-stack repair + failure ladder |
 

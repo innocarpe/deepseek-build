@@ -110,21 +110,26 @@ dsb → deepseek-build-agent (Grok composition root)     [2.x already]
 
 ---
 
-## 5. Suggested PR / ultragoal shape (plan before code)
+## 5. PR / ultragoal shape (plan before code)
 
-Plan id suggestion: **`heart-3x`** (do not invent overnight; formalize in this PRD + board PR first).
+| Artifact | Path |
+|----------|------|
+| Plan id | **`heart-3x`** |
+| Board | [HEART_3X_GOALS.md](./HEART_3X_GOALS.md) (G001–G008) |
+| PR DAG | [WAVE_3x_PR_DAG.md](./WAVE_3x_PR_DAG.md) |
+| Cold start | [ULTRAGOAL_PROMPT_COLD_START_3.0.md](./ULTRAGOAL_PROMPT_COLD_START_3.0.md) |
+| Chain | [ULTRAGOAL_CHAIN.md](./ULTRAGOAL_CHAIN.md) |
+| Baseline | [PRE_3X_TEST_MATRIX.md](./PRE_3X_TEST_MATRIX.md) |
 
-| Story band | Content | SemVer band |
-|------------|---------|-------------|
-| H001 | Spec map: which Specs bind under Grok tools | docs |
-| H002 | Snippet edit adapter / fail-closed whole-file | `3.0.0-alpha.N` |
-| H003 | Permissions matrix under Grok tools | alpha |
-| H004 | Prefix/epoch under agent context | `3.0.0-beta.N` |
-| H005 | Repair + Flash/Pro routing under agent | beta |
-| H006 | Evidence dogfood + tests | beta |
-| H007 | Cut **3.0.0** | **3.0.0** |
+| Story | Content | SemVer band |
+|-------|---------|-------------|
+| G001–G002 | Prep harness + plan docs on main | `2.0.x` / docs |
+| G003 | Spec map under Grok tools | docs/spec |
+| G004–G005 | L1 snippet + permissions | `3.0.0-alpha.N` |
+| G006–G007 | L2 prefix + repair / Flash-Pro | `3.0.0-beta.N` |
+| G008 | Cut **3.0.0** | **3.0.0** |
 
-Exact DAG → write `WAVE_3x_PR_DAG.md` in a docs PR **before** implementation (same rule as 2.x).
+Extend the DAG only via docs PR — do not invent overnight units.
 
 ---
 

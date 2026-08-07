@@ -298,6 +298,103 @@ def make_handler(state: ScriptedState):
                     if stream
                     else _json_text(model, "Path A liveness")
                 )
+            elif state.scenario == "write-deny":
+                # One search_replace empty-old overwrite attempt → final text.
+                uq = -1
+                for i, m in enumerate(msgs):
+                    if isinstance(m, dict) and "user_query" in str(m.get("content") or ""):
+                        uq = i
+                tool_results = sum(
+                    1
+                    for m in msgs[uq + 1 :]
+                    if isinstance(m, dict) and m.get("role") in ("tool", "function")
+                )
+                if tool_results == 0:
+                    payload = (
+                        _sse_tool_then_text(
+                            model,
+                            0,
+                            state.final_text,
+                            tool_name="search_replace",
+                            tool_args=json.dumps(
+                                {
+                                    "file_path": "existing.txt",
+                                    "old_string": "",
+                                    "new_string": "OVERWRITE_ATTEMPT\n",
+                                }
+                            ),
+                        )
+                        if stream
+                        else _json_text(model, state.final_text)
+                    )
+                else:
+                    payload = (
+                        _sse_text(model, "write-deny-ok")
+                        if stream
+                        else _json_text(model, "write-deny-ok")
+                    )
+            elif state.scenario == "bash-stale" and state.liveness_dir is not None:
+                import hashlib
+
+                uq = -1
+                for i, m in enumerate(msgs):
+                    if isinstance(m, dict) and "user_query" in str(m.get("content") or ""):
+                        uq = i
+                tool_results = sum(
+                    1
+                    for m in msgs[uq + 1 :]
+                    if isinstance(m, dict) and m.get("role") in ("tool", "function")
+                )
+                a_path = state.liveness_dir / "a.txt"
+                # Step0: bash mutates a.txt (invalidates prior version)
+                # Step1: search_replace with STALE version captured before bash
+                #         (server embeds stale hash from initial file bytes)
+                if tool_results == 0:
+                    payload = (
+                        _sse_tool_then_text(
+                            model,
+                            0,
+                            state.final_text,
+                            # Product surface may expose either id; prefer run_terminal_command
+                            # (also accepted as execute-kind alias on some builds).
+                            tool_name="run_terminal_command",
+                            tool_args=json.dumps(
+                                {
+                                    "command": "printf 'mutated-by-bash\\n' > a.txt",
+                                    "description": "G005 bash mutation of a.txt",
+                                }
+                            ),
+                        )
+                        if stream
+                        else _json_text(model, state.final_text)
+                    )
+                elif tool_results == 1:
+                    # Stale version = hash of original content (pre-bash)
+                    stale = hashlib.sha256(b"original\n").hexdigest()
+                    payload = (
+                        _sse_tool_then_text(
+                            model,
+                            0,
+                            state.final_text,
+                            tool_name="search_replace",
+                            tool_args=json.dumps(
+                                {
+                                    "file_path": "a.txt",
+                                    "old_string": "mutated-by-bash",
+                                    "new_string": "should-fail",
+                                    "file_version": stale,
+                                }
+                            ),
+                        )
+                        if stream
+                        else _json_text(model, state.final_text)
+                    )
+                else:
+                    payload = (
+                        _sse_text(model, "bash-stale-ok")
+                        if stream
+                        else _json_text(model, "bash-stale-ok")
+                    )
             elif state.scenario == "liveness-3edits" and state.liveness_dir is not None:
                 # Count tool results after the user_query (ignore session_title side-call).
                 uq = -1
@@ -420,6 +517,8 @@ def main() -> int:
             "tool-then-text",
             "read-file-then-text",
             "liveness-3edits",
+            "write-deny",
+            "bash-stale",
         ),
         default="text-pong",
     )

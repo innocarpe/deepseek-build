@@ -296,5 +296,7 @@ This story is **one PR** (exactly one unmerged stacked PR). Internally:
 - [x] Whitespace clean for `git diff --check` (`f66067c`)
 - [x] Unit 4 READY + independent review (this commit)
 - [x] Practical gates green; TSV side-effects restored
-- [ ] Single stacked English PR base `vc013-5-4-cut` · Depends on #145 · labels verified
+- [x] Single stacked English PR base `vc013-5-4-cut` · Depends on #145 · labels verified
+  - PR **#146** — https://github.com/innocarpe/deepseek-build/pull/146
+  - labels: `docs` + `area/docs` · base `vc013-5-4-cut` · head `vc014-vision-docs` · mergeable
 - [x] No merge / no publish / no SemVer bump / no VC013 edit

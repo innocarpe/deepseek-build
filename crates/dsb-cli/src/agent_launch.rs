@@ -367,7 +367,14 @@ fn prompt_first_launch_theme(home: &BuildHome) -> Option<&'static str> {
 fn picker_answer_to_theme(answer: &str) -> Option<&'static str> {
     match answer.trim() {
         "1" | PRODUCT_THEME_BLUE | "deepseek-night" | "dsb" => Some(PRODUCT_THEME_BLUE),
-        "2" | "" | PRODUCT_THEME | "deepseek-night-v2" | "deepseeknight-v2" | "dsb2" | "deepseek-night-neutral" | "dsb-neutral" => Some(PRODUCT_THEME),
+        "2"
+        | ""
+        | PRODUCT_THEME
+        | "deepseek-night-v2"
+        | "deepseeknight-v2"
+        | "dsb2"
+        | "deepseek-night-neutral"
+        | "dsb-neutral" => Some(PRODUCT_THEME),
         _ => None,
     }
 }

@@ -29,7 +29,7 @@ Docs-only tips after this file that only point at the review do **not** require 
 
 | Must-hold | Result |
 |-----------|--------|
-| Path A public-entry R0A: worktree CLI surface, opt-in stamp, headless no-create | **OK** — three scenarios green |
+| Path A public-entry R0A: CLI surface, flag-forward stub, opt-in stamp, headless no-create | **OK** — four scenarios green (conservative bounded) |
 | Public-path only claims (`deepseek-build`/`dsb`; no `DEEPSEEK_BUILD_AGENT_BIN` sole proof) | **OK** — harness unsets override; META records unset |
 | Bare session honesty: opt-in, not mandatory implement worktree | **OK** — stamp + docs + Spec 60 non-goal restated |
 | Unversioned — no SemVer bump (stay **5.3.0**) | **OK** |
@@ -66,7 +66,7 @@ worker_epochs_match=true
 |----------|-------------------|
 | Plan/evidence `VC012_WORKTREE_DOGFOOD_PATH_A_2026-08-08.md` | Call-path map, acceptance matrix, public-path table, non-claims present |
 | `crates/dsb-cli/src/main.rs` | `--worktree`/`-w`/`--worktree-ref` on Cli; `tui_forward_flags`; reject on line-mode; unit tests |
-| `scripts/test-path-a-vc012-r0a.sh` | Public CLI; dual dsb path; three scenarios; headless git worktree count assert |
+| `scripts/test-path-a-vc012-r0a.sh` | Public CLI; dual dsb; four scenarios incl. stub argv forward + headless porcelain identity |
 | User-guide 13 | Bare single-session; public entry examples; headless honesty; R0A pointer |
 | KNOWN_LIMITS | Residual row updated for VC012 / Spec 60 non-goal |
 | META/WIRE | CLI surface + stamp + headless no-create consistent |
@@ -83,10 +83,16 @@ worker_epochs_match=true
 
 | Residual | Notes |
 |----------|-------|
-| Interactive TTY worktree **create** sole green | Not claimed; flag forward + docs + headless honesty are the R0A bar |
+| Interactive TTY worktree **create** after process `exec` | **Explicit residual** — META `process_boundary_residual=interactive_tty_worktree_create_not_asserted`. Bounded substitute: stub argv flag-forward + headless porcelain no-create |
 | `spawn_subagent` `isolation=worktree` live create | Optional; Spec 60 forbids mandatory implement worktree |
 | **5.4.0** cut | **VC013** |
 | V3-60-3 parent snippet expire Path A | Remains VC011 residual |
+
+### Claim bound (reviewer must not over-read)
+
+- **Headless no-create** = identical `git worktree list --porcelain` before/after public `-p` + product `--worktree` + scripted turn completion.
+- **Flag forward** = stub agent argv after product `exec` includes `--worktree` / `--worktree-ref` values.
+- Neither claim is interactive TTY create.
 
 ---
 

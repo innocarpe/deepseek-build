@@ -3,13 +3,15 @@ cli=/Users/WooseongKim/Projects/deepseek-build/vc012-worktree-dogfood/target/rel
 dsb=/Users/WooseongKim/Projects/deepseek-build/vc012-worktree-dogfood/target/release/dsb
 agent_resolved=/Users/WooseongKim/.deepseek-build/bin/xai-grok-pager
 DEEPSEEK_BUILD_AGENT_BIN_unset=yes
-DEEPSEEK_BUILD_HOME=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc012-r0a.I2yt1H/product-home
-scenario=worktree-opt-in-stamp
-scripted_base_url=http://127.0.0.1:59050
+DEEPSEEK_BUILD_HOME=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc012-r0a.6fCusx/product-home
+scenario=worktree-flag-forward
 agent_exit=0
-wire=/Users/WooseongKim/Projects/deepseek-build/vc012-worktree-dogfood/docs/product/evidence/PATH_A_R0_VC012_worktree-opt-in-stamp_WIRE_last.jsonl
-fixture_scenario=worker-cache-stamp
-wire_lines=6
+worktree_flag_name=vc012-bound-forward
+worktree_ref=HEAD
+worktree_flag_source=product_top_level
+claim_scope=product_flag_forward_stub_argv_after_exec
+process_boundary_residual=interactive_tty_worktree_create_not_asserted
+stub_agent=yes
 path_a_l3_stamp=present
 l3_max_parallel_readonly=8
 l3_ro_indices=[0, 4]
@@ -25,6 +27,18 @@ l3_worker_epochs_match=true
 l3_subagents_enabled_in_config=true
 l3_worktree_product=opt_in
 l3_bare_dsb_session=single
+stub_argv<<EOF
+argc=8
+arg[1]=--worktree
+arg[2]=vc012-bound-forward
+arg[3]=--worktree-ref
+arg[4]=HEAD
+arg[5]=-p
+arg[6]=stub-only-no-model
+arg[7]=--max-turns
+arg[8]=1
+raw: --worktree vc012-bound-forward --worktree-ref HEAD -p stub-only-no-model --max-turns 1
+EOF
 agent_out_tail<<EOF
-worker-cache-stamp-ok
+STUB_AGENT_OK
 EOF

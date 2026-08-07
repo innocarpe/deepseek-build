@@ -62,8 +62,10 @@ Config (product home `~/.deepseek-build/config.toml`):
 ./scripts/test-l3-smoke.sh --offline-only
 # L3.0/L3.4: agent help lists worktree; worktree --help available
 
-# Public-entry Path A dogfood (VC012): CLI surface + opt-in stamp + headless no-create
+# Public-entry Path A dogfood (VC012, conservative bounded):
+# CLI surface + product flag-forward (stub argv) + opt-in stamp + headless no-create
 ./scripts/test-path-a-vc012-r0a.sh
+# Residual: interactive TTY worktree create after process exec is not asserted
 ```
 
 Evidence: [`docs/product/evidence/VC012_WORKTREE_DOGFOOD_PATH_A_2026-08-08.md`](../product/evidence/VC012_WORKTREE_DOGFOOD_PATH_A_2026-08-08.md)

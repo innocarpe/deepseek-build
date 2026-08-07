@@ -89,13 +89,22 @@ Public CLI → `agent_launch` → product agent (no `DEEPSEEK_BUILD_AGENT_BIN` f
    - (carry) `worker_epochs_match=true` + subagents enabled (L3 stamp integrity)
 3. This is **public Path A** proof that product policy remains opt-in, not forced worktree on bare launch.
 
-#### 2.3 Headless `--worktree` does not create (docs honesty)
+#### 2.3 Headless `--worktree` does not create (docs honesty) — **evidence-backed**
 
-1. Snapshot `git worktree list --porcelain` (or path set) for a disposable git repo **before**.
-2. Run public `deepseek-build agent -p … --worktree=vc012-headless-dogfood --cwd <repo>` under hermetic home + scripted wire.
+1. Snapshot `git worktree list --porcelain` for a disposable git repo **before**.
+2. Run public `deepseek-build --worktree=vc012-headless-dogfood agent -p … --cwd <repo>` under hermetic home + scripted wire (product top-level flag).
 3. Snapshot worktrees **after**.
-4. Assert **no new worktree path** was added for that name (headless honesty).
+4. Assert porcelain **identical** before/after, count unchanged, and name absent (headless honesty).
 5. Turn still completes (scripted final token) so the claim is “ignored create”, not “launch failed”.
+6. META records `claim_scope=headless_p_plus_product_worktree_no_git_worktree_create` and  
+   `process_boundary_residual=interactive_tty_worktree_create_not_asserted`.
+
+#### 2.3b Product flag forward across process boundary (conservative bounded)
+
+1. Hermetic home installs a **stub agent** that only records argv (no model, no worktree create).
+2. Public `deepseek-build --worktree NAME --worktree-ref REF agent -p …` → product stamps then **exec**s agent.
+3. Stub argv must contain `--worktree`, `NAME`, `--worktree-ref`, `REF`.
+4. This bounds the product→agent handoff without claiming interactive TTY create.
 
 #### 2.4 Docs honesty pass
 
@@ -173,11 +182,13 @@ This story ships as **one unversioned PR** with atomic Conventional Commits (not
 |----|-------|----------|
 | **VC012-1** | Public `deepseek-build agent` worktree help + list --json | R0A scenario `worktree-cli-surface` |
 | **VC012-2** | Dual CLI `dsb agent worktree list` when bin present | Same harness dual path |
-| **VC012-3** | Public launch stamps `worktree_product=opt_in` + `bare_dsb_session=single` | R0A scenario `worktree-opt-in-stamp` |
-| **VC012-4** | Headless `-p --worktree=…` creates **no** new git worktree | R0A scenario `worktree-headless-no-create` |
-| **VC012-5** | Docs honesty (bare single-session; opt-in; headless no-create) | user-guide 13 + KNOWN_LIMITS |
-| **VC012-6** | Owner-bar / path-linkage / heart stay green | gate commands |
-| **VC012-7** | No SemVer bump; stacked PR Depends on #143; not merged | `Cargo.toml` + `gh pr view` |
+| **VC012-3** | Product `--worktree`/`--worktree-ref` appear in agent argv after exec | R0A scenario `worktree-flag-forward` (stub) |
+| **VC012-4** | Public launch stamps `worktree_product=opt_in` + `bare_dsb_session=single` | R0A scenario `worktree-opt-in-stamp` |
+| **VC012-5** | Headless `-p` + product `--worktree` creates **no** new git worktree | R0A scenario `worktree-headless-no-create` (porcelain identity) |
+| **VC012-6** | Docs honesty (bare single-session; opt-in; headless no-create) | user-guide 13 + KNOWN_LIMITS |
+| **VC012-7** | Owner-bar / path-linkage / heart stay green | gate commands |
+| **VC012-8** | No SemVer bump; stacked PR Depends on #143; not merged | `Cargo.toml` + `gh pr view` |
+| **VC012-R1** | Interactive TTY worktree **create** after exec | **Residual** — process boundary; not asserted in hermetic R0A |
 
 ---
 
@@ -205,7 +216,7 @@ Restore any generated TSV side-effects to HEAD if gates rewrite them. Clean vend
 
 | Command | Result |
 |---------|--------|
-| `./scripts/test-path-a-vc012-r0a.sh --skip-build` | **PASS** (worktree-cli-surface, worktree-opt-in-stamp, worktree-headless-no-create) |
+| `./scripts/test-path-a-vc012-r0a.sh --skip-build` | **PASS** (cli-surface, flag-forward, opt-in-stamp, headless-no-create) |
 | `cargo test -p dsb-cli tui_forward_flags_worktree` | **PASS** (support) |
 | `cargo test -p dsb-cli reject_worktree_flags_on_line_mode` | **PASS** (support) |
 | `cargo test -p dsb-cli stamp_path_a_l3` | **PASS** (support) |
@@ -219,16 +230,18 @@ Restore any generated TSV side-effects to HEAD if gates rewrite them. Clean vend
 | Scenario | Proof |
 |----------|-------|
 | `worktree-cli-surface` | Product `--help` lists `--worktree`; `agent -- --help` lists agent worktree flags; `agent worktree --help` + `list --json` via `deepseek-build` and `dsb` |
+| `worktree-flag-forward` | Stub agent argv after `exec` contains product `--worktree`/`--worktree-ref` values; stamp present |
 | `worktree-opt-in-stamp` | Public `-p` launch writes `path_a_l3` with `worktree_product=opt_in` + `bare_dsb_session=single` + `worker_epochs_match=true` |
-| `worktree-headless-no-create` | Public `-p --worktree=vc012-headless-dogfood` completes scripted turn; git worktree count unchanged; name not present |
+| `worktree-headless-no-create` | Product `--worktree` + `-p`; scripted turn completes; git porcelain **identical** before/after; count/name unchanged |
 
 Artifacts:
 
 | Path | Role |
 |------|------|
 | [`PATH_A_R0_VC012_worktree-cli-surface_META_last.txt`](./PATH_A_R0_VC012_worktree-cli-surface_META_last.txt) | Public CLI worktree help/list |
+| [`PATH_A_R0_VC012_worktree-flag-forward_META_last.txt`](./PATH_A_R0_VC012_worktree-flag-forward_META_last.txt) + ARGV | Bounded process-boundary flag forward |
 | [`PATH_A_R0_VC012_worktree-opt-in-stamp_WIRE_last.jsonl`](./PATH_A_R0_VC012_worktree-opt-in-stamp_WIRE_last.jsonl) + META | Stamp honesty from public launch |
-| [`PATH_A_R0_VC012_worktree-headless-no-create_WIRE_last.jsonl`](./PATH_A_R0_VC012_worktree-headless-no-create_WIRE_last.jsonl) + META | Headless no-create proof |
+| [`PATH_A_R0_VC012_worktree-headless-no-create_WIRE_last.jsonl`](./PATH_A_R0_VC012_worktree-headless-no-create_WIRE_last.jsonl) + META | Headless no-create proof (porcelain) |
 | [`PATH_A_R0_VC012_L3_last.txt`](./PATH_A_R0_VC012_L3_last.txt) | L3 stamp sample |
 | [`VC012_INDEPENDENT_REVIEW_2026-08-08.md`](./VC012_INDEPENDENT_REVIEW_2026-08-08.md) | Independent review |
 
@@ -244,16 +257,21 @@ bare_dsb_session=single
 ### 6.3 What shipped
 
 1. Product CLI **`--worktree` / `-w` / `--worktree-ref`** forward on bare TTY + `agent` paths (opt-in; rejected on line-mode).
-2. Public R0A harness `scripts/test-path-a-vc012-r0a.sh` (three scenarios).
+2. **Conservative bounded** public R0A harness `scripts/test-path-a-vc012-r0a.sh` (four scenarios):
+   - CLI surface, **stub flag-forward** (process boundary), opt-in stamp, **headless no-create porcelain**.
 3. User-guide **13** + **KNOWN_LIMITS** honesty: bare single-session; headless no-create; implement workers not forced into worktree isolation.
 4. Honest non-claims: no SemVer, no interactive TTY create sole green, no mandatory implement worktree, no **5.4.0** cut.
 
 ### 6.4 Explicit residuals at READY
 
-- Interactive TTY worktree **create** success is not the sole Path A claim (flag forwarding + docs + headless honesty are).
-- Optional `spawn_subagent` `isolation=worktree` live create remains residual (Spec 60: not mandatory).
-- SemVer **5.4.0** → **VC013**.
-- V3-60-3 Path A parent snippet expire residual stays from VC011.
+| Residual | Recorded as |
+|----------|-------------|
+| Interactive TTY worktree **create** after `exec_agent` | META `process_boundary_residual=interactive_tty_worktree_create_not_asserted` (VC012-R1) |
+| Optional `spawn_subagent` `isolation=worktree` live create | Spec 60 non-goal (not mandatory) |
+| SemVer **5.4.0** cut | **VC013** |
+| V3-60-3 Path A parent snippet expire | VC011 residual |
+
+**Claim bound (no over-claim):** headless no-create is **git porcelain identity** on a disposable repo under public `-p` + product `--worktree`. Flag handoff is **stub argv after exec**. Neither asserts interactive TTY create.
 
 ### 6.5 Independent review
 

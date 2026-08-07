@@ -79,6 +79,33 @@ pub const PRODUCT_THEME: &str = "deepseeknight";
 /// Env override for product theme name (passed as GROK_THEME to the agent).
 pub const ENV_PRODUCT_THEME: &str = "DEEPSEEK_BUILD_THEME";
 
+/// Product name shown in the terminal tab/window title (OSC 0).
+///
+/// The vendored agent rebrands its own tab title to this value (see
+/// `xai-grok-pager` `notifications/title.rs`); we also emit it here before
+/// exec so the tab carries the product name from the very first frame.
+pub const PRODUCT_TITLE: &str = "DeepSeek Build";
+
+/// OSC 0 (window/tab title) escape sequence for the product name.
+///
+/// Matches crossterm's `SetTitle` framing used by the vendored agent and by
+/// peer CLIs (Claude Code, Codex) so iTerm2 / Terminal.app render the tab
+/// title consistently.
+pub fn product_title_escape() -> Vec<u8> {
+    format!("\x1b]0;{PRODUCT_TITLE}\x07").into_bytes()
+}
+
+/// Emit the product tab title to stdout when it is a TTY (best-effort).
+fn emit_product_title() {
+    use std::io::{self, IsTerminal, Write};
+
+    if !io::stdout().is_terminal() {
+        return;
+    }
+    let _ = io::stdout().write_all(&product_title_escape());
+    let _ = io::stdout().flush();
+}
+
 /// Default DeepSeek OpenAI-compatible base URL (ADR 0005).
 ///
 /// Must appear on each `[model.deepseek-*]` as `base_url`. Setting only
@@ -347,6 +374,10 @@ pub fn exec_agent(args: &[String]) -> Result<()> {
         }
     }
 
+    // Set the tab/window title to the product name before handing off to the
+    // agent (the agent re-emits it on its own title ticks).
+    emit_product_title();
+
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -386,6 +417,13 @@ mod tests {
             cs.iter().any(|p| p.ends_with(AGENT_BIN_NAME)),
             "expected {AGENT_BIN_NAME} in {cs:?}"
         );
+    }
+
+    #[test]
+    fn product_title_escape_is_osc0_with_bel_terminator() {
+        let esc = product_title_escape();
+        let s = String::from_utf8(esc).expect("title escape is valid UTF-8");
+        assert_eq!(s, "\x1b]0;DeepSeek Build\x07");
     }
 
     #[test]

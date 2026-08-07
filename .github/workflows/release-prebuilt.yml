@@ -86,7 +86,7 @@ jobs:
             cargo install dotslash
           fi
       - name: Build agent
-        if: steps.scope.outputs.scope == 'full'
+        if: steps.scope.outputs.scope == 'full' || steps.prev.outputs.scope == 'full'
         run: |
           ./scripts/build-grok-pager.sh release
           AGENT="$(ls third_party/grok-build/target/release/xai-grok-pager-bin third_party/grok-build/target/release/xai-grok-pager 2>/dev/null | head -1)"

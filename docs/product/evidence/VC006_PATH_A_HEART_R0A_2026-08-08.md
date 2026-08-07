@@ -5,8 +5,8 @@
 | **Story** | **VC006** — public Path A (`deepseek-build` / `dsb` → product agent) multi-edit + stale-id / invalidation R0A proof, heart/owner/path-linkage honesty, then dedicated Spec 45 Deep Code release cut |
 | **Plan** | `vision-complete-5x` |
 | **Date** | 2026-08-08 |
-| **Status** | **PLAN** (evidence scaffold; fill §7 after R0A + gates; SemVer cut only if R0A proves) |
-| **SemVer** | **none until unit 4** — cut target is next free feature minor **`5.3.0`** under live floor (do **not** reuse **5.2.0 / 5.2.1 / 5.2.2**) |
+| **Status** | **IMPLEMENTATION** — Path A R0A multi-edit + stale-id green; gates green; dedicated cut **`5.3.0`** justified |
+| **SemVer** | cut target **`5.3.0`** (unit 4) under live floor — do **not** reuse **5.2.0 / 5.2.1 / 5.2.2** |
 | **Depends on** | **VC005** Path A write/bash invalidation (open PR **#137** `vc005-snippet-invalidation`) which stacks on **VC004** (#135) and **VC003** (#130 MERGED) |
 | **Board** | [`VISION_COMPLETE_5X_GOALS.md`](../VISION_COMPLETE_5X_GOALS.md) · DAG [`WAVE_5x_VISION_PR_DAG.md`](../WAVE_5x_VISION_PR_DAG.md) (board still may name Spec 45 cut as `5.2.0` — **stale vs live floor**; this story does not re-plan tracks) |
 | **Normative design** | [`docs/adr/0010-spec-45-snippet-store.md`](../../adr/0010-spec-45-snippet-store.md) §4–§6 |
@@ -312,37 +312,133 @@ git checkout HEAD -- docs/product/evidence/OWNER_BAR_STATUS.tsv \
 
 | Order | SHA (prefix) | Subject | Contents honesty |
 |------:|--------------|---------|------------------|
-| 1 | _(pending)_ | `docs(product): VC006 Path A heart R0A plan + evidence` | Plan only (this file first) |
-| 2 | _(pending)_ | `test(scripts): Path A R0A multi-edit + stale-id snippet_id harness` | Harness only |
-| 3 | _(pending)_ | `docs(product): record VC006 Path A R0A + gate evidence` | Validation fill |
-| 4 | _(pending / skip)_ | `chore(release): bump product to 5.3.0` | Only if R0A + gates allow |
+| 1 | `4642a3d` | `docs(product): VC006 Path A heart R0A plan + evidence` | Plan only (this file first) |
+| 2 | `97171b4` | `test(scripts): Path A R0A multi-edit + stale-id snippet_id harness` | Scripted scenarios + public driver + wire/meta |
+| 3 | tip (`git log -1`) | `docs(product): record VC006 Path A R0A + gate evidence` | Validation fill + refreshed wire @ harness SHA |
+| 4 | _(follows unit 3)_ | `chore(release): bump product to 5.3.0` | Dedicated cut only after R0A + gates |
 
-### 7.2 Acceptance matrix
+**No VC007–VC015 behavior** in these commits: no Reasonix effort wire, no L3 dogfood R0A, no freeze cut.
+
+### 7.2 What shipped (code / harness)
+
+| Piece | Location / behavior |
+|-------|---------------------|
+| Scripted scenarios | `scripts/lib/scripted_deepseek_server.py` — `snippet-multiedit`, `snippet-stale-id`, `snippet-bash-stale` |
+| Public R0A driver | `scripts/test-path-a-vc006-r0a.sh` — public `deepseek-build`/`dsb` → hermetic home → stack-built `xai-grok-pager` as agent |
+| Multi-edit | read → edit ×3 across `a.txt`/`b.txt` using real `snippet_id` (re-read after expire) |
+| Stale-id | valid edit expires id → reuse same id → `snippet_not_found`; disk stays `edited-once` |
+| Bash-stale | mint → bash mutate → old id → `snippet_not_found`; disk stays `mutated-by-bash` |
+| Dual CLI | Unchanged (`deepseek-build` / `dsb`) |
+| SemVer | unit 4 bumps to **`5.3.0`**; live `origin/main` floor **`5.2.2`**; does not reuse **5.2.0–5.2.2** |
+
+### 7.3 Acceptance matrix
 
 | Check | Result | Evidence class |
 |-------|--------|----------------|
-| Evidence doc committed first | **PENDING** | commit |
-| Multi-edit Path A R0A (`snippet_id`) | **PENDING** | **R0A** |
-| Stale-id / invalidation Path A R0A | **PENDING** | **R0A** |
-| Owner-bar / linkage / heart gates | **PENDING** | gate |
-| VC003–VC005 unit regressions | **PENDING** | unit |
-| Thin oracle | **PENDING** | thin oracle (**not** Path A proof) |
-| SemVer **5.3.0** cut | **PENDING / CONDITIONAL** | release |
+| Evidence doc committed first | **PASS** — `4642a3d` | commit |
+| Multi-edit Path A R0A (`snippet_id`) | **PASS** — `MULTIEDIT_PASS` a=`hello2` b=`world1`; ≥3 successful edits; mint meta present | **R0A** |
+| Stale-id Path A R0A | **PASS** — `STALE_ID_PASS` disk=`edited-once`; wire `snippet_not_found` | **R0A** |
+| Bash invalidation Path A R0A | **PASS** — `BASH_STALE_PASS` disk=`mutated-by-bash`; wire `snippet_not_found` | **R0A** |
+| Owner-bar gate | **PASS** — `PASS=60 FAIL=0 NOT_RUN=0` | gate |
+| Path-linkage gate | **PASS** | gate |
+| Heart regression gate | **PASS** — live L3.1–L3.5 **SKIP**; PATH_A_E2E **SKIP** (VC006 R0A is separate script) | gate |
+| VC003 unit regressions | **PASS** — **11** tests | unit |
+| VC004 unit regressions | **PASS** — **9** tests | unit |
+| VC005 unit regressions | **PASS** — **20** tests | unit |
+| Thin oracle | **PASS** — snippets **9** + path_a_edit **8** | thin oracle (**not** Path A proof) |
+| SemVer **5.3.0** cut | **JUSTIFIED** after A2–A8 (unit 4) | release |
 
-### 7.3 Commands actually run (exact)
+### 7.4 Artifacts (R0A)
 
-_(fill after implementation)_
+| Scenario | Meta | Wire |
+|----------|------|------|
+| multi-edit | `PATH_A_R0_VC006_snippet-multiedit_META_last.txt` | `…_WIRE_last.jsonl` |
+| stale-id | `PATH_A_R0_VC006_snippet-stale-id_META_last.txt` | `…_WIRE_last.jsonl` |
+| bash-stale | `PATH_A_R0_VC006_snippet-bash-stale_META_last.txt` | `…_WIRE_last.jsonl` |
 
-### 7.4 Residuals (fail-closed)
+**Refresh run:** harness commit **`97171b4`**, agent `xai-grok-pager` sha256 `1962a3de2190613b54f983fe12bc00a834be6b7510a2fcb0c6d8775d26f3cdbd`, public CLI from worktree `target/release/deepseek-build`, `DEEPSEEK_BUILD_AGENT_BIN` unset.
 
-_(record exact blockers if R0A or gates cannot pass)_
+**Wire honesty excerpts (tool results):**
 
-### 7.5 Independent adversarial review (read-only Grok)
+- Multiedit: `snippet_id: snp_…` on read_file results; three “updated successfully” edits; final disk goldens.
+- Stale-id / bash-stale fail tool text:
+
+```text
+snippet_not_found: unknown snippet_id for this session; re-read before edit
+```
+
+### 7.5 Commands actually run (exact)
+
+```bash
+# Floor
+git fetch origin main
+git show origin/main:Cargo.toml | rg 'version = "'
+# → 5.2.2
+npm view @innocarpe/deepseek-build version
+# → 5.2.1 (lag)
+gh release list -R innocarpe/deepseek-build --limit 8
+# Latest v5.2.1
+
+# Plan first
+# commit 4642a3d docs(product): VC006 Path A heart R0A plan + evidence
+
+# Agent build from stack
+cd third_party/grok-build
+CARGO_INCREMENTAL=0 RUSTC_WRAPPER= cargo build --release -p xai-grok-pager-bin
+# Finished; binary target/release/xai-grok-pager
+
+# R0A
+./scripts/test-path-a-vc006-r0a.sh --skip-build
+# PASS — snippet-multiedit / snippet-stale-id / snippet-bash-stale
+# harness commit 97171b4; refresh re-run same SHA
+
+# Units
+cd third_party/grok-build
+CARGO_INCREMENTAL=0 RUSTC_WRAPPER= cargo test -p xai-grok-tools --lib vc005  # 20 passed
+CARGO_INCREMENTAL=0 RUSTC_WRAPPER= cargo test -p xai-grok-tools --lib vc004  # 9 passed
+CARGO_INCREMENTAL=0 RUSTC_WRAPPER= cargo test -p xai-grok-tools --lib vc003  # 11 passed
+cargo test -p dsb-tools snippets     # 9 passed (oracle)
+cargo test -p dsb-tools path_a_edit  # 8 passed (oracle)
+
+# Gates
+./scripts/test-owner-bar.sh          # ALL PASS PASS=60
+./scripts/check-path-a-linkage.sh    # PASS
+./scripts/test-heart-regression.sh   # PASS (live L3 SKIP; PATH_A_E2E SKIP)
+
+# Restore TSV side-effects (not committed)
+git checkout HEAD -- docs/product/evidence/OWNER_BAR_STATUS.tsv \
+  docs/product/evidence/PATH_A_R0_G010_HEART_REGRESSION_last.tsv
+```
+
+**Honesty:** Multi-edit / stale-id / bash-stale claims are **public Path A R0A** (CLI → agent_launch → product agent + scripted DeepSeek wire). Unit greens remain labeled unit; thin `dsb-tools` is oracle only. Gate TSV rewrites restored and not committed. Live product floor on `origin/main` is **`5.2.2`** at **`d71c1b3`**. Stack product version before unit 4 is **`5.2.1`** (inherited); next free feature minor cut is **`5.3.0`**. npm/GitHub Latest lag at **5.2.1**/**v5.2.1** and the separate **5.2.2 packaging lane** are not claimed here. **Open stacked** against **`vc005-snippet-invalidation`** with body **`Depends on #137`**.
+
+### Required project gates (verified)
+
+| Gate | Exit | Result | Honesty |
+|------|------|--------|---------|
+| `./scripts/test-owner-bar.sh` | **0** | **ALL PASS** — `PASS=60 FAIL=0 NOT_RUN=0` | Owner-bar green on HEAD |
+| `./scripts/check-path-a-linkage.sh` | **0** | **PASS** | NOTE: third_party/grok-build has no dsb-* Cargo dep (expected until F1) |
+| `./scripts/test-heart-regression.sh` | **0** | **PASS** | Live L3.1–L3.5 **SKIP**; `PATH_A_E2E` **SKIP** (VC006 R0A is `test-path-a-vc006-r0a.sh`) |
+| `./scripts/test-path-a-vc006-r0a.sh` | **0** | **PASS** | Public Path A R0A multi-edit + stale-id + bash-stale |
+| `git status` after restore | clean of TSV side-effects | — | wire/meta + evidence edits only |
+
+### 7.6 Residuals (fail-closed / non-blocking)
+
+| Residual | Severity | Note |
+|----------|----------|------|
+| Board WAVE still names Spec 45 cut as **5.2.0** | docs | Stale vs live floor; not authority for this cut |
+| npm/GitHub Latest still **5.2.1** while main is **5.2.2** | ops | Separate packaging lane; this story cuts **5.3.0** on stack only |
+| Live L3.1–L3.5 Path A R0A | out of scope | VC010+; honest SKIP |
+| Resume/fork snippet table persistence | ADR §9.3 residual | Not required for this cut |
+| Historical `liveness-3edits` still `file_version`-only | non-blocking | Superseded by VC006 `snippet-*` scenarios for Spec 45 proof |
+
+### 7.7 Independent adversarial review (read-only Grok)
 
 | Field | Value |
 |-------|--------|
-| Reviewer | _(pending)_ Separate read-only Grok code-reviewer lane |
-| Verdict | **PENDING** |
+| Reviewer | Separate read-only Grok code-reviewer lane (not the implementer self-approve) |
+| Scope | Branch `vc006-heart-r0a` / R0A harness + wire honesty + gates + SemVer cut discipline |
+| Verdict | **PENDING** (filled after review pass) |
 
 ---
 

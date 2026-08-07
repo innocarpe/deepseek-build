@@ -1,10 +1,10 @@
-git_sha=4642a3dbdd36f0124bc5146e2d396793ee28471e
+git_sha=97171b448f78cb57e172139760be817443da7420
 cli=/Users/WooseongKim/Projects/deepseek-build/vc006-heart-r0a/target/release/deepseek-build
 dsb=/Users/WooseongKim/Projects/deepseek-build/vc006-heart-r0a/target/release/dsb
 agent_resolved=/Users/WooseongKim/Projects/deepseek-build/vc006-heart-r0a/third_party/grok-build/target/release/xai-grok-pager
 DEEPSEEK_BUILD_AGENT_BIN_unset=yes
-DEEPSEEK_BUILD_HOME=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc006-r0a.XoY4ot/product-home
-scripted_base_url=http://127.0.0.1:55386
+DEEPSEEK_BUILD_HOME=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc006-r0a.r43L8k/product-home
+scripted_base_url=http://127.0.0.1:57162
 scenario=snippet-multiedit
 agent_exit=0
 wire=/Users/WooseongKim/Projects/deepseek-build/vc006-heart-r0a/docs/product/evidence/PATH_A_R0_VC006_snippet-multiedit_WIRE_last.jsonl

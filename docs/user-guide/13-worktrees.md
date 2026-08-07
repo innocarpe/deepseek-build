@@ -1,8 +1,8 @@
 # 13 — Git worktrees (full-screen agent)
 
-**Applies to:** public `deepseek-build` / `dsb` (primary) → agent binary  
+**Applies to:** public `deepseek-build` / `dsb` (primary) → agent binary
 **Alias:** both commands are the same product CLI; agent flags are forwarded via
-`deepseek-build agent …` / `dsb agent …` (or bare TTY launch).  
+`deepseek-build agent …` / `dsb agent …` (or bare TTY launch).
 **Product plan:** worktree as L3 surface → **4.0.0+** (vision dogfood **VC012** / **V3-WT**)
 
 ## Honesty (fail-close)
@@ -76,7 +76,7 @@ Evidence: [`docs/product/evidence/VC012_WORKTREE_DOGFOOD_PATH_A_2026-08-08.md`](
 
 ## Related
 
-- [11-subagents.md](./11-subagents.md)  
-- [12-background-tasks.md](./12-background-tasks.md)  
-- [KNOWN_LIMITS.md](../product/KNOWN_LIMITS.md) — bare session residual  
+- [11-subagents.md](./11-subagents.md)
+- [12-background-tasks.md](./12-background-tasks.md)
+- [KNOWN_LIMITS.md](../product/KNOWN_LIMITS.md) — bare session residual
 - Parallel ops: [PARALLEL_3X_4X_PLAN.md](../product/PARALLEL_3X_4X_PLAN.md)

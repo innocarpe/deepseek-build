@@ -12,7 +12,7 @@
 | **Normative** | Spec **60** non-goal “mandatory worktree for every implement worker” · [`HARNESS_PHILOSOPHY.md`](../../architecture/HARNESS_PHILOSOPHY.md) optional worktree isolation · user-guide [`13-worktrees.md`](../../user-guide/13-worktrees.md) · L3 matrix worktree row · owner-bar **L3-WT-1/2** · vision **V3-WT** |
 | **Prior** | G010 offline L3.0/L3.4 help + stamp honesty ([`G010_L3_UNDER_HEARTS_2026-08-07.md`](./G010_L3_UNDER_HEARTS_2026-08-07.md)); VC011 residual “worktree dogfood → VC012” ([`VC011_SUBAGENT_WORKER_CACHE_PATH_A_2026-08-08.md`](./VC011_SUBAGENT_WORKER_CACHE_PATH_A_2026-08-08.md)) |
 
-**This file is the mandatory ultragoal PR unit plan for VC012 plus (later) implementation evidence.**  
+**This file is the mandatory ultragoal PR unit plan for VC012 plus (later) implementation evidence.**
 It does **not** claim VISION L3 / **5.4.0** freeze complete. It does **not** make worktree mandatory for implement workers (Spec 60 non-goal). Live interactive TTY worktree create remains residual unless a hermetic non-TTY path is proven.
 
 ---
@@ -117,7 +117,7 @@ Public CLI → `agent_launch` → product agent (no `DEEPSEEK_BUILD_AGENT_BIN` f
 3. Snapshot worktrees **after**.
 4. Assert porcelain **identical** before/after, count unchanged, and name absent (headless honesty).
 5. Turn still completes (scripted final token) so the claim is “ignored create”, not “launch failed”.
-6. META records `claim_scope=headless_p_plus_product_worktree_no_git_worktree_create` and  
+6. META records `claim_scope=headless_p_plus_product_worktree_no_git_worktree_create` and
    `process_boundary_residual=interactive_tty_worktree_create_not_asserted`.
 
 #### 2.3b Product flag forward across process boundary (conservative bounded)

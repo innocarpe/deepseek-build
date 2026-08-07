@@ -525,6 +525,7 @@ pub(crate) fn persist_and_prepend_image_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine as _;
     use xai_grok_sampling_types::conversation::{ConversationItem, UserItem};
     #[test]
     fn persist_and_prepend_image_files_writes_assets_and_lists_paths() {

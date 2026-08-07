@@ -9,24 +9,33 @@
 
 use crate::theme::{Role, Theme};
 
-/// Official DeepSeek whale silhouette as braille (rasterized logo; ~14×8 cells).
+/// Official DeepSeek whale silhouette as braille (rasterized logo; 22×8
+/// terminal cells / 44×32 braille dots).
 ///
-/// Generated from the public solid-fill whale mark so the body curve, belly
-/// cutout, and fluke remain recognizable at terminal scale.
+/// The raster is horizontally oversampled to compensate for terminal cells
+/// being narrower than they are tall; without that correction the whale looks
+/// visibly pinched compared with the source mark.
 pub const WHALE_MARK: &[&str] = &[
-    "⠀⠀⣀⣤⣤⣤⣶⠂⠀⢸⣄⠀⠀⢀",
-    "⢀⣾⣿⣿⣿⣿⣿⣦⡀⢸⣿⣶⣾⡿",
-    "⣼⣿⣿⣿⣿⣿⣿⣿⣷⡄⢻⣿⠟⠁",
-    "⣿⠀⠀⠉⠻⣿⣿⣯⠹⣿⣿⡏",
-    "⣿⡆⠀⠀⠀⠙⣿⣿⣤⣿⣿⠇",
-    "⢸⣷⡀⠀⢀⠀⠸⣿⣿⣿⡟",
-    "⠀⠻⣷⣄⣸⣷⣄⠙⣿⣿⣄",
-    "⠀⠀⠙⠻⣿⣿⣿⠿⠋⠉⠉",
+    "⠀⠀⠀⣀⣠⣤⣤⣤⣤⣶⣶⠂⠀⠀⢠⣷⣀⠀⠀⠀⠀⣀",
+    "⠀⣠⣾⣿⣿⣿⣿⣿⣿⣿⣿⣶⣄⠀⠘⣿⣿⣷⣶⣾⣿⡟",
+    "⣰⣿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣄⠈⢻⣿⡿⠟⠋",
+    "⣿⡇⠀⠀⠀⠉⠙⢿⣿⣿⣿⡯⡍⠻⣿⣿⣿⣿⠇",
+    "⢿⣿⡀⠀⠀⠀⠀⠀⠈⢿⣿⣿⣷⣄⣼⣿⣿⡟",
+    "⠘⣿⣷⡀⠀⠀⠀⣀⠀⠀⠻⣿⣿⣿⣿⣿⡟⠁",
+    "⠀⠈⠻⣿⣦⣄⣀⣹⣿⣦⣀⠈⠻⣿⣿⣯⣄⡀",
+    "⠀⠀⠀⠈⠛⠿⢿⣿⣿⣿⣿⠿⠟⠉⠉⠉⠉⠁",
 ];
 
-/// Compact raster for narrow terminals (`COLUMNS` < 64).
+/// Compact raster for narrow terminals (`COLUMNS` < 64), widened to 14×5
+/// terminal cells / 28×20 braille dots for the same aspect-ratio correction.
 pub const WHALE_MARK_COMPACT: &[&str] =
-    &["⢀⣤⣶⣶⣇⠀⣧⣀⣠", "⣾⢿⣿⣿⣿⣧⣹⡿⠋", "⣧⠀⠈⢻⣿⣙⣿⡇", "⢻⣆⠀⣀⢻⣿⡿", "⠀⠻⢷⣿⣶⠟⠛"];
+    &[
+        "⠀⣠⣤⣶⣶⣶⣶⡀⠀⢸⣦⣀⣀⣤",
+        "⣼⠿⠿⣿⣿⣿⣿⣿⣦⣈⣻⡿⠟⠃",
+        "⣿⡀⠀⠀⠉⠻⣿⣷⡈⣿⣿⡇",
+        "⠸⣷⡀⠀⢀⡀⠙⢿⣿⣿⠟",
+        "⠀⠈⠻⠷⣶⣿⣷⡦⠟⠛⠓",
+    ];
 
 /// Horizontal rule character used inside the card.
 const HR: &str = "─";
@@ -310,13 +319,18 @@ mod tests {
         let joined = WHALE_MARK.join("\n");
         assert!(contains_braille(&joined), "mark should use braille density");
         let w = WHALE_MARK.iter().map(|l| visible_width(l)).max().unwrap();
-        assert!(w >= 10);
-        assert!(w <= 22);
+        assert_eq!(w, 22, "full mark keeps the aspect-ratio compensation");
     }
 
     #[test]
     fn compact_mark_is_braille() {
         assert!(contains_braille(&WHALE_MARK_COMPACT.join("\n")));
+        let w = WHALE_MARK_COMPACT
+            .iter()
+            .map(|l| visible_width(l))
+            .max()
+            .unwrap();
+        assert_eq!(w, 14, "compact mark keeps the aspect-ratio compensation");
     }
 
     #[test]

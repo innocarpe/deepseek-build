@@ -37,3 +37,6 @@ third_party/grok-build/**/target/
 third_party/grok-build/.gjc/
 third_party/grok-build/.omc/
 third_party/grok-build/**/.DS_Store
+
+# Pre-3.x baseline runtime results (local only)
+docs/product/evidence/_last_pre3x_*.tsv

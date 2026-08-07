@@ -1623,6 +1623,47 @@ impl AgentView {
         let dropdown_open = self.prompt.any_dropdown_open();
         self.hit_upgrade_cta
             .set_unless_dropdown(upgrade_cta_rect, dropdown_open);
+        // DeepSeek bottom status row: account balance + prompt-cache hit
+        // rate. Renders only when the shell confirmed the session is
+        // DeepSeek-backed; the row always reserves one line but stays blank
+        // otherwise (x.ai sessions get no chips here).
+        buf.set_style(layout.deepseek_status, Style::default().bg(theme.bg_base));
+        if let Some(ds) = self.deepseek_status.as_ref().filter(|s| s.is_deepseek) {
+            let mut chips: Vec<Span<'static>> = Vec::new();
+            if let Some(balance) = &ds.balance {
+                chips.push(Span::styled(
+                    crate::views::agent_status::format_deepseek_balance(balance),
+                    Style::default().fg(theme.text_primary).bg(theme.bg_base),
+                ));
+            }
+            if let Some(pct) = crate::views::agent_status::format_cache_hit_pct(
+                ds.usage.totals.cached_read_tokens,
+                ds.usage.totals.input_tokens,
+            ) {
+                chips.push(Span::styled(
+                    pct,
+                    Style::default().fg(theme.text_secondary).bg(theme.bg_base),
+                ));
+            }
+            let mut x = layout.deepseek_status.x;
+            for (i, chip) in chips.iter().enumerate() {
+                if i > 0 {
+                    let sep = Span::styled(
+                        "  ",
+                        Style::default().fg(theme.gray_dim).bg(theme.bg_base),
+                    );
+                    buf.set_span_safe(x, layout.deepseek_status.y, &sep, sep.width() as u16);
+                    x += sep.width() as u16;
+                }
+                buf.set_span_safe(
+                    x,
+                    layout.deepseek_status.y,
+                    chip,
+                    chip.width() as u16,
+                );
+                x += chip.width() as u16;
+            }
+        }
         let mut inline_edit_cursor: Option<(u16, u16)> = None;
         let sticky_gap_row: Option<u16>;
         {

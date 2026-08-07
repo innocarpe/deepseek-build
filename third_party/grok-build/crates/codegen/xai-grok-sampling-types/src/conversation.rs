@@ -726,6 +726,7 @@ pub struct TokenUsage {
     pub reasoning_tokens: u32,
     /// Prompt tokens served from cache (the cache-hit subset of `prompt_tokens`).
     /// OpenAI: `prompt_tokens_details.cached_tokens`. Messages: `cache_read_input_tokens`.
+    /// DeepSeek: top-level `prompt_cache_hit_tokens`.
     #[serde(default)]
     pub cached_prompt_tokens: u32,
     /// Prompt tokens written to cache this call (Messages `cache_creation_input_tokens`,
@@ -746,10 +747,14 @@ impl TokenUsage {
 
 impl From<Usage> for TokenUsage {
     fn from(u: Usage) -> Self {
+        // DeepSeek surfaces cache hits as a top-level `prompt_cache_hit_tokens`
+        // field instead of OpenAI-style `prompt_tokens_details.cached_tokens`;
+        // prefer the nested detail when present, fall back to the DeepSeek field.
         let cached_prompt_tokens = u
             .prompt_tokens_details
             .as_ref()
-            .map_or(0, |d| d.cached_tokens);
+            .map(|d| d.cached_tokens)
+            .unwrap_or_else(|| u.prompt_cache_hit_tokens.unwrap_or(0));
         Self {
             prompt_tokens: u.prompt_tokens,
             completion_tokens: u.completion_tokens,
@@ -2366,7 +2371,57 @@ mod tests {
     use super::test_support::*;
     use super::*;
     use crate::tool_overrides::*;
+    use crate::types::PromptTokensDetails;
     use assert_matches::assert_matches;
+
+    /// DeepSeek reports cache hits as a top-level `prompt_cache_hit_tokens`
+    /// field; it must land in `TokenUsage.cached_prompt_tokens`.
+    #[test]
+    fn deepseek_prompt_cache_hit_tokens_maps_to_cached_prompt_tokens() {
+        let usage = Usage {
+            prompt_tokens: 100,
+            completion_tokens: 20,
+            total_tokens: 120,
+            prompt_tokens_details: None,
+            completion_tokens_details: None,
+            prompt_cache_hit_tokens: Some(60),
+            cost_in_usd_ticks: None,
+        };
+        let tu: TokenUsage = usage.into();
+        assert_eq!(tu.cached_prompt_tokens, 60);
+    }
+
+    /// OpenAI-style `prompt_tokens_details.cached_tokens` still wins when both
+    /// fields are present, and legacy payloads without either stay at 0.
+    #[test]
+    fn cached_tokens_prefers_details_and_defaults_to_zero() {
+        let nested = Usage {
+            prompt_tokens: 100,
+            completion_tokens: 20,
+            total_tokens: 120,
+            prompt_tokens_details: Some(PromptTokensDetails {
+                cached_tokens: 40,
+                audio_tokens: 0,
+            }),
+            completion_tokens_details: None,
+            prompt_cache_hit_tokens: Some(60),
+            cost_in_usd_ticks: None,
+        };
+        let tu: TokenUsage = nested.into();
+        assert_eq!(tu.cached_prompt_tokens, 40);
+
+        let bare = Usage {
+            prompt_tokens: 100,
+            completion_tokens: 20,
+            total_tokens: 120,
+            prompt_tokens_details: None,
+            completion_tokens_details: None,
+            prompt_cache_hit_tokens: None,
+            cost_in_usd_ticks: None,
+        };
+        let tu: TokenUsage = bare.into();
+        assert_eq!(tu.cached_prompt_tokens, 0);
+    }
 
     /// Keeps `forwards_prompt_cache_key()` honest against each mapping: a key that never reaches the wire looks like a 0% cache hit, not a bug.
     #[test]

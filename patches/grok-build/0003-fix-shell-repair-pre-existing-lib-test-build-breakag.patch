@@ -1,0 +1,47 @@
+From 2d96d6751fd4d2a4d7412921d81ddbc2a98caae8 Mon Sep 17 00:00:00 2001
+From: Wooseong Kim <innocarpe@gmail.com>
+Date: Fri, 7 Aug 2026 15:18:10 +0900
+Subject: [PATCH 3/5] fix(shell): repair pre-existing lib-test build breakage
+ on main
+
+xai-grok-shell lib tests fail to compile on origin/main with two errors:
+
+- tool_calls.rs: SearchReplaceInput gained a file_version field upstream;
+  the test helper literal was missing it (E0063).
+- tool_layer_images_bridge_tests.rs: base64 0.22 moved the encode method
+  behind the Engine trait; the test lacked use base64::Engine (E0599).
+
+Both are test-only, verified pre-existing via empty git diff against the
+base before fixing. Required to build the shell lib test binary at all.
+---
+ .../xai-grok-shell/src/session/acp_session_impl/tool_calls.rs    | 1 +
+ .../session/acp_session_tests/tool_layer_images_bridge_tests.rs  | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
+index a751997..559139e 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
+@@ -3128,6 +3128,7 @@ mod plan_mode_edit_gate_tests {
+             old_string: "a".into(),
+             new_string: "b".into(),
+             replace_all: false,
++            file_version: None,
+         })
+     }
+     fn write(path: &str) -> ToolInput {
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs
+index b84ecab..5665800 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs
+@@ -1,6 +1,7 @@
+ //! Wiring tests for MCP tool-layer images through `handle_bridge_tool_success`.
+ use super::support::*;
+ use super::*;
++use base64::Engine;
+ use xai_grok_sampling_types::{ContentPart, ConversationItem};
+ use xai_grok_tools::types::output::{MCPOutput, ToolOutput, ToolRunResult};
+ use xai_grok_tools::util::base64_images::{ExtractedImage, IMAGE_CONTENT_PLACEHOLDER};
+-- 
+2.50.1 (Apple Git-155)
+

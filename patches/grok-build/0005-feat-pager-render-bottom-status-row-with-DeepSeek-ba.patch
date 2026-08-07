@@ -1,0 +1,822 @@
+From 3a8b35012ce5a99a12b31ef785f646905fb4d3e5 Mon Sep 17 00:00:00 2001
+From: Wooseong Kim <innocarpe@gmail.com>
+Date: Fri, 7 Aug 2026 16:52:01 +0900
+Subject: [PATCH 5/5] feat(pager): render bottom status row with DeepSeek
+ balance and cache-hit chips
+
+Ports Reasonix's bottom status line to the DSB pager. A new one-line
+status row under the shortcuts bar shows the DeepSeek account balance
+and the session's prompt-cache hit rate; it renders only for
+DeepSeek-backed sessions (is_deepseek flag from the shell extension)
+and stays blank for x.ai sessions.
+
+- Effect::FetchDeepSeekStatus + TaskResult arms, dispatched through
+  x.ai/deepseek/status (bare response, mirrors fetch_session_usage)
+- dispatch/deepseek module: poll gating (unknown/DeepSeek -> refresh,
+  confirmed false -> stop), stale-session dropping, silent failure
+- Refresh on session create/load, after each turn, and on a 60s timer
+  while the active session is DeepSeek-backed
+- AgentViewLayout reserves one bottom row; chips render with the
+  established set_span_safe idiom; balance formatting prefers USD
+  then CNY with matching currency symbols, cache % hides when
+  input tokens = 0
+---
+ .../codegen/xai-grok-pager/src/app/actions.rs |  19 +++
+ .../xai-grok-pager/src/app/agent_view/mod.rs  |   5 +
+ .../src/app/agent_view/render.rs              |  41 +++++
+ .../src/app/agent_view/session.rs             |   1 +
+ .../xai-grok-pager/src/app/app_view.rs        |  17 +++
+ .../src/app/dispatch/deepseek.rs              |  89 +++++++++++
+ .../xai-grok-pager/src/app/dispatch/mod.rs    |   2 +
+ .../xai-grok-pager/src/app/dispatch/prompt.rs |   3 +
+ .../src/app/dispatch/session/lifecycle.rs     |   8 +
+ .../src/app/dispatch/session/load.rs          |   4 +
+ .../src/app/dispatch/task_result.rs           |  13 ++
+ .../src/app/dispatch/tests/deepseek.rs        | 143 ++++++++++++++++++
+ .../src/app/dispatch/tests/mod.rs             |   1 +
+ .../xai-grok-pager/src/app/effects/mod.rs     |  54 +++++++
+ .../xai-grok-pager/src/app/event_loop.rs      |  34 +++++
+ .../codegen/xai-grok-pager/src/views/agent.rs |   9 ++
+ .../xai-grok-pager/src/views/agent_status.rs  |  73 +++++++++
+ 17 files changed, 516 insertions(+)
+ create mode 100644 third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/deepseek.rs
+ create mode 100644 third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/tests/deepseek.rs
+
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/actions.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/actions.rs
+index 1697bc5..c052a62 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/actions.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/actions.rs
+@@ -2089,6 +2089,13 @@ pub enum Effect {
+         agent_id: AgentId,
+         session_id: acp::SessionId,
+     },
++    /// Fetch DeepSeek account status (balance + session usage) via
++    /// `x.ai/deepseek/status`. Only renders when the shell reports the
++    /// session is talking to a DeepSeek endpoint.
++    FetchDeepSeekStatus {
++        agent_id: AgentId,
++        session_id: acp::SessionId,
++    },
+     /// Re-fetch remote settings to check subscription gate.
+     RefreshGate,
+     /// Spawn a debounce sleep task for shell suggestions. `agent_id` rides
+@@ -2646,6 +2653,18 @@ pub enum TaskResult {
+         session_id: acp::SessionId,
+         error: String,
+     },
++    /// DeepSeek status fetched. Drop if `session_id` no longer matches.
++    DeepSeekStatusComplete {
++        agent_id: AgentId,
++        session_id: acp::SessionId,
++        status: Box<xai_grok_shell::extensions::deepseek::DeepSeekStatusResponse>,
++    },
++    /// DeepSeek status fetch failed. Drop if `session_id` no longer matches.
++    DeepSeekStatusFailed {
++        agent_id: AgentId,
++        session_id: acp::SessionId,
++        error: String,
++    },
+     /// Feedback submitted successfully (fire-and-forget).
+     FeedbackComplete {
+         agent_id: AgentId,
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
+index 454efc9..8db4311 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs
+@@ -893,6 +893,11 @@ pub struct AgentView {
+     pub credit_balance: Option<crate::views::credit_bar::CreditBalance>,
+     /// Auto top-up rule paired with `credit_balance` for the prompt warning.
+     pub auto_topup: Option<crate::views::credit_bar::AutoTopupInfo>,
++    /// Latest DeepSeek account status (balance + session usage) from the
++    /// `x.ai/deepseek/status` extension. `None` until the first fetch
++    /// lands; the bottom status row renders only when the shell reports
++    /// `is_deepseek` for the session.
++    pub deepseek_status: Option<xai_grok_shell::extensions::deepseek::DeepSeekStatusResponse>,
+     /// Current goal orchestration state. Set by `GoalUpdated` session
+     /// notifications, cleared when a new session starts.
+     pub goal_state: Option<super::agent::GoalDisplayState>,
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs
+index 32307a4..5e040f6 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs
+@@ -1623,6 +1623,47 @@ impl AgentView {
+         let dropdown_open = self.prompt.any_dropdown_open();
+         self.hit_upgrade_cta
+             .set_unless_dropdown(upgrade_cta_rect, dropdown_open);
++        // DeepSeek bottom status row: account balance + prompt-cache hit
++        // rate. Renders only when the shell confirmed the session is
++        // DeepSeek-backed; the row always reserves one line but stays blank
++        // otherwise (x.ai sessions get no chips here).
++        buf.set_style(layout.deepseek_status, Style::default().bg(theme.bg_base));
++        if let Some(ds) = self.deepseek_status.as_ref().filter(|s| s.is_deepseek) {
++            let mut chips: Vec<Span<'static>> = Vec::new();
++            if let Some(balance) = &ds.balance {
++                chips.push(Span::styled(
++                    crate::views::agent_status::format_deepseek_balance(balance),
++                    Style::default().fg(theme.text_primary).bg(theme.bg_base),
++                ));
++            }
++            if let Some(pct) = crate::views::agent_status::format_cache_hit_pct(
++                ds.usage.totals.cached_read_tokens,
++                ds.usage.totals.input_tokens,
++            ) {
++                chips.push(Span::styled(
++                    pct,
++                    Style::default().fg(theme.text_secondary).bg(theme.bg_base),
++                ));
++            }
++            let mut x = layout.deepseek_status.x;
++            for (i, chip) in chips.iter().enumerate() {
++                if i > 0 {
++                    let sep = Span::styled(
++                        "  ",
++                        Style::default().fg(theme.gray_dim).bg(theme.bg_base),
++                    );
++                    buf.set_span_safe(x, layout.deepseek_status.y, &sep, sep.width() as u16);
++                    x += sep.width() as u16;
++                }
++                buf.set_span_safe(
++                    x,
++                    layout.deepseek_status.y,
++                    chip,
++                    chip.width() as u16,
++                );
++                x += chip.width() as u16;
++            }
++        }
+         let mut inline_edit_cursor: Option<(u16, u16)> = None;
+         let sticky_gap_row: Option<u16>;
+         {
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
+index 462253a..c517e31 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs
+@@ -130,6 +130,7 @@ impl AgentView {
+             workspace_mode_cli_locked: false,
+             credit_balance: None,
+             auto_topup: None,
++            deepseek_status: None,
+             goal_state: None,
+             workflow_blocks: std::collections::HashMap::new(),
+             workflow_runs: Vec::new(),
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/app_view.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/app_view.rs
+index 6700de9..07da7f9 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/app_view.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/app_view.rs
+@@ -1231,6 +1231,23 @@ impl AppView {
+     pub fn is_zdr_blocked(&self) -> bool {
+         self.is_zdr && !self.zdr_access_enabled
+     }
++    /// Whether the DeepSeek status poll should keep running.
++    ///
++    /// The active agent's `deepseek_status` gates the poll: unknown
++    /// (`None`) keeps polling until the first response lands, a
++    /// successful `is_deepseek=true` keeps it alive, and a confirmed
++    /// `is_deepseek=false` stops it (x.ai sessions need no balance row).
++    pub fn deepseek_poll_wanted(&self) -> bool {
++        match self.active_view {
++            ActiveView::Agent(id) => self
++                .agents
++                .get(&id)
++                .and_then(|a| a.deepseek_status.as_ref())
++                .map(|s| s.is_deepseek)
++                .unwrap_or(true),
++            _ => false,
++        }
++    }
+     /// User is not gated (no gate from remote settings or subscription fallback).
+     pub fn has_access(&self) -> bool {
+         self.gate.is_none()
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/deepseek.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/deepseek.rs
+new file mode 100644
+index 0000000..2dfd75a
+--- /dev/null
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/deepseek.rs
+@@ -0,0 +1,89 @@
++//! DeepSeek account status: balance + session usage for the bottom
++//! status row. Mirrors the `x.ai/billing` + `x.ai/session/usage` wiring
++//! but is fully auth-agnostic — the shell talks to the DeepSeek REST
++//! API directly when the session targets a DeepSeek endpoint.
++//!
++//! The shell's `x.ai/deepseek/status` response carries an `is_deepseek`
++//! flag because the pager cannot see per-session base URLs. The bottom
++//! row renders only when that flag is true; a successful
++//! `is_deepseek=false` also stops the polling timer so x.ai sessions
++//! never burn a fetch every 60 seconds.
++
++use agent_client_protocol as acp;
++
++use crate::app::actions::Effect;
++use crate::app::agent::AgentId;
++use crate::app::agent_view::AgentView;
++use crate::app::app_view::AppView;
++use xai_grok_shell::extensions::deepseek::DeepSeekStatusResponse;
++
++/// Whether the agent currently wants DeepSeek status refreshes.
++///
++/// Unknown (`None`) counts as "wanted" so the first fetch (session init)
++/// discovers whether the session is DeepSeek-backed. A successful
++/// `is_deepseek=false` response flips this to `false` and stops polling;
++/// transient failures keep `None`/previous state so the next poll
++/// self-heals.
++fn deepseek_poll_wanted(agent: &AgentView) -> bool {
++    agent
++        .deepseek_status
++        .as_ref()
++        .map(|s| s.is_deepseek)
++        .unwrap_or(true)
++}
++
++/// Fetch DeepSeek status after a turn (and on session init via the
++/// callers in lifecycle/load). No-op when the agent has confirmed it is
++/// not DeepSeek-backed or has no session id yet.
++pub(crate) fn maybe_refresh_deepseek_status(
++    app: &mut AppView,
++    agent_id: AgentId,
++) -> Vec<Effect> {
++    let Some(agent) = app.agents.get(&agent_id) else {
++        return vec![];
++    };
++    if !deepseek_poll_wanted(agent) {
++        return vec![];
++    }
++    let Some(session_id) = agent.session.session_id.clone() else {
++        return vec![];
++    };
++    vec![Effect::FetchDeepSeekStatus { agent_id, session_id }]
++}
++
++/// Store a fresh DeepSeek status on the agent. Drops the result when the
++/// session has moved on (stale in-flight fetch).
++pub(super) fn handle_deepseek_status_complete(
++    app: &mut AppView,
++    agent_id: AgentId,
++    session_id: &acp::SessionId,
++    status: DeepSeekStatusResponse,
++) -> Vec<Effect> {
++    if app
++        .agents
++        .get(&agent_id)
++        .and_then(|a| a.session.session_id.as_ref())
++        != Some(session_id)
++    {
++        return vec![];
++    }
++    if let Some(agent) = app.agents.get_mut(&agent_id) {
++        agent.deepseek_status = Some(status);
++    }
++    vec![]
++}
++
++/// DeepSeek status fetch failed. Fail-soft: log and keep the previous
++/// state (chip stays as-is); the next poll retries.
++pub(super) fn handle_deepseek_status_failed(
++    app: &mut AppView,
++    agent_id: AgentId,
++    session_id: &acp::SessionId,
++    error: &str,
++) -> Vec<Effect> {
++    let _ = app;
++    let _ = agent_id;
++    let _ = session_id;
++    tracing::debug!("deepseek status fetch failed: {error}");
++    vec![]
++}
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/mod.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/mod.rs
+index 6d55225..64983dd 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/mod.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/mod.rs
+@@ -18,6 +18,7 @@ mod cta;
+ mod ctx;
+ mod dashboard;
+ mod dashboard_telemetry;
++mod deepseek;
+ pub(crate) mod external_editor;
+ mod import_claude;
+ mod interject;
+@@ -40,6 +41,7 @@ mod voice;
+ pub(crate) use auth::scrollback_has_recent_disk_full;
+ pub(in crate::app) use auth::scrollback_has_recent_error_banner;
+ pub(crate) use billing::{UPSELL_URL_PAYG, UPSELL_URL_UPGRADE, is_credit_limit_error};
++pub(crate) use deepseek::maybe_refresh_deepseek_status;
+ pub(crate) use modes::{downgrade_displayed_auto_if_gated, effective_auto};
+ pub(crate) use notes::{recap_unavailable_toast, scrollback_has_user_messages};
+ pub(crate) use permissions::resolve_permission_queue_transition;
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs
+index eae428e..e8b71e4 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs
+@@ -1568,6 +1568,9 @@ pub(super) fn handle_prompt_response(
+             agent_id,
+             silent: true,
+         });
++        // Refresh DeepSeek status (balance + cache hit rate) after a turn;
++        // no-op unless the session is DeepSeek-backed.
++        effects.extend(super::deepseek::maybe_refresh_deepseek_status(app, agent_id));
+         note_peek_page_flip(app, agent_id, page_flip_entry);
+         return effects;
+     }
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs
+index e2709f5..535d900 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs
+@@ -1108,6 +1108,10 @@ pub(in crate::app::dispatch) fn handle_session_created(
+             agent_id,
+             silent: true,
+         });
++        effects.push(Effect::FetchDeepSeekStatus {
++            agent_id,
++            session_id: session_id_clone.clone(),
++        });
+         if let Some(switch) = deferred {
+             effects.push(Effect::SwitchModel {
+                 agent_id,
+@@ -1211,6 +1215,10 @@ pub(in crate::app::dispatch) fn handle_worktree_session_created(
+             agent_id,
+             silent: true,
+         });
++        effects.push(Effect::FetchDeepSeekStatus {
++            agent_id,
++            session_id: session_id_clone.clone(),
++        });
+         if let Some(switch) = deferred {
+             effects.push(Effect::SwitchModel {
+                 agent_id,
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/session/load.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/session/load.rs
+index 30bed50..390b4b5 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/session/load.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/session/load.rs
+@@ -1140,6 +1140,10 @@ pub(in crate::app::dispatch) fn handle_session_loaded(
+             agent_id,
+             silent: true,
+         });
++        effects.push(Effect::FetchDeepSeekStatus {
++            agent_id,
++            session_id: hydrate_sid.clone(),
++        });
+         if let Some(switch) = deferred {
+             agent.session.model_switch_pending = true;
+             effects.push(Effect::SwitchModel {
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/task_result.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/task_result.rs
+index 7c11a36..4bc450d 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/task_result.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/task_result.rs
+@@ -14,6 +14,9 @@ use super::cta::{
+     handle_plugin_cta_mcps_loaded,
+ };
+ use super::ctx::{find_agent_by_session_id, get_active_agent_mut};
++use super::deepseek::{
++    handle_deepseek_status_complete, handle_deepseek_status_failed,
++};
+ use super::notes::{handle_btw_response, handle_memory_note_saved};
+ use super::prompt::{
+     defer_to_open_reload_window, handle_compact_complete, handle_prompt_response,
+@@ -1041,6 +1044,16 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
+             &session_id,
+             format!("Couldn't load session usage: {error}"),
+         ),
++        TaskResult::DeepSeekStatusComplete {
++            agent_id,
++            session_id,
++            status,
++        } => handle_deepseek_status_complete(app, agent_id, &session_id, *status),
++        TaskResult::DeepSeekStatusFailed {
++            agent_id,
++            session_id,
++            error,
++        } => handle_deepseek_status_failed(app, agent_id, &session_id, &error),
+         TaskResult::FeedbackComplete { .. } => vec![],
+         TaskResult::FeedbackFailed { agent_id, error } => {
+             if let Some(agent) = app.agents.get_mut(&agent_id) {
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/tests/deepseek.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/tests/deepseek.rs
+new file mode 100644
+index 0000000..311c433
+--- /dev/null
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/tests/deepseek.rs
+@@ -0,0 +1,143 @@
++//! Tests for the DeepSeek status dispatch: refresh gating, result storage,
++//! and stale-session dropping.
++
++use super::*;
++use xai_grok_shell::extensions::deepseek::{
++    DeepSeekBalance, DeepSeekStatusResponse,
++};
++use xai_grok_shell::extensions::notification::PromptUsage;
++
++/// Minimal DeepSeek status fixture.
++fn ds_status(is_deepseek: bool, balance: Option<DeepSeekBalance>) -> DeepSeekStatusResponse {
++    DeepSeekStatusResponse {
++        is_deepseek,
++        balance,
++        usage: PromptUsage::default(),
++    }
++}
++
++fn usd_balance() -> DeepSeekBalance {
++    DeepSeekBalance {
++        currency: "USD".into(),
++        total_balance: "9.82".into(),
++        is_available: true,
++    }
++}
++
++fn complete_deepseek(app: &mut AppView, session_id: &str, status: DeepSeekStatusResponse) {
++    let _ = dispatch(
++        Action::TaskComplete(TaskResult::DeepSeekStatusComplete {
++            agent_id: AgentId(0),
++            session_id: session_id.to_string().into(),
++            status: Box::new(status),
++        }),
++        app,
++    );
++}
++
++// ── maybe_refresh gating ───────────────────────────────────────────
++
++#[test]
++fn refresh_fires_when_status_unknown() {
++    let mut app = test_app_with_agent();
++    let effects = maybe_refresh_deepseek_status(&mut app, AgentId(0));
++    assert!(
++        matches!(
++            effects.as_slice(),
++            [Effect::FetchDeepSeekStatus { agent_id, .. }] if *agent_id == AgentId(0)
++        ),
++        "unknown status must still probe: {effects:?}"
++    );
++}
++
++#[test]
++fn refresh_fires_when_deepseek_confirmed() {
++    let mut app = test_app_with_agent();
++    complete_deepseek(&mut app, "test-session", ds_status(true, None));
++    let effects = maybe_refresh_deepseek_status(&mut app, AgentId(0));
++    assert!(
++        matches!(
++            effects.as_slice(),
++            [Effect::FetchDeepSeekStatus { agent_id, .. }] if *agent_id == AgentId(0)
++        ),
++        "confirmed DeepSeek session keeps refreshing: {effects:?}"
++    );
++}
++
++#[test]
++fn refresh_skips_when_not_deepseek() {
++    let mut app = test_app_with_agent();
++    complete_deepseek(&mut app, "test-session", ds_status(false, None));
++    let effects = maybe_refresh_deepseek_status(&mut app, AgentId(0));
++    assert!(
++        effects.is_empty(),
++        "non-DeepSeek session must not keep polling: {effects:?}"
++    );
++}
++
++#[test]
++fn refresh_skips_without_session_id() {
++    let mut app = test_app_with_agent();
++    app.agents.get_mut(&AgentId(0)).unwrap().session.session_id = None;
++    let effects = maybe_refresh_deepseek_status(&mut app, AgentId(0));
++    assert!(effects.is_empty(), "no session id → no fetch: {effects:?}");
++}
++
++// ── result handling ────────────────────────────────────────────────
++
++#[test]
++fn complete_stores_status_on_agent() {
++    let mut app = test_app_with_agent();
++    let status = ds_status(true, Some(usd_balance()));
++    complete_deepseek(&mut app, "test-session", status);
++    let stored = app
++        .agents
++        .get(&AgentId(0))
++        .and_then(|a| a.deepseek_status.as_ref())
++        .expect("status stored");
++    assert!(stored.is_deepseek);
++    assert_eq!(stored.balance.as_ref().map(|b| b.currency.as_str()), Some("USD"));
++}
++
++#[test]
++fn complete_drops_stale_session_result() {
++    let mut app = test_app_with_agent();
++    complete_deepseek(&mut app, "stale-session", ds_status(true, Some(usd_balance())));
++    assert!(
++        app.agents.get(&AgentId(0)).unwrap().deepseek_status.is_none(),
++        "result for a different session must be dropped"
++    );
++}
++
++#[test]
++fn failed_is_silent_and_keeps_state() {
++    let mut app = test_app_with_agent();
++    complete_deepseek(&mut app, "test-session", ds_status(true, Some(usd_balance())));
++    let effects = dispatch(
++        Action::TaskComplete(TaskResult::DeepSeekStatusFailed {
++            agent_id: AgentId(0),
++            session_id: "test-session".to_string().into(),
++            error: "boom".into(),
++        }),
++        &mut app,
++    );
++    assert!(effects.is_empty(), "failure is silent: {effects:?}");
++    let stored = app.agents.get(&AgentId(0)).unwrap().deepseek_status.as_ref();
++    assert!(
++        stored.is_some_and(|s| s.is_deepseek),
++        "previous status must survive a failed refresh"
++    );
++}
++
++#[test]
++fn not_deepseek_flips_poll_wanted_off() {
++    let mut app = test_app_with_agent();
++    complete_deepseek(&mut app, "test-session", ds_status(false, None));
++    assert!(
++        !app.deepseek_poll_wanted(),
++        "confirmed non-DeepSeek session stops the poll timer"
++    );
++    // Unknown (no status) still wants polling.
++    let fresh = test_app_with_agent();
++    assert!(fresh.deepseek_poll_wanted());
++}
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
+index 66fb356..206c02d 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/tests/mod.rs
+@@ -3,6 +3,7 @@ mod auth;
+ mod billing;
+ mod cta_e2e;
+ mod dashboard;
++mod deepseek;
+ mod jump;
+ mod modes;
+ mod notes;
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/effects/mod.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/effects/mod.rs
+index 0e81e01..29d567b 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/effects/mod.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/effects/mod.rs
+@@ -3423,6 +3423,28 @@ pub(crate) fn execute(
+                     }
+                 });
+         }
++        Effect::FetchDeepSeekStatus { agent_id, session_id } => {
++            let tx = acp_tx.clone();
++            tasks
++                .spawn(async move {
++                    match fetch_deepseek_status(&session_id, &tx).await {
++                        Ok(status) => {
++                            TaskResult::DeepSeekStatusComplete {
++                                agent_id,
++                                session_id,
++                                status: Box::new(status),
++                            }
++                        }
++                        Err(error) => {
++                            TaskResult::DeepSeekStatusFailed {
++                                agent_id,
++                                session_id,
++                                error,
++                            }
++                        }
++                    }
++                });
++        }
+         Effect::SendFeedback { agent_id, session_id, feedback_text } => {
+             use xai_grok_shell::session::ClientType;
+             use xai_grok_shell::session::acp_types::ClientFeedbackInput;
+@@ -4505,6 +4527,38 @@ async fn fetch_session_usage(
+         })?;
+     Ok(parsed.usage)
+ }
++/// `x.ai/deepseek/status` → [`DeepSeekStatusResponse`] (bare response, no envelope).
++async fn fetch_deepseek_status(
++    session_id: &acp::SessionId,
++    tx: &AcpAgentTx,
++) -> Result<xai_grok_shell::extensions::deepseek::DeepSeekStatusResponse, String> {
++    let request = acp::ExtRequest::new(
++        "x.ai/deepseek/status",
++        serde_json::value::to_raw_value(
++                &serde_json::json!({
++            "sessionId": session_id.0.to_string()
++        }),
++            )
++            .expect("serialize deepseek/status params")
++            .into(),
++    );
++    let resp = acp_send(request, tx)
++        .await
++        .map_err(|e| {
++            if i32::from(e.code) == i32::from(acp::Error::method_not_found().code) {
++                "not supported by this agent version".to_string()
++            } else {
++                sanitize_user_error(&e.to_string())
++            }
++        })?;
++    serde_json::from_str::<xai_grok_shell::extensions::deepseek::DeepSeekStatusResponse>(
++            resp.0.get(),
++        )
++        .map_err(|e| {
++            tracing::debug!("deepseek status deser failed: {e}");
++            "invalid deepseek status response".to_string()
++        })
++}
+ /// Look up the session title/summary from local persistence.
+ async fn lookup_session_title(session_id: &acp::SessionId) -> Option<String> {
+     let summaries = xai_grok_shell::session::persistence::list_summaries(None)
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/event_loop.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/event_loop.rs
+index 6e948dd..21a4728 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/event_loop.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/event_loop.rs
+@@ -1546,6 +1546,12 @@ pub(crate) async fn run(
+     const BILLING_POLL_INTERVAL: Duration = Duration::from_secs(30);
+     let mut billing_poll_at: Option<Instant> = None;
+ 
++    // DeepSeek bottom-row status refresh (balance + cache hit rate).
++    // Only fires while the active session is DeepSeek-backed
++    // (`app.deepseek_poll_wanted()`), see `dispatch/deepseek.rs`.
++    const DEEPSEEK_POLL_INTERVAL: Duration = Duration::from_secs(60);
++    let mut deepseek_poll_at: Option<Instant> = None;
++
+     const GATE_POLL_INTERVAL: Duration = Duration::from_secs(30);
+     let mut gate_poll_at: Option<Instant> = None;
+ 
+@@ -2035,6 +2041,13 @@ pub(crate) async fn run(
+             }
+         };
+ 
++        let deepseek_poll = async {
++            match deepseek_poll_at {
++                Some(at) => sleep_until(at).await,
++                None => std::future::pending().await,
++            }
++        };
++
+         let gate_poll = async {
+             match gate_poll_at {
+                 Some(at) => sleep_until(at).await,
+@@ -2160,6 +2173,11 @@ pub(crate) async fn run(
+                         } else if !app.billing_poll_wanted {
+                             billing_poll_at = None;
+                         }
++                        if app.deepseek_poll_wanted() && deepseek_poll_at.is_none() {
++                            deepseek_poll_at = Some(Instant::now() + DEEPSEEK_POLL_INTERVAL);
++                        } else if !app.deepseek_poll_wanted() {
++                            deepseek_poll_at = None;
++                        }
+                         if !app.has_access() && gate_poll_at.is_none() {
+                             gate_poll_at = Some(Instant::now() + GATE_POLL_INTERVAL);
+                         } else if app.has_access() {
+@@ -2337,6 +2355,22 @@ pub(crate) async fn run(
+                 }
+             }
+ 
++            _ = deepseek_poll => {
++                deepseek_poll_at = None;
++                if let ActiveView::Agent(id) = app.active_view {
++                    let effs = super::dispatch::maybe_refresh_deepseek_status(
++                        &mut app,
++                        id,
++                    );
++                    if process_effects(effs, &mut tasks, &mut app, &progress_tx) {
++                        break;
++                    }
++                }
++                if app.deepseek_poll_wanted() {
++                    deepseek_poll_at = Some(Instant::now() + DEEPSEEK_POLL_INTERVAL);
++                }
++            }
++
+             _ = gate_poll => {
+                 gate_poll_at = None;
+                 let effs = vec![Effect::RefreshGate];
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/views/agent.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/views/agent.rs
+index 5bb153c..6c20880 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/views/agent.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/views/agent.rs
+@@ -123,6 +123,9 @@ pub struct AgentViewLayout {
+     pub voice_recording: Rect,
+     pub prompt: Rect,
+     pub shortcuts: Rect,
++    /// Bottom status row (DeepSeek balance + cache hit rate). Always
++    /// present as a row; renders blank when no DeepSeek status is known.
++    pub deepseek_status: Rect,
+     /// Scrollback area narrowed for scrollbar (content rendering uses this).
+     pub scrollback_content: Rect,
+     /// Scrollbar track position (x coordinate).
+@@ -258,6 +261,9 @@ impl AgentViewLayout {
+             constraints.push(Constraint::Length(shortcuts_gap));
+         }
+         constraints.push(Constraint::Length(shortcuts_height));
++        // DeepSeek bottom status row: always present so the row count is
++        // stable; renders blank when no status data has landed.
++        constraints.push(Constraint::Length(1));
+         let chunks = Layout::vertical(constraints).split(inner_area);
+         let mut i = 0;
+         let status_bar = chunks[i];
+@@ -360,6 +366,8 @@ impl AgentViewLayout {
+             i += 1;
+         }
+         let shortcuts = chunks[i];
++        i += 1;
++        let deepseek_status = chunks[i];
+         let scrollbar_x = area.right().saturating_sub(scrollbar_cfg.gap_right + 1);
+         let timeline_width = if scrollbar_cfg.enabled {
+             timeline_width
+@@ -397,6 +405,7 @@ impl AgentViewLayout {
+             voice_recording,
+             prompt,
+             shortcuts,
++            deepseek_status,
+             scrollback_content,
+             scrollbar_x,
+             timeline_x,
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/views/agent_status.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/views/agent_status.rs
+index 7fc9318..28f9256 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/views/agent_status.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/views/agent_status.rs
+@@ -325,6 +325,40 @@ pub fn mcp_status_line(
+     ]))
+ }
+ 
++// ---------------------------------------------------------------------------
++// DeepSeek bottom status row chips
++// ---------------------------------------------------------------------------
++
++/// Format a DeepSeek account balance for the bottom status row.
++///
++/// Uses the currency symbol when the code is known (`USD` → `$`,
++/// `CNY` → `¥`), otherwise falls back to the raw ISO code. The value
++/// string is kept verbatim from the API to avoid float drift.
++pub fn format_deepseek_balance(
++    balance: &xai_grok_shell::extensions::deepseek::DeepSeekBalance,
++) -> String {
++    let sym = match balance.currency.as_str() {
++        "USD" => "$",
++        "CNY" => "¥",
++        other => other,
++    };
++    format!("{sym}{}", balance.total_balance)
++}
++
++/// Format the prompt-cache hit percentage for the bottom status row.
++///
++/// `cache 45%` with `cached_read_tokens` clamped to `input_tokens`.
++/// Returns `None` when there is no input to measure against (zero-input
++/// turns or a fresh session), so the caller hides the chip.
++pub fn format_cache_hit_pct(cached_read_tokens: u64, input_tokens: u64) -> Option<String> {
++    if input_tokens == 0 {
++        return None;
++    }
++    let cached = cached_read_tokens.min(input_tokens);
++    let pct = (cached as f64 / input_tokens as f64) * 100.0;
++    Some(format!("cache {pct:.0}%"))
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+@@ -906,4 +940,43 @@ mod tests {
+         assert_eq!(row.trim(), "XX");
+         assert!(!row.contains(SEPARATOR));
+     }
++
++    #[test]
++    fn deepseek_balance_formats_known_currencies() {
++        use xai_grok_shell::extensions::deepseek::DeepSeekBalance;
++        let usd = DeepSeekBalance {
++            currency: "USD".into(),
++            total_balance: "9.82".into(),
++            is_available: true,
++        };
++        let cny = DeepSeekBalance {
++            currency: "CNY".into(),
++            total_balance: "70.16".into(),
++            is_available: true,
++        };
++        let other = DeepSeekBalance {
++            currency: "KRW".into(),
++            total_balance: "1234.5".into(),
++            is_available: true,
++        };
++        assert_eq!(format_deepseek_balance(&usd), "$9.82");
++        assert_eq!(format_deepseek_balance(&cny), "¥70.16");
++        assert_eq!(format_deepseek_balance(&other), "KRW1234.5");
++    }
++
++    #[test]
++    fn cache_hit_pct_hides_with_zero_input() {
++        assert_eq!(format_cache_hit_pct(0, 0), None);
++        assert_eq!(format_cache_hit_pct(100, 0), None);
++    }
++
++    #[test]
++    fn cache_hit_pct_clamps_and_rounds() {
++        assert_eq!(format_cache_hit_pct(0, 100), Some("cache 0%".into()));
++        assert_eq!(format_cache_hit_pct(50, 100), Some("cache 50%".into()));
++        // Cached cannot exceed input — clamp guards defensive API drift.
++        assert_eq!(format_cache_hit_pct(120, 100), Some("cache 100%".into()));
++        // Rounds to whole percent.
++        assert_eq!(format_cache_hit_pct(1, 3), Some("cache 33%".into()));
++    }
+ }
+-- 
+2.50.1 (Apple Git-155)
+

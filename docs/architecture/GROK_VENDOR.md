@@ -60,6 +60,12 @@ Never silent-copy. Always a dedicated PR:
 
 ## Local patches
 
+Local work on the vendored tree comes in two forms, and an
+`rsync -a --delete` refresh would silently drop both — re-apply after every
+refresh and keep this list current:
+
+### Applied directly in the tree
+
 The tree ships "as upstream", but a small set of **deliberate local deviations** lives in the vendored sources. `rsync -a --delete` in the refresh procedure would silently drop them — re-apply after every refresh and keep this list current:
 
 | File | Patch | Why |
@@ -69,6 +75,39 @@ The tree ships "as upstream", but a small set of **deliberate local deviations**
 | `crates/dsb-cli/src/agent_launch.rs` | `exec_agent` sets `GROK_INVOCATION_NAME` to the product command name | Wrapper side of the branding contract |
 
 Tests: `resume_hint_line_brands_invocation_name` and `failed_relaunch_hint_brands_invocation_name` pin the `dsb` output; upstream default (`grok`) assertions keep passing.
+
+### Carried as patch files under `patches/grok-build/`
+
+DSB carries local feature work on the vendored tree as patches under
+`patches/grok-build/` — **outside** the vendor tree, so an `rsync --delete`
+refresh cannot wipe them.
+
+| Patch | Commit it derives from |
+|-------|------------------------|
+| `0001-*.patch` | `feat(sampling-types): map DeepSeek prompt_cache_hit_tokens into cached_read_tokens` |
+| `0002-*.patch` | `feat(shell): add x.ai/deepseek/status extension for balance and session usage` |
+| `0003-*.patch` | `fix(shell): repair pre-existing lib-test build breakage on main` |
+| `0004-*.patch` | `test(pager): cover DeepSeekNight kind in settings preview test` |
+| `0005-*.patch` | `feat(pager): render bottom status row with DeepSeek balance and cache-hit chips` |
+
+These patches are the **DeepSeek status line** feature plus the shell test-build
+fix it depends on. A refresh must never silently drop them.
+
+- **Re-apply after refresh:** `./scripts/apply-grok-build-patches.sh`
+  (add `--check` for a dry run; already-applied patches are skipped).
+- **Regenerate** when the patch set changes:
+  `git format-patch <base>..HEAD -- third_party/grok-build -o patches/grok-build`
+  where `<base>` is the merge-base of the vendor PR that carried the patches.
+- **Refresh conflicts:** if `apply-grok-build-patches.sh` fails after an
+  upstream refresh, fix the conflicts by hand, re-run
+  `./scripts/build-grok-pager.sh check`, and regenerate the patches before
+  merging the refresh PR.
+
+Refresh procedure step 2 therefore becomes:
+
+2. `rsync -a --delete --exclude target --exclude .git <src>/ third_party/grok-build/`  
+   (or `git subtree pull` if that workflow is adopted later), then  
+   `./scripts/apply-grok-build-patches.sh` to re-apply the local patches.
 
 ---
 

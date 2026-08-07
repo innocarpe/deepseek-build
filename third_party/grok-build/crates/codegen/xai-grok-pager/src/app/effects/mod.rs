@@ -3423,6 +3423,28 @@ pub(crate) fn execute(
                     }
                 });
         }
+        Effect::FetchDeepSeekStatus { agent_id, session_id } => {
+            let tx = acp_tx.clone();
+            tasks
+                .spawn(async move {
+                    match fetch_deepseek_status(&session_id, &tx).await {
+                        Ok(status) => {
+                            TaskResult::DeepSeekStatusComplete {
+                                agent_id,
+                                session_id,
+                                status: Box::new(status),
+                            }
+                        }
+                        Err(error) => {
+                            TaskResult::DeepSeekStatusFailed {
+                                agent_id,
+                                session_id,
+                                error,
+                            }
+                        }
+                    }
+                });
+        }
         Effect::SendFeedback { agent_id, session_id, feedback_text } => {
             use xai_grok_shell::session::ClientType;
             use xai_grok_shell::session::acp_types::ClientFeedbackInput;
@@ -4504,6 +4526,38 @@ async fn fetch_session_usage(
             "invalid session usage response".to_string()
         })?;
     Ok(parsed.usage)
+}
+/// `x.ai/deepseek/status` → [`DeepSeekStatusResponse`] (bare response, no envelope).
+async fn fetch_deepseek_status(
+    session_id: &acp::SessionId,
+    tx: &AcpAgentTx,
+) -> Result<xai_grok_shell::extensions::deepseek::DeepSeekStatusResponse, String> {
+    let request = acp::ExtRequest::new(
+        "x.ai/deepseek/status",
+        serde_json::value::to_raw_value(
+                &serde_json::json!({
+            "sessionId": session_id.0.to_string()
+        }),
+            )
+            .expect("serialize deepseek/status params")
+            .into(),
+    );
+    let resp = acp_send(request, tx)
+        .await
+        .map_err(|e| {
+            if i32::from(e.code) == i32::from(acp::Error::method_not_found().code) {
+                "not supported by this agent version".to_string()
+            } else {
+                sanitize_user_error(&e.to_string())
+            }
+        })?;
+    serde_json::from_str::<xai_grok_shell::extensions::deepseek::DeepSeekStatusResponse>(
+            resp.0.get(),
+        )
+        .map_err(|e| {
+            tracing::debug!("deepseek status deser failed: {e}");
+            "invalid deepseek status response".to_string()
+        })
 }
 /// Look up the session title/summary from local persistence.
 async fn lookup_session_title(session_id: &acp::SessionId) -> Option<String> {

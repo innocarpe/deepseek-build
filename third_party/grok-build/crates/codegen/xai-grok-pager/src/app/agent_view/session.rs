@@ -130,6 +130,7 @@ impl AgentView {
             workspace_mode_cli_locked: false,
             credit_balance: None,
             auto_topup: None,
+            deepseek_status: None,
             goal_state: None,
             workflow_blocks: std::collections::HashMap::new(),
             workflow_runs: Vec::new(),

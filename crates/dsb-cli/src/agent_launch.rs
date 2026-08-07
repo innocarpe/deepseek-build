@@ -565,7 +565,10 @@ fn picker_maps_numbers_names_and_defaults() {
         Some(PRODUCT_THEME_BLUE)
     );
     assert_eq!(picker_answer_to_theme(PRODUCT_THEME), Some(PRODUCT_THEME));
-    assert_eq!(picker_answer_to_theme("deepseek-night"), Some(PRODUCT_THEME_BLUE));
+    assert_eq!(
+        picker_answer_to_theme("deepseek-night"),
+        Some(PRODUCT_THEME_BLUE)
+    );
     assert_eq!(
         picker_answer_to_theme("deepseek-night-neutral"),
         Some(PRODUCT_THEME)

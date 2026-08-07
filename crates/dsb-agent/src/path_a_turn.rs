@@ -30,10 +30,7 @@ pub enum PathAToolPrep {
         repair_applied: bool,
     },
     /// Do **not** execute; structured error for the model.
-    Reject {
-        name: String,
-        error: String,
-    },
+    Reject { name: String, error: String },
 }
 
 /// Product Path A defaults for a new agent session (Spec 20).
@@ -45,10 +42,7 @@ pub fn path_a_default_router() -> ModelRouter {
 }
 
 /// Spec 15: repair then fail closed — never execute invalid args on Path A.
-pub fn prepare_path_a_tool_call(
-    call: &PathAToolCall,
-    schema: Option<&Value>,
-) -> PathAToolPrep {
+pub fn prepare_path_a_tool_call(call: &PathAToolCall, schema: Option<&Value>) -> PathAToolPrep {
     match repair_tool_arguments(&call.raw_arguments, schema) {
         Ok(RepairOutcome {
             arguments,

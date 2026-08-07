@@ -18,7 +18,7 @@ async fn welcome_screen_braille_logo_renders_correctly() {
     let content = ContentController::start().await.expect("start content");
 
     let binary = pager_binary().expect("resolve pager binary");
-    // Use a tall terminal so pick_logo() selects the 7-line logo (≥26 rows).
+    // Use a tall terminal so pick_logo() selects the 8-line logo (≥26 rows).
     let mut harness =
         PtyHarness::spawn_with_content(&binary, DEFAULT_ROWS, DEFAULT_COLS, &content, &[])
             .expect("spawn pager");

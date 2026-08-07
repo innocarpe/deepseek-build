@@ -8,10 +8,11 @@
 
 ## Active product chain
 
-**No active product ultragoal.** Cut complete: plan id **`owner-bar-5x`** → tag **`v5.0.0`**.
+**Active:** plan id **`vision-complete-5x`** (close VISION north star inside **`5.x.y`** after owner-bar).
 
 | Order | Plan / stage | Role | Prompt / board |
 |-------|--------------|------|----------------|
+| **1** | **`vision-complete-5x`** | **Active** — Deep Code + Reasonix + Grok feel under `5.x` | [VISION_COMPLETE_5X_GOALS.md](./VISION_COMPLETE_5X_GOALS.md) · [WAVE_5x_VISION_PR_DAG.md](./WAVE_5x_VISION_PR_DAG.md) · [VISION.md](./VISION.md) |
 | — | **`owner-bar-5x`** | **Complete** owner-bar product cut **`5.0.0`** | [CUT_5_0_0_2026-08-07.md](./evidence/CUT_5_0_0_2026-08-07.md) · [OWNER_BAR_5X_GOALS.md](./OWNER_BAR_5X_GOALS.md) · [PRD-v5.md](./PRD-v5.md) |
 
 ```text
@@ -25,7 +26,7 @@ G001 TruthHarness (RED gate)
   → G012 Freeze + dual review + tag v5.0.0
 ```
 
-**Do not** invent a second product plan-id mid-train; extend OWNER_BAR_5X_GOALS via docs PR only.
+Owner-bar train is frozen complete. **Active** plan-id is **`vision-complete-5x`** only; do not invent a third product plan-id mid-train.
 
 ### Completed / superseded trains (not owner-bar green)
 

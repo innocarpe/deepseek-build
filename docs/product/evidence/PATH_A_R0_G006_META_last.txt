@@ -1,0 +1,9 @@
+git_sha=d8a192bd8e4790e6469d900c8f4f7b306331b051
+yolo=false
+permission_mode=default
+no_cli_yolo=true
+headless=true
+search_replace_denied=True
+file_preserved='keep-me\n'
+path_a_perm_unit_tests=7_passed
+product_config_seed_yolo_false=ok

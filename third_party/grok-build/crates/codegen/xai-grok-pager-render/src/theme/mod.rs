@@ -2,8 +2,9 @@
 //!
 //! All colors come from the `Theme` struct. No hardcoded colors elsewhere.
 //! The default **product** theme is DeepSeek Night v2 (DeepSeek blue `#4D6BFE`
-//! on a measured C-balanced palette). Retired names (`deepseeknight`,
-//! `deepseeknight-neutral`, `groknight`) still parse for config back-compat.
+//! on a measured C-balanced palette). The original DeepSeek Night is
+//! selectable as **DeepSeek Night (classic)**. Retired names
+//! (`deepseeknight-neutral`, `groknight`) still parse for config back-compat.
 //!
 //! ## Color support
 //!
@@ -60,6 +61,8 @@ impl ThemeKind {
     /// All theme kinds (including those that may not work on the current terminal).
     pub const ALL: &[ThemeKind] = &[
         ThemeKind::DeepSeekNightV2,
+        // Original DeepSeek Night (v1) — re-listed as "DeepSeek Night (classic)".
+        ThemeKind::DeepSeekNight,
         ThemeKind::GrokDay,
         ThemeKind::TokyoNight,
         ThemeKind::RosePineMoon,
@@ -76,6 +79,7 @@ impl ThemeKind {
         const ALL: &[ThemeKind] = ThemeKind::ALL;
         const NO_TRUECOLOR: &[ThemeKind] = &[
             ThemeKind::DeepSeekNightV2,
+            ThemeKind::DeepSeekNight,
             ThemeKind::GrokDay,
         ];
 
@@ -766,8 +770,16 @@ mod tests {
     #[test]
     fn retired_themes_are_hidden_from_pickers() {
         assert!(!ThemeKind::ALL.contains(&ThemeKind::GrokNight));
-        assert!(!ThemeKind::ALL.contains(&ThemeKind::DeepSeekNight));
         assert!(!ThemeKind::ALL.contains(&ThemeKind::DeepSeekNightNeutral));
+    }
+
+    #[test]
+    fn classic_deepseek_theme_is_selectable_again() {
+        // The original DeepSeek Night (v1) was hidden in the v2 switch; it is
+        // re-listed as "DeepSeek Night (classic)" so users can keep the original
+        // look while v2 stays the product default.
+        assert!(ThemeKind::ALL.contains(&ThemeKind::DeepSeekNight));
+        assert!(ThemeKind::available().contains(&ThemeKind::DeepSeekNight));
     }
 
     #[test]

@@ -50,6 +50,11 @@ const THEME_CHOICES: &[EnumChoice] = &[
         description: "Product default - measured C-balanced DeepSeek palette.",
     },
     EnumChoice {
+        canonical: "deepseeknight",
+        display: "DeepSeek Night (classic)",
+        description: "Original blue-tinted DeepSeek palette.",
+    },
+    EnumChoice {
         canonical: "grokday",
         display: "Grok Day",
         description: "Light theme for bright environments.",
@@ -481,6 +486,11 @@ const CONCRETE_THEME_CHOICES: &[EnumChoice] = &[
         canonical: "deepseeknight-v2",
         display: "DeepSeek Night",
         description: "Product default - measured C-balanced DeepSeek palette.",
+    },
+    EnumChoice {
+        canonical: "deepseeknight",
+        display: "DeepSeek Night (classic)",
+        description: "Original blue-tinted DeepSeek palette.",
     },
     EnumChoice {
         canonical: "grokday",

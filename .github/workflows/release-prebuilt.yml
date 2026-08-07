@@ -1,19 +1,19 @@
 # Build and attach the Apple Silicon macOS prebuilt on version tags (ADR 0009).
 # Maintainer still runs npm publish (OTP) after assets exist.
 #
-# Change-scope fast path (docs/contributing/release-cycle.md):
+# Change-scope fast path:
 #   - third_party/ unchanged since the previous release tag -> reuse that
 #     release's vendored agent binary, rebuild only the dsb-cli wrappers
-#     (seconds instead of a full vendored build).
-#   - third_party/ changed -> full vendored build; sccache makes it
-#     incremental across runs (SCCACHE_GHA_CACHE).
+#     (minutes instead of a full vendored build).
+#   - third_party/ changed -> full vendored build; sccache + rust-cache make
+#     subsequent full builds incremental.
 # If the previous Apple Silicon tarball is missing, we fall back to full.
 name: release-prebuilt
 
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - "v*.*.*"
   workflow_dispatch:
     inputs:
       version:
@@ -27,6 +27,8 @@ permissions:
 env:
   RUSTC_WRAPPER: sccache
   SCCACHE_GHA_CACHE: "true"
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   build:
@@ -39,6 +41,21 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Need full history + tags so prev SemVer tag and third_party
+          # diffs resolve. Shallow checkouts made prev_tag empty and forced
+          # a full agent rebuild on every release.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Fetch all version tags
+        run: |
+          # checkout v4 sometimes only materializes the push ref; make sure
+          # we can list vX.Y.Z tags for the wrapper fast path.
+          git fetch --force --tags origin || true
+          echo "tags (newest 8):"
+          git tag -l 'v[0-9]*' --sort=-v:refname | head -n 8 || true
+
       - name: Resolve release version
         id: release
         env:
@@ -57,49 +74,104 @@ jobs:
           }
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "release=v$VERSION platform=${{ matrix.platform }}"
+
       - uses: mozilla-actions/sccache-action@v0.0.6
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.94.0
+
+      # Registry/git + workspace target cache. Speeds full agent rebuilds when
+      # the vendored tree only changes a little; cheap no-op on wrapper-only.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            third_party/grok-build
+          shared-key: release-prebuilt-${{ matrix.platform }}
+          cache-all-crates: true
+          cache-on-failure: true
+
       - name: Install protoc
         run: |
           brew install protobuf || true
+
       - name: Detect change scope
         id: scope
         run: |
-          PREV_TAG="$(git tag --merged HEAD --sort=-v:refname | awk '!seen[$0]++' | sed -n '2p' || true)"
-          SCOPE="full"
-          if [[ -n "$PREV_TAG" ]] && git diff --quiet "$PREV_TAG" HEAD -- third_party/; then
-            SCOPE="wrapper"
+          set -euo pipefail
+
+          CURRENT_TAG="${GITHUB_REF_NAME:-}"
+          # Prefer previous SemVer tag by version sort, excluding the tag we
+          # are building (so v5.1.0 does not pick itself as "previous").
+          PREV_TAG="$(
+            git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+              | grep -vxF "${CURRENT_TAG}" \
+              | head -n 1 || true
+          )"
+
+          # Fallbacks when tag listing is sparse (workflow_dispatch on a commit).
+          if [[ -z "$PREV_TAG" ]]; then
+            PREV_TAG="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' HEAD^ 2>/dev/null || true)"
           fi
-          echo "prev_tag=${PREV_TAG:-}" >> "$GITHUB_OUTPUT"
-          echo "scope=${SCOPE}" >> "$GITHUB_OUTPUT"
-          echo "scope=${SCOPE} prev_tag=${PREV_TAG:-none}"
+          if [[ -z "$PREV_TAG" ]]; then
+            PREV_TAG="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' HEAD 2>/dev/null || true)"
+            if [[ "$PREV_TAG" == "$CURRENT_TAG" ]]; then
+              PREV_TAG=""
+            fi
+          fi
+
+          SCOPE="full"
+          if [[ -n "$PREV_TAG" ]] && git rev-parse -q --verify "${PREV_TAG}^{commit}" >/dev/null; then
+            if git diff --quiet "$PREV_TAG" HEAD -- third_party/; then
+              SCOPE="wrapper"
+            else
+              echo "third_party/ changed since ${PREV_TAG}; full agent build"
+            fi
+          else
+            echo "no usable previous tag; full agent build"
+          fi
+
+          {
+            echo "prev_tag=${PREV_TAG:-}"
+            echo "scope=${SCOPE}"
+          } >> "$GITHUB_OUTPUT"
+          echo "scope=${SCOPE} prev_tag=${PREV_TAG:-none} current=${CURRENT_TAG:-none}"
+
       - name: Fetch previous release binaries (reuse agent when vendored tree unchanged)
         id: prev
-        if: steps.scope.outputs.scope != 'full'
+        if: steps.scope.outputs.scope == 'wrapper'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           mkdir -p /tmp/prev "$HOME/.deepseek-build/bin"
+          # Default: stay on wrapper path unless download/extract fails.
+          echo "scope=wrapper" >> "$GITHUB_OUTPUT"
           if ! gh release download "${{ steps.scope.outputs.prev_tag }}" \
                 --pattern "deepseek-build-*-${{ matrix.platform }}.tar.gz" \
                 --dir /tmp/prev --clobber; then
             echo "prev tarball missing for ${{ steps.scope.outputs.prev_tag }}/${{ matrix.platform }}; falling back to full build"
             echo "scope=full" >> "$GITHUB_OUTPUT"
-          else
-            tar -xzf /tmp/prev/*.tar.gz -C "$HOME/.deepseek-build/bin"
-            echo "reused agent from ${{ steps.scope.outputs.prev_tag }} (${{ matrix.platform }})"
+            exit 0
           fi
+          tar -xzf /tmp/prev/*.tar.gz -C "$HOME/.deepseek-build/bin"
+          test -x "$HOME/.deepseek-build/bin/deepseek-build-agent"
+          echo "reused agent from ${{ steps.scope.outputs.prev_tag }} (${{ matrix.platform }})"
+          ls -lh "$HOME/.deepseek-build/bin/deepseek-build-agent"
+
       - name: Build wrappers
         run: |
           cargo install --path crates/dsb-cli --locked --force --root "$HOME/.deepseek-build"
+
       - name: Install dotslash (vendored protoc launcher)
         if: steps.scope.outputs.scope == 'full' || steps.prev.outputs.scope == 'full'
         run: |
           if ! command -v dotslash >/dev/null 2>&1; then
             cargo install dotslash
           fi
+
       - name: Build agent
         if: steps.scope.outputs.scope == 'full' || steps.prev.outputs.scope == 'full'
         run: |
@@ -108,9 +180,11 @@ jobs:
           test -n "$AGENT"
           cp -f "$AGENT" "$HOME/.deepseek-build/bin/deepseek-build-agent"
           chmod 755 "$HOME/.deepseek-build/bin/deepseek-build-agent"
+
       - name: Package tarball
         run: |
           ./scripts/package-release-binaries.sh --platform "${{ matrix.platform }}"
+
       - name: Upload release asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -122,3 +196,9 @@ jobs:
             gh release create "v${VERSION}" --title "v${VERSION}" --generate-notes || true
           fi
           gh release upload "v${VERSION}" "$ASSET" --clobber
+
+      - name: sccache stats
+        if: always()
+        run: |
+          echo "=== sccache stats (hit rate is the useful signal) ==="
+          sccache --show-stats || true

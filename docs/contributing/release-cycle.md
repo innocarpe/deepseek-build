@@ -102,15 +102,18 @@ turn repeated builds into incremental ones.
 > matrix is intentionally limited to Apple Silicon macOS (`darwin-arm64`).
 
 - **Change-scope fast path:** if `third_party/` is unchanged since the previous
-  release tag, the vendored agent binary is extracted from that release's
-  tarball and only `dsb-cli` is rebuilt (seconds). If the previous Apple
+  SemVer tag, the vendored agent binary is extracted from that release's
+  tarball and only `dsb-cli` is rebuilt (minutes). If the previous Apple
   Silicon tarball is missing, the job falls back to a full build.
-- **sccache:** `RUSTC_WRAPPER=sccache` + `SCCACHE_GHA_CACHE=true` make full
-  builds incremental across runs (cache scoping follows the GitHub Actions
-  cache service; the fast path is the guaranteed win).
+  Checkout uses `fetch-depth: 0` + explicit tag fetch so `prev_tag` is not
+  empty (v5.1.0 regressed to `scope=full prev_tag=none` under shallow clone).
+- **sccache:** `RUSTC_WRAPPER=sccache` + `SCCACHE_GHA_CACHE=true`; every run
+  prints `sccache --show-stats` so hit rate is visible in the job log.
+- **rust-cache:** `Swatinem/rust-cache@v2` covers the product workspace and
+  `third_party/grok-build` (registry + target) for warmer full rebuilds.
 - **Honest limits:** GitHub runner queue time is outside our control; a first
-  full build after a vendored change is cold; non-Apple-Silicon users are
-  outside the current product support boundary and receive a clear
+  full build after a large vendored change is still long; non-Apple-Silicon
+  users are outside the current product support boundary and receive a clear
   unsupported-platform message.
 
 ### Manual asset fallback (when CI never runs)

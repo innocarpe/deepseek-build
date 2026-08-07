@@ -265,15 +265,18 @@ mod tests {
         }
         // Forbidden Crockford exclusions must never appear.
         assert!(
-            !suffix.bytes().any(|b| matches!(b, b'I' | b'L' | b'O' | b'U'
-                | b'i' | b'l' | b'o' | b'u')),
+            !suffix
+                .bytes()
+                .any(|b| matches!(b, b'I' | b'L' | b'O' | b'U' | b'i' | b'l' | b'o' | b'u')),
             "forbidden crockford chars in {id}"
         );
         assert!(is_valid_snippet_id(&id), "got {id}");
         // Explicitly not UUID-v7-simple under snp_ (32 lowercase hex).
         assert_ne!(suffix.len(), 32);
         assert!(
-            !suffix.bytes().all(|b| b.is_ascii_hexdigit() && suffix.len() == 32),
+            !suffix
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && suffix.len() == 32),
             "must not be UUID hex"
         );
     }

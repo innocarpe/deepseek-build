@@ -703,7 +703,11 @@ fn append_snippet_metadata(body: String, file_content: &FileContent) -> String {
     {
         meta.push(format!("snippet_scope: {scope}"));
     }
-    if let Some(v) = file_content.file_version.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(v) = file_content
+        .file_version
+        .as_deref()
+        .filter(|s| !s.is_empty())
+    {
         meta.push(format!("file_version: {v}"));
     }
     if meta.is_empty() {

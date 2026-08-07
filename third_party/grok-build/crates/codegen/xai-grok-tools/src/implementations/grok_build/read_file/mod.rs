@@ -484,31 +484,35 @@ pub(crate) async fn run_read_file(
     if file_content.is_empty() {
         let stored_offset = stored_read_offset(input.offset);
         let snippet = if utf8_ok {
-            Some(mint_session_snippet(
-                &resources,
-                &path,
-                file_version.as_deref().unwrap_or(""),
-                0,
-                stored_offset,
-                input.limit,
-                "",
+            Some(
+                mint_session_snippet(
+                    &resources,
+                    &path,
+                    file_version.as_deref().unwrap_or(""),
+                    0,
+                    stored_offset,
+                    input.limit,
+                    "",
+                )
+                .await,
             )
-            .await)
         } else {
             None
         };
-        return Ok(ReadFileOutput::FileContent(file_content_with_optional_snippet(
-            String::new(),
-            None,
-            path,
-            stored_offset,
-            input.limit,
-            String::new(),
-            0,
-            Vec::new(),
-            file_version,
-            snippet,
-        )));
+        return Ok(ReadFileOutput::FileContent(
+            file_content_with_optional_snippet(
+                String::new(),
+                None,
+                path,
+                stored_offset,
+                input.limit,
+                String::new(),
+                0,
+                Vec::new(),
+                file_version,
+                snippet,
+            ),
+        ));
     }
     let total_lines = file_content.matches('\n').count() + 1;
     let max_lines = {
@@ -619,18 +623,20 @@ pub(crate) async fn run_read_file(
     } else {
         None
     };
-    Ok(ReadFileOutput::FileContent(file_content_with_optional_snippet(
-        content,
-        content_concise,
-        path,
-        stored_offset,
-        stored_limit,
-        raw_output,
-        total_lines,
-        extracted_images,
-        file_version,
-        snippet,
-    )))
+    Ok(ReadFileOutput::FileContent(
+        file_content_with_optional_snippet(
+            content,
+            content_concise,
+            path,
+            stored_offset,
+            stored_limit,
+            raw_output,
+            total_lines,
+            extracted_images,
+            file_version,
+            snippet,
+        ),
+    ))
 }
 
 /// Mint into the **session** `Resources` bag behind `SharedResources`.

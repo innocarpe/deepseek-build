@@ -12,6 +12,14 @@
 
 ## Unreleased
 
+## 4.0.3 — 2026-08-07
+
+### CLI
+
+- **`dsb --resume [<id>]` / `-r`** resumes a full-screen TUI session (bare flag = most-recent session); `--minimal` / `--fullscreen` forwarded to the TUI
+- Quit and screen-mode relaunch hints branded as **`dsb`** / **`deepseek-build`** (via `GROK_INVOCATION_NAME`) instead of upstream `grok`
+- `--resume` conflicts with `--session`; TUI-only flags rejected on line-mode subcommands (`run`, `chat`, …)
+
 ## 4.0.2 — 2026-08-07
 
 ### UX

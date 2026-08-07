@@ -46,19 +46,46 @@ find_product_bin() {
   return 1
 }
 
+# True if agent binary runs and its --help mentions worktree (L3 surface).
+# Some install paths leave a non-functional deepseek-build-agent stub that
+# exits 0 with empty help; prefer a working xai-grok-pager copy instead.
+agent_bin_usable() {
+  local bin="$1"
+  [[ -x "${bin}" ]] || return 1
+  local help
+  help="$("${bin}" --help 2>&1 || true)"
+  # Require a non-trivial help page with worktree surface (Path A L3).
+  [[ "${#help}" -gt 80 ]] || return 1
+  printf '%s\n' "${help}" | rg -q 'worktree' || return 1
+  return 0
+}
+
 find_agent_bin() {
   if [[ -n "${DEEPSEEK_BUILD_AGENT_BIN:-}" && -x "${DEEPSEEK_BUILD_AGENT_BIN}" ]]; then
-    echo "$DEEPSEEK_BUILD_AGENT_BIN"
-    return 0
+    if agent_bin_usable "${DEEPSEEK_BUILD_AGENT_BIN}"; then
+      echo "$DEEPSEEK_BUILD_AGENT_BIN"
+      return 0
+    fi
+    # Fall through to other candidates when override is broken.
   fi
   local c
   for c in \
-    "${DEEPSEEK_BUILD_HOME:-$HOME/.deepseek-build}/bin/deepseek-build-agent" \
     "${DEEPSEEK_BUILD_HOME:-$HOME/.deepseek-build}/bin/xai-grok-pager" \
+    "$ROOT/third_party/grok-build/target/debug/xai-grok-pager" \
     "$ROOT/third_party/grok-build/target/release/xai-grok-pager" \
     "$ROOT/third_party/grok-build/target/release/xai-grok-pager-bin" \
-    "${CARGO_HOME:-$HOME/.cargo}/bin/deepseek-build-agent" \
-    "${CARGO_HOME:-$HOME/.cargo}/bin/xai-grok-pager"; do
+    "${DEEPSEEK_BUILD_HOME:-$HOME/.deepseek-build}/bin/deepseek-build-agent" \
+    "${CARGO_HOME:-$HOME/.cargo}/bin/xai-grok-pager" \
+    "${CARGO_HOME:-$HOME/.cargo}/bin/deepseek-build-agent"; do
+    if agent_bin_usable "$c"; then
+      echo "$c"
+      return 0
+    fi
+  done
+  # Last resort: first executable (may still fail probes).
+  for c in \
+    "${DEEPSEEK_BUILD_HOME:-$HOME/.deepseek-build}/bin/deepseek-build-agent" \
+    "${DEEPSEEK_BUILD_HOME:-$HOME/.deepseek-build}/bin/xai-grok-pager"; do
     if [[ -x "$c" ]]; then
       echo "$c"
       return 0

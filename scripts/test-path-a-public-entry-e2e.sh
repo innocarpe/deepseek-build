@@ -297,6 +297,15 @@ else
   warn "path_a_routing.txt missing under DEEPSEEK_BUILD_HOME (G009 stamp)"
 fi
 
+# G010: Path A L3 schedule + worker cache stamp.
+L3_STAMP="${HOME_DIR}/path_a_l3.txt"
+if [[ -f "${L3_STAMP}" ]]; then
+  cp "${L3_STAMP}" "${OUT_DIR}/PATH_A_L3_last.txt"
+  log "path_a_l3 stamp present"
+else
+  warn "path_a_l3.txt missing under DEEPSEEK_BUILD_HOME (G010 stamp)"
+fi
+
 # Persist wire + meta for evidence (redacted)
 if [[ -f "${WIRE}" ]]; then
   cp "${WIRE}" "${EVIDENCE_WIRE}"
@@ -327,6 +336,12 @@ fi
   else
     echo "path_a_routing_stamp=missing"
   fi
+  if [[ -f "${L3_STAMP}" ]]; then
+    echo "path_a_l3_stamp=present"
+    cat "${L3_STAMP}"
+  else
+    echo "path_a_l3_stamp=missing"
+  fi
 } >"${EVIDENCE_META}"
 
 # --- assertions ---
@@ -341,6 +356,15 @@ if [[ ! -f "${EPOCH_STAMP}" ]]; then
 fi
 if [[ ! -f "${ROUTING_STAMP}" ]]; then
   warn "G009 stamp missing — path_a_default_router not exercised on launch"
+  FAIL=1
+fi
+if [[ ! -f "${L3_STAMP}" ]]; then
+  warn "G010 stamp missing — L3 classify/worker_stable_prefix not exercised on launch"
+  FAIL=1
+elif ! rg -q 'worker_epochs_match=true' "${L3_STAMP}" \
+  || ! rg -q 'bash_mutating=true' "${L3_STAMP}" \
+  || ! rg -q 'subagents_enabled_in_config=true' "${L3_STAMP}"; then
+  warn "G010 stamp content incomplete"
   FAIL=1
 fi
 # L2-20-1: default deepseek turns use Flash wire id

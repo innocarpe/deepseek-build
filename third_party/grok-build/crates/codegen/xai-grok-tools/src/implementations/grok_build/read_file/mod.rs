@@ -460,6 +460,13 @@ pub(crate) async fn run_read_file(
             path.display()
         )));
     }
+    // Owner-bar / Spec 45: mint full-file sha256 at read time (Path A).
+    let file_version = {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(&file_bytes);
+        Some(format!("{:x}", h.finalize()))
+    };
     let file_content = String::from_utf8_lossy(&file_bytes).into_owned();
     if file_content.is_empty() {
         let stored_offset = stored_read_offset(input.offset);
@@ -472,6 +479,7 @@ pub(crate) async fn run_read_file(
             raw_output: String::new(),
             total_lines: 0,
             extracted_images: Vec::new(),
+            file_version,
         }));
     }
     let total_lines = file_content.matches('\n').count() + 1;
@@ -573,6 +581,7 @@ pub(crate) async fn run_read_file(
         raw_output: extracted.raw_output,
         total_lines,
         extracted_images,
+        file_version,
     }))
 }
 /// New-architecture `ReadFile` tool.
@@ -816,6 +825,44 @@ mod tests {
                 assert!(msg.contains("does not exist"), "got: {msg}");
             }
             other => panic!("Expected FileNotFound, got {:?}", other),
+        }
+    }
+
+    /// Owner-bar G003 / L1-45-2: Path A read_file mints file_version = sha256(file).
+    #[tokio::test]
+    async fn current_read_file_mints_file_version_sha256() {
+        use sha2::{Digest, Sha256};
+        let tmp = TempDir::new().unwrap();
+        let body = b"path-a mint body\nline2\n";
+        std::fs::write(tmp.path().join("mint.txt"), body).unwrap();
+        let mut h = Sha256::new();
+        h.update(body);
+        let expected = format!("{:x}", h.finalize());
+        let tool = ReadFileTool;
+        let resources = test_resources(tmp.path());
+        let input = ReadFileInput {
+            path: "mint.txt".to_string(),
+            offset: None,
+            limit: None,
+            pages: None,
+            format: None,
+        };
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
+            .await
+            .unwrap();
+        match result {
+            ReadFileOutput::FileContent(fc) => {
+                assert_eq!(fc.file_version.as_deref(), Some(expected.as_str()));
+                let prompt = crate::types::output::ToolOutput::ReadFile(
+                    ReadFileOutput::FileContent(fc.clone()),
+                )
+                .to_prompt_format();
+                assert!(
+                    prompt.contains(&format!("file_version: {expected}")),
+                    "model-visible prompt must include file_version; got: {prompt}"
+                );
+            }
+            other => panic!("Expected FileContent, got {other:?}"),
         }
     }
     #[tokio::test]

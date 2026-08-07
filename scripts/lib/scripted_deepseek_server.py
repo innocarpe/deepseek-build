@@ -105,14 +105,30 @@ def _json_text(model: str, text: str) -> bytes:
     return json.dumps(body, separators=(",", ":")).encode()
 
 
-def _sse_tool_then_text(model: str, turn: int, text: str) -> bytes:
+def _sse_tool_then_text(
+    model: str,
+    turn: int,
+    text: str,
+    *,
+    tool_name: str = "run_terminal_command",
+    tool_args: str | None = None,
+) -> bytes:
     """Turn 0: stream a single tool_call; later turns: final text."""
     if turn == 0:
         cid = _completion_id()
-        tool_name = "run_terminal_command"
-        tool_args = json.dumps(
-            {"command": "echo path-a-r0-tool-ok", "description": "G002 scripted probe"}
-        )
+        if tool_args is None:
+            if tool_name in ("read_file", "Read", "read"):
+                # Grok schema renames path → target_file
+                tool_args = json.dumps({"target_file": "mint.txt"})
+            else:
+                tool_args = json.dumps(
+                    {
+                        "command": "echo path-a-r0-tool-ok",
+                        "description": "G002 scripted probe",
+                    }
+                )
+        # Emit tool_call in one delta with full JSON arguments (avoids
+        # partial-arg parse failures on some clients).
         chunks = [
             {
                 "id": cid,
@@ -132,30 +148,10 @@ def _sse_tool_then_text(model: str, turn: int, text: str) -> bytes:
                                     "type": "function",
                                     "function": {
                                         "name": tool_name,
-                                        "arguments": "",
+                                        "arguments": tool_args,
                                     },
                                 }
                             ],
-                        },
-                        "finish_reason": None,
-                    }
-                ],
-            },
-            {
-                "id": cid,
-                "object": "chat.completion.chunk",
-                "created": _now(),
-                "model": model,
-                "choices": [
-                    {
-                        "index": 0,
-                        "delta": {
-                            "tool_calls": [
-                                {
-                                    "index": 0,
-                                    "function": {"arguments": tool_args},
-                                }
-                            ]
                         },
                         "finish_reason": None,
                     }
@@ -188,6 +184,8 @@ class ScriptedState:
         self.wire_path = wire_path
         self.scenario = scenario
         self.final_text = final_text
+        self.tool_name = "run_terminal_command"
+        self.tool_args: str | None = None
         self.lock = threading.Lock()
         self.request_count = 0
         self.wire_path.parent.mkdir(parents=True, exist_ok=True)
@@ -272,13 +270,54 @@ def make_handler(state: ScriptedState):
                 model = body["model"]
 
             stream = bool(body.get("stream")) if isinstance(body, dict) else False
+            # Decide response shape from message history (not raw request count):
+            # session-title side-calls must not consume the tool turn.
+            msgs = body.get("messages") if isinstance(body, dict) else None
+            msgs = msgs if isinstance(msgs, list) else []
+            has_tool_result = any(
+                isinstance(m, dict) and m.get("role") in ("tool", "function") for m in msgs
+            )
+            tool_choice = body.get("tool_choice") if isinstance(body, dict) else None
+            forced_fn = None
+            if isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
+                fn = tool_choice.get("function") or {}
+                if isinstance(fn, dict) and isinstance(fn.get("name"), str):
+                    forced_fn = fn["name"]
+
             if state.scenario == "tool-then-text":
-                payload = (
-                    _sse_tool_then_text(model, n, state.final_text)
-                    if stream
-                    else _json_text(model, state.final_text)
-                )
-                # non-stream tool path not needed for agent (always streams)
+                if forced_fn == "session_title":
+                    # Return a minimal session_title tool call so title side-call completes.
+                    payload = (
+                        _sse_tool_then_text(
+                            model,
+                            0,
+                            state.final_text,
+                            tool_name="session_title",
+                            tool_args=json.dumps({"session_title": "Path A mint probe"}),
+                        )
+                        if stream
+                        else _json_text(model, "Path A mint probe")
+                    )
+                elif not has_tool_result:
+                    # First real agent turn with tools: emit scripted tool call.
+                    payload = (
+                        _sse_tool_then_text(
+                            model,
+                            0,
+                            state.final_text,
+                            tool_name=state.tool_name,
+                            tool_args=state.tool_args,
+                        )
+                        if stream
+                        else _json_text(model, state.final_text)
+                    )
+                else:
+                    # After tool result: final assistant text.
+                    payload = (
+                        _sse_text(model, state.final_text)
+                        if stream
+                        else _json_text(model, state.final_text)
+                    )
             else:
                 payload = (
                     _sse_text(model, state.final_text)
@@ -306,7 +345,7 @@ def main() -> int:
     ap.add_argument("--wire", required=True, help="JSONL path for request capture")
     ap.add_argument(
         "--scenario",
-        choices=("text-pong", "tool-then-text"),
+        choices=("text-pong", "tool-then-text", "read-file-then-text"),
         default="text-pong",
     )
     ap.add_argument(
@@ -314,9 +353,26 @@ def main() -> int:
         default="path-a-r0-ok",
         help="Final assistant text content",
     )
+    ap.add_argument(
+        "--tool-name",
+        default="",
+        help="Override tool name for tool scenarios (default depends on scenario)",
+    )
     args = ap.parse_args()
 
-    state = ScriptedState(Path(args.wire), args.scenario, args.final_text)
+    # Normalize scenario aliases
+    scenario = args.scenario
+    tool_name = args.tool_name
+    if scenario == "read-file-then-text":
+        scenario = "tool-then-text"
+        if not tool_name:
+            tool_name = "read_file"
+    if scenario == "tool-then-text" and not tool_name:
+        tool_name = "run_terminal_command"
+
+    state = ScriptedState(Path(args.wire), scenario, args.final_text)
+    state.tool_name = tool_name
+    state.tool_args = None
     handler = make_handler(state)
     server = ThreadingHTTPServer((args.host, args.port), handler)
     host, port = server.server_address[0], server.server_address[1]

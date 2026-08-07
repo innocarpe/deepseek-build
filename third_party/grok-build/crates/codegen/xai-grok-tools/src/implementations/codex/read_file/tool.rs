@@ -267,6 +267,7 @@ impl xai_tool_runtime::Tool for CodexReadFileTool {
             raw_output,
             total_lines,
             extracted_images: Vec::new(),
+            file_version: None,
         }))
     }
 }

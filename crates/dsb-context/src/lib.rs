@@ -8,11 +8,15 @@
 
 mod canonicalize;
 mod epoch;
+mod path_a_agent_context;
 mod prefix;
 mod skills;
 
 pub use canonicalize::{canonicalize_json, stable_prefix_bytes};
 pub use epoch::PrefixEpoch;
+pub use path_a_agent_context::{
+    PathAAssembledContext, PathAContextInputs, assemble_path_a_context,
+};
 pub use prefix::{
     DEFAULT_SYSTEM_PROMPT, EnvironmentSummary, PrefixBuildInputs, PrefixBuilder, PrefixError,
     SkillIndexEntry, StablePrefix, VolatileTail, discover_project_instructions,

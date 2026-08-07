@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 3.0.0-beta.1 — 2026-08-07
+
+### L2 prefix (Path A agent context)
+
+- `dsb-context` `assemble_path_a_context`: stable prefix + volatile tail under Spec 10 for default agent path
+- H10.* epoch stability tests (identical inputs, tool/skills thrash, volatile isolation)
+
+
 ## 3.0.0-alpha.2 — 2026-08-07
 
 ### L1 permissions (Path A)

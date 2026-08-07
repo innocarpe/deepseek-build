@@ -186,6 +186,8 @@ class ScriptedState:
         self.final_text = final_text
         self.tool_name = "run_terminal_command"
         self.tool_args: str | None = None
+        self.liveness_dir: Path | None = None
+        self.liveness_step = 0
         self.lock = threading.Lock()
         self.request_count = 0
         self.wire_path.parent.mkdir(parents=True, exist_ok=True)
@@ -284,22 +286,91 @@ def make_handler(state: ScriptedState):
                 if isinstance(fn, dict) and isinstance(fn.get("name"), str):
                     forced_fn = fn["name"]
 
-            if state.scenario == "tool-then-text":
-                if forced_fn == "session_title":
-                    # Return a minimal session_title tool call so title side-call completes.
+            if forced_fn == "session_title":
+                payload = (
+                    _sse_tool_then_text(
+                        model,
+                        0,
+                        state.final_text,
+                        tool_name="session_title",
+                        tool_args=json.dumps({"session_title": "Path A liveness"}),
+                    )
+                    if stream
+                    else _json_text(model, "Path A liveness")
+                )
+            elif state.scenario == "liveness-3edits" and state.liveness_dir is not None:
+                # Count tool results after the user_query (ignore session_title side-call).
+                uq = -1
+                for i, m in enumerate(msgs):
+                    if isinstance(m, dict) and "user_query" in str(m.get("content") or ""):
+                        uq = i
+                tool_results = sum(
+                    1
+                    for m in msgs[uq + 1 :]
+                    if isinstance(m, dict) and m.get("role") in ("tool", "function")
+                )
+                # Sequence: 3 search_replace edits across a.txt + b.txt
+                # 0: a hello->hello1, 1: b world->world1, 2: a hello1->hello2
+                import hashlib
+
+                def file_ver(name: str) -> str:
+                    p = state.liveness_dir / name
+                    return hashlib.sha256(p.read_bytes()).hexdigest()
+
+                steps = [
+                    (
+                        "search_replace",
+                        {
+                            "file_path": "a.txt",
+                            "old_string": "hello",
+                            "new_string": "hello1",
+                            "file_version": file_ver("a.txt") if (state.liveness_dir / "a.txt").exists() else "",
+                        },
+                    ),
+                    (
+                        "search_replace",
+                        {
+                            "file_path": "b.txt",
+                            "old_string": "world",
+                            "new_string": "world1",
+                            "file_version": file_ver("b.txt") if (state.liveness_dir / "b.txt").exists() else "",
+                        },
+                    ),
+                    (
+                        "search_replace",
+                        {
+                            "file_path": "a.txt",
+                            "old_string": "hello1",
+                            "new_string": "hello2",
+                            "file_version": file_ver("a.txt") if (state.liveness_dir / "a.txt").exists() else "",
+                        },
+                    ),
+                ]
+                if tool_results < len(steps):
+                    tname, targs = steps[tool_results]
+                    # Recompute version live (files change after each edit)
+                    if tname == "search_replace" and (state.liveness_dir / targs["file_path"]).exists():
+                        targs = dict(targs)
+                        targs["file_version"] = file_ver(targs["file_path"])
                     payload = (
                         _sse_tool_then_text(
                             model,
                             0,
                             state.final_text,
-                            tool_name="session_title",
-                            tool_args=json.dumps({"session_title": "Path A mint probe"}),
+                            tool_name=tname,
+                            tool_args=json.dumps(targs),
                         )
                         if stream
-                        else _json_text(model, "Path A mint probe")
+                        else _json_text(model, state.final_text)
                     )
-                elif not has_tool_result:
-                    # First real agent turn with tools: emit scripted tool call.
+                else:
+                    payload = (
+                        _sse_text(model, "liveness-ok")
+                        if stream
+                        else _json_text(model, "liveness-ok")
+                    )
+            elif state.scenario == "tool-then-text":
+                if not has_tool_result:
                     payload = (
                         _sse_tool_then_text(
                             model,
@@ -312,7 +383,6 @@ def make_handler(state: ScriptedState):
                         else _json_text(model, state.final_text)
                     )
                 else:
-                    # After tool result: final assistant text.
                     payload = (
                         _sse_text(model, state.final_text)
                         if stream
@@ -345,8 +415,18 @@ def main() -> int:
     ap.add_argument("--wire", required=True, help="JSONL path for request capture")
     ap.add_argument(
         "--scenario",
-        choices=("text-pong", "tool-then-text", "read-file-then-text"),
+        choices=(
+            "text-pong",
+            "tool-then-text",
+            "read-file-then-text",
+            "liveness-3edits",
+        ),
         default="text-pong",
+    )
+    ap.add_argument(
+        "--liveness-dir",
+        default="",
+        help="Workspace dir with a.txt/b.txt for liveness-3edits (hashes computed live)",
     )
     ap.add_argument(
         "--final-text",
@@ -373,6 +453,8 @@ def main() -> int:
     state = ScriptedState(Path(args.wire), scenario, args.final_text)
     state.tool_name = tool_name
     state.tool_args = None
+    state.liveness_dir = Path(args.liveness_dir) if args.liveness_dir else None
+    state.liveness_step = 0
     handler = make_handler(state)
     server = ThreadingHTTPServer((args.host, args.port), handler)
     host, port = server.server_address[0], server.server_address[1]

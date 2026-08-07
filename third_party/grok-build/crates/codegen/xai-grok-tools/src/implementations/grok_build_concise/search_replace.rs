@@ -140,6 +140,7 @@ mod tests {
             old_string: old.to_string(),
             new_string: new.to_string(),
             replace_all: false,
+            file_version: None,
         }
     }
 
@@ -182,6 +183,7 @@ mod tests {
             old_string: "aaa".to_string(),
             new_string: "ccc".to_string(),
             replace_all: true,
+            file_version: None,
         };
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
             .await

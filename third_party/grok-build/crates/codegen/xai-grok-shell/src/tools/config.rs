@@ -368,11 +368,23 @@ impl FileToolset {
         hashline_config: &HashlineSchemeConfig,
     ) -> Result<Vec<ToolConfig>, String> {
         match self {
-            Self::Standard => Ok(vec![
-                ToolConfig::for_tool::<grok_build::ReadFileTool>(),
-                ToolConfig::for_tool::<grok_build::SearchReplaceTool>(),
-                ToolConfig::for_tool::<grok_build::GrepTool>(),
-            ]),
+            Self::Standard => {
+                // DeepSeek Build Path A default: Spec 45 spirit on search_replace
+                // (require file_version; block empty-old whole-file overwrite).
+                let mut search_replace = ToolConfig::for_tool::<grok_build::SearchReplaceTool>();
+                let params = serde_json::json!({
+                    "snippet_safe": true,
+                    "empty_old_string_does_not_override": true,
+                });
+                if let serde_json::Value::Object(map) = params {
+                    search_replace.params = Some(map);
+                }
+                Ok(vec![
+                    ToolConfig::for_tool::<grok_build::ReadFileTool>(),
+                    search_replace,
+                    ToolConfig::for_tool::<grok_build::GrepTool>(),
+                ])
+            }
             Self::Hashline => {
                 hashline_config.validate()?;
                 let params_json = serde_json::json!({

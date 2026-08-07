@@ -1,0 +1,282 @@
+# VC004 — Path A `search_replace` requires session-local `snippet_id`
+
+| Field | Value |
+|-------|--------|
+| **Story** | **VC004** — Path A public `search_replace` requires a valid session-local Spec 45 `snippet_id` |
+| **Plan** | `vision-complete-5x` |
+| **Date** | 2026-08-08 |
+| **Status** | **IMPLEMENTATION** (runtime require on Path A edit path; unit evidence) |
+| **SemVer** | **none** (no version bump in this story; does **not** cut any release minor) |
+| **Depends on** | **PR #130** / VC003 Path A mint (`snippet_id` + `SessionSnippetStore` on `Resources`) — branch base head `a691d29` |
+| **Board** | [`VISION_COMPLETE_5X_GOALS.md`](../VISION_COMPLETE_5X_GOALS.md) · DAG [`WAVE_5x_VISION_PR_DAG.md`](../WAVE_5x_VISION_PR_DAG.md) (read live on `origin/main` for floor; see §0) |
+| **Normative design** | [`docs/adr/0010-spec-45-snippet-store.md`](../../adr/0010-spec-45-snippet-store.md) §5 edit contract |
+| **Semantics SSOT** | [`docs/specs/45-snippet-edit.md`](../../specs/45-snippet-edit.md) |
+| **Binding** | [`HEART_3X_SPEC_BINDING.md`](../../architecture/HEART_3X_SPEC_BINDING.md) · [`HARNESS_PHILOSOPHY.md`](../../architecture/HARNESS_PHILOSOPHY.md) §4.1 |
+
+**This file is the mandatory ultragoal PR unit plan for VC004 plus implementation evidence.**
+It does **not** claim VISION L1 complete, owner-bar re-cut, Path A multi-edit R0A, write/bash invalidation (VC005), resume/fork (VC006), any SemVer cut, or public R0A wire proof.
+
+---
+
+## 0. Floor and dependency facts
+
+### 0.1 Live floor (re-check at VC004 open; 2026-08-08)
+
+| Probe | Live result |
+|-------|-------------|
+| This worktree branch | `vc004-snippet-id-require` @ `a691d29` (PR #130 head / VC003 tip) |
+| Working tree product `Cargo.toml` | **`5.1.0`** (behind main; **not** bumped by this story) |
+| `git show origin/main:Cargo.toml` version | **`5.2.0`** (`origin/main` includes chore/release-5.2.0) |
+| Board text on this branch | Still documents Spec 45 cut as **`5.2.0`** (VC006) — **stale vs live main floor** |
+| VC003 on this branch | **present** — Path A `read_file` mints `snippet_id` into session `SessionSnippetStore` |
+| Thin Path B | `crates/dsb-tools` `SnippetStore` remains **reference/oracle**, not Path A proof |
+
+### 0.2 Floor interpretation (fail-close)
+
+- **`5.2.0` is already used** on live `origin/main`. This story **must not** reuse or cut **`5.2.0`**.
+- Under the live floor, remaining Spec 45 completion (VC004 → VC005 → cut unit) belongs to the **next free feature minor**. With main at **`5.2.0`**, that is **`5.3.0`** unless a later board/npm re-check shows another free `5.Y.0`.
+- Feature PRs (VC003–VC005) stay **unversioned**. Only a dedicated cut unit (historical VC006 slot, rebased) bumps SemVer.
+- Owner-bar **`file_version` (sha256)** remains a **compatibility alias** of snippet `version`; do not remove it from wire/output.
+- Safe open base: stack on VC003 / PR #130 head (or `main` after #130 merges).
+
+---
+
+## 1. Why this PR (one sentence)
+
+Require a **valid session-local `snippet_id`** on Path A `search_replace` (when product `snippet_safe` is on) so free-form / hash-only primary edit is fail-closed and edits are authorized only for the recorded path / range / version from a prior text `read_file`.
+
+---
+
+## 2. Call-path map (inspected before design)
+
+| Layer | Path | Role today (pre-VC004) |
+|-------|------|------------------------|
+| Public product | `deepseek-build` / `dsb` → `deepseek-build-agent` (vendored Grok) | **Path A** product default |
+| Product Standard toolset | `xai-grok-shell` `FileToolset::Standard::tool_configs` | Injects `snippet_safe: true` + `empty_old_string_does_not_override: true` on `search_replace` |
+| Edit impl | `xai-grok-tools` `implementations/grok_build/search_replace` | `run_search_replace` → create vs `handle_replacement` |
+| Edit args today | `SearchReplaceInput` | `file_path`, `old_string`, `new_string`, `replace_all`, optional **`file_version`** — **no `snippet_id`** |
+| `snippet_safe` gate today | Before mutation | Non-create edits require matching full-file **`file_version`** sha256; missing → free-form reject; mismatch → `snippet_stale` |
+| Match scope today | Whole file | Literal (optional unicode-normalized) match on **entire file**, not session snippet range |
+| Session store (VC003) | `types/snippet_store.rs` `SessionSnippetStore` on `Resources` | Minted by text `read_file`; fields: id, path, start/end line, version, scope, preview, encoding, issued_at_turn |
+| Thin oracle | `crates/dsb-tools` `path_a_edit` / `SnippetStore::edit` | Already requires `snippet_id` + scope replace — **not** Path A proof |
+| Dual CLI | `deepseek-build` / `dsb` | Must both keep working; no install rename |
+
+### Exact pre-VC004 product edit contract (honesty)
+
+1. **Create path:** `old_string == ""` and path missing → write new file; **no** `file_version` / `snippet_id` required (write-create spirit; full write laws remain VC005).
+2. **Existing file + `snippet_safe`:** requires **`file_version`** equal to `hex(sha256(current full file bytes))`.
+3. **Missing `file_version`:** `InvalidInput` free-form primary reject; **no disk write**.
+4. **Stale `file_version`:** `InvalidInput` with `snippet_stale:…`; **no disk write**.
+5. **Match:** whole-file literal match; multi-match without `replace_all` fails closed; empty-old overwrite of non-empty file fail-closed when guard / `snippet_safe` on.
+6. **Session `snippet_id`:** minted on read (VC003) but **ignored** by edit until this story.
+
+### Target VC004 contract (Path A, `snippet_safe == true`)
+
+| Case | Behavior |
+|------|----------|
+| Non-create edit **missing** `snippet_id` | Fail closed; **no write** |
+| **Malformed** id (not ADR `snp_` + 26 Crockford ULID) | Fail closed; **no write** |
+| **Unknown** id (not in this session store) | Fail closed; **no write** |
+| **Path mismatch** (edit `file_path` ≠ recorded snippet path after resolve) | Fail closed; **no write** |
+| **Stale / version mismatch** (recorded `version` ≠ current full-file sha256; optional wire `file_version` if present must also match current) | Fail closed; **no write** |
+| **Valid** id | Authorizes **only** recorded path + inclusive line range + version; replace runs **inside that scope**; returns normal `EditsApplied` / existing error classes for no-match / multi-match |
+| After successful mutation | Old ids become **stale** on next check via version drift; **re-read/mint** is the way to obtain a fresh id (eager path expire is **VC005**, not claimed here) |
+| Create (`old_string` empty + new path) | Unchanged: no `snippet_id` required |
+| `snippet_safe == false` (non-product legacy) | Unchanged free-form path (tests / non-Standard); product Standard keeps `snippet_safe: true` |
+
+**Dual-accept decision (explicit):** Prefer **hard `snippet_id`** on product Path A once VC003 mints IDs (ADR 0010 §5.1). Do **not** keep `file_version`-only authorization as product primary. Keep `file_version` on the wire as optional compatibility alias / extra check; do not remove mint or schema field.
+
+---
+
+## 3. PR unit plan (four sections)
+
+Per [`ULTRAGOAL_PR_PLANNING.md`](../ULTRAGOAL_PR_PLANNING.md). **VC004 is one feature PR** — edit require only; no write/bash expire; no SemVer bump; no R0A.
+
+### 3.1 PR units (ordered)
+
+#### PR unit 1 — `docs(product): VC004 Path A snippet_id require plan + evidence` **(this file)**
+- **Intent:** Lock dependency on VC003 / #130, map live edit contract, atomic units, acceptance, non-claims, floor facts **before** source edits.
+- **Touches:** `docs/product/evidence/VC004_PATH_A_SNIPPET_ID_REQUIRE_2026-08-08.md` only
+- **Depends on:** VC003 mint (PR #130 head)
+- **SemVer:** none
+
+#### PR unit 2 — `feat(tools): require session snippet_id on Path A search_replace`
+- **Intent:** Add optional `snippet_id` arg; when `snippet_safe`, non-create edits require a store-valid id authorizing path/range/version; fail closed otherwise; scope-limit match to recorded range; preserve create path + unrelated semantics + dual CLI.
+- **Touches:** primarily `third_party/grok-build/.../search_replace/` (+ any `SearchReplaceInput` construction sites that need the new field); reuse `SessionSnippetStore` / `is_valid_snippet_id` from VC003
+- **Depends on:** unit 1
+- **SemVer:** none
+
+#### PR unit 3 — `test(tools): VC004 snippet_id require regressions`
+- **Intent:** Focused unit tests for acceptance checks below (valid, missing, malformed/unknown, stale/version, path mismatch, no partial write, session isolation as feasible).
+- **Touches:** `search_replace` tests in `xai-grok-tools` (update existing `snippet_safe` + `file_version` cases to the new primary)
+- **Depends on:** unit 2
+- **SemVer:** none
+
+#### Forward mapping (out of this PR)
+
+| Unit | Story | Status here |
+|------|-------|-------------|
+| VC005 | write create-only / force overwrite + bash expire laws | **not implemented** |
+| VC006 / Spec 45 cut | heart + multi-edit R0A + SemVer cut of remaining Spec 45 | **not implemented**; cut at **next free minor** (live → **`5.3.0`**, not reused **`5.2.0`**) |
+
+### 3.2 Sequential vs parallel
+
+#### Sequential (must order)
+
+1. **VC003 / PR #130** → **VC004 unit 1 (docs)** — mint before require.
+2. **unit 1** → **unit 2** (edit require + scope) → **unit 3** (tests).
+3. **VC004** → **VC005** — invalidation laws after require exists.
+
+#### Parallel (safe concurrent)
+
+- None on the same Path A `search_replace` / `SearchReplaceInput` surface.
+- Pure docs that do not redefine ADR 0010 edit semantics may proceed independently.
+
+```text
+VC003 (mint, #130) ──► VC004 (require, no SemVer) ──► VC005 ──► Spec 45 cut @ next free minor (live → 5.3.0)
+```
+
+### 3.3 Atomic commits (on `vc004-snippet-id-require`)
+
+```text
+docs(product): VC004 Path A snippet_id require plan + evidence
+feat(tools): require session snippet_id on Path A search_replace
+test(tools): VC004 snippet_id require and fail-closed regressions
+```
+
+| Do | Do not |
+|----|--------|
+| One concern per commit | Mix VC005 write/bash expire into this branch |
+| Keep `file_version` mint/alias | Remove `file_version` or break dual CLI |
+| Session-local Resources store only | Process-global / cross-session table |
+| English Conventional subjects | Bump `Cargo.toml` / package SemVer / claim `5.2.0` cut |
+
+### 3.4 Chaining / stacking
+
+| Pattern | Choice for VC004 |
+|---------|------------------|
+| **Base** | VC003 / PR #130 head (`a691d29`); open to `main` only after #130 merges (or restack) |
+| **Branch** | `vc004-snippet-id-require` |
+| **Merge order** | #130 (VC003) → VC004 → VC005 → Spec 45 cut (next free minor) |
+| **Conflict lock** | Path A `search_replace` + `SearchReplaceInput` + session snippet lookup owned by VC004; write/bash expire reserved for VC005 |
+
+**Planned PR title (when opened later):** `feat(tools): require snippet_id on Path A search_replace`  
+**Label kind:** `feat`  
+**Body:** Problem / What changed / Testing honesty / AI review / Security / Notes; **Depends on #130**; SemVer none; does **not** cut **`5.2.0`**.
+
+---
+
+## 4. Acceptance criteria (VC004 only)
+
+| ID | Criterion | Pass condition |
+|----|-----------|----------------|
+| **VC004-A1** | Valid session `snippet_id` authorizes edit | Unit: mint via store (or read), edit with id → `EditsApplied`; file content matches expected scope change |
+| **VC004-A2** | Missing `snippet_id` fails closed | Unit: `snippet_safe` + non-create + no id → error; **bytes unchanged** |
+| **VC004-A3** | Malformed / unknown id fails closed | Unit: bad shape and/or absent from this session store → error; no write |
+| **VC004-A4** | Stale / version mismatch fails closed | Unit: mutate file after mint (or wrong version) → error; no write |
+| **VC004-A5** | Path mismatch fails closed | Unit: id for path A used with edit path B → error; no write on either |
+| **VC004-A6** | Scope authorization | Unit: match only inside recorded `[start_line, end_line]`; occurrence outside range does not authorize a whole-file free edit |
+| **VC004-A7** | No partial write | Unit: every fail-closed case leaves original file bytes intact |
+| **VC004-A8** | Session isolation | Unit: id minted in Resources A is unknown in Resources B |
+| **VC004-A9** | Create path preserved | Unit: empty `old_string` new file still works without `snippet_id` under product guards |
+| **VC004-A10** | No SemVer / no VC005–VC006 behavior | Diff has no version bump; no bash expire / write-force laws / R0A claim |
+
+### Explicit non-claims (fail-close)
+
+- Does **not** implement write create-only residual hardening beyond existing empty-old guard (VC005).
+- Does **not** implement bash / external mutation snippet expiry (VC005).
+- Does **not** eagerly expire all path snippets on successful edit as a separate VC005 law claim (version drift + re-read is the VC004 story; product may still purge later).
+- Does **not** prove Path A multi-edit R0A / heart regression under real `snippet_id` tables (VC006 / R0A).
+- Does **not** persist/restore snippet tables across resume/fork (VC006).
+- Does **not** cut **`5.2.0`** (already used on live `main`), **`5.3.0`**, or any other SemVer; does **not** bump product version.
+- Does **not** re-plan board tracks on `main` (board residual still lists Spec 45 cut as 5.2.0 in places).
+- Does **not** claim public `deepseek-build`/`dsb` wire harness R0A unless that harness is run and captured with honest labels.
+- Thin `dsb-tools` greens are **oracle only**, not Path A proof.
+
+---
+
+## 5. Security / cache boundaries
+
+| Concern | Rule |
+|---------|------|
+| Spec 10 stable prefix | Snippet table **must not** appear in stable-prefix bytes (session `Resources` only; already true for VC003 store) |
+| Cross-session leakage | IDs bind to owning session `Resources` / `SharedResources`; no process-global map |
+| Permission | Existing Spec 90 / path policy gates stay before mutation; this story does not weaken them |
+| Symlink / path | Compare authorized snippet path to resolved edit path; fail closed on mismatch |
+| Dual CLI | No change to `deepseek-build` / `dsb` packaging names |
+| Dependencies | **No new crates**; reuse VC003 helpers (`SessionSnippetStore`, `is_valid_snippet_id`, sha256 already in tree) |
+
+---
+
+## 6. Validation commands
+
+```bash
+# Whitespace / conflict markers
+git diff --check
+git status --short
+git diff --stat
+
+# Path A unit (xai-grok-tools)
+cd third_party/grok-build
+cargo test -p xai-grok-tools --lib vc004
+cargo test -p xai-grok-tools --lib snippet_safe
+cargo test -p xai-grok-tools --lib vc003   # mint regressions must stay green
+
+# Format
+cargo fmt --manifest-path third_party/grok-build/Cargo.toml -p xai-grok-tools -- --check
+
+# Thin oracle still green (reference; not Path A proof)
+# from repo root:
+cargo test -p dsb-tools snippets path_a_edit
+
+# Required project gates
+./scripts/test-owner-bar.sh
+./scripts/check-path-a-linkage.sh
+./scripts/test-heart-regression.sh
+```
+
+**R0A public wire:** not claimed in this story unless a later amendment appends wire artifacts with honest labels.
+
+---
+
+## 7. Implementation evidence (filled after code)
+
+| Check | Result | Evidence class |
+|-------|--------|----------------|
+| Evidence doc committed first | **pending** | commit |
+| `SearchReplaceInput.snippet_id` + `snippet_safe` require gate | **pending** | commit |
+| Scope-limited match for authorized id | **pending** | commit |
+| Valid id edit succeeds | **pending** | unit |
+| Missing / malformed / unknown fail closed | **pending** | unit |
+| Stale / version mismatch fail closed | **pending** | unit |
+| Path mismatch fail closed | **pending** | unit |
+| No partial write | **pending** | unit |
+| Session isolation | **pending** | unit |
+| Create without id still ok | **pending** | unit |
+| VC003 mint regressions still green | **pending** | unit |
+| Thin oracle still green | **pending** | thin oracle (**not** Path A proof) |
+| Public Path A R0A wire | **not run / not claimed** | — |
+| SemVer bump | **none** | must not touch version files; live `origin/main` product is already **`5.2.0`** |
+
+### Required project gates (fill after verification)
+
+| Gate | Exit | Result | Honesty |
+|------|------|--------|---------|
+| `./scripts/test-owner-bar.sh` | pending | | |
+| `./scripts/check-path-a-linkage.sh` | pending | | |
+| `./scripts/test-heart-regression.sh` | pending | | |
+| `cargo fmt … xai-grok-tools -- --check` | pending | | |
+| `git diff --check` | pending | | |
+
+---
+
+## 8. References
+
+- ADR: [0010-spec-45-snippet-store](../../adr/0010-spec-45-snippet-store.md)
+- Spec: [45-snippet-edit](../../specs/45-snippet-edit.md)
+- VC003 evidence: [VC003_PATH_A_SNIPPET_ID_2026-08-08.md](./VC003_PATH_A_SNIPPET_ID_2026-08-08.md)
+- VC002 ADR evidence: [VC002_SPEC45_ADR_2026-08-07.md](./VC002_SPEC45_ADR_2026-08-07.md)
+- Prior spirit: [H45_PATH_A_SNIPPET_2026-08-07.md](./H45_PATH_A_SNIPPET_2026-08-07.md) · [G004_SNIPPET_LIVE_2026-08-07.md](./G004_SNIPPET_LIVE_2026-08-07.md)
+- Path A code: `third_party/grok-build/.../implementations/grok_build/search_replace/`
+- Session store: `third_party/grok-build/.../types/snippet_store.rs`
+- Planning: [ULTRAGOAL_PR_PLANNING](../ULTRAGOAL_PR_PLANNING.md) · [WAVE_5x_VISION_PR_DAG](../WAVE_5x_VISION_PR_DAG.md)

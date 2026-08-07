@@ -79,6 +79,12 @@ jobs:
       - name: Build wrappers
         run: |
           cargo install --path crates/dsb-cli --locked --force --root "$HOME/.deepseek-build"
+      - name: Install dotslash (vendored protoc launcher)
+        if: steps.scope.outputs.scope == 'full' || steps.prev.outputs.scope == 'full'
+        run: |
+          if ! command -v dotslash >/dev/null 2>&1; then
+            cargo install dotslash
+          fi
       - name: Build agent
         if: steps.scope.outputs.scope == 'full'
         run: |

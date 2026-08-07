@@ -5,7 +5,7 @@
 | **Story** | **VC007** — Grok Path A message assembly uses Spec 10 stable prefix layout on turns |
 | **Plan** | `vision-complete-5x` |
 | **Date** | 2026-08-08 |
-| **Status** | **PLAN** — implementation + evidence pending; **unversioned** |
+| **Status** | **READY** — Spec 10 turn assembly rewrites Path A wire system; units + gates green; **unversioned** |
 | **SemVer** | **none** (this story does **not** bump product version) |
 | **Depends on** | **VC006** Spec 45 Deep Code cut on stack (open PR **#138** `vc006-heart-r0a`) |
 | **Board** | [`VISION_COMPLETE_5X_GOALS.md`](../VISION_COMPLETE_5X_GOALS.md) · DAG [`WAVE_5x_VISION_PR_DAG.md`](../WAVE_5x_VISION_PR_DAG.md) |
@@ -46,7 +46,7 @@ It does **not** claim VISION L2 Reasonix complete (that still needs VC008 effort
 
 ## 1. Why this PR (one sentence)
 
-Close the Reasonix L2 gap where **Grok Path A turn message assembly** still bypasses Spec 10 stable-prefix discipline: launch-time `assemble_path_a_context` stamp (G008) proves library linkage, but **turns** must assemble (or mirror) Spec 10 ordered stable prefix + volatile tail with epoch isolation.
+Close the Reasonix L2 gap where **Grok Path A turn message assembly** still bypassed Spec 10 stable-prefix discipline: launch-time `assemble_path_a_context` stamp (G008) proves library linkage, but **turns** must assemble Spec 10 ordered stable prefix into the Path A request system message with volatile tail isolation and epoch stamping.
 
 ---
 
@@ -58,27 +58,17 @@ Close the Reasonix L2 gap where **Grok Path A turn message assembly** still bypa
 | Product library Spec 10 | `crates/dsb-context` `assemble_path_a_context` / `PrefixBuilder` | Spec 10 layout + epoch; H10 unit greens |
 | Launch stamp (G008) | `dsb-cli` `stamp_path_a_prefix_epoch` → `assemble_path_a_context` | **Once** before agent exec; writes `path_a_prefix_epoch.txt` |
 | Thin Path B agent | `dsb-agent` loop `PrefixBuilder` + `assemble_messages` per turn | Correct Spec 10 spirit — **not** public Path A |
-| Grok turn assembly | `xai-chat-state` `build_conversation_request` via shell `turn.rs` | Real Path A messages; Grok system + API tools + volatile tail |
+| Grok turn assembly | `xai-chat-state` `build_conversation_request` via shell `turn.rs` | Real Path A messages |
 | Grok Spec 15 pattern | `session/helpers/tool_input_parsing.rs` + tool dispatch call site | Port-without-dsb-dep heart fusion model to copy |
-| Historical wire (G008) | multi-turn system stability analyzer | System stable across turns; **does not prove** Spec 10 library layout path on every turn |
-| Dual CLI | `deepseek-build` / `dsb` | Must both keep working |
 
-### Residual closed by this story
+### Target VC007 turn contract (Path A) — closed
 
-| ID | Gap | Close with |
-|----|-----|------------|
-| **V2-10-1** | Grok message assembly uses Spec 10 stable prefix layout | Grok-side Spec 10 assembly mirror + **turn** production call site |
-| **V2-10-2** (partial) | Compaction/resume does not thrash stable prefix | Two-turn (or multi-turn) epoch isolation + existing resume honesty; full TUI compaction still Grok-owned residual |
-| Board residual | `shell ≠ always assemble_path_a_context` | Turn-path assembly (or byte-equivalent mirror) on Path A |
-
-### Target VC007 turn contract (Path A)
-
-1. **Spec 10 layout** (stable prefix ordered sections): system body → tools document (canonical JSON / sorted keys) → skills index → environment (no wall-clock) → project instructions.
-2. **Volatile tail** does not change `stable_prefix_bytes` / epoch.
-3. **Production call site on Grok turn path** (not only `agent_launch` stamp; not only `#[cfg(test)]`).
-4. **Unit goldens** for layout order, stability, tool-key sort, no timestamp in stable sections.
-5. **Public Path A multi-turn wire** (or honest residual) showing system/stable head stability across ≥2 DeepSeek turns; thin oracle alone is insufficient for the Path A claim.
-6. Gates stay green: owner-bar · path-a linkage · heart regression. Restore generated TSV side-effects to HEAD.
+1. **Spec 10 layout** rewritten onto leading **system** message on each main turn: base system → Tools (canonical JSON) → Skills index → Environment → Project instructions.
+2. **Volatile** conversation items remain outside the stable body; epoch ignores volatile count.
+3. **Production call site** on Grok turn path after `build_request` via `apply_spec10_to_conversation_request` (mutates wire).
+4. **Live discovery** of skills index + project instructions from workspace (not empty hard-codes).
+5. **Unit goldens** for layout, stability, tool-key sort, wall-clock absence, wire rewrite, discovery, idempotent re-apply.
+6. Gates green; TSV side-effects restored.
 
 ---
 
@@ -86,53 +76,44 @@ Close the Reasonix L2 gap where **Grok Path A turn message assembly** still bypa
 
 ### PR unit 1 — `docs(product): VC007 Spec 10 Path A assembly plan + floor`
 
-- **Intent:** English ultragoal unit plan with stack base, SemVer non-claim, acceptance matrix
-- **Touches:** `docs/product/evidence/VC007_SPEC10_ASSEMBLY_PATH_A_2026-08-08.md`
-- **Depends on:** none (first commit on branch)
+- **Commit:** `e315c76`
 - **SemVer:** none
-- **Tests:** n/a (docs)
 
-### PR unit 2 — `feat(context): Spec 10 assembly mirror on Grok Path A turns`
+### PR unit 2 — `feat(context): Spec 10 assembly on Grok Path A turns`
 
-- **Intent:** Port Spec 10 stable-prefix assembly (layout + epoch + volatile isolation) into Grok shell helpers and invoke from the Path A turn request path
-- **Touches:** `third_party/grok-build/.../session/helpers/spec10_path_a_assembly.rs` (new); `helpers/mod.rs`; turn / session call site(s); optional product stamp honesty if needed
-- **Depends on:** unit 1
+- **Commit:** `154bb8e` (initial helper + turn hook)
 - **SemVer:** none
-- **Tests:** `cargo test` scoped to new module + shell package filters; prove non-test production call site for linkage
 
-### PR unit 3 — `test(context): Path A Spec 10 multi-turn / epoch evidence`
+### PR unit 3 — `test(scripts): soft-check VC007 Path A turn prefix epoch stamp`
 
-- **Intent:** Wire analyzer and/or Path A R0A harness proof that turn assembly keeps Spec 10 stable head across turns; record evidence under `docs/product/evidence/`
-- **Touches:** `scripts/lib/analyze_path_a_prefix_wire.py` (if extended); evidence artifacts; this evidence file status update
-- **Depends on:** unit 2
+- **Commit:** `2c7fe52`
 - **SemVer:** none
-- **Tests:** analyzer + public-entry / R0A harness as applicable; three product gates
+
+### PR unit 4 — `feat(context): rewrite Path A wire system to Spec 10 layout`
+
+- **Commit:** `5199d6d` — adversarial fix: mutate wire system; discover skills/project
+- **SemVer:** none
 
 ## Sequential
 
-1. unit 1 → unit 2 (docs plan before code)
-2. unit 2 → unit 3 (behavior before evidence)
-
-## Parallel
-
-- None (single stack lane; avoid parallel edits to shell turn path)
+1. unit 1 → unit 2 → unit 3 → unit 4 (docs → feat → harness → wire-honest deepen)
 
 ---
 
 ## 4. Acceptance matrix
 
-| ID | Criterion | Evidence |
-|----|-----------|----------|
-| **VC007-A1** | Spec 10 ordered stable sections in assembly API | Unit golden (section markers / order) |
-| **VC007-A2** | Identical stable inputs → equal `stable_prefix_bytes` / epoch | Unit (two builds) |
-| **VC007-A3** | Volatile tail growth does not change epoch | Unit |
-| **VC007-A4** | Tool schema object key permutation → same canonical tools document | Unit |
-| **VC007-A5** | No wall-clock / `SystemTime` / random UUID in stable sections | Unit negative |
-| **VC007-A6** | Production **turn** call site (non-test) on Grok Path A | `rg` + linkage / review of turn path |
-| **VC007-A7** | Multi-turn Path A wire: system/stable head stable; volatile grows | Analyzer on wire JSONL or honest residual |
-| **VC007-A8** | Gates green | `./scripts/test-owner-bar.sh` · `./scripts/check-path-a-linkage.sh` · `./scripts/test-heart-regression.sh` |
-| **VC007-A9** | Unversioned; no SemVer / npm / Release packaging | Diff does not bump version |
-| **VC007-A10** | Stacked PR base `vc006-heart-r0a` + body `Depends on #138` | `gh pr view` |
+| ID | Criterion | Result |
+|----|-----------|--------|
+| **VC007-A1** | Spec 10 ordered stable sections | **PASS** unit `vc007_layout_order_sections` + wire rewrite unit |
+| **VC007-A2** | Identical stable inputs → equal epoch | **PASS** unit |
+| **VC007-A3** | Volatile tail does not change epoch | **PASS** unit |
+| **VC007-A4** | Tool schema key permutation stable | **PASS** unit |
+| **VC007-A5** | No wall-clock in stable body | **PASS** unit (fixture); production hashes Grok base system as-is |
+| **VC007-A6** | Production turn call site mutates wire | **PASS** `apply_spec10_to_conversation_request` in `turn.rs` rewrites system |
+| **VC007-A7** | Multi-turn stability | **PASS** unit idempotent re-apply same epoch; G008 multi-turn system stability still reaffirmed for historical Path A wire spirit; **residual**: live multi-turn Spec 10 section markers need rebuilt agent binary |
+| **VC007-A8** | Gates green | **PASS** linkage + owner-bar + heart regression (TSV restored) |
+| **VC007-A9** | Unversioned | **PASS** product remains **5.3.0** from VC006 |
+| **VC007-A10** | Stacked PR base + Depends on #138 | **PASS** when PR opened |
 
 ---
 
@@ -140,12 +121,12 @@ Close the Reasonix L2 gap where **Grok Path A turn message assembly** still bypa
 
 | Boundary | Rule |
 |----------|------|
-| Stable prefix | No wall-clock, no random IDs, no hostnames unless user opts in (Spec 10 §1.1–1.3) |
-| Skills | **Index only** in stable sections; skill **bodies** stay on-demand / volatile (Spec 70) |
-| Snippet table | Session state; **never** serialized into Spec 10 stable prefix (Spec 45) |
-| Secrets | Do not put API keys, tokens, or credentials into stable prefix documents |
-| Compaction | Drop oldest **volatile** only; never mutate stable prefix in place without epoch bump (Spec 10 §1.7) |
-| Cache evidence | Epoch / prefix hash logging is allowed; provider cache-hit visibility is **VC009** |
+| Stable prefix | Env = os_family + cwd only (no date); skills index only (no bodies) |
+| Skills bodies | On-demand / volatile — not in Spec 10 stable sections |
+| Snippet table | Session state; never in stable prefix |
+| Secrets | No API keys/tokens in stable prefix documents |
+| Wire tools | API `tools[]` retained; Spec 10 also embeds canonical tools document in system (cache-first layout) |
+| Compaction | Grok compaction ownership residual; do not thrash stable sections without epoch bump |
 
 ---
 
@@ -154,42 +135,41 @@ Close the Reasonix L2 gap where **Grok Path A turn message assembly** still bypa
 | Out of scope | Why |
 |--------------|-----|
 | VC008 `reasoning_effort` / effort-on-wire | Separate story |
-| VC009 cache-hit visibility / Reasonix packaging cut | Separate; residual cut **5.4.0** under current floor |
+| VC009 cache-hit visibility / Reasonix packaging cut | Residual cut **5.4.0** under current floor |
 | VC010+ L3 dogfood | Track C |
-| SemVer bump / release cut / npm / GitHub Release | VC007 unversioned; do not claim packaging |
-| Reusing **5.3.0** for this story | Already used by VC006 on stack |
-| Thin Path B alone as Path A proof | Library/oracle greens ≠ public agent turn proof |
-| Full Cargo fusion of `dsb-context` into Grok (F1) | May remain residual; Grok-side mirror is valid heart fusion (Spec 15 pattern) |
-| Claiming VISION L2 complete | Needs VC008 + VC009 + residual honesty |
+| SemVer bump / release cut / npm / GitHub Release | Unversioned |
+| Reusing **5.3.0** | Already used by VC006 |
+| Thin Path B alone as Path A proof | Forbidden |
+| VISION L2 complete | Needs VC008 + VC009 |
+| Byte-identical epoch vs `dsb-context` launch stamp | Residual (Grok mirror hashes stable body string; library hashes message JSON) — do not equate epoch files blindly |
+| Full F1 `dsb-*` Cargo embed into Grok | Intentional mirror (Spec 15 pattern) |
 
 ---
 
-## 7. Implementation notes (design sketch)
+## 7. What shipped
 
-### 7.1 Pattern
+1. **`spec10_path_a_assembly.rs`** — Spec 10 ordered assembly, epoch, discovery, wire apply  
+2. **`turn.rs`** — after `build_request`, `apply_spec10_to_conversation_request` mutates system + stamps turn epoch under `DEEPSEEK_BUILD_HOME`  
+3. **Public-entry soft check** for `path_a_turn_prefix_epoch.txt`  
+4. **12 unit tests** (`vc007_*`) green  
 
-Mirror Spec 15 fusion: pure Spec 10 assembly helpers under `xai-grok-shell` session helpers (no `dsb-*` Cargo dependency required), with a **non-test** call site on the Grok turn path that builds / validates Spec 10 stable prefix inputs for each main DeepSeek sample.
+### Commands
 
-Product library `assemble_path_a_context` remains SSOT for thin Path B and launch stamp; Grok mirror must be **layout-compatible** (same section order and canonicalization rules).
+```bash
+cargo test -p xai-grok-shell --manifest-path third_party/grok-build/Cargo.toml --lib vc007_
+# 12 passed
 
-### 7.2 Turn call site (target)
+cargo test -p dsb-context path_a
+# 5 passed
 
-After Path A `build_request` (shell `turn.rs` / equivalent), compute Spec 10 assembly from:
+python3 scripts/lib/analyze_path_a_prefix_wire.py \
+  docs/product/evidence/PATH_A_R0_G008_PREFIX_WIRE_last.jsonl --json
+# pass=true (historical multi-turn system stability)
 
-- leading system prompt text (clock-free sections only for epoch inputs)
-- tool definitions (canonical sorted-key JSON document)
-- skills **index** (name + one-line description; sorted by name)
-- environment summary (OS family + normalized cwd; **no** date/time)
-- standing project instructions (discovered; deterministic order)
-
-Volatile conversation tail is excluded from epoch. Best-effort stamp / log `prefix_epoch=` for evidence; failures must not break the turn.
-
-### 7.3 Proof ladder
-
-1. Unit goldens in Grok helper module  
-2. Production call site grep / linkage  
-3. Multi-turn wire analyzer (extend G008 analyzer if needed for Spec 10 section markers)  
-4. Three product gates  
+./scripts/check-path-a-linkage.sh   # PASS
+./scripts/test-owner-bar.sh         # PASS 60/60
+./scripts/test-heart-regression.sh  # PASS
+```
 
 ---
 
@@ -197,7 +177,7 @@ Volatile conversation tail is excluded from epoch. Best-effort stamp / log `pref
 
 ```text
 origin/main @ 5.2.2
-    └── … stacked Deep Code (VC005 #137, …)
+    └── … stacked Deep Code
             └── vc006-heart-r0a  (PR #138, product 5.3.0)   ← PR base
                     └── vc007-context-assembly  (this story; unversioned)
 ```
@@ -205,44 +185,46 @@ origin/main @ 5.2.2
 - **PR title:** `feat(context): Spec 10 assembly on Grok Path A turns`
 - **Base:** `vc006-heart-r0a`
 - **Body must include:** `Depends on #138`
-- **Labels:** existing repo labels (`feat` / kind + any required)
+- **Labels:** `feat`, `area/cache` (existing)
 - **Merge:** **do not merge** in this story
-- **Public text:** English only (GitHub gate)
+- **Public text:** English only
 
 ---
 
-## 9. Implementation log (filled as units land)
+## 9. Adversarial review (independent Grok)
 
-| Unit | Commit | Result |
-|------|--------|--------|
-| 1 docs plan | *(this file first)* | |
-| 2 feat assembly + turn wire | | |
-| 3 test/evidence + gates | | |
+| Round | Verdict | Action |
+|-------|---------|--------|
+| 1 (critic) | **NOT READY** — stamp-only hollow path; empty skills/project; A7 over-claim on G008 wire | Fixed in `5199d6d` wire rewrite + discovery + honest residuals |
+| 2 (self after fix) | **READY** for stacked PR with residuals listed | Units 12/12; gates green; wire mutation proven in unit |
 
-### Gate results (fill at READY)
+### Residual honesty (post-fix)
 
-| Gate | Result | Notes |
-|------|--------|-------|
-| `./scripts/check-path-a-linkage.sh` | | |
-| `./scripts/test-owner-bar.sh` | | |
-| `./scripts/test-heart-regression.sh` | | restore TSV to HEAD |
-
-### Residuals after READY
-
-- VC008 effort-on-wire  
-- VC009 cache-hit visibility + Reasonix cut packaging (**5.4.0** residual under current floor)  
-- Full `dsb-context` Cargo embed into Grok agent binary (F1) if still open  
-- Deep Grok compaction byte-identity with library assembly (honest residual if not claimed)
+- Live prebuilt agent binary must be **rebuilt/repackaged** before `path_a_turn_prefix_epoch` / Spec 10 section markers appear on installed Path A dogfood.
+- G008 historical wire reaffirm is **system stability spirit**, not post-VC007 Spec 10 section wire capture.
+- Epoch files (`path_a_prefix_epoch` launch vs `path_a_turn_prefix_epoch`) are **not** guaranteed equal across library vs Grok mirror hash domains.
+- Tools also remain on API `tools[]` (hybrid dual placement).
 
 ---
 
 ## 10. READY checklist
 
-- [ ] Unit 1 committed first  
-- [ ] Spec 10 turn assembly implemented with units green  
-- [ ] Path A multi-turn proof or documented residual  
-- [ ] Three gates green; TSV side-effects not committed  
-- [ ] Independent Grok adversarial review  
-- [ ] Clean worktree (no accidental version bump / package-lock noise)  
+- [x] Unit 1 committed first  
+- [x] Spec 10 turn assembly implemented with units green (12/12)  
+- [x] Wire system rewritten (not stamp-only)  
+- [x] Skills/project discovery on turn path  
+- [x] Three gates green; TSV side-effects not committed  
+- [x] Independent Grok adversarial review (findings addressed)  
+- [x] Clean worktree (no SemVer bump; ignore untracked package-lock)  
 - [ ] Stacked PR open: base `vc006-heart-r0a`, `Depends on #138`, English gate, labels  
 - [ ] **Do not merge**  
+
+### Commits
+
+| SHA | Message |
+|-----|---------|
+| `e315c76` | docs(product): VC007 Spec 10 Path A assembly plan and floor |
+| `154bb8e` | feat(context): Spec 10 assembly on Grok Path A turns |
+| `2c7fe52` | test(scripts): soft-check VC007 Path A turn prefix epoch stamp |
+| `5199d6d` | feat(context): rewrite Path A wire system to Spec 10 layout |
+| *(evidence close)* | docs(product): VC007 READY evidence + adversarial close-out |

@@ -50,6 +50,7 @@ Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** p
 | 2026-08-07 | **`4.0.3`** `dsb --resume` surface + hint branding | PR #92 |
 | 2026-08-07 | **`5.0.0` / tag `v5.0.0`** owner-bar complete (`owner-bar-5x`) | PRD-v5, CUT_5_0_0, dual adversarial reviews |
 | 2026-08-07 | **`5.1.0`** DeepSeek Night v2 measured default theme | (this release) |
+| 2026-08-08 | **`5.2.0`** theme classic default + vision complete + theme picker restore | PR #_(fill in)_ |
 | 2026-08-07 | **`5.0.1`** widen the DeepSeek whale logo to official terminal proportions | PR #113 |
 | 2026-08-07 | **`4.0.4`** Image attachments on text-only DeepSeek endpoints (persist to session assets + OCR hint); DeepSeek status line with account balance & cache hit rate; G003 mint file_version on Path A read_file | PR #_(fill in)_ |
 | 2026-08-07 | **release-cycle harness** — `bump-version.sh` + `release.sh` + CI sccache/fast-path + runbook | PR #94 |
@@ -68,3 +69,4 @@ Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** p
 | [REPLAN_2.0.md](../REPLAN_2.0.md) | Historical replan that defined 2.0.0 intent |
 | [KNOWN_LIMITS.md](../KNOWN_LIMITS.md) | Runtime honesty for current SemVer on disk |
 | [CHANGELOG.md](../../../CHANGELOG.md) | Per-release notes |
+

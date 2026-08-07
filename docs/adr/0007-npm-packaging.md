@@ -25,17 +25,18 @@ Overnight agents and humans need a **non-inventable** npm path: dual bins (`deep
 
 **Rationale for scoped name:** org ownership (`@innocarpe`), avoid unscoped name squatting, clear brand ownership. Install UX is still short CLIs after install. Do **not** invent alternate package names overnight; change only via ADR amendment.
 
-### Distribution strategy (v1 / `0.7.0`)
+### Distribution strategy
 
-**Source-assisted install (chosen for v1):**
+| Era | Strategy |
+|-----|----------|
+| **`0.7.0`–`3.0.0`** | Source-assisted postinstall (`cargo` + vendor build). **Deprecated for product UX.** |
+| **`4.0.1`+** | **Prebuilt download from GitHub Releases** — [ADR 0009](./0009-npm-prebuilt-binaries.md). Default `npm i -g` does **not** compile. |
 
-1. npm package contains Node **wrappers** + scripts that locate or **build** the native binary.  
-2. Preferred resolution order (wrappers):  
-   `DEEPSEEK_BUILD_BIN` → `~/.deepseek-build/bin/` → `~/.cargo/bin/` → dev `target/release/`.  
-3. `postinstall` may invoke `scripts/install.sh` / cargo build when Rust is available.  
-4. `DEEPSEEK_BUILD_SKIP_POSTINSTALL=1` allows skip; user runs `./scripts/install.sh` manually.
+**Wrapper resolution order** (unchanged intent):  
+`DEEPSEEK_BUILD_BIN` → `~/.deepseek-build/bin/` → `~/.cargo/bin/` → package `npm/native-bin/` → dev `target/release/`.
 
-**Not in `0.7.0` (later ADR if needed):** prebuilt multi-platform optionalDependencies download matrix, signed artifacts, musl.
+**Skip:** `DEEPSEEK_BUILD_SKIP_POSTINSTALL=1`.  
+**Optional source fallback:** `DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD=1` (dev only).
 
 ### Agent vs human DoD
 

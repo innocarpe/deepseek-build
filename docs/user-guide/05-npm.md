@@ -1,105 +1,82 @@
 # 05 — npm install
 
-**Product version:** `1.1.0`+  
+**Product version:** `4.0.1`+ (prebuilt path — ADR 0009)
 
 | Surface | Value |
 |---------|--------|
 | **npm package** | `@innocarpe/deepseek-build` |
 | **CLI commands** | `deepseek-build` (primary) · `dsb` (alias) — [ADR 0006](../adr/0006-cli-names-and-semver.md) |
 
-Package name and command names are **different on purpose** (same pattern as many scoped CLIs).
-
-## Package layout
-
-Root `package.json`:
-
-| Field | Value |
-|-------|--------|
-| `name` | `@innocarpe/deepseek-build` |
-| `version` | Must equal workspace Cargo SemVer |
-| `bin.deepseek-build` | `npm/bin/deepseek-build.js` |
-| `bin.dsb` | `npm/bin/dsb.js` |
-| `publishConfig.access` | `public` (scoped package is public) |
-
-## Install (after registry publish)
+## Install (normal users)
 
 ```bash
 npm install -g @innocarpe/deepseek-build
 
 deepseek-build --version
 dsb --version
+dsb setup    # API key once
+dsb          # full-screen DeepSeek TUI
 ```
 
-One-shot:
+**Expectations (same class as Claude Code / Codex / Grok Build npm):**
+
+- **No Rust required** for registry install.  
+- `postinstall` downloads a **platform tarball** from GitHub Releases for this SemVer and installs into `~/.deepseek-build/bin/`.  
+- Should finish in **seconds** (network + extract), not tens of minutes.  
+- Node **≥ 18**.  
+- Platforms: `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`.
+
+If `dsb` is not on PATH after install:
 
 ```bash
-npx @innocarpe/deepseek-build --version
+export PATH="$HOME/.deepseek-build/bin:$PATH"
+# zsh permanent:
+# echo 'export PATH="$HOME/.deepseek-build/bin:$PATH"' >> ~/.zshrc
 ```
 
-**Requirements / expectations**
-
-- **Rust/cargo** must be installed for `postinstall` (or run `./scripts/install.sh` yourself). Without cargo, npm package installs but CLI wrappers print how to build natives.
-- First install can take **tens of seconds** (native compile). Later installs reuse `~/.deepseek-build/bin` when present.
-- Node **≥ 18**.
-
-## Install from git checkout (dev)
+## Skip / source (dev only)
 
 ```bash
+# skip postinstall download
+DEEPSEEK_BUILD_SKIP_POSTINSTALL=1 npm install -g @innocarpe/deepseek-build
+
+# allow slow cargo build if prebuilt asset is missing
+DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD=1 npm install -g @innocarpe/deepseek-build
+
+# from git checkout
 git clone https://github.com/innocarpe/deepseek-build.git
 cd deepseek-build
-npm install -g .
-
-deepseek-build --version
-dsb --version
-```
-
-Skip postinstall native build:
-
-```bash
-DEEPSEEK_BUILD_SKIP_POSTINSTALL=1 npm install -g .
 ./scripts/install.sh
 ```
 
 ## How wrappers work
 
-Node shims resolve the **native** binary from:
+Node shims (`npm/bin/*.js`) resolve natives from:
 
-1. `DEEPSEEK_BUILD_BIN` (absolute path override)
-2. `~/.deepseek-build/bin/{deepseek-build,dsb}`
-3. `~/.cargo/bin/…`
-4. `./target/release/…` (dev checkout)
+1. `DEEPSEEK_BUILD_BIN`  
+2. `~/.deepseek-build/bin/{deepseek-build,dsb,deepseek-build-agent}`  
+3. `~/.cargo/bin/…`  
+4. package `npm/native-bin/`  
+
+## Maintainer: release prebuilts
+
+```bash
+# After version bump + building natives for this machine:
+./scripts/package-release-binaries.sh --upload
+# → dist/deepseek-build-{VERSION}-{platform}.tar.gz on GitHub release v{VERSION}
+
+npm publish --access public   # human OTP (ADR 0007)
+```
+
+CI should attach all supported platform tarballs on each version tag.
 
 ## Publish (owner)
 
-Prerequisites:
-
-1. npm account with rights to the **`@innocarpe`** org (or create the org on npmjs.com)
-2. `npm login` / `npm whoami` succeeds
-
 ```bash
-cd /path/to/deepseek-build
-git checkout main && git pull
 ./scripts/check-semver.sh
-node npm/scripts/check-version-match.js
-npm pack --dry-run          # review tarball contents
-npm publish --access public # publishConfig also sets access=public
-```
-
-Verify:
-
-```bash
+npm run version-check
+npm whoami
+npm pack   # should be small (no third_party vendor tree)
+npm publish --access public
 npm view @innocarpe/deepseek-build version
-npm install -g @innocarpe/deepseek-build
-deepseek-build --version
-dsb --version
 ```
-
-Never put API keys in the package.
-
-## Name policy
-
-| Kind | Name | Change often? |
-|------|------|----------------|
-| npm package | `@innocarpe/deepseek-build` | Rare (ownership / branding) |
-| CLI | `deepseek-build`, `dsb` | No — product identity (ADR 0006) |
-| Config dir | `~/.deepseek-build/` | No |

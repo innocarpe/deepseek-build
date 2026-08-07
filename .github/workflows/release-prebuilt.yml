@@ -1,0 +1,62 @@
+# Build and attach prebuilt natives on version tags (ADR 0009).
+# Maintainer still runs npm publish (OTP) after assets exist.
+name: release-prebuilt
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            platform: darwin-arm64
+          - os: macos-13
+            platform: darwin-x64
+          - os: ubuntu-22.04
+            platform: linux-x64
+          # linux-arm64: enable when runners available
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.0
+      - name: Install protoc
+        run: |
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            brew install protobuf || true
+          else
+            sudo apt-get update && sudo apt-get install -y protobuf-compiler
+          fi
+      - name: Build wrappers
+        run: |
+          cargo install --path crates/dsb-cli --locked --force --root "$HOME/.deepseek-build"
+      - name: Build agent
+        run: |
+          ./scripts/build-grok-pager.sh release
+          AGENT="$(ls third_party/grok-build/target/release/xai-grok-pager-bin third_party/grok-build/target/release/xai-grok-pager 2>/dev/null | head -1)"
+          test -n "$AGENT"
+          cp -f "$AGENT" "$HOME/.deepseek-build/bin/deepseek-build-agent"
+          chmod 755 "$HOME/.deepseek-build/bin/deepseek-build-agent"
+      - name: Package tarball
+        run: |
+          ./scripts/package-release-binaries.sh --platform "${{ matrix.platform }}"
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ASSET="dist/deepseek-build-${VERSION}-${{ matrix.platform }}.tar.gz"
+          # Release may already exist (created by first matrix job / maintainer)
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes || true
+          fi
+          gh release upload "$GITHUB_REF_NAME" "$ASSET" --clobber

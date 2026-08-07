@@ -12,6 +12,15 @@
 
 ## Unreleased
 
+## 4.0.1 — 2026-08-07
+
+### Install DX (critical)
+
+- **`npm i -g` no longer compiles Grok from source** (ADR 0009).
+- `postinstall` downloads platform prebuilts from GitHub Releases into `~/.deepseek-build/bin/`.
+- npm package is thin (wrappers only) — no `third_party/grok-build` in the tarball.
+- Optional source fallback: `DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD=1` only.
+
 ## 3.0.0 — 2026-08-07
 
 ### Heart fusion (product major)

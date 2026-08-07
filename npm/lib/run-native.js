@@ -95,10 +95,11 @@ function run(binName, args) {
     console.error(
       `deepseek-build: native binary "${binName}" not found.\n` +
         `Tried: ${candidatePaths(binName).join(', ')}\n` +
-        `Fix (needs Rust once):\n` +
+        `Fix (no Rust required for registry install):\n` +
         `  npm install -g @innocarpe/deepseek-build\n` +
-        `  # or from package: ./scripts/install.sh\n` +
+        `  # downloads prebuilts from GitHub Releases (ADR 0009)\n` +
         `  export PATH="$HOME/.deepseek-build/bin:$PATH"\n` +
+        `Dev/source only: DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD=1 or ./scripts/install.sh\n` +
         `Then: dsb`
     );
     process.exit(127);

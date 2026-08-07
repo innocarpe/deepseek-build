@@ -1788,9 +1788,22 @@ fn install_heap_profile_hooks() {
     });
 }
 fn version_text(channel_label: &str) -> String {
+    // Prefer runtime product SemVer (DEEPSEEK_BUILD_VERSION) when set by dsb/npm.
+    let product = xai_grok_version::installed();
+    let with_commit = env!("VERSION_WITH_COMMIT");
+    // If product env overrides, show product version; keep short commit from build when possible.
+    let body = if product != xai_grok_version::VERSION {
+        if let Some((_, commit)) = with_commit.rsplit_once(' ') {
+            format!("{product} {commit}")
+        } else {
+            product
+        }
+    } else {
+        with_commit.to_string()
+    };
     format!(
-        "grok {}\n",
-        xai_grok_version::display_version_with_commit(env!("VERSION_WITH_COMMIT"), channel_label,)
+        "deepseek-build {}\n",
+        xai_grok_version::display_version_with_commit(&body, channel_label,)
     )
 }
 fn write_version(writer: &mut impl std::io::Write, channel_label: &str) -> std::io::Result<()> {

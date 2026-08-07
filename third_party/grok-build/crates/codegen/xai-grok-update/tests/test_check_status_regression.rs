@@ -5,7 +5,7 @@
 //! Seen when a user is behind a corporate npm registry mirror:
 //!
 //! ```text
-//! # Mirror returns 403 for the @xai-official scope
+//! # Mirror returns 403 for the @innocarpe scope
 //! { "currentVersion": "0.1.181", "latestVersion": null,
 //!   "updateAvailable": false, "installer": "npm", "channel": "stable",
 //!   "autoUpdate": true,
@@ -74,7 +74,7 @@ async fn check_status_surfaces_npm_403_in_error_field() {
     g.set_exit_code(1);
     g.set_stderr(
         "npm error code E403\n\
-         npm error 403 403 Forbidden - GET https://registry-mirror.example.invalid/api/npm/js-virtual/@xai-official%2fgrok\n\
+         npm error 403 403 Forbidden - GET https://registry-mirror.example.invalid/api/npm/js-virtual/@innocarpe%2fdeepseek-build\n\
          npm error 403 In most cases, you or one of your dependencies are requesting\n\
          npm error 403 a package version that is forbidden by your security policy",
     );

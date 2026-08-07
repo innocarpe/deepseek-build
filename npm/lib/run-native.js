@@ -105,18 +105,37 @@ function run(binName, args) {
     process.exit(127);
   }
 
-  return exec(bin, args, process.env);
+  // Always inject product version/home for both wrapper and agent paths.
+  return exec(bin, args, productEnv());
+}
+
+function productVersion() {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(pkgRoot, 'package.json'), 'utf8'));
+    if (pkg && typeof pkg.version === 'string' && pkg.version.trim()) {
+      return pkg.version.trim();
+    }
+  } catch {
+    // fall through
+  }
+  return process.env.DEEPSEEK_BUILD_VERSION || '';
 }
 
 function productEnv() {
   const home = process.env.DEEPSEEK_BUILD_HOME || path.join(os.homedir(), '.deepseek-build');
   const theme = process.env.DEEPSEEK_BUILD_THEME || process.env.GROK_THEME || 'deepseeknight';
-  return {
+  const version = productVersion();
+  const env = {
     ...process.env,
     GROK_HOME: process.env.GROK_HOME || home,
     GROK_THEME: theme,
     LC_GROK_THEME: theme,
   };
+  // Product SemVer for agent TUI display + update checks (not vendor 0.2.x).
+  if (version) {
+    env.DEEPSEEK_BUILD_VERSION = process.env.DEEPSEEK_BUILD_VERSION || version;
+  }
+  return env;
 }
 
 function exec(bin, args, env) {

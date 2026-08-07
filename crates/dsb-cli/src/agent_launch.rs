@@ -623,6 +623,11 @@ pub fn exec_agent(args: &[String]) -> Result<()> {
     // Bridge product home into Grok path resolution without mutating process env globally
     // when not needed — Command env is sufficient for the child/exec image.
     cmd.env("GROK_HOME", home.path());
+    // Product SemVer for TUI title + update checks (not vendor pager 0.2.x).
+    // Runtime env wins if already set (e.g. npm wrapper).
+    if env::var_os("DEEPSEEK_BUILD_VERSION").is_none() {
+        cmd.env("DEEPSEEK_BUILD_VERSION", env!("CARGO_PKG_VERSION"));
+    }
     // Product theme lives in `[ui].theme` of the seeded product config, so
     // in-pager `/theme` changes persist across launches. Only force a theme via
     // env when the user explicitly asked (DEEPSEEK_BUILD_THEME / GROK_THEME).

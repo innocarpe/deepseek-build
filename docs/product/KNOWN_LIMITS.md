@@ -1,7 +1,9 @@
 # Known limitations
 
 **On-disk SemVer:** read root `Cargo.toml` (do not hardcode).  
-**Major line PRDs:** [versions/README.md](./versions/README.md) · current ship **[PRD-v4.md](./PRD-v4.md)** (`4.0.0`) · hearts **[PRD-v3.md](./PRD-v3.md)** (`3.0.0`)  
+**Major line PRDs:** [versions/README.md](./versions/README.md)  
+**Owner-bar (true complete product):** [OWNER_BAR_ACCEPTANCE.md](./OWNER_BAR_ACCEPTANCE.md) · train **[PRD-v5.md](./PRD-v5.md)** (`5.0.0` / `owner-bar-5x`)  
+**Tagged but not owner-bar green:** [PRD-v4.md](./PRD-v4.md) (`4.x`) · [PRD-v3.md](./PRD-v3.md) (`3.x`)  
 **Legacy:** `2.x` shell — [PRD-v2.md](./PRD-v2.md) · `1.x` scaffold — [PRD-v1.md](./PRD-v1.md)
 
 ## Honesty: majors
@@ -9,8 +11,9 @@
 | Cut | Meaning |
 |-----|---------|
 | **2.x** | **Shell cut** — Grok-derived full-screen agent + DeepSeek entry/UI/npm. Hearts residual. |
-| **3.0.0** | **Heart fusion** — L1 + L2 P0 on the **default agent path** (Path A). |
-| **4.0.0** | **L3 productization** — subagents on by default; worktree opt-in; matrix + guides; **yolo still false**. |
+| **3.0.0 (tagged)** | Heart fusion *attempt* — **owner-bar NOT MET** (library/thin Path A claims; dead snippet wiring). |
+| **4.0.0 / 4.0.1 (tagged)** | L3 productization *attempt* — machinery + docs; **owner-bar NOT MET**. |
+| **5.0.0 (in train)** | **Only** major allowed to claim complete product — [OWNER_BAR_P0_LEDGER.md](./OWNER_BAR_P0_LEDGER.md) all PASS on Path A. |
 
 ## What 3.0.0 delivers (P0)
 

@@ -1,26 +1,46 @@
 # Ultragoal chain — overnight continuity
 
 **Purpose:** When one wave plan completes, the next starts without re-deriving the final goal.  
-**Major lines:** [versions/README.md](./versions/README.md) · [PRD-v4.md](./PRD-v4.md)  
-**Scaffold history board:** [MASTER_PLAN.md](./MASTER_PLAN.md)
+**Major lines:** [versions/README.md](./versions/README.md)  
+**Owner-bar DoD:** [OWNER_BAR_ACCEPTANCE.md](./OWNER_BAR_ACCEPTANCE.md) · [OWNER_BAR_P0_LEDGER.md](./OWNER_BAR_P0_LEDGER.md)
 
 ---
 
 ## Active product chain
 
-**No active product ultragoal train.** Latest major cut: **`v4.0.0`** (L3). On-disk / npm: read root SemVer (may be `4.0.x` patches).
+**One ultragoal plate through product `5.0.0` — plan id `owner-bar-5x`.**  
+On-disk / npm may still report `4.0.x` until the owner-bar cut — that is **not** owner-bar complete.
 
-### Completed trains
+| Order | Plan / stage | Role | Prompt / board |
+|-------|--------------|------|----------------|
+| **1** | **`owner-bar-5x`** | **Active** owner-bar complete product → tag **`5.0.0`** | [ULTRAGOAL_PROMPT_COLD_START_5.0.md](./ULTRAGOAL_PROMPT_COLD_START_5.0.md) · [OWNER_BAR_5X_GOALS.md](./OWNER_BAR_5X_GOALS.md) · [WAVE_5x_PR_DAG.md](./WAVE_5x_PR_DAG.md) · [PRD-v5.md](./PRD-v5.md) · [OWNER_BAR_P0_LEDGER.md](./OWNER_BAR_P0_LEDGER.md) |
 
-| Plan id | Role |
-|---------|------|
-| **`fleet-4x`** | 4.0.0 L3 productization — **complete** (tag `v4.0.0`, PR #85; install/UX `4.0.1`/`4.0.2`) |
-| **`heart-3x`** | 3.0.0 heart fusion — **complete** (tag `v3.0.0`) |
-| **`ship-3.0.0`** | 3.0.0 ship closeout (tag/release/npm verify) — **complete** |
-| **`l3-prep-lane-b`** | Parallel L3 prep during 3.0 — **complete** |
-| **`grokbase-2x`** | 2.x Grok base + DeepSeek shell |
+```text
+G001 TruthHarness (RED gate)
+  → G002 PathA-R0-Rig
+  → G003 Mint → G004 SnippetLive+liveness → G005 WriteBash
+  ∥ G006 Perms ∥ G007 Repair ∥ G009 Routing
+  → G008 Prefix/Skills/Resume
+  → G010 L3 under hearts
+  → G011 Install
+  → G012 Freeze + dual review + tag v5.0.0
+```
 
-Cut evidence: [CUT_4_0_0_2026-08-07.md](./evidence/CUT_4_0_0_2026-08-07.md) · [CUT_3_0_0_2026-08-07.md](./evidence/CUT_3_0_0_2026-08-07.md)
+**Do not** invent a second product plan-id mid-train; extend OWNER_BAR_5X_GOALS via docs PR only.
+
+### Completed / superseded trains (not owner-bar green)
+
+| Plan id | Role | Owner-bar? |
+|---------|------|------------|
+| **`fleet-4x`** | 4.0.0 L3 productization *attempt* — tagged `v4.0.0`; install/UX `4.0.1`/`4.0.2` | **NO** |
+| **`heart-3x`** | 3.0.0 heart fusion *attempt* — tagged `v3.0.0` | **NO** |
+| **`ship-3.0.0`** | 3.0.0 ship closeout (tag/release/npm verify) | closeout only |
+| **`l3-prep-lane-b`** | Parallel L3 prep during 3.0 | prep only |
+| **`grokbase-2x`** | 2.x Grok base + DeepSeek shell | shell only |
+
+**Do not resume `heart-3x` / `fleet-4x` as product SSOT.** Use `owner-bar-5x` only.
+
+Cut evidence (historical tags): [CUT_4_0_0_2026-08-07.md](./evidence/CUT_4_0_0_2026-08-07.md) · [CUT_3_0_0_2026-08-07.md](./evidence/CUT_3_0_0_2026-08-07.md)
 
 ---
 
@@ -32,22 +52,24 @@ Cut evidence: [CUT_4_0_0_2026-08-07.md](./evidence/CUT_4_0_0_2026-08-07.md) · [
 
 ---
 
-## Operator loop (post-cut)
+## Operator loop (until 12/12 owner-bar-5x)
 
 ```bash
 git fetch origin && git checkout main && git pull origin main
-./scripts/test-product-offline.sh
-./scripts/test-l3-smoke.sh --offline-only
-# hearts
-cargo test -p dsb-tools path_a
-# ledger (read-only unless a new train starts)
-omc ultragoal status --plan-id fleet-4x 2>/dev/null || true
+./scripts/test-owner-bar.sh || true
+./scripts/check-path-a-linkage.sh || true
+omc ultragoal status --plan-id owner-bar-5x
+omc ultragoal complete-goals --plan-id owner-bar-5x
 ```
+
+Cold start paste: [ULTRAGOAL_PROMPT_COLD_START_5.0.md](./ULTRAGOAL_PROMPT_COLD_START_5.0.md)
 
 ## Continuity rules
 
-1. Do not reopen `fleet-4x` as active product SSOT; extend 4.x via minors or a new plan-id.  
-2. Keep Path A hearts (`yolo = false`).  
-3. PR planning: [ULTRAGOAL_PR_PLANNING.md](./ULTRAGOAL_PR_PLANNING.md).  
-4. Merge commits (squash disabled).  
-5. Full SemVer only; dual CLI names.  
+1. Final goal: [PRD-v5.md](./PRD-v5.md) — Path A only for hearts/L3.  
+2. PR planning: [ULTRAGOAL_PR_PLANNING.md](./ULTRAGOAL_PR_PLANNING.md).  
+3. Merge commits when repo forbids squash.  
+4. Full SemVer only; dual CLI names.  
+5. Dual adversarial review required on G012 before tag.  
+6. GitHub public text English.  
+7. Keep product default non-YOLO (`yolo = false`) while implementing hearts.  

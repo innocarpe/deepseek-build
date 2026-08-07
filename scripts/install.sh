@@ -123,10 +123,26 @@ else
   echo "install.sh: ERROR: third_party/grok-build missing — cannot install agent TUI" >&2
 fi
 
+# Prefer release pager; fall back to debug build if release not present.
+if [[ -z "$VENDOR_PAGER" ]]; then
+  for cand in \
+    "$ROOT/third_party/grok-build/target/debug/xai-grok-pager" \
+    "$ROOT/third_party/grok-build/target/debug/xai-grok-pager-bin"; do
+    if [[ -x "$cand" ]]; then
+      VENDOR_PAGER="$cand"
+      echo "install.sh: using debug agent binary (release not found): $cand"
+      break
+    fi
+  done
+fi
+
 if [[ -n "$VENDOR_PAGER" ]]; then
   install -m 755 "$VENDOR_PAGER" "$BIN_DIR/$AGENT_NAME"
+  # Also install under upstream cargo name for probe/fallback (find_agent_bin).
+  install -m 755 "$VENDOR_PAGER" "$BIN_DIR/xai-grok-pager"
   echo "install.sh: installed agent:"
   echo "  $BIN_DIR/$AGENT_NAME  ←  DeepSeek full-screen TUI"
+  echo "  $BIN_DIR/xai-grok-pager  (fallback name)"
 else
   echo "install.sh: agent binary not installed (build failed or missing vendor tree)" >&2
 fi

@@ -205,7 +205,10 @@ fn sha256_hex(bytes: &[u8]) -> String {
 ///
 /// When `DEEPSEEK_BUILD_HOME` is set (Path A product launch), write
 /// `path_a_turn_prefix_epoch.txt`. Failures never block the turn.
-pub fn stamp_spec10_turn_epoch(assembled: &Spec10PathAAssembled, stamp_dir: Option<&std::path::Path>) {
+pub fn stamp_spec10_turn_epoch(
+    assembled: &Spec10PathAAssembled,
+    stamp_dir: Option<&std::path::Path>,
+) {
     let dir = stamp_dir
         .map(std::path::PathBuf::from)
         .or_else(|| std::env::var_os("DEEPSEEK_BUILD_HOME").map(std::path::PathBuf::from));
@@ -294,10 +297,7 @@ pub fn discover_project_instructions(workspace_root: &std::path::Path) -> String
     if nested.is_file() {
         if let Ok(body) = std::fs::read_to_string(&nested) {
             let body = body.replace("\r\n", "\n").replace('\r', "\n");
-            parts.push(format!(
-                "### instructions.md\n\n{}",
-                body.trim_end()
-            ));
+            parts.push(format!("### instructions.md\n\n{}", body.trim_end()));
         }
     }
     parts.join("\n\n---\n\n")
@@ -345,10 +345,7 @@ pub fn discover_skills_index(
                 continue;
             };
             let description = extract_skill_description(&raw);
-            by_name.insert(
-                name.clone(),
-                Spec10SkillIndexEntry { name, description },
-            );
+            by_name.insert(name.clone(), Spec10SkillIndexEntry { name, description });
         }
     }
     by_name.into_values().collect()
@@ -449,12 +446,7 @@ pub fn apply_spec10_to_conversation_request(
     let volatile_count = request
         .items
         .iter()
-        .filter(|item| {
-            !matches!(
-                item,
-                xai_grok_sampling_types::ConversationItem::System(_)
-            )
-        })
+        .filter(|item| !matches!(item, xai_grok_sampling_types::ConversationItem::System(_)))
         .count();
 
     let root = workspace_root
@@ -637,22 +629,8 @@ mod tests {
             "read_file",
             json!({"type":"object","properties":{"target_file":{"type":"string"}}}),
         )];
-        let a = apply_spec10_path_a_turn_assembly(
-            "SYS",
-            &tools,
-            "/ws",
-            vec![],
-            String::new(),
-            2,
-        );
-        let b = apply_spec10_path_a_turn_assembly(
-            "SYS",
-            &tools,
-            "/ws",
-            vec![],
-            String::new(),
-            9,
-        );
+        let a = apply_spec10_path_a_turn_assembly("SYS", &tools, "/ws", vec![], String::new(), 2);
+        let b = apply_spec10_path_a_turn_assembly("SYS", &tools, "/ws", vec![], String::new(), 9);
         assert_eq!(a.epoch_sha256_hex, b.epoch_sha256_hex);
         assert_eq!(a.volatile_count, 2);
         assert_eq!(b.volatile_count, 9);

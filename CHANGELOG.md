@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 5.2.0 — 2026-08-08
+
+- theme classic default + vision complete + theme picker restore
+
 ## 5.1.0 — 2026-08-07
 
 ### Changed

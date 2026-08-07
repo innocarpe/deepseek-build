@@ -210,7 +210,7 @@ docs(product): record VC006 adversarial READY verdict
 | **Merge order** | #130 → #135 → #137 → VC006 → later vision units |
 | **Conflict lock** | Path A R0A harness + Spec 45 cut evidence + optional `5.3.0` bump owned by VC006 |
 
-**Planned PR title (when opened later):** `test+chore(release): Path A Spec 45 multi-edit R0A + 5.3.0 cut`  
+**Planned PR title (when opened later):** `chore(release): cut Path A Spec 45 5.3.0 with R0A evidence`  
 (or split title if unit 4 skipped: `test(scripts): Path A Spec 45 multi-edit R0A + heart evidence`)  
 **Label kind:** `test` and/or `chore` as justified by final diff  
 **Body:** Problem / What changed / Testing honesty / AI review / Security / Notes; **`Depends on #137`**; base **`vc005-snippet-invalidation`**; SemVer **none** or **`5.3.0`** only if unit 4 included; does **not** reuse **5.2.0–5.2.2**.

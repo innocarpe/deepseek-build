@@ -2170,6 +2170,44 @@ impl SessionActor {
                 })),
             );
             let mut request = request;
+            // VC007 / Spec 10: Path A turn assembly — Spec 10 stable prefix layout
+            // + epoch on every main Grok turn (not only agent_launch stamp).
+            // Best-effort; never blocks sampling.
+            {
+                let system_prompt = request
+                    .items
+                    .iter()
+                    .find_map(|item| match item {
+                        xai_grok_sampling_types::ConversationItem::System(sys) => {
+                            Some(sys.content.as_ref().to_string())
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                let cwd = self
+                    .display_cwd
+                    .get()
+                    .cloned()
+                    .unwrap_or_else(|| self.hook_resolved_workspace_root.clone());
+                let volatile_count = request
+                    .items
+                    .iter()
+                    .filter(|item| {
+                        !matches!(
+                            item,
+                            xai_grok_sampling_types::ConversationItem::System(_)
+                        )
+                    })
+                    .count();
+                let _spec10 = crate::session::helpers::spec10_path_a_assembly::apply_spec10_path_a_turn_assembly(
+                    &system_prompt,
+                    &request.tools,
+                    &cwd,
+                    Vec::new(),
+                    String::new(),
+                    volatile_count,
+                );
+            }
             request.x_grok_session_id = Some(self.session_info.id.to_string());
             request.x_grok_turn_idx =
                 Some(self.chat_state_handle.get_prompt_index().await.to_string());

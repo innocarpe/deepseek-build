@@ -8,7 +8,12 @@ pub mod replay;
 pub mod session_compact;
 pub mod session_recap;
 pub mod session_summary;
+pub mod spec10_path_a_assembly;
 pub mod tool_input_parsing;
 pub mod turn_summary;
 
 pub use compaction_context::CompactionStateContext;
+pub use spec10_path_a_assembly::{
+    Spec10EnvironmentSummary, Spec10PathAAssembled, Spec10PathAInputs, Spec10SkillIndexEntry,
+    apply_spec10_path_a_turn_assembly, assemble_spec10_path_a_turn,
+};

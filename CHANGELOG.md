@@ -1,20 +1,14 @@
 # Changelog
 
-## 4.0.0 — 2026-08-07
-
-### L3 productization (PRD-v4 / fleet-4x)
-
-- **Product defaults:** `[subagents] enabled = true` in auto-created product config; keep **`yolo = false`** (hearts)
-- **Capability matrix** + user guides 11–14 (subagent / bg / worktree / throughput)
-- **Smoke:** `./scripts/test-l3-smoke.sh`
-- Tag **`v4.0.0`** (full SemVer only)
-
-
 ## Unreleased
 
 ## 4.0.4 — 2026-08-07
 
-- Image attachments on text-only DeepSeek endpoints (persist to session assets + OCR hint); DeepSeek status line with account balance & cache hit rate; G003 mint file_version on Path A read_file
+- **Image attachments** on text-only DeepSeek endpoints no longer 400: images persist to session assets with an agent-driven OCR hint (matches Reasonix/DeepCode preprocessing instead of silent drop)
+- **DeepSeek status line** with account balance & cache hit rate
+- **G003:** `mint file_version` on Path A `read_file` (snippet contract)
+- **G004:** Standard `snippet_safe` tool_configs now always applied (dead wiring fix) + `liveness-3edits` harness scenario
+- CI: dotslash install + full-build fallback fix for prebuilt tag runs
 
 ## 4.0.3 — 2026-08-07
 
@@ -31,7 +25,6 @@
 - `dsb setup` next steps: bare **`dsb`** (full-screen agent TUI), not legacy `dsb chat`
 - `chat` documented as line-mode only
 
-
 ## 4.0.1 — 2026-08-07
 
 ### Install DX (critical)
@@ -40,6 +33,15 @@
 - `postinstall` downloads platform prebuilts from GitHub Releases into `~/.deepseek-build/bin/`.
 - npm package is thin (wrappers only) — no `third_party/grok-build` in the tarball.
 - Optional source fallback: `DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD=1` only.
+
+## 4.0.0 — 2026-08-07
+
+### L3 productization (PRD-v4 / fleet-4x)
+
+- **Product defaults:** `[subagents] enabled = true` in auto-created product config; keep **`yolo = false`** (hearts)
+- **Capability matrix** + user guides 11–14 (subagent / bg / worktree / throughput)
+- **Smoke:** `./scripts/test-l3-smoke.sh`
+- Tag **`v4.0.0`** (full SemVer only)
 
 ## 3.0.0 — 2026-08-07
 
@@ -56,7 +58,6 @@
 - Spec 45 **file_version** equivalent on Grok path (full snippet_id mint polish → 3.x minor)
 - Live dogfood env-gated; L3 product identity → 4.x
 
-
 ## 3.0.0-beta.2 — 2026-08-07
 
 ### L2 repair + Flash/Pro (Path A)
@@ -64,14 +65,12 @@
 - `dsb-agent` `path_a_turn`: Spec 15 prep-before-execute + Spec 20 Flash default / Pro once under agent defaults
 - H15.* / H20.* contract tests; H2 exit band
 
-
 ## 3.0.0-beta.1 — 2026-08-07
 
 ### L2 prefix (Path A agent context)
 
 - `dsb-context` `assemble_path_a_context`: stable prefix + volatile tail under Spec 10 for default agent path
 - H10.* epoch stability tests (identical inputs, tool/skills thrash, volatile isolation)
-
 
 ## 3.0.0-alpha.2 — 2026-08-07
 
@@ -81,7 +80,6 @@
 - Product seed/repair: explicit `yolo = false` when missing (does not clobber user `yolo = true`)
 - `dsb-tools` `path_a_permissions` contract tests (H90.*)
 
-
 ## 3.0.0-alpha.1 — 2026-08-07
 
 ### L1 heart (Path A snippet-safe)
@@ -89,7 +87,6 @@
 - Spec 45 spirit on **default Grok** `search_replace` path: `snippet_safe` + `file_version` gate; empty-old whole-file overwrite fail-closed
 - Product adapter: `dsb-tools` `path_a_edit` contract tests (H45.*)
 - Standard file toolset injects `snippet_safe=true` for DeepSeek agent
-
 
 ## 2.0.3 — 2026-08-07
 
@@ -102,7 +99,6 @@
 - Requires Rust + protoc (or dotslash). First agent build may take several minutes.
 - Skip agent only: `DEEPSEEK_BUILD_SKIP_AGENT_BUILD=1` (not recommended)
 
-
 ## 2.0.2 — 2026-08-07
 
 ### Product entry (DeepSeek TUI only)
@@ -111,7 +107,6 @@
 - CLI binary name / help Usage: **dsb** (not `grok`)
 - User-facing help no longer describes the product as "Grok-class" / Grok Build UI
 - `repl-legacy` hidden; line-mode remains as `chat` only for legacy/script use
-
 
 ## 2.0.1 — 2026-08-07
 
@@ -122,7 +117,6 @@
 - Launcher splash: whale + DeepSeek Build before full-screen agent
 - Force `GROK_THEME=deepseeknight` from `dsb` entry (override with `DEEPSEEK_BUILD_THEME`)
 - Product config seed includes `theme = "deepseeknight"`
-
 
 ## 2.0.0 — 2026-08-06
 
@@ -142,7 +136,6 @@
 - npm publish may still require human OTP (ADR 0007 residual)
 - Upstream pager chrome may still say “Grok” in places; product CLI/docs use DeepSeek Build
 
-
 ## 2.0.0-alpha.2 — 2026-08-06
 
 ### Added
@@ -153,7 +146,6 @@
 - Product `config.toml` seed: DeepSeek models, `api.deepseek.com`, chat_completions
 - First-run setup before agent launch; credentials 0600 under `~/.deepseek-build/`
 - Smoke note: `docs/product/evidence/W1_ENTRY_SMOKE.md`
-
 
 ## 2.0.0-alpha.1 — 2026-08-06
 
@@ -170,9 +162,7 @@
 - Default `dsb` entry still product overlay until W1 entry/TUI stories land
 - Full Grok `cargo check -p xai-grok-pager-bin` verified on vendor tree (local evidence)
 
-
 ## Prior unreleased notes (folded)
-
 
 ### Added
 

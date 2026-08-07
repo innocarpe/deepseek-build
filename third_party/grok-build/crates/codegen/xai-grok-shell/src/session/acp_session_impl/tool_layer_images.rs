@@ -116,6 +116,7 @@ mod tests {
             raw_output: String::new(),
             total_lines: 1,
             extracted_images: vec![img(&"B".repeat(3000), "image/jpeg")],
+            file_version: None,
         };
         let drained = DrainedToolSuccess::new(run_result(ToolOutput::ReadFile(
             ReadFileOutput::FileContent(fc),
@@ -170,6 +171,7 @@ mod tests {
             raw_output: String::new(),
             total_lines: 1,
             extracted_images: vec![img(&"B".repeat(3000), "image/jpeg")],
+            file_version: None,
         };
         let mut output = ToolOutput::ReadFile(ReadFileOutput::FileContent(fc));
 

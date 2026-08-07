@@ -289,8 +289,22 @@ pub fn bash_command_may_mutate_files(command: &str) -> bool {
     if contains_any(
         &lower,
         &[
-            "rm ", "rm\t", "rmdir ", "unlink ", "mv ", "cp ", "tee ", "touch ", "mkdir ", "chmod ",
-            "chown ", "truncate ", "install ", "sed -i", "perl -i", "dd ",
+            "rm ",
+            "rm\t",
+            "rmdir ",
+            "unlink ",
+            "mv ",
+            "cp ",
+            "tee ",
+            "touch ",
+            "mkdir ",
+            "chmod ",
+            "chown ",
+            "truncate ",
+            "install ",
+            "sed -i",
+            "perl -i",
+            "dd ",
         ],
     ) {
         return true;

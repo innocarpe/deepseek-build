@@ -448,8 +448,8 @@ async fn handle_new_file_creation(
         });
     }
     // Force overwrite of an existing path is not a brand-new file.
-    let is_overwrite = path_exists
-        && (allow_force_write_overwrite || !empty_old_string_does_not_override);
+    let is_overwrite =
+        path_exists && (allow_force_write_overwrite || !empty_old_string_does_not_override);
     if let Some(old_text) = old_text
         && is_overwrite
     {

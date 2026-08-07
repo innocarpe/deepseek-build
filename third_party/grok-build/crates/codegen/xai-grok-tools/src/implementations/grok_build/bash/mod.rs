@@ -3109,9 +3109,7 @@ mod tests {
         h.update(body.as_bytes());
         let ver = format!("{:x}", h.finalize());
         let store = resources.get_or_default::<SessionSnippetStore>();
-        store
-            .issue(path, 1, 1, ver, body, 1)
-            .snippet_id
+        store.issue(path, 1, 1, ver, body, 1).snippet_id
     }
 
     #[tokio::test]
@@ -3121,13 +3119,9 @@ mod tests {
         let id = mint_bash_snippet(&mut resources, &path, "x");
         let shared = resources.into_shared();
         let tool = BashTool;
-        let _ = xai_tool_runtime::Tool::run(
-            &tool,
-            test_ctx(shared.clone()),
-            make_input("ls -la"),
-        )
-        .await
-        .unwrap();
+        let _ = xai_tool_runtime::Tool::run(&tool, test_ctx(shared.clone()), make_input("ls -la"))
+            .await
+            .unwrap();
         let res = shared.lock().await;
         assert!(
             res.get::<crate::types::snippet_store::SessionSnippetStore>()
@@ -3147,13 +3141,10 @@ mod tests {
         let shared = resources.into_shared();
         let tool = BashTool;
         // cwd in make_resources is /tmp — relative a.txt resolves under /tmp.
-        let _ = xai_tool_runtime::Tool::run(
-            &tool,
-            test_ctx(shared.clone()),
-            make_input("rm -f a.txt"),
-        )
-        .await
-        .unwrap();
+        let _ =
+            xai_tool_runtime::Tool::run(&tool, test_ctx(shared.clone()), make_input("rm -f a.txt"))
+                .await
+                .unwrap();
         let res = shared.lock().await;
         let store = res
             .get::<crate::types::snippet_store::SessionSnippetStore>()
@@ -3193,13 +3184,13 @@ mod tests {
         let id = mint_bash_snippet(&mut resources, &PathBuf::from("/tmp/x.txt"), "x");
         let shared = resources.into_shared();
         let tool = BashTool;
-        let result = xai_tool_runtime::Tool::run(
-            &tool,
-            test_ctx(shared.clone()),
-            make_input("echo hi &"),
-        )
-        .await;
-        assert!(result.is_err(), "expected validation reject, got {result:?}");
+        let result =
+            xai_tool_runtime::Tool::run(&tool, test_ctx(shared.clone()), make_input("echo hi &"))
+                .await;
+        assert!(
+            result.is_err(),
+            "expected validation reject, got {result:?}"
+        );
         let res = shared.lock().await;
         assert!(
             res.get::<crate::types::snippet_store::SessionSnippetStore>()
@@ -3215,12 +3206,9 @@ mod tests {
         let id = mint_bash_snippet(&mut resources, &PathBuf::from("/tmp/x.txt"), "x");
         let shared = resources.into_shared();
         let tool = BashTool;
-        let result = xai_tool_runtime::Tool::run(
-            &tool,
-            test_ctx(shared.clone()),
-            make_input("rm -f x.txt"),
-        )
-        .await;
+        let result =
+            xai_tool_runtime::Tool::run(&tool, test_ctx(shared.clone()), make_input("rm -f x.txt"))
+                .await;
         assert!(result.is_err());
         let res = shared.lock().await;
         assert!(

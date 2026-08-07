@@ -287,6 +287,9 @@ PY
 
   log "${SCENARIO}: running public entry deepseek-build agent -p …"
   local AGENT_OUT EC
+  # Keep subagent tools available: product builder forces enabled_background=false
+  # when allowed_subagent_types becomes empty (builder.rs). Only strip web tools.
+  # L3 smoke uses the product default tool surface for background shell.
   set +e
   AGENT_OUT="$(
     run_to 240 "${CLI}" agent \
@@ -295,7 +298,7 @@ PY
       --output-format plain \
       --max-turns "${MAX_TURNS}" \
       --yolo \
-      --disallowed-tools "web_search,web_fetch,Agent,spawn_subagent" \
+      --disallowed-tools "web_search,web_fetch" \
       2>&1
   )"
   EC=$?

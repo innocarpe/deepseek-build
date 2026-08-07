@@ -82,7 +82,7 @@ settings/registry.rs:619,626,866,882   .unwrap_or("groknight")
 | I5 | `gray_dim`은 **텍스트 금지** — 괘선/테두리 전용 | 코드 리뷰 |
 | I6 | 표면 인접 단계 **ΔL\* ≥ 2.3** | CIE L\* |
 | I7 | `bg_hover`는 **명도축**, `bg_visual`은 **채도축** (Δchroma ≥ 30) | 두 축이 겹치지 않음 |
-| I8 | **h2~h6는 단조 비증가 대비 사다리.** h1은 색상으로 구별되는 유일한 예외이며 `BLUE_TEXT`여야 한다 (h1 CR 7.31 < h2 15.04 — 밝기가 아니라 색상으로 최상위 표시) | h1=`BLUE_TEXT`; h2≥h3≥…≥h6 on bg_base |
+| I8 | **h3~h6는 단조 비증가 대비 사다리.** h1·h2는 색상(브랜드 파랑 램프)으로 구별된다 — h1=`BLUE_TEXT`(7.31), h2=`BLUE_MID`(5.60), h3~h6는 명도로만 내려간다. (5.2.1 개정: v2가 "본문이 전부 흰색"으로 읽히는 피드백으로 h2를 hue-marked로 복원) | h1=`BLUE_TEXT`; h2=`BLUE_MID`; h3≥h4≥h5≥h6 on bg_base |
 | I9 | `#4D6BFE`(공식색)는 **선·면 전용**, 텍스트는 `#7E9AFF` | 4.46 < 4.5 이므로 텍스트 불가 |
 
 I9가 핵심입니다. **공식 브랜드 색은 그대로 보존되지만 역할이 바뀝니다** — 테두리·레일·채움에는 쓰고, 글자에는 밝은 짝을 씁니다.
@@ -101,6 +101,11 @@ pub const VIOLET:     Color = rgb(185, 140, 245); // #B98CF5  CR 7.47  추론(�
 pub const GREEN:      Color = rgb( 95, 211, 155); // #5FD39B  CR10.37  성공/추가
 pub const RED:        Color = rgb(242, 112, 138); // #F2708A  CR 6.86  오류/삭제
 pub const AMBER:      Color = rgb(232, 183,  95); // #E8B75F  CR10.45  진행/경고/plan
+
+// ── 커맨드 액센트 (5.2.1 복원) ─────────────────────────────
+// v1의 YELLOW. AMBER(41°)와 나란한 40° — v1에서 command와 warning이 같은
+// 노랑이었던 관행을 유지. I2(상태 의미색 4종)에는 포함하지 않는다.
+pub const YELLOW:     Color = rgb(230, 190, 110); // #E6BE6E  CR10.99  command
 
 // ── 표면: 균등 L* 사다리, chroma 3~5 고정 ────────────────────
 pub const BG_TERMINAL:Color = rgb(  8,   9,  11); // #08090B  L* 2.45
@@ -151,7 +156,7 @@ text_primary: FG,         text_secondary: FG_DARK,
 gray_dim: GRAY_DIM,       gray: GRAY,       gray_bright: GRAY_BRIGHT,
 
 // 의미
-command: FG,              // v1 YELLOW — 굵기로 처리, path와 충돌 제거
+command: YELLOW,          // ⑪ v1 YELLOW 복원 — path가 BLUE_TEXT로 옮겨가 충돌 제거됨
 path:    BLUE_TEXT,       // ⑤ "갈 수 있는 것"
 running: AMBER,           // v1 CYAN
 warning: AMBER,
@@ -181,14 +186,14 @@ diff_equal_fg:  GRAY,         diff_gutter_fg: GRAY_DIM,
 // paste
 paste_bg: BG_RAISED,  paste_fg: FG_DARK,  paste_dim: GRAY_DIM,
 
-// markdown — 제목은 색이 아니라 밝기 사다리 (I8)
+// markdown — h1·h2는 브랜드 파랑 램프, h3~h6는 밝기 사다리 (I8 개정)
 md_heading_h1: BLUE_TEXT,   md_heading_h1_mod: Modifier::BOLD,   // ⑨ 7.31
-md_heading_h2: FG,          md_heading_h2_mod: Modifier::BOLD,   //   15.04
+md_heading_h2: BLUE_MID,    md_heading_h2_mod: Modifier::BOLD,   // ⑫ 5.60  (C-rich 스타일 복원)
 md_heading_h3: GRAY_BRIGHT, md_heading_h3_mod: Modifier::BOLD,   //    6.36
 md_heading_h4: GRAY_BRIGHT, md_heading_h4_mod: Modifier::empty(),//    6.36
 md_heading_h5: GRAY,        md_heading_h5_mod: Modifier::BOLD,   //    4.95
 md_heading_h6: GRAY,        md_heading_h6_mod: Modifier::empty(),//    4.95
-md_code:           FG_DARK,       // v1 BLUE1 — cyan과 충돌하던 4번째 파랑 제거
+md_code:           BLUE_TEXT,     // ⑬ v1 BLUE1 역할 복원 — AA-safe 밝은 파랑
 md_code_bg:        BG_RAISED,
 md_text:           FG_DARK,
 md_task_checked:   GREEN,
@@ -201,15 +206,22 @@ v1 대비 **h5/h6가 AA 미달 회색으로 렌더되던 문제**도 함께 해�
 
 ### 2-4. 검증 결과
 
-| 항목 | v1 | v2 (C-balanced) |
-|---|---|---|
-| 파랑이 맡는 역할 | 12 | **10** |
-| 의미 색상 계열 수 | 18 | **6** |
-| 색상 충돌 (< 35°) | 50쌍 | **0쌍** |
-| 텍스트 역할 AA 실패 | 3개 | **0개** |
-| `gray` on bg_base / bg_raised | 3.97 ✗ | **4.95 / 4.51 ✓** |
-| hover vs visual | ΔL\* 1.06 | **Δchroma +34** |
-| 브랜드 램프 색상 스프레드 | — | **3.6°** (단일 계열) |
+| 항목 | v1 | v2 (C-balanced) | v2 (5.2.1 개정) |
+|---|---|---|---|
+| 파랑이 맡는 역할 | 12 | **10** | **12** (+h2, +code) |
+| 의미 색상 계열 수 | 18 | **6** | **7** (+command YELLOW) |
+| 색상 충돌 (< 35°) | 50쌍 | **0쌍** | **1쌍** — YELLOW↔AMBER (1°) ※명시적 예외 |
+| 텍스트 역할 AA 실패 | 3개 | **0개** | **0개** |
+| `gray` on bg_base / bg_raised | 3.97 ✗ | **4.95 / 4.51 ✓** | 동일 |
+| hover vs visual | ΔL\* 1.06 | **Δchroma +34** | 동일 |
+| 브랜드 램프 색상 스프레드 | — | **3.6°** (단일 계열) | 동일 |
+
+> **5.2.1 개정 사유:** h2·코드·커맨드가 전부 흰색-회색으로 중성화되어 본문이
+> "하이라이팅이 죄다 흰색"으로 읽히는 사용자 피드백. path가 이미 BLUE_TEXT라
+> v1에서 커맨드를 중성화했던 근거(노랑↔주황 충돌)가 사라져, C-rich 스타일로
+> h2(`BLUE_MID`), 코드(`BLUE_TEXT`), 커맨드(`YELLOW`)를 복원했다. YELLOW↔AMBER
+> 인접(1°)은 v1에서 command와 warning이 같은 노랑이었던 관행을 따른 명시적 예외
+> 이며 I2(상태 의미색 4종)에는 포함하지 않는다.
 
 ---
 
@@ -332,3 +344,11 @@ C-balanced는 **다크 전용**으로 설계·검증했습니다. 라이트 대�
 | `/private/tmp/deepseek-blue-density.html` | C-lean / **C-balanced** / C-rich 농도 비교 |
 
 **채택: C-balanced.** C-lean은 어시스턴트 레일을 무채색으로 두는데, 레일을 남긴 채 회색을 칠하면 절제가 아니라 "비활성"으로 읽혀 기각했습니다. C-rich는 `md_code`·`md_heading_h2`까지 파랑이라 본문 한복판에 누를 수 없는 파란 텍스트가 생겨 기각했습니다.
+
+> **5.2.1 개정 — C-balanced 위에 C-rich의 마크다운 계층만 복원.**
+> 실제 사용 피드백에서 h2·코드·커맨드까지 중성화한 C-balanced가 "본문이 전부
+> 흰색"으로 읽혔습니다. C-rich 기각 사유였던 "본문 한복판의 파란 텍스트"는
+> h2(`## 제목`)와 코드(`code`)가 마크다운 **구조 표지**라는 점을 고려하면
+> "누를 수 없는 파란 텍스트"라기보다 "계층을 보여주는 하이라이트"로 읽히는 쪽이
+> 더 강했습니다. path가 이미 BLUE_TEXT라 v1의 노랑-주황 충돌도 사라졌으므로
+> 커맨드도 v1 YELLOW로 복원했습니다. 표면(서피스)은 C-balanced 그대로 유지.

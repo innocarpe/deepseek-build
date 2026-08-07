@@ -5,7 +5,7 @@
 | **Story** | **VC007** — Grok Path A message assembly uses Spec 10 stable prefix layout on turns |
 | **Plan** | `vision-complete-5x` |
 | **Date** | 2026-08-08 |
-| **Status** | **READY** — wire mutation + gates re-green; adversarial round 2 **READY** with residuals; **unversioned** |
+| **Status** | **READY** — independent Grok Review 2 **READY** (no P0/P1); wire mutation + gates re-sealed; **unversioned** |
 | **SemVer** | **none** (this story does **not** bump product version) |
 | **Depends on** | **VC006** Spec 45 Deep Code cut on stack (open PR **#138** `vc006-heart-r0a`) |
 | **Board** | [`VISION_COMPLETE_5X_GOALS.md`](../VISION_COMPLETE_5X_GOALS.md) · DAG [`WAVE_5x_VISION_PR_DAG.md`](../WAVE_5x_VISION_PR_DAG.md) |
@@ -110,10 +110,10 @@ Close the Reasonix L2 gap where **Grok Path A turn message assembly** still bypa
 | **VC007-A4** | Tool schema key permutation stable | **PASS** unit |
 | **VC007-A5** | No wall-clock in stable body | **PASS** unit (fixture); production hashes Grok base system as-is |
 | **VC007-A6** | Production turn call site mutates wire | **PASS** — see §7.1 wire-mutation proof |
-| **VC007-A7** | Multi-turn stability | **RESIDUAL** — unit idempotent re-apply same epoch only; G008 historical multi-turn reaffirm is **not** post-VC007 Spec 10 section wire; live multi-turn JSONL needs rebuilt agent |
-| **VC007-A8** | Gates green | **PASS** re-run 2026-08-08 (this session): linkage + owner-bar 60/60 + heart regression; TSV restored |
+| **VC007-A7** | Multi-turn stability | **RESIDUAL** — unit idempotent re-apply only; G008 historical multi-turn is **not** post-VC007 Spec 10 section wire; live multi-turn JSONL needs rebuilt agent (independent Review 2) |
+| **VC007-A8** | Gates green | **PASS** re-sealed after independent Review 2 READY: linkage + owner-bar 60/60 + heart regression; TSV restored |
 | **VC007-A9** | Unversioned | **PASS** product remains **5.3.0** from VC006; no version commits in this story |
-| **VC007-A10** | Stacked PR | **OPEN** #139 base `vc006-heart-r0a` — refresh only after READY; **do not merge** |
+| **VC007-A10** | Stacked PR | create/refresh after independent READY; base `vc006-heart-r0a`; **do not merge** |
 
 ---
 
@@ -220,14 +220,29 @@ origin/main @ 5.2.2
 
 ---
 
-## 9. Adversarial review (independent Grok)
+## 9. Independent Grok reviews (fail-close process)
 
-| Round | Verdict | Action |
-|-------|---------|--------|
-| 1 (critic) | **NOT READY** — stamp-only hollow path; empty skills/project; A7 over-claim on G008 wire | Fixed in `5199d6d` wire rewrite + discovery + honest residuals |
-| 2 (fresh, post wire-rewrite) | **READY** | Confirms wire mutation + discovery; A7 must stay **RESIDUAL**; memory-in-base residual explicit |
+**Process rule:** Implementer self-checks and “self after fix” notes are **not** independent review. Only separate read-only Grok critic lanes count as Review 1 / Review 2.
 
-### Residual honesty (fail-close) — round 2 required list
+| Review | Lane | Scope tip | Verdict | P0/P1 | Outcome |
+|--------|------|-----------|---------|-------|---------|
+| **Review 1** | Independent Grok critic (read-only) | Pre-wire-honest path (stamp-only hollow turn hook) | **NOT READY** | Major: stamp-only ≠ message assembly; empty skills/project; A7 over-claim via G008 wire | Code fix in `5199d6d` (`apply_spec10_to_conversation_request` mutates system; workspace discovery) |
+| **Review 2** | **New independent** Grok critic (read-only); re-inspected post-`5199d6d` tip from sources; did **not** rubber-stamp prior implementer notes | Tip at review: `3849232` (code land `5199d6d`) | **READY** | **P0: none · P1: none** (P2 polish only) | READY for push + stacked PR with residuals below |
+
+### Review 2 checklist (independent re-score)
+
+| Check | Score |
+|-------|--------|
+| Wire mutation (turn mutates system, not stamp-only) | **PASS** |
+| Live input discovery (skills + project from workspace) | **PASS** (+ residual `user_skills_root=None`) |
+| Section ordering Spec 10 §1.1 | **PASS** |
+| Path A claim honesty (no thin-Path-B-as-R0A; no fake live multi-turn Spec 10 wire) | **PASS** |
+| Residuals accurate | **PASS** |
+| Scope (no VC008/VC009/L3/SemVer smuggle) | **PASS** |
+| Tests honesty (12 `vc007_*` units; soft e2e warn-only) | **PASS** |
+| A7 multi-turn live Spec 10 JSONL | **RESIDUAL** (unit + G008 historical only) |
+
+### Residual honesty (fail-close) — Review 2 required list
 
 | Residual | Honesty |
 |----------|---------|
@@ -246,13 +261,14 @@ origin/main @ 5.2.2
 ## 10. READY checklist
 
 - [x] Unit 1 committed first  
-- [x] Spec 10 turn assembly implemented with units green (12/12 re-run)  
+- [x] Spec 10 turn assembly implemented with units green (**12/12** re-sealed post Review 2)  
 - [x] Wire system rewritten (not stamp-only) — §7.1  
 - [x] Skills/project discovery on turn path  
-- [x] Three gates green (this session re-run); TSV side-effects not committed  
-- [x] Fresh independent Grok adversarial review of rewritten implementation (**READY**, round 2)  
-- [x] No SemVer bump  
-- [x] Stacked PR #139 already open — body refresh after READY (do not open a second PR)  
+- [x] Three gates green (re-sealed post Review 2); TSV side-effects not committed  
+- [x] **Review 1** independent: **NOT READY** (documented)  
+- [x] **Review 2** independent: **READY**, P0/P1 none (self-notes do not substitute)  
+- [x] Untracked `package-lock.json` removed; no SemVer bump  
+- [ ] Push + stacked PR after this evidence commit  
 - [x] **Do not merge**  
 
 ### Commits
@@ -265,4 +281,5 @@ origin/main @ 5.2.2
 | `5199d6d` | feat(context): rewrite Path A wire system to Spec 10 layout |
 | `ec90a66` | docs(product): VC007 READY evidence and adversarial close-out |
 | `f4a5cfe` | docs(product): VC007 wire-mutation proof and residual honesty |
-| *(this)* | docs(product): VC007 adversarial-2 READY close-out |
+| `3849232` | docs(product): VC007 adversarial-2 READY close-out |
+| *(this)* | docs(product): distinguish independent Review 1 vs Review 2 READY |

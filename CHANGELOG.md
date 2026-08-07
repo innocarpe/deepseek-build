@@ -2,10 +2,13 @@
 
 ## Unreleased
 
+## 5.0.1 — 2026-08-07
+
+- widen the DeepSeek whale logo to official terminal proportions
+
 ## 5.0.0 — 2026-08-07
 
 - Owner-bar complete product cut (`owner-bar-5x`): Path A P0 ledger green, dual adversarial reviews, tag `v5.0.0`.
-
 
 ## 4.0.4 — 2026-08-07
 

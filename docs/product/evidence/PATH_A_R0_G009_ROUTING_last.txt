@@ -1,0 +1,7 @@
+path_a_default_model=deepseek-v4-flash
+path_a_pro_model=deepseek-v4-pro
+flash_visibility=model=deepseek-v4-flash thinking=on effort=high
+pro_once_visibility=model=deepseek-v4-pro thinking=on effort=high escalate_reason=user_pro_once
+after_pro_visibility=model=deepseek-v4-flash thinking=on effort=high
+flash_wire_id=deepseek-v4-flash
+pro_wire_id=deepseek-v4-pro

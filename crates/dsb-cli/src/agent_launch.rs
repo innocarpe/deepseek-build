@@ -443,6 +443,43 @@ fn stamp_path_a_prefix_epoch(home: &BuildHome) {
     let _ = std::fs::write(path, stamp);
 }
 
+/// Stamp Path A Spec 20 routing defaults under product home (owner-bar G009).
+///
+/// Production call site for [`dsb_agent::path_a_default_router`] /
+/// [`dsb_agent::route_path_a_turn`] so Flash-default + `/pro` one-shot are not
+/// test-only. Best-effort; failures never block agent launch.
+fn stamp_path_a_routing(home: &BuildHome) {
+    use dsb_agent::{
+        apply_routing_command, path_a_default_router, path_a_flash_wire_id, path_a_pro_wire_id,
+        route_path_a_turn,
+    };
+
+    let mut router = path_a_default_router();
+    let flash = route_path_a_turn(&mut router, "path-a-routing-stamp");
+    let (pro_text, _) = apply_routing_command(&mut router, "/pro stamp-pro-once");
+    let pro = route_path_a_turn(&mut router, &pro_text);
+    let after = route_path_a_turn(&mut router, "return-to-flash");
+
+    let stamp = format!(
+        "path_a_default_model={}\n\
+         path_a_pro_model={}\n\
+         flash_visibility={}\n\
+         pro_once_visibility={}\n\
+         after_pro_visibility={}\n\
+         flash_wire_id={}\n\
+         pro_wire_id={}\n",
+        flash.wire_model,
+        pro.wire_model,
+        flash.visibility_line(),
+        pro.visibility_line(),
+        after.visibility_line(),
+        path_a_flash_wire_id(),
+        path_a_pro_wire_id(),
+    );
+    let path = home.path().join("path_a_routing.txt");
+    let _ = std::fs::write(path, stamp);
+}
+
 /// Exec the Grok-class agent, replacing this process (Unix).
 ///
 /// On failure to find the binary, returns an error with install guidance.
@@ -454,6 +491,8 @@ pub fn exec_agent(args: &[String]) -> Result<()> {
     let _ = ensure_product_agent_config_with_theme(&home, theme);
     // Spec 10 / G008: production Path A prefix epoch stamp (non-blocking).
     stamp_path_a_prefix_epoch(&home);
+    // Spec 20 / G009: production Path A Flash/Pro routing stamp (non-blocking).
+    stamp_path_a_routing(&home);
     print_product_splash();
 
     let Some(bin) = find_agent_bin() else {
@@ -568,6 +607,27 @@ mod tests {
             .expect("epoch hex");
         assert_eq!(hex.len(), 64, "sha256 hex length");
         assert!(hex.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    /// G009 / L2-20: production routing stamp Flash → Pro once → Flash.
+    #[test]
+    fn stamp_path_a_routing_flash_pro_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dsb_config::BuildHome::from_path(dir.path());
+        stamp_path_a_routing(&home);
+        let body = std::fs::read_to_string(dir.path().join("path_a_routing.txt"))
+            .expect("routing stamp file");
+        assert!(
+            body.contains("path_a_default_model=deepseek-v4-flash"),
+            "{body}"
+        );
+        assert!(body.contains("path_a_pro_model=deepseek-v4-pro"), "{body}");
+        assert!(
+            body.contains("after_pro_visibility=model=deepseek-v4-flash"),
+            "must return to Flash after /pro once: {body}"
+        );
+        assert!(body.contains("effort="), "visibility must show effort: {body}");
+        assert!(body.contains("thinking="), "visibility must show thinking: {body}");
     }
 }
 

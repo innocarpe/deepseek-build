@@ -152,7 +152,7 @@ Philosophy: [HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.md) §4.
 | ID | Requirement | P0 for owner-bar major? | Baseline |
 |----|-------------|-------------------------|----------|
 | **L1-70** | Skills as structured context: **index** in stable prefix; body load on demand (thrash-free spirit) | **P0** index + load path on Path A | **MET** G008 (unit + wire skills stable) |
-| **L1-30** | Thinking / effort knobs first-class for DeepSeek wire (not only hidden env) | **P0** Flash coding default effort; UX dogfoodable | **PARTIAL** |
+| **L1-30** | Thinking / effort knobs first-class for DeepSeek wire (not only hidden env) | **P0** Flash coding default effort; UX dogfoodable | **MET** G009 (router+CLI); wire field residual admitted |
 | **L1-80** | MCP mountable without breaking prefix/permission contracts | **P1** unless already product-critical | thin/Path A gap |
 | **L1-100** | Sessions resume on product agent path | **P0** resume works on Path A | **MET** G008 (`--resume` forward + SessionStore repair) |
 | **L1-110** | Plan mode light (optional assist, not Gajae multi-stage trap) | **P1** | per NON_GOALS |
@@ -185,11 +185,11 @@ Philosophy: [HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.md) §4.
 
 | ID | Requirement | Evidence (Path A) | Baseline |
 |----|-------------|-------------------|----------|
-| **L2-20-1** | Default session model is **Flash** (`deepseek-v4-flash`) | Config + wire log / status | **MET** (static seed) |
-| **L2-20-2** | **Pro escalate** dogfoodable (`/pro` or product equivalent) for **one turn** then return (or sticky preset per Spec 20) | R0 on TUI path | **MISSING** (router lives in thin `path_a_turn`) |
-| **L2-20-3** | User-visible which wire model ran the turn | UI or log | **PARTIAL** |
-| **L2-20-4** | Precedence: explicit user > sticky preset > auto > default Flash | Table tests on Path A | **MISSING** |
-| **L2-20-5** | Both models always carry correct DeepSeek `base_url` | Live/offline | **MET** |
+| **L2-20-1** | Default session model is **Flash** (`deepseek-v4-flash`) | Config + wire log / status | **MET** G009 Path A wire |
+| **L2-20-2** | **Pro escalate** dogfoodable (`/pro` or product equivalent) for **one turn** then return (or sticky preset per Spec 20) | R0 on TUI path | **MET** G009 stamp + `-m deepseek-v4-pro` wire |
+| **L2-20-3** | User-visible which wire model ran the turn | UI or log | **MET** G009 visibility_line stamp |
+| **L2-20-4** | Precedence: explicit user > sticky preset > auto > default Flash | Table tests on Path A | **MET** G009 routing units |
+| **L2-20-5** | Both models always carry correct DeepSeek `base_url` | Live/offline | **MET** G009 seed/repair |
 
 ---
 

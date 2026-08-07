@@ -1,0 +1,7 @@
+git_sha=5b5e22398fefa55f2ec2d229a375b582bf448654
+story=G009
+e2e=PASS flash_on_wire
+routing_stamp=present
+pro_wire=deepseek-v4-pro
+effort_cli=--reasoning-effort high
+effort_wire_field=null_residual

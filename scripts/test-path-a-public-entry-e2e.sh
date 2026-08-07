@@ -288,6 +288,15 @@ else
   warn "path_a_prefix_epoch.txt missing under DEEPSEEK_BUILD_HOME (G008 stamp)"
 fi
 
+# G009: Path A Spec 20 routing stamp (Flash default + /pro once).
+ROUTING_STAMP="${HOME_DIR}/path_a_routing.txt"
+if [[ -f "${ROUTING_STAMP}" ]]; then
+  cp "${ROUTING_STAMP}" "${OUT_DIR}/PATH_A_ROUTING_last.txt"
+  log "path_a_routing stamp present"
+else
+  warn "path_a_routing.txt missing under DEEPSEEK_BUILD_HOME (G009 stamp)"
+fi
+
 # Persist wire + meta for evidence (redacted)
 if [[ -f "${WIRE}" ]]; then
   cp "${WIRE}" "${EVIDENCE_WIRE}"
@@ -312,6 +321,12 @@ fi
   else
     echo "path_a_prefix_epoch_stamp=missing"
   fi
+  if [[ -f "${ROUTING_STAMP}" ]]; then
+    echo "path_a_routing_stamp=present"
+    cat "${ROUTING_STAMP}"
+  else
+    echo "path_a_routing_stamp=missing"
+  fi
 } >"${EVIDENCE_META}"
 
 # --- assertions ---
@@ -323,6 +338,47 @@ fi
 if [[ ! -f "${EPOCH_STAMP}" ]]; then
   warn "G008 stamp missing — assemble_path_a_context not exercised on launch"
   FAIL=1
+fi
+if [[ ! -f "${ROUTING_STAMP}" ]]; then
+  warn "G009 stamp missing — path_a_default_router not exercised on launch"
+  FAIL=1
+fi
+# L2-20-1: default deepseek turns use Flash wire id
+if [[ -s "${WIRE}" ]]; then
+  if ! python3 - "${WIRE}" <<'PY'
+import json, sys
+path = sys.argv[1]
+flash = 0
+pro = 0
+other = []
+for line in open(path, encoding="utf-8"):
+    o = json.loads(line)
+    body = o.get("body", o)
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except Exception:
+            continue
+    if not isinstance(body, dict):
+        continue
+    m = body.get("model") or ""
+    if m == "deepseek-v4-flash":
+        flash += 1
+    elif m == "deepseek-v4-pro":
+        pro += 1
+    elif m and "deepseek" in m:
+        other.append(m)
+    # ignore session-title side model (grok-4.5)
+if flash < 1:
+    print(f"no deepseek-v4-flash on wire (flash={flash} pro={pro} other={other})", file=sys.stderr)
+    sys.exit(1)
+print(f"wire_models flash={flash} pro={pro}")
+sys.exit(0)
+PY
+  then
+    warn "L2-20-1: expected deepseek-v4-flash on Path A wire"
+    FAIL=1
+  fi
 fi
 
 if ! rg -q 'chat/completions' "${WIRE}" 2>/dev/null; then

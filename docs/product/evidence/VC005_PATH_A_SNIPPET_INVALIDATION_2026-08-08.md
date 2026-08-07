@@ -5,7 +5,7 @@
 | **Story** | **VC005** — Path A Spec 45 write bypass + bash mutation invalidation for session-local `snippet_id` |
 | **Plan** | `vision-complete-5x` |
 | **Date** | 2026-08-08 |
-| **Status** | **PLAN** (mandatory unit plan before source edits; implementation evidence appended later) |
+| **Status** | **IMPLEMENTATION** (runtime write/bash invalidation on Path A; unit evidence) |
 | **SemVer** | **none** (no version bump in this story; does **not** cut any release minor) |
 | **Depends on** | **VC004** Path A `search_replace` hard `snippet_id` require (branch stack / open PR **#135** `vc004-snippet-id-require`) which depends on **VC003** mint (**PR #130 MERGED**) |
 | **Board** | [`VISION_COMPLETE_5X_GOALS.md`](../VISION_COMPLETE_5X_GOALS.md) · DAG [`WAVE_5x_VISION_PR_DAG.md`](../WAVE_5x_VISION_PR_DAG.md) (read live on `origin/main` for floor; see §0) |
@@ -287,20 +287,128 @@ git checkout HEAD -- docs/product/evidence/OWNER_BAR_STATUS.tsv \
 
 | Order | SHA (prefix) | Subject | Contents honesty |
 |------:|--------------|---------|------------------|
-| 1 | *(this commit)* | `docs(product): VC005 Path A snippet invalidation plan + evidence` | Plan only |
-| 2 | _TBD_ | `feat(tools): Path A snippet expire + write/bash invalidation laws` | Contract/impl only |
-| 3 | _TBD_ | `test(tools): VC005 write/bash invalidation fail-closed regressions` | Focused tests only |
-| 4+ | _TBD_ | style / gate evidence if needed | no scope broaden |
+| 1 | `2a2f11c` | `docs(product): VC005 Path A snippet invalidation plan + evidence` | Plan only (this file first) |
+| 2 | `464ba28` | `feat(tools): Path A snippet expire + write/bash invalidation laws` | Store expire + write/bash laws (force-guard skip completed with test lane) |
+| 3 | `d1080a3` | `test(tools): VC005 write/bash invalidation fail-closed regressions` | Focused `vc005_*` unit tests (+ host force empty-old skip fix) |
+| 4 | `ae67c64` | `style(tools): cargo fmt Path A snippet invalidation sources` | rustfmt only |
+| 5 | `879e95f` | `fix(tools): harden Path A bash expire path match and redirects` | P1 fixes from independent review (path form + fd redirects) |
+| 6 | tip (`git log -1`) | `docs(product): record VC005 Path A invalidation gate evidence` | Validation fill + adversarial READY |
 
 **No VC006 behavior** in these commits: no resume/fork table restore, no public R0A harness, no SemVer bump, no release packaging.
 
-### 7.2 What shipped (code) — _pending_
+### 7.2 What shipped (code)
 
-### 7.3 Acceptance matrix — _pending_
+| Piece | Location / behavior |
+|-------|---------------------|
+| Store expiry | `SessionSnippetStore::expire_path` / `expire_all` / `apply_bash_expire_plan` |
+| Bash classifier | `bash_snippet_expire_plan` / `bash_command_may_mutate_files` / path extraction helpers (M2 heuristic; unknown → All) |
+| Edit success | Path A `search_replace` after `EditsApplied` → `expire_path` |
+| Write deny | Under `snippet_safe`, empty `old_string` + existing path (incl. empty file) → `path_exists_use_edit`; **no write**, **no expire** |
+| Host force | `SearchReplaceParams.allow_force_write_overwrite` (host-only, default false) allows empty-old overwrite + expire; not a model input field |
+| Bash hook | After backend accepts dispatch (FG run Ok / BG start Ok) apply plan; validation reject / backend Err → no expire |
+| Dual CLI | Unchanged (`deepseek-build` / `dsb`) |
+| Dependencies | **None** added |
+| SemVer | **none**; live floor **5.2.1**; next free feature minor **5.3.0** |
 
-### 7.4 Commands actually run — _pending_
+### 7.3 Acceptance matrix
 
-### 7.5 Independent adversarial review — _pending_
+| Check | Result | Evidence class |
+|-------|--------|----------------|
+| Evidence doc committed first | **PASS** — `2a2f11c` | commit |
+| expire_path / expire_all APIs | **PASS** (`vc005_expire_path_*`, `vc005_expire_all_*`) | **unit** |
+| Successful edit expires path snippets | **PASS** (`vc005_successful_edit_expires_path_snippets`) | **unit** |
+| Other paths preserved | **PASS** (`vc005_expire_path_preserves_other_paths`) | **unit** |
+| Create-new without id | **PASS** (`vc005_create_new_still_ok_without_snippet_id`) | **unit** |
+| path_exists_use_edit deny + no partial write | **PASS** (`vc005_path_exists_use_edit_*`, `vc005_empty_existing_file_*`) | **unit** |
+| Host force overwrite + expire | **PASS** (`vc005_host_force_overwrite_writes_and_expires`) | **unit** |
+| Bash known / unknown / read-only | **PASS** (`vc005_bash_*` + store plan units) | **unit** |
+| Pre-dispatch / backend fail no expire | **PASS** (`vc005_bash_pre_dispatch_*`, `vc005_bash_backend_error_*`) | **unit** |
+| Session isolation | **PASS** (`vc005_session_isolation_*`) | **unit** |
+| VC005 focused suite | **PASS** — **20** tests, 0 failed (post P1 fix) | **unit** |
+| macOS private/tmp expire match | **PASS** (`vc005_expire_path_matches_macos_private_tmp_asymmetry`) | **unit** |
+| fd/dev-null redirect not mutation | **PASS** (`vc005_bash_fd_redirect_is_not_file_mutation`) | **unit** |
+| VC004 regressions | **PASS** — **9** tests | **unit** |
+| VC003 mint regressions | **PASS** — **11** tests | **unit** |
+| `snippet_safe` filter | **PASS** — **4** tests | **unit** |
+| Broader `search_replace::tests` | **PASS** — **92** tests (incl. concise) | **unit** |
+| Thin oracle | **PASS** — `dsb-tools` snippets **9** + path_a_edit **8** | thin oracle (**not** Path A proof) |
+| Public Path A R0A wire | **not run / not claimed** | — |
+| SemVer bump | **none** | no version files touched; live `origin/main` is **`5.2.1`** |
+
+### 7.4 Commands actually run (exact)
+
+```bash
+# Floor
+git fetch origin main
+git show origin/main:Cargo.toml | rg 'version = "'
+# 5.2.1
+npm view @innocarpe/deepseek-build version
+# 5.2.0 (lag; release-5.2.1 lane)
+gh release list -R innocarpe/deepseek-build --limit 8
+# Latest v5.2.0
+
+# Focused + regressions
+cd third_party/grok-build
+CARGO_INCREMENTAL=0 RUSTC_WRAPPER= cargo test -p xai-grok-tools --lib vc005
+# ok — 20 passed (after path-form + fd-redirect harden)
+CARGO_INCREMENTAL=0 RUSTC_WRAPPER= cargo test -p xai-grok-tools --lib vc004
+# ok — 9 passed
+CARGO_INCREMENTAL=0 RUSTC_WRAPPER= cargo test -p xai-grok-tools --lib vc003
+# ok — 11 passed
+CARGO_INCREMENTAL=0 RUSTC_WRAPPER= cargo test -p xai-grok-tools --lib snippet_safe
+# ok — 4 passed
+CARGO_INCREMENTAL=0 RUSTC_WRAPPER= cargo test -p xai-grok-tools --lib search_replace::tests
+# ok — 92 passed
+cargo fmt --manifest-path Cargo.toml -p xai-grok-tools -- --check
+# exit 0 (after style commit)
+
+# Thin oracle (repo root)
+cargo test -p dsb-tools snippets   # 9 passed
+cargo test -p dsb-tools path_a_edit  # 8 passed
+
+# Required gates
+./scripts/test-owner-bar.sh
+# exit 0 — ALL PASS (PASS=60 FAIL=0 NOT_RUN=0)
+./scripts/check-path-a-linkage.sh
+# exit 0 — PASS
+./scripts/test-heart-regression.sh
+# exit 0 — PASS
+# SKIPs: live L3.1–L3.5 (no credentials); PATH_A_E2E (not requested)
+
+# Restore TSV side-effects (not committed)
+git checkout HEAD -- docs/product/evidence/OWNER_BAR_STATUS.tsv \
+  docs/product/evidence/PATH_A_R0_G010_HEART_REGRESSION_last.tsv
+```
+
+**Honesty:** All Path A invalidation claims above are **unit tests inside `xai-grok-tools`**. No public `deepseek-build`/`dsb` agent wire harness (R0A) was run for this story. Gate TSV rewrites were **restored to HEAD** and **not** committed. Live product floor on `origin/main` is **`5.2.1`** — VC005 does not ship any SemVer cut or release packaging; remaining Spec 45 completion stays at the **next free feature minor (`5.3.0` under current live floor)**. Branch stacks VC004 (open PR **#135**) until that merges.
+
+### Required project gates (verified)
+
+| Gate | Exit | Result | Honesty |
+|------|------|--------|---------|
+| `./scripts/test-owner-bar.sh` | **0** | **ALL PASS** — `PASS=60 FAIL=0 NOT_RUN=0` | Owner-bar green on HEAD |
+| `./scripts/check-path-a-linkage.sh` | **0** | **PASS** | NOTE: third_party/grok-build has no dsb-* Cargo dep (expected until F1) |
+| `./scripts/test-heart-regression.sh` | **0** | **PASS** | Live L3.1–L3.5 **SKIP** (no credentials); `PATH_A_E2E` **SKIP** |
+| `cargo fmt … xai-grok-tools -- --check` | **0** | clean | after style commit |
+| `git status` after restore | clean of TSV side-effects | — | worktree clean of gate artifacts |
+
+### 7.5 Independent adversarial review (read-only Grok)
+
+| Field | Value |
+|-------|--------|
+| Reviewer | Separate read-only Grok code-reviewer lane (not the implementer self-approve) |
+| Scope | Branch `vc005-snippet-invalidation` / Path A write+bash invalidation + tests + evidence + Spec/ADR §6 |
+| First-pass verdict | **NOT_READY** (0 P0, 2 P1) |
+| First-pass P1 | (1) known-path expire miss after delete when mint `/private/tmp` vs extract `/tmp`; (2) `ls 2>&1` / `/dev/null` redirects → over-broad `expire_all` |
+| Remediation | `879e95f` path normalize + fd/dev-null non-mutation + regressions |
+| **Final verdict** | **READY** |
+| **P0** | **none** |
+| **P1** | **none remaining** (both fixed + unit-covered) |
+| P2 residuals (non-blocking) | (1) force-overwrite success copy still says “created”; (2) triple FS read on empty-old path; (3) `path_exists_use_edit` is substring in `InvalidInput` not a dedicated enum; (4) residual bash classifier bluntness on unknown mutators (intentional M2 fail-close) |
+| VC006/R0A/SemVer smuggling | **none** found |
+| Honesty | Unit lane only; no R0A claim; floor **5.2.1**; next free feature minor **5.3.0** |
+
+P2 items are optional polish / later stories — **not** required to call VC005 implementation-ready under the unit evidence bar.
 
 ---
 

@@ -1832,6 +1832,261 @@ mod tests {
         }
     }
 
+    // --- VC004 focused regressions ---
+
+    #[tokio::test]
+    async fn vc004_valid_snippet_id_edits_within_scope() {
+        let tmp = TempDir::new().unwrap();
+        let body = "alpha\nbeta\nalpha\n";
+        let path = tmp.path().join("a.txt");
+        std::fs::write(&path, body).unwrap();
+        let abs = std::fs::canonicalize(&path).unwrap_or(path.clone());
+        let tool = SearchReplaceTool;
+        let mut resources = test_resources(tmp.path());
+        resources.insert(Params(SearchReplaceParams {
+            snippet_safe: true,
+            empty_old_string_does_not_override: true,
+            ..Default::default()
+        }));
+        // Scope only line 1 so the second "alpha" is outside authorization.
+        let id = mint_snippet(&mut resources, &abs, body, 1, 1);
+        let mut input = make_input("a.txt", "alpha", "ALPHA");
+        input.snippet_id = Some(id);
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
+            .await
+            .unwrap();
+        match result {
+            SearchReplaceOutput::EditsApplied(_) => {
+                let content = std::fs::read_to_string(&path).unwrap();
+                assert_eq!(content, "ALPHA\nbeta\nalpha\n");
+            }
+            other => panic!("Expected EditsApplied, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn vc004_missing_snippet_id_no_partial_write() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("f.txt");
+        std::fs::write(&path, "keep me\n").unwrap();
+        let tool = SearchReplaceTool;
+        let mut resources = test_resources(tmp.path());
+        resources.insert(Params(SearchReplaceParams {
+            snippet_safe: true,
+            ..Default::default()
+        }));
+        let input = make_input("f.txt", "keep", "gone");
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
+            .await
+            .unwrap();
+        assert!(matches!(result, SearchReplaceOutput::InvalidInput(_)));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "keep me\n");
+    }
+
+    #[tokio::test]
+    async fn vc004_malformed_snippet_id_rejected() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("f.txt");
+        std::fs::write(&path, "hello\n").unwrap();
+        let tool = SearchReplaceTool;
+        let mut resources = test_resources(tmp.path());
+        resources.insert(Params(SearchReplaceParams {
+            snippet_safe: true,
+            ..Default::default()
+        }));
+        let mut input = make_input("f.txt", "hello", "hi");
+        input.snippet_id = Some("snp_not-a-valid-ulid".into());
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
+            .await
+            .unwrap();
+        match result {
+            SearchReplaceOutput::InvalidInput(msg) => {
+                assert!(
+                    msg.contains("malformed") || msg.contains("snippet_not_found"),
+                    "msg={msg}"
+                );
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello\n");
+            }
+            other => panic!("Expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn vc004_unknown_snippet_id_rejected() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("f.txt");
+        std::fs::write(&path, "hello\n").unwrap();
+        let tool = SearchReplaceTool;
+        let mut resources = test_resources(tmp.path());
+        resources.insert(Params(SearchReplaceParams {
+            snippet_safe: true,
+            ..Default::default()
+        }));
+        // Well-formed id shape but never minted into this session store.
+        let mut input = make_input("f.txt", "hello", "hi");
+        input.snippet_id = Some(crate::types::snippet_store::new_snippet_id());
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
+            .await
+            .unwrap();
+        match result {
+            SearchReplaceOutput::InvalidInput(msg) => {
+                assert!(msg.contains("snippet_not_found") || msg.contains("unknown"), "msg={msg}");
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello\n");
+            }
+            other => panic!("Expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn vc004_path_mismatch_rejected() {
+        let tmp = TempDir::new().unwrap();
+        let a = tmp.path().join("a.txt");
+        let b = tmp.path().join("b.txt");
+        std::fs::write(&a, "hello\n").unwrap();
+        std::fs::write(&b, "hello\n").unwrap();
+        let abs_a = std::fs::canonicalize(&a).unwrap_or(a.clone());
+        let tool = SearchReplaceTool;
+        let mut resources = test_resources(tmp.path());
+        resources.insert(Params(SearchReplaceParams {
+            snippet_safe: true,
+            ..Default::default()
+        }));
+        let id = mint_snippet(&mut resources, &abs_a, "hello\n", 1, 1);
+        let mut input = make_input("b.txt", "hello", "hi");
+        input.snippet_id = Some(id);
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
+            .await
+            .unwrap();
+        match result {
+            SearchReplaceOutput::InvalidInput(msg) => {
+                assert!(msg.contains("path"), "msg={msg}");
+                assert_eq!(std::fs::read_to_string(&a).unwrap(), "hello\n");
+                assert_eq!(std::fs::read_to_string(&b).unwrap(), "hello\n");
+            }
+            other => panic!("Expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn vc004_file_version_mismatch_with_valid_id_rejected() {
+        let tmp = TempDir::new().unwrap();
+        let body = "hello world\n";
+        let path = tmp.path().join("f.txt");
+        std::fs::write(&path, body).unwrap();
+        let abs = std::fs::canonicalize(&path).unwrap_or(path.clone());
+        let tool = SearchReplaceTool;
+        let mut resources = test_resources(tmp.path());
+        resources.insert(Params(SearchReplaceParams {
+            snippet_safe: true,
+            ..Default::default()
+        }));
+        let id = mint_snippet(&mut resources, &abs, body, 1, 1);
+        let mut input = make_input("f.txt", "hello", "hi");
+        input.snippet_id = Some(id);
+        input.file_version = Some("00".repeat(32));
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
+            .await
+            .unwrap();
+        match result {
+            SearchReplaceOutput::InvalidInput(msg) => {
+                assert!(msg.contains("snippet_stale"), "msg={msg}");
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), body);
+            }
+            other => panic!("Expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn vc004_session_isolation_unknown_in_other_resources() {
+        let tmp = TempDir::new().unwrap();
+        let body = "hello\n";
+        let path = tmp.path().join("f.txt");
+        std::fs::write(&path, body).unwrap();
+        let abs = std::fs::canonicalize(&path).unwrap_or(path.clone());
+        let tool = SearchReplaceTool;
+        let mut resources_a = test_resources(tmp.path());
+        resources_a.insert(Params(SearchReplaceParams {
+            snippet_safe: true,
+            ..Default::default()
+        }));
+        let id = mint_snippet(&mut resources_a, &abs, body, 1, 1);
+        // Different session bag — no shared store.
+        let mut resources_b = test_resources(tmp.path());
+        resources_b.insert(Params(SearchReplaceParams {
+            snippet_safe: true,
+            ..Default::default()
+        }));
+        let mut input = make_input("f.txt", "hello", "hi");
+        input.snippet_id = Some(id);
+        let result =
+            xai_tool_runtime::Tool::run(&tool, test_ctx(resources_b.into_shared()), input)
+                .await
+                .unwrap();
+        match result {
+            SearchReplaceOutput::InvalidInput(msg) => {
+                assert!(
+                    msg.contains("snippet_not_found") || msg.contains("unknown"),
+                    "msg={msg}"
+                );
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), body);
+            }
+            other => panic!("Expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn vc004_create_new_file_without_snippet_id_allowed() {
+        let tmp = TempDir::new().unwrap();
+        let tool = SearchReplaceTool;
+        let mut resources = test_resources(tmp.path());
+        resources.insert(Params(SearchReplaceParams {
+            snippet_safe: true,
+            empty_old_string_does_not_override: true,
+            ..Default::default()
+        }));
+        let input = make_input("brand_new.txt", "", "fresh\n");
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
+            .await
+            .unwrap();
+        match result {
+            SearchReplaceOutput::EditsApplied(_) => {
+                assert_eq!(
+                    std::fs::read_to_string(tmp.path().join("brand_new.txt")).unwrap(),
+                    "fresh\n"
+                );
+            }
+            other => panic!("Expected EditsApplied, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn vc004_occurrence_outside_scope_is_no_match() {
+        let tmp = TempDir::new().unwrap();
+        let body = "alpha\nbeta\nalpha\n";
+        let path = tmp.path().join("a.txt");
+        std::fs::write(&path, body).unwrap();
+        let abs = std::fs::canonicalize(&path).unwrap_or(path.clone());
+        let tool = SearchReplaceTool;
+        let mut resources = test_resources(tmp.path());
+        resources.insert(Params(SearchReplaceParams {
+            snippet_safe: true,
+            ..Default::default()
+        }));
+        // Scope only line 2 ("beta") — "alpha" exists in file but not in scope.
+        let id = mint_snippet(&mut resources, &abs, body, 2, 2);
+        let mut input = make_input("a.txt", "alpha", "ALPHA");
+        input.snippet_id = Some(id);
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
+            .await
+            .unwrap();
+        match result {
+            SearchReplaceOutput::NoMatchesFound(_) => {
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), body);
+            }
+            other => panic!("Expected NoMatchesFound, got {other:?}"),
+        }
+    }
+
     #[tokio::test]
     async fn empty_old_string_creates_new_file_even_with_override_guard() {
         let tmp = TempDir::new().unwrap();

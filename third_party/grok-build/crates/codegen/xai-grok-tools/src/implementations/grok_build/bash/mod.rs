@@ -3100,6 +3100,137 @@ mod tests {
         }
     }
 
+    // ─── VC005 bash snippet invalidation ───────────────────────────────────
+
+    fn mint_bash_snippet(resources: &mut Resources, path: &std::path::Path, body: &str) -> String {
+        use crate::types::snippet_store::SessionSnippetStore;
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(body.as_bytes());
+        let ver = format!("{:x}", h.finalize());
+        let store = resources.get_or_default::<SessionSnippetStore>();
+        store
+            .issue(path, 1, 1, ver, body, 1)
+            .snippet_id
+    }
+
+    #[tokio::test]
+    async fn vc005_bash_read_only_does_not_expire_snippets() {
+        let mut resources = make_resources(MockTerminal::success("ok\n", 0));
+        let path = PathBuf::from("/tmp/ro.txt");
+        let id = mint_bash_snippet(&mut resources, &path, "x");
+        let shared = resources.into_shared();
+        let tool = BashTool;
+        let _ = xai_tool_runtime::Tool::run(
+            &tool,
+            test_ctx(shared.clone()),
+            make_input("ls -la"),
+        )
+        .await
+        .unwrap();
+        let res = shared.lock().await;
+        assert!(
+            res.get::<crate::types::snippet_store::SessionSnippetStore>()
+                .unwrap()
+                .contains(&id),
+            "read-only bash must not expire snippets"
+        );
+    }
+
+    #[tokio::test]
+    async fn vc005_bash_known_path_mutate_expires_that_path() {
+        let mut resources = make_resources(MockTerminal::success("", 0));
+        let path_a = PathBuf::from("/tmp/a.txt");
+        let path_b = PathBuf::from("/tmp/b.txt");
+        let id_a = mint_bash_snippet(&mut resources, &path_a, "a");
+        let id_b = mint_bash_snippet(&mut resources, &path_b, "b");
+        let shared = resources.into_shared();
+        let tool = BashTool;
+        // cwd in make_resources is /tmp — relative a.txt resolves under /tmp.
+        let _ = xai_tool_runtime::Tool::run(
+            &tool,
+            test_ctx(shared.clone()),
+            make_input("rm -f a.txt"),
+        )
+        .await
+        .unwrap();
+        let res = shared.lock().await;
+        let store = res
+            .get::<crate::types::snippet_store::SessionSnippetStore>()
+            .unwrap();
+        assert!(!store.contains(&id_a), "known path must expire");
+        assert!(store.contains(&id_b), "other path must remain");
+    }
+
+    #[tokio::test]
+    async fn vc005_bash_unknown_mutate_expires_all() {
+        let mut resources = make_resources(MockTerminal::success("", 0));
+        let id_a = mint_bash_snippet(&mut resources, &PathBuf::from("/tmp/a.txt"), "a");
+        let id_b = mint_bash_snippet(&mut resources, &PathBuf::from("/tmp/b.txt"), "b");
+        let shared = resources.into_shared();
+        let tool = BashTool;
+        let _ = xai_tool_runtime::Tool::run(
+            &tool,
+            test_ctx(shared.clone()),
+            make_input("python do_stuff.py"),
+        )
+        .await
+        .unwrap();
+        let res = shared.lock().await;
+        let store = res
+            .get::<crate::types::snippet_store::SessionSnippetStore>()
+            .unwrap();
+        assert!(
+            !store.contains(&id_a) && !store.contains(&id_b) && store.is_empty(),
+            "unknown mutator must expire_all"
+        );
+    }
+
+    #[tokio::test]
+    async fn vc005_bash_pre_dispatch_reject_does_not_expire() {
+        // Background operator rejected before backend run when opt-in reject.
+        let mut resources = make_resources_reject_bg_op(MockTerminal::success("", 0));
+        let id = mint_bash_snippet(&mut resources, &PathBuf::from("/tmp/x.txt"), "x");
+        let shared = resources.into_shared();
+        let tool = BashTool;
+        let result = xai_tool_runtime::Tool::run(
+            &tool,
+            test_ctx(shared.clone()),
+            make_input("echo hi &"),
+        )
+        .await;
+        assert!(result.is_err(), "expected validation reject, got {result:?}");
+        let res = shared.lock().await;
+        assert!(
+            res.get::<crate::types::snippet_store::SessionSnippetStore>()
+                .unwrap()
+                .contains(&id),
+            "pre-dispatch reject must not expire snippets"
+        );
+    }
+
+    #[tokio::test]
+    async fn vc005_bash_backend_error_before_success_does_not_expire() {
+        let mut resources = make_resources(MockTerminal::failing());
+        let id = mint_bash_snippet(&mut resources, &PathBuf::from("/tmp/x.txt"), "x");
+        let shared = resources.into_shared();
+        let tool = BashTool;
+        let result = xai_tool_runtime::Tool::run(
+            &tool,
+            test_ctx(shared.clone()),
+            make_input("rm -f x.txt"),
+        )
+        .await;
+        assert!(result.is_err());
+        let res = shared.lock().await;
+        assert!(
+            res.get::<crate::types::snippet_store::SessionSnippetStore>()
+                .unwrap()
+                .contains(&id),
+            "backend failure before successful dispatch must not expire"
+        );
+    }
+
     #[tokio::test]
     async fn foreground_command_timeout() {
         let resources = make_resources(MockTerminal::timed_out("partial output"));

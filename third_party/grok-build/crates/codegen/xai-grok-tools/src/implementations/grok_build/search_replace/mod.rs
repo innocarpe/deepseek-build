@@ -401,7 +401,8 @@ async fn handle_new_file_creation(
         )));
     }
     // Legacy / non-snippet_safe guard: empty old_string cannot overwrite non-empty.
-    if file_nonempty && empty_old_string_does_not_override {
+    // Host force (allow_force_write_overwrite) skips this guard after policy grant.
+    if file_nonempty && empty_old_string_does_not_override && !allow_force_write_overwrite {
         let old_string_name;
         {
             let res = resources.lock().await;
@@ -2128,6 +2129,261 @@ mod tests {
             }
             other => panic!("Expected NoMatchesFound, got {other:?}"),
         }
+    }
+
+    // ─── VC005 write / expire laws ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn vc005_successful_edit_expires_path_snippets() {
+        let tmp = TempDir::new().unwrap();
+        let body = "hello world\n";
+        let path = tmp.path().join("a.txt");
+        std::fs::write(&path, body).unwrap();
+        let abs = std::fs::canonicalize(&path).unwrap_or(path.clone());
+        let tool = SearchReplaceTool;
+        let mut resources = test_resources(tmp.path());
+        resources.insert(Params(SearchReplaceParams {
+            snippet_safe: true,
+            ..Default::default()
+        }));
+        let id1 = mint_snippet(&mut resources, &abs, body, 1, 1);
+        let id2 = mint_snippet(&mut resources, &abs, body, 1, 1);
+        assert_ne!(id1, id2);
+        let mut input = make_input("a.txt", "hello", "hi");
+        input.snippet_id = Some(id1.clone());
+        let shared = resources.into_shared();
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(shared.clone()), input)
+            .await
+            .unwrap();
+        assert!(
+            matches!(result, SearchReplaceOutput::EditsApplied(_)),
+            "got {result:?}"
+        );
+        {
+            let res = shared.lock().await;
+            let store = res.get::<SessionSnippetStore>().expect("store");
+            assert!(
+                !store.contains(&id1) && !store.contains(&id2),
+                "both path snippets must be expired after successful edit"
+            );
+        }
+        // Reuse expired id → snippet_not_found; no further write of original body.
+        let mut retry = make_input("a.txt", "hi", "HELLO");
+        retry.snippet_id = Some(id1);
+        let result2 = xai_tool_runtime::Tool::run(&tool, test_ctx(shared), retry)
+            .await
+            .unwrap();
+        match result2 {
+            SearchReplaceOutput::InvalidInput(msg) => {
+                assert!(
+                    msg.contains("snippet_not_found"),
+                    "expired id must fail closed: {msg}"
+                );
+            }
+            other => panic!("Expected InvalidInput snippet_not_found, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn vc005_expire_path_preserves_other_paths() {
+        let tmp = TempDir::new().unwrap();
+        let body_a = "aaa\n";
+        let body_b = "bbb\n";
+        let path_a = tmp.path().join("a.txt");
+        let path_b = tmp.path().join("b.txt");
+        std::fs::write(&path_a, body_a).unwrap();
+        std::fs::write(&path_b, body_b).unwrap();
+        let abs_a = std::fs::canonicalize(&path_a).unwrap_or(path_a.clone());
+        let abs_b = std::fs::canonicalize(&path_b).unwrap_or(path_b.clone());
+        let tool = SearchReplaceTool;
+        let mut resources = test_resources(tmp.path());
+        resources.insert(Params(SearchReplaceParams {
+            snippet_safe: true,
+            ..Default::default()
+        }));
+        let id_a = mint_snippet(&mut resources, &abs_a, body_a, 1, 1);
+        let id_b = mint_snippet(&mut resources, &abs_b, body_b, 1, 1);
+        let mut input = make_input("a.txt", "aaa", "AAA");
+        input.snippet_id = Some(id_a.clone());
+        let shared = resources.into_shared();
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(shared.clone()), input)
+            .await
+            .unwrap();
+        assert!(matches!(result, SearchReplaceOutput::EditsApplied(_)));
+        let res = shared.lock().await;
+        let store = res.get::<SessionSnippetStore>().expect("store");
+        assert!(!store.contains(&id_a));
+        assert!(store.contains(&id_b), "other path must survive expire_path");
+    }
+
+    #[tokio::test]
+    async fn vc005_path_exists_use_edit_denies_empty_old_overwrite() {
+        let tmp = TempDir::new().unwrap();
+        let original = "keep-me\n";
+        let path = tmp.path().join("existing.txt");
+        std::fs::write(&path, original).unwrap();
+        let abs = std::fs::canonicalize(&path).unwrap_or(path.clone());
+        let tool = SearchReplaceTool;
+        let mut resources = test_resources(tmp.path());
+        resources.insert(Params(SearchReplaceParams {
+            snippet_safe: true,
+            ..Default::default()
+        }));
+        // Outstanding snippet must not be expired on deny.
+        let id = mint_snippet(&mut resources, &abs, original, 1, 1);
+        let input = make_input("existing.txt", "", "overwrite\n");
+        let shared = resources.into_shared();
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(shared.clone()), input)
+            .await
+            .unwrap();
+        match result {
+            SearchReplaceOutput::InvalidInput(msg) => {
+                assert!(
+                    msg.contains("path_exists_use_edit"),
+                    "stable ADR error identity required: {msg}"
+                );
+            }
+            other => panic!("Expected InvalidInput path_exists_use_edit, got {other:?}"),
+        }
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        let res = shared.lock().await;
+        assert!(
+            res.get::<SessionSnippetStore>()
+                .expect("store")
+                .contains(&id),
+            "deny must not expire snippets"
+        );
+    }
+
+    #[tokio::test]
+    async fn vc005_empty_existing_file_also_denied_under_snippet_safe() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("empty.txt");
+        std::fs::write(&path, "").unwrap();
+        let tool = SearchReplaceTool;
+        let mut resources = test_resources(tmp.path());
+        resources.insert(Params(SearchReplaceParams {
+            snippet_safe: true,
+            ..Default::default()
+        }));
+        let input = make_input("empty.txt", "", "filled\n");
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
+            .await
+            .unwrap();
+        match result {
+            SearchReplaceOutput::InvalidInput(msg) => {
+                assert!(msg.contains("path_exists_use_edit"), "got {msg}");
+            }
+            other => panic!("Expected path_exists_use_edit, got {other:?}"),
+        }
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+    }
+
+    #[tokio::test]
+    async fn vc005_host_force_overwrite_writes_and_expires() {
+        let tmp = TempDir::new().unwrap();
+        let original = "old\n";
+        let path = tmp.path().join("forced.txt");
+        std::fs::write(&path, original).unwrap();
+        let abs = std::fs::canonicalize(&path).unwrap_or(path.clone());
+        let tool = SearchReplaceTool;
+        let mut resources = test_resources(tmp.path());
+        resources.insert(Params(SearchReplaceParams {
+            snippet_safe: true,
+            allow_force_write_overwrite: true,
+            ..Default::default()
+        }));
+        let id = mint_snippet(&mut resources, &abs, original, 1, 1);
+        let input = make_input("forced.txt", "", "new\n");
+        // SearchReplaceInput has no force field — host params only.
+        assert!(input.snippet_id.is_none());
+        let shared = resources.into_shared();
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(shared.clone()), input)
+            .await
+            .unwrap();
+        assert!(
+            matches!(result, SearchReplaceOutput::EditsApplied(_)),
+            "got {result:?}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new\n");
+        let res = shared.lock().await;
+        assert!(
+            !res.get::<SessionSnippetStore>()
+                .expect("store")
+                .contains(&id),
+            "force overwrite must expire path snippets"
+        );
+    }
+
+    #[tokio::test]
+    async fn vc005_create_new_still_ok_without_snippet_id() {
+        let tmp = TempDir::new().unwrap();
+        let tool = SearchReplaceTool;
+        let mut resources = test_resources(tmp.path());
+        resources.insert(Params(SearchReplaceParams {
+            snippet_safe: true,
+            ..Default::default()
+        }));
+        let input = make_input("brand_new_vc005.txt", "", "fresh\n");
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
+            .await
+            .unwrap();
+        match result {
+            SearchReplaceOutput::EditsApplied(_) => {
+                assert_eq!(
+                    std::fs::read_to_string(tmp.path().join("brand_new_vc005.txt")).unwrap(),
+                    "fresh\n"
+                );
+            }
+            other => panic!("Expected EditsApplied, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn vc005_session_isolation_expire_does_not_cross_resources() {
+        let tmp = TempDir::new().unwrap();
+        let body = "x\n";
+        let path = tmp.path().join("s.txt");
+        std::fs::write(&path, body).unwrap();
+        let abs = std::fs::canonicalize(&path).unwrap_or(path.clone());
+        let tool = SearchReplaceTool;
+
+        let mut resources_a = test_resources(tmp.path());
+        resources_a.insert(Params(SearchReplaceParams {
+            snippet_safe: true,
+            ..Default::default()
+        }));
+        let id_a = mint_snippet(&mut resources_a, &abs, body, 1, 1);
+
+        let mut resources_b = test_resources(tmp.path());
+        resources_b.insert(Params(SearchReplaceParams {
+            snippet_safe: true,
+            ..Default::default()
+        }));
+        let id_b = mint_snippet(&mut resources_b, &abs, body, 1, 1);
+
+        let mut input = make_input("s.txt", "x", "y");
+        input.snippet_id = Some(id_a.clone());
+        let shared_a = resources_a.into_shared();
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(shared_a.clone()), input)
+            .await
+            .unwrap();
+        assert!(matches!(result, SearchReplaceOutput::EditsApplied(_)));
+        assert!(
+            !shared_a
+                .lock()
+                .await
+                .get::<SessionSnippetStore>()
+                .unwrap()
+                .contains(&id_a)
+        );
+        // B's store is independent.
+        assert!(
+            resources_b
+                .get::<SessionSnippetStore>()
+                .unwrap()
+                .contains(&id_b)
+        );
     }
 
     #[tokio::test]

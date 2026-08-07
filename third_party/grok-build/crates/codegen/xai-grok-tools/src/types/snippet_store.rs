@@ -665,4 +665,81 @@ mod tests {
         assert_eq!(snippet_line_range(10, Some(3), Some(2)), (3, 4));
         assert_eq!(snippet_line_range(10, None, None), (1, 10));
     }
+
+    #[test]
+    fn vc005_expire_path_removes_only_matching_path() {
+        let mut store = SessionSnippetStore::new();
+        let a = store.issue(Path::new("/tmp/a.txt"), 1, 1, "va", "a", 1);
+        let b = store.issue(Path::new("/tmp/b.txt"), 1, 1, "vb", "b", 1);
+        let a2 = store.issue(Path::new("/tmp/a.txt"), 1, 1, "va", "a", 1);
+        store.expire_path(Path::new("/tmp/a.txt"));
+        assert!(!store.contains(&a.snippet_id));
+        assert!(!store.contains(&a2.snippet_id));
+        assert!(store.contains(&b.snippet_id));
+        assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn vc005_expire_all_clears_table() {
+        let mut store = SessionSnippetStore::new();
+        store.issue(Path::new("/tmp/a.txt"), 1, 1, "v", "x", 1);
+        store.issue(Path::new("/tmp/b.txt"), 1, 1, "v", "y", 1);
+        store.expire_all();
+        assert!(store.is_empty());
+    }
+
+    #[test]
+    fn vc005_bash_read_only_plan_is_none() {
+        let cwd = Path::new("/ws");
+        assert_eq!(
+            bash_snippet_expire_plan("ls -la", cwd),
+            BashSnippetExpirePlan::None
+        );
+        assert_eq!(
+            bash_snippet_expire_plan("echo hello", cwd),
+            BashSnippetExpirePlan::None
+        );
+        assert_eq!(
+            bash_snippet_expire_plan("git status", cwd),
+            BashSnippetExpirePlan::None
+        );
+    }
+
+    #[test]
+    fn vc005_bash_redirect_plan_expires_known_path() {
+        let cwd = Path::new("/ws");
+        match bash_snippet_expire_plan("echo x > foo.txt", cwd) {
+            BashSnippetExpirePlan::Paths(paths) => {
+                assert!(
+                    paths.iter().any(|p| p.ends_with("foo.txt")),
+                    "expected foo.txt in {paths:?}"
+                );
+            }
+            other => panic!("expected Paths, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn vc005_bash_unknown_mutator_plan_is_all() {
+        let cwd = Path::new("/ws");
+        assert_eq!(
+            bash_snippet_expire_plan("python do_stuff.py", cwd),
+            BashSnippetExpirePlan::All
+        );
+        assert_eq!(
+            bash_snippet_expire_plan("sudo true", cwd),
+            BashSnippetExpirePlan::All
+        );
+    }
+
+    #[test]
+    fn vc005_bash_rm_known_path_plan() {
+        let cwd = Path::new("/ws");
+        match bash_snippet_expire_plan("rm -f bar.txt", cwd) {
+            BashSnippetExpirePlan::Paths(paths) => {
+                assert!(paths.iter().any(|p| p.ends_with("bar.txt")));
+            }
+            other => panic!("expected Paths, got {other:?}"),
+        }
+    }
 }

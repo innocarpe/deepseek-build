@@ -6,11 +6,8 @@
 # workflows never report when docs-only → branch protection blocks merges.
 # A single always-on `required` job aggregates parallel work and stays required.
 #
-# Design constraint: a single CI run should finish in roughly 2–4 minutes.
-# The vendor (grok-build) lane is path-gated and scoped so it never drags
-# every-PR CI past that budget (see grok_test for scope decisions).
-#
-# UI: "CI / fmt", "CI / test", "CI / grok fmt", "CI / grok test", "CI / required"
+# UI: "CI / fmt", "CI / test", "CI / grok fmt",
+# "CI / grok clippy", "CI / grok test", "CI / required".
 
 name: CI
 
@@ -147,15 +144,14 @@ jobs:
       - run: ./scripts/check-semver.sh
       - run: node npm/scripts/check-version-match.js
 
-  # ---------------------------------------------------------------------------
-  # Vendor (grok-build) lane — path-gated, designed for ~2–4 min warm runs
-  # ---------------------------------------------------------------------------
+  # Vendored Grok workspace validation. Path-gated so docs-only/root-only PRs
+  # stay green, but vendor/workflow changes must validate the vendored workspace.
   grok_fmt:
     name: grok fmt
     needs: changes
     if: needs.changes.outputs.grok == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: third_party/grok-build
@@ -174,42 +170,60 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all -- --check
 
-  grok_test:
-    name: grok test
+  grok_clippy:
+    name: grok clippy
     needs: changes
     if: needs.changes.outputs.grok == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     defaults:
       run:
         working-directory: third_party/grok-build
     steps:
       - uses: actions/checkout@v4
-      - name: Install protobuf compiler
-        run: |
-          if ! command -v protoc >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq protobuf-compiler
-          fi
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.94.0"
+          components: clippy
+      - name: Install protobuf compiler
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq protobuf-compiler
+          echo "PROTOC=$(command -v protoc)" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: grok-build-clippy-v1
+          workspaces: third_party/grok-build -> target
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo clippy --all-targets --workspace -- -D warnings
+
+  grok_test:
+    name: grok test
+    needs: changes
+    if: needs.changes.outputs.grok == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: third_party/grok-build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.94.0"
+      - name: Install protobuf compiler
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq protobuf-compiler
+          echo "PROTOC=$(command -v protoc)" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: grok-build-test-v1
           workspaces: third_party/grok-build -> target
-          cache-all-crates: true
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Test pager render crate (scoped)
-        # Scope decisions (2–4 min budget, green-required):
-        #  - `-p xai-grok-pager-render` only. A full `--workspace` run would
-        #    hit 38 pre-existing xai-grok-pager dispatch test failures and
-        #    exceed the budget; those failures are tracked separately.
-        #  - One env-timing tmux probe test is skipped here (it runs fine
-        #    locally): it sleeps ~1.2s against a 1500ms deadline and flakes
-        #    on loaded CI runners. Skipping keeps this check non-flaky.
-        run: cargo test -p xai-grok-pager-render -- --skip successful_near_deadline_exit_still_returns_captured_output
+      - run: cargo test --workspace
 
   # ---------------------------------------------------------------------------
   # Always-on merge gate (branch protection / rulesets should require THIS name)
@@ -217,7 +231,7 @@ jobs:
   # ---------------------------------------------------------------------------
   required:
     name: required
-    needs: [changes, fmt, clippy, test, semver, grok_fmt, grok_test]
+    needs: [changes, fmt, clippy, test, semver, grok_fmt, grok_clippy, grok_test]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -231,6 +245,7 @@ jobs:
           echo "test=${{ needs.test.result }}"
           echo "semver=${{ needs.semver.result }}"
           echo "grok_fmt=${{ needs.grok_fmt.result }}"
+          echo "grok_clippy=${{ needs.grok_clippy.result }}"
           echo "grok_test=${{ needs.grok_test.result }}"
 
           fail=0
@@ -247,6 +262,7 @@ jobs:
             "test:${{ needs.test.result }}" \
             "semver:${{ needs.semver.result }}" \
             "grok_fmt:${{ needs.grok_fmt.result }}" \
+            "grok_clippy:${{ needs.grok_clippy.result }}" \
             "grok_test:${{ needs.grok_test.result }}"
           do
             name="${pair%%:*}"

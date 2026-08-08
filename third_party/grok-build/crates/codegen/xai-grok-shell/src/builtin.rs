@@ -26,9 +26,7 @@ pub fn extract_builtin_files(grok_home: &std::path::Path) {
     // the welcome-screen CHANGELOG click silently no-op after a version bump
     // (the seed is written before the agent starts, then deleted by this
     // cleanup on the version-transition first run).
-    for stale in &["CHANGELOG.json"] {
-        let _ = std::fs::remove_file(grok_home.join(stale));
-    }
+    let _ = std::fs::remove_file(grok_home.join("CHANGELOG.json"));
 
     for &(filename, content) in BUILTIN_FILES {
         if let Err(e) = std::fs::write(grok_home.join(filename), content) {

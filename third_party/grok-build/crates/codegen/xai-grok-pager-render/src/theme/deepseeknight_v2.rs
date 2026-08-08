@@ -96,7 +96,7 @@ impl Theme {
             gray_bright: GRAY_BRIGHT,
 
             // Semantic
-            command: YELLOW,   // v1 YELLOW restore — path is BLUE_TEXT, no collision
+            command: YELLOW, // v1 YELLOW restore — path is BLUE_TEXT, no collision
             path: BLUE_TEXT,
             running: AMBER,
             warning: AMBER,
@@ -218,11 +218,7 @@ mod tests {
         } else {
             60.0 * ((r - g) / delta + 4.0)
         };
-        if h < 0.0 {
-            h + 360.0
-        } else {
-            h
-        }
+        if h < 0.0 { h + 360.0 } else { h }
     }
 
     fn hue_gap(a: Color, b: Color) -> f64 {
@@ -314,8 +310,21 @@ mod tests {
     fn semantic_roles_only_use_declared_palette() {
         let t = Theme::deepseeknight_v2();
         let allowed = [
-            BLUE_DIM, BLUE, BLUE_MID, BLUE_TEXT, VIOLET, GREEN, RED, AMBER, YELLOW, FG, FG_DARK,
-            GRAY_BRIGHT, GRAY, GRAY_DIM, BORDER,
+            BLUE_DIM,
+            BLUE,
+            BLUE_MID,
+            BLUE_TEXT,
+            VIOLET,
+            GREEN,
+            RED,
+            AMBER,
+            YELLOW,
+            FG,
+            FG_DARK,
+            GRAY_BRIGHT,
+            GRAY,
+            GRAY_DIM,
+            BORDER,
         ];
         let mut roles = text_roles(&t);
         roles.extend([
@@ -398,7 +407,10 @@ mod tests {
     fn hover_and_visual_separate_on_different_axes() {
         let t = Theme::deepseeknight_v2();
         let dc = chroma(t.bg_visual) - chroma(t.bg_hover);
-        assert!(dc >= 30.0, "bg_visual vs bg_hover chroma delta {dc:.0} < 30");
+        assert!(
+            dc >= 30.0,
+            "bg_visual vs bg_hover chroma delta {dc:.0} < 30"
+        );
         assert!(
             hue_gap(t.bg_visual, BLUE) <= 6.0,
             "the selection tint must sit in the brand hue family"
@@ -463,8 +475,7 @@ mod tests {
         // two states rendered identically. The track colors must differ.
         let t = Theme::deepseeknight_v2();
         assert_ne!(
-            t.scrollbar_bg,
-            t.bg_highlight,
+            t.scrollbar_bg, t.bg_highlight,
             "following vs not-following scrollbar states must be visually distinct"
         );
     }

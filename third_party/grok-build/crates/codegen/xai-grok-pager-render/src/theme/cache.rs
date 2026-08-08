@@ -474,10 +474,7 @@ mod tests {
             );
             assert!(is_auto_mode(), "auto must arm the appearance watcher");
 
-            assert_eq!(
-                resolve_from_config(None, false),
-                ThemeKind::DeepSeekNight
-            );
+            assert_eq!(resolve_from_config(None, false), ThemeKind::DeepSeekNight);
         });
     }
 

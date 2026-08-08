@@ -1570,7 +1570,9 @@ pub(super) fn handle_prompt_response(
         });
         // Refresh DeepSeek status (balance + cache hit rate) after a turn;
         // no-op unless the session is DeepSeek-backed.
-        effects.extend(super::deepseek::maybe_refresh_deepseek_status(app, agent_id));
+        effects.extend(super::deepseek::maybe_refresh_deepseek_status(
+            app, agent_id,
+        ));
         note_peek_page_flip(app, agent_id, page_flip_entry);
         return effects;
     }

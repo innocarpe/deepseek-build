@@ -2340,9 +2340,9 @@ fn picking_enum_esc_returns_to_browse() {
                 "Esc revert must dispatch the original canonical"
             );
         }
-        other => panic!(
-            "expected Action::PreviewTheme(\"deepseeknight-v2\") on Esc, got {other:?}"
-        ),
+        other => {
+            panic!("expected Action::PreviewTheme(\"deepseeknight-v2\") on Esc, got {other:?}")
+        }
     }
     assert!(matches!(s.mode(), SettingsModalMode::Browse));
 }
@@ -7165,7 +7165,9 @@ fn max_thoughts_width_preview_title_styling_distinguishes_from_content() {
         // because `theme::oscura` is a private module.
         crate::theme::ThemeKind::OscuraMidnight => crate::theme::Theme::current(),
         crate::theme::ThemeKind::DeepSeekNight => crate::theme::Theme::deepseeknight(),
-        crate::theme::ThemeKind::DeepSeekNightNeutral => crate::theme::Theme::deepseeknight_neutral(),
+        crate::theme::ThemeKind::DeepSeekNightNeutral => {
+            crate::theme::Theme::deepseeknight_neutral()
+        }
         crate::theme::ThemeKind::Auto => crate::theme::Theme::groknight(),
     };
     assert_ne!(

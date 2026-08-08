@@ -1257,8 +1257,9 @@ impl AppView {
                     agent.deepseek_status_session_id.as_ref(),
                     agent.deepseek_status.as_ref(),
                 ) {
-                    (Some(status_session_id), Some(status))
-                        if status_session_id == session_id => status.is_deepseek,
+                    (Some(status_session_id), Some(status)) if status_session_id == session_id => {
+                        status.is_deepseek
+                    }
                     _ => true,
                 }
             }

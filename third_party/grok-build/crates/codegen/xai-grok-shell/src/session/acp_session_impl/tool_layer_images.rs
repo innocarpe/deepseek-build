@@ -323,10 +323,16 @@ mod tests {
         });
         let mut bytes = Vec::new();
         source
-            .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
             .expect("encode screenshot fixture");
         let payload = base64::engine::general_purpose::STANDARD.encode(bytes);
-        assert!(payload.len() > 100_000, "fixture must exercise a large result");
+        assert!(
+            payload.len() > 100_000,
+            "fixture must exercise a large result"
+        );
 
         let mut mcp = MCPOutput::okay_output(
             "browser_screenshot".into(),
@@ -364,7 +370,10 @@ mod tests {
         ])];
         let encoded_history = serde_json::to_string(&persisted).unwrap();
         let mut resumed: Vec<ConversationItem> = serde_json::from_str(&encoded_history).unwrap();
-        assert_eq!(crate::session::storage::jsonl::strip_invalid_images(&mut resumed), 0);
+        assert_eq!(
+            crate::session::storage::jsonl::strip_invalid_images(&mut resumed),
+            0
+        );
 
         let truncated_url = format!("data:image/png;base64,{}", &payload[..payload.len() / 2]);
         let mut poisoned = vec![ConversationItem::user_with_parts(vec![

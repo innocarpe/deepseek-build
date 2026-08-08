@@ -124,7 +124,11 @@ async fn handle_status(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
 /// session's base URL is not DeepSeek, no API key is configured, or the
 /// upstream call/parse fails.
 async fn fetch_balance(handle: &SessionHandle) -> Option<DeepSeekBalance> {
-    let base_url = handle.chat_state_handle.get_sampling_config().await?.base_url;
+    let base_url = handle
+        .chat_state_handle
+        .get_sampling_config()
+        .await?
+        .base_url;
     if !is_deepseek_base_url(&base_url) {
         return None;
     }
@@ -217,8 +221,14 @@ mod tests {
                 total_balance: "9.82".into(),
             },
         ];
-        assert_eq!(prefer_currency(&infos, &["USD", "CNY"]).unwrap().currency, "USD");
-        assert_eq!(prefer_currency(&infos, &["CNY", "USD"]).unwrap().currency, "CNY");
+        assert_eq!(
+            prefer_currency(&infos, &["USD", "CNY"]).unwrap().currency,
+            "USD"
+        );
+        assert_eq!(
+            prefer_currency(&infos, &["CNY", "USD"]).unwrap().currency,
+            "CNY"
+        );
         // Unknown preference falls back to the first entry.
         assert_eq!(
             prefer_currency(&infos, &["EUR", "JPY"]).unwrap().currency,
@@ -311,7 +321,10 @@ mod tests {
     fn balance_url_normalization_strips_v1_suffix() {
         // Mirrors the normalization applied in `fetch_balance`.
         let normalized = |base: &str| {
-            format!("{}/user/balance", base.trim_end_matches('/').trim_end_matches("/v1"))
+            format!(
+                "{}/user/balance",
+                base.trim_end_matches('/').trim_end_matches("/v1")
+            )
         };
         assert_eq!(
             normalized("https://api.deepseek.com"),

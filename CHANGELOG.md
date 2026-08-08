@@ -8,6 +8,10 @@
   upstream Grok x.ai channel pointers, npm installs are classified as npm, and
   the product never auto-downgrades for any installer classification.
 
+## 5.5.1 — 2026-08-09
+
+- fix update banner advertising Grok Build version as available update
+
 ## 5.5.0 — 2026-08-08
 
 - Vision-complete freeze cut merged on `main`: V1 Deep Code + V2 Reasonix + V3

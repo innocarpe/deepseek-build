@@ -388,21 +388,23 @@ async fn gh_release_same_version_no_update() {
 // auto_update_target: the leader/background auto-install decision
 //
 // Unlike the upgrade-only `check_update_status` report, this is the
-// downgrade-aware convergence decision. It gates on the installer, so
-// authoritative installers (gh-release/internal) follow a rolled-back pointer
-// while npm never downgrades. `fetch_latest_version` keeps these hermetic.
+// auto-install convergence decision. DeepSeek Build never downgrades, for any
+// installer classification — the pointer-rollback convergence of upstream Grok
+// does not apply to the product. `fetch_latest_version` keeps these hermetic.
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[tokio::test]
 #[serial]
-async fn auto_update_target_gh_release_rollback_returns_older() {
+async fn auto_update_target_gh_release_rollback_returns_none() {
+    // DeepSeek Build never converges down: a rolled-back pointer (or, in the
+    // wild, the Grok Build channel version) must not trigger an install.
     let g = setup_gh("0.2.26");
     g.set_stable_only_stdout("v0.2.22\n");
 
     assert_eq!(
         auto_update_target(&make_config("stable")).await,
-        Some(("gh-release", "0.2.22".to_string())),
-        "authoritative installer must converge down on a rolled-back pointer"
+        None,
+        "the product must never downgrade, even for gh-release installs"
     );
 }
 
@@ -513,17 +515,20 @@ async fn ensure_latest_noop_when_running_and_disk_current() {
 
 #[tokio::test]
 #[serial]
-async fn ensure_latest_relaunches_onto_rolled_back_disk() {
-    // Pointer rolled back to 0.2.22 and the disk already converged; a running
-    // 0.2.26 leader must relaunch onto the older binary (gh-release is an
-    // authoritative installer → downgrades allowed).
+async fn ensure_latest_does_not_relaunch_onto_rolled_back_disk() {
+    // Pointer rolled back to 0.2.22 and the disk already converged; the
+    // running 0.2.26 must NOT relaunch onto the older binary — the product
+    // never downgrades, for any installer classification.
     let g = setup_gh("0.2.26");
     g.set_stable_only_stdout("v0.2.22\n");
     fake_managed_install("0.2.22");
 
     let outcome = ensure_latest_on_disk(&make_config("stable")).await.unwrap();
     assert_eq!(outcome.installed, None, "disk already at pointer");
-    assert!(outcome.relaunch_needed, "downgrade relaunch expected");
+    assert!(
+        !outcome.relaunch_needed,
+        "downgrade relaunch must never happen for the product"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

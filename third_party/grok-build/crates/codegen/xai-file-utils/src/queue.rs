@@ -14,7 +14,7 @@ use crate::storage_client::{Auth401AttributionCallback, HttpUploadError};
 use crate::{BlobCompression, TraceExportConfig, UploadMethod};
 use anyhow::Context;
 use async_compression::tokio::bufread::ZstdEncoder;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -2337,13 +2337,22 @@ pub fn cleanup_orphaned_uploads(grok_home: &Path, max_age: Duration) -> u64 {
 /// When `stats` is `Some`, each deleted lone queue file (temp without sidecar
 /// or vice versa) bumps `cleanup_orphan_mismatched`. Pairing is decided against
 /// a name snapshot taken before any deletion, so the count is independent of
-/// visit order.
+/// visit order. Pair ages are also snapshotted before deletion, so temp files
+/// never lose sidecar-derived age when a sidecar is visited first.
 fn cleanup_queue_dir(queue_dir: &Path, max_age: Duration, stats: Option<&UploadQueueStats>) -> u64 {
     let entries: Vec<std::fs::DirEntry> = match std::fs::read_dir(queue_dir) {
         Ok(e) => e.flatten().collect(),
         Err(_) => return 0,
     };
     let all_names: HashSet<std::ffi::OsString> = entries.iter().map(|e| e.file_name()).collect();
+    let pair_ages: HashMap<std::ffi::OsString, Duration> = entries
+        .iter()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let name = entry.file_name();
+            pair_age(&path, &name, &all_names).map(|age| (name, age))
+        })
+        .collect();
     let mut cleaned = 0u64;
     let mut cleaned_bytes = 0u64;
     for entry in &entries {
@@ -2359,7 +2368,7 @@ fn cleanup_queue_dir(queue_dir: &Path, max_age: Duration, stats: Option<&UploadQ
             cleaned_bytes += sub_bytes;
             continue;
         }
-        let age = pair_age(&path, &name, &all_names).unwrap_or_else(|| {
+        let age = pair_ages.get(&name).copied().unwrap_or_else(|| {
             metadata
                 .modified()
                 .ok()

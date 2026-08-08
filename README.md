@@ -37,11 +37,12 @@
 </p>
 
 > [!NOTE]
-> **Product status:** the `5.x` line is the owner-bar-complete product. The
+> **Product status:** the `5.x` line is the owner-bar-complete product.
+> **`5.5.0`** is the vision-complete freeze — Deep Code (L1), Reasonix (L2),
+> and Grok throughput (L3) closed on Path A. The
 > [`5.0.0` cut](docs/product/evidence/CUT_5_0_0_2026-08-07.md) passed the Path A
-> ledger and independent reviews; `main` currently reports `5.5.0` after the
-> vision-complete stack merged. npm and GitHub Latest still report `5.2.2` until
-> the release lane publishes `5.5.0`. Earlier `3.x` and `4.x` tags are
+> ledger and independent reviews; `main` is at `5.5.0` and the release lane
+> publishes it as the current version. Earlier `3.x` and `4.x` tags are
 > documented as partial attempts in the [version history](docs/product/versions/README.md).
 
 ## Quick start

@@ -658,6 +658,7 @@ fn rows_contain_categories_and_settings_through_pr_14() {
             // both the pager drain and the shell promote. Registered before
             // multiline_mode, so it renders first).
             "combine_queued_prompts",
+            "confirm_before_rewind",
             // PAGER-owned multiline (Editor category).
             "multiline_mode",
             // SHELL-owned prompt_suggestions (Editor; tab autocomplete
@@ -2291,8 +2292,8 @@ fn int_editing_value_click_on_value_text_is_noop() {
 #[test]
 fn picking_enum_esc_dispatches_preview_revert_for_each_key() {
     let cases: &[(&str, &str)] = &[
-        ("theme", "deepseeknight-v2"),
-        ("auto_dark_theme", "deepseeknight-v2"),
+        ("theme", "deepseeknight"),
+        ("auto_dark_theme", "deepseeknight"),
         ("auto_light_theme", "grokday"),
     ];
     for &(key, original) in cases {
@@ -2339,7 +2340,9 @@ fn picking_enum_esc_returns_to_browse() {
                 "Esc revert must dispatch the original canonical"
             );
         }
-        other => panic!("expected Action::PreviewTheme(\"groknight\") on Esc, got {other:?}"),
+        other => panic!(
+            "expected Action::PreviewTheme(\"deepseeknight-v2\") on Esc, got {other:?}"
+        ),
     }
     assert!(matches!(s.mode(), SettingsModalMode::Browse));
 }
@@ -6414,13 +6417,13 @@ fn click_settings_breadcrumb_collapses_picker_to_browse() {
     );
     // For preview-supporting enums (theme), the breadcrumb-
     // click revert dispatches `Action::PreviewTheme(original)`.
-    // The original canonical for the default theme is
-    // `"deepseeknight-v2"`. Tightened from the previous `Action(_) |
+    // The original canonical for the product-default theme is
+    // `"deepseeknight"`. Tightened from the previous `Action(_) |
     // Changed` to lock in the revert contract.
     match outcome {
         SettingsKeyOutcome::Action(Action::PreviewTheme(orig)) => {
             assert_eq!(
-                orig, "deepseeknight-v2",
+                orig, "deepseeknight",
                 "breadcrumb-click revert must carry the original canonical",
             );
         }
@@ -6469,7 +6472,7 @@ fn click_settings_breadcrumb_ignores_close_on_picker_exit() {
     );
     match outcome {
         SettingsKeyOutcome::Action(Action::PreviewTheme(orig)) => {
-            assert_eq!(orig, "deepseeknight-v2");
+            assert_eq!(orig, "deepseeknight");
         }
         other => panic!("expected preview revert Action, got {other:?}"),
     }
@@ -6514,8 +6517,8 @@ fn click_settings_breadcrumb_after_nav_reverts_to_original() {
         }
         other => panic!("expected PickingEnum, got {other:?}"),
     };
-    // Pick a different index. The default theme is `groknight`
-    // (index 1 per the registry); advance to index 0 to ensure
+    // Pick a different index. The picker catalog starts with `auto` at index
+    // 0 and `deepseeknight-v2` at index 1; choose the other entry to ensure
     // we're navigating to a different value.
     let target_idx = if advanced_idx == 0 { 1 } else { 0 };
     match s.mode() {
@@ -6574,10 +6577,10 @@ fn d_key_in_picking_enum_dispatches_open_reset_confirm() {
                 key, "theme",
                 "OpenResetConfirm key must be the active picker setting",
             );
-            // Default theme is `deepseeknight-v2`; entering the picker
-            // captures original_value = current value = deepseeknight-v2.
+            // Default theme is `deepseeknight`; entering the picker captures
+            // original_value = current value = deepseeknight.
             assert_eq!(
-                orig, "deepseeknight-v2",
+                orig, "deepseeknight",
                 "PreviewTheme revert must carry the original canonical",
             );
         }
@@ -7153,6 +7156,7 @@ fn max_thoughts_width_preview_title_styling_distinguishes_from_content() {
     // raw theme directly so this assertion survives `NO_COLOR`
     // / 256-color quantization.
     let raw_theme = match crate::theme::Theme::current_kind() {
+        crate::theme::ThemeKind::DeepSeekNightV2 => crate::theme::Theme::deepseeknight_v2(),
         crate::theme::ThemeKind::GrokNight => crate::theme::Theme::groknight(),
         crate::theme::ThemeKind::TokyoNight => crate::theme::Theme::tokyonight(),
         crate::theme::ThemeKind::GrokDay => crate::theme::Theme::grokday(),
@@ -7160,7 +7164,6 @@ fn max_thoughts_width_preview_title_styling_distinguishes_from_content() {
         // Resolved via `Theme::current()` rather than a constructor
         // because `theme::oscura` is a private module.
         crate::theme::ThemeKind::OscuraMidnight => crate::theme::Theme::current(),
-        crate::theme::ThemeKind::DeepSeekNightV2 => crate::theme::Theme::deepseeknight_v2(),
         crate::theme::ThemeKind::DeepSeekNight => crate::theme::Theme::deepseeknight(),
         crate::theme::ThemeKind::DeepSeekNightNeutral => crate::theme::Theme::deepseeknight_neutral(),
         crate::theme::ThemeKind::Auto => crate::theme::Theme::groknight(),

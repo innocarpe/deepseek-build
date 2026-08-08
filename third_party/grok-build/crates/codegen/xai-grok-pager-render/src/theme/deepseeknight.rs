@@ -1,14 +1,16 @@
-//! DeepSeekNight themes — product skins for DeepSeek Build.
+//! DeepSeekNight themes — product and compatibility skins for DeepSeek Build.
 //!
-//! Two selectable dark themes share the **DeepSeek blue `#4D6BFE`** accent
-//! (user prompt, system, skill, fuzzy, selection) and differ only in the
-//! background/gray ramp:
+//! Two legacy-compatible dark themes share the **DeepSeek blue `#4D6BFE`**
+//! accent (user prompt, system, skill, fuzzy, selection) and differ only in
+//! the background/gray ramp:
 //!
 //! - [`Theme::deepseeknight`] — **DeepSeek Night**: blue-tinted dark chrome,
 //!   the original dsb signature look.
 //! - [`Theme::deepseeknight_neutral`] — **DeepSeek Night Neutral**:
 //!   hue-neutral ramp (r≈g≈b) at the same luminance, so the blue accent
-//!   reads as a deliberate highlight instead of a wash. Product default.
+//!   reads as a deliberate highlight instead of a wash. Retained for
+//!   legacy/config compatibility; the current product default is the classic
+//!   blue-tinted skin.
 //!
 //! Blue-on-dark is the worst hue for small-text legibility (chromatic
 //! aberration, low blue luminance), so the neutral variant keeps the gray
@@ -95,15 +97,15 @@ mod palette {
 use palette::*;
 
 impl Theme {
-    /// DeepSeek Build product night theme (`#4D6BFE` accents, blue-tinted ramp).
+    /// Legacy-compatible DeepSeek Night theme (`#4D6BFE` accents, blue-tinted ramp).
     pub const fn deepseeknight() -> Self {
         Self::deepseeknight_inner(false)
     }
 
-    /// DeepSeek Build product night theme, neutral ramp (`#4D6BFE` accents).
+    /// Legacy-compatible DeepSeek Night theme with a neutral ramp (`#4D6BFE` accents).
     ///
-    /// Product default: same accents as [`Self::deepseeknight`] on a
-    /// hue-neutral background/gray ramp.
+    /// Retained for direct config and alias compatibility; the current
+    /// product default is [`super::Theme::deepseeknight`].
     pub const fn deepseeknight_neutral() -> Self {
         Self::deepseeknight_inner(true)
     }
@@ -147,7 +149,6 @@ impl Theme {
 
             accent_plan: rgb(255, 219, 141),
             accent_verify: MAGENTA,
-            accent_feedback: GREEN1,
             accent_remember: Color::Rgb(139, 195, 74),
 
             selection_border: DEEPSEEK_BLUE_DIM,

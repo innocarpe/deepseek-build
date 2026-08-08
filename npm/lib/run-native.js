@@ -123,14 +123,21 @@ function productVersion() {
 
 function productEnv() {
   const home = process.env.DEEPSEEK_BUILD_HOME || path.join(os.homedir(), '.deepseek-build');
-  const theme = process.env.DEEPSEEK_BUILD_THEME || process.env.GROK_THEME || 'deepseeknight';
   const version = productVersion();
   const env = {
     ...process.env,
     GROK_HOME: process.env.GROK_HOME || home,
-    GROK_THEME: theme,
-    LC_GROK_THEME: theme,
   };
+  // Only force a theme via env when the user explicitly asked
+  // (DEEPSEEK_BUILD_THEME / GROK_THEME). Injecting a default here overrode
+  // `[ui].theme` in the product config at every launch, so an in-pager
+  // `/theme` choice never survived a restart (agent_launch.rs contract:
+  // "env is only for explicit user override").
+  const userTheme = process.env.DEEPSEEK_BUILD_THEME || process.env.GROK_THEME;
+  if (userTheme && userTheme.trim()) {
+    env.GROK_THEME = userTheme;
+    env.LC_GROK_THEME = userTheme;
+  }
   // Product SemVer for agent TUI display + update checks (not vendor 0.2.x).
   if (version) {
     env.DEEPSEEK_BUILD_VERSION = process.env.DEEPSEEK_BUILD_VERSION || version;

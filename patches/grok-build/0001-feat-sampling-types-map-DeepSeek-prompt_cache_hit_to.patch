@@ -1,25 +1,20 @@
-From 6bce598efc4f8d282b4bd11ed6a8097a0aa0da0a Mon Sep 17 00:00:00 2001
+From af9b3527d1ed7ede02b696ed7068b148fad35ac9 Mon Sep 17 00:00:00 2001
 From: Wooseong Kim <innocarpe@gmail.com>
-Date: Fri, 7 Aug 2026 14:36:25 +0900
-Subject: [PATCH 1/5] feat(sampling-types): map DeepSeek
- prompt_cache_hit_tokens into cached_read_tokens
+Date: Fri, 7 Aug 2026 22:00:50 +0900
+Subject: [PATCH 1/6] feat(sampling-types): map DeepSeek prompt_cache_hit_tokens into cached_read_tokens
 
-DeepSeek reports cache hits as a top-level `prompt_cache_hit_tokens` field
-instead of OpenAI-style `prompt_tokens_details.cached_tokens`, so the usage
-mapping previously always recorded 0 cached tokens for DeepSeek responses.
+DeepSeek reports prompt-cache hits in the top-level
+`prompt_cache_hit_tokens` field rather than OpenAI's nested token details.
+Prefer the nested mapping when it is present and fall back to the DeepSeek
+field, with focused conversion coverage for both payload shapes.
 
-- Add optional `prompt_cache_hit_tokens` to `Usage` (serde default, absent
-  on x.ai/OpenAI responses -> backward compatible).
-- Prefer `prompt_tokens_details.cached_tokens` when present, fall back to
-  the DeepSeek top-level field in `TokenUsage` conversion.
-- Tests for both the fallback mapping and the nested-details precedence.
 ---
  .../src/conversation.rs                       | 57 ++++++++++++++++++-
  .../xai-grok-sampling-types/src/types.rs      |  5 ++
  2 files changed, 61 insertions(+), 1 deletion(-)
 
 diff --git a/third_party/grok-build/crates/codegen/xai-grok-sampling-types/src/conversation.rs b/third_party/grok-build/crates/codegen/xai-grok-sampling-types/src/conversation.rs
-index 51b5bf7..e500c8d 100644
+index 9fd4f80..72e9c2e 100644
 --- a/third_party/grok-build/crates/codegen/xai-grok-sampling-types/src/conversation.rs
 +++ b/third_party/grok-build/crates/codegen/xai-grok-sampling-types/src/conversation.rs
 @@ -726,6 +726,7 @@ pub struct TokenUsage {
@@ -46,7 +41,7 @@ index 51b5bf7..e500c8d 100644
          Self {
              prompt_tokens: u.prompt_tokens,
              completion_tokens: u.completion_tokens,
-@@ -2366,8 +2371,58 @@ mod tests {
+@@ -2364,8 +2369,58 @@ mod tests {
      use super::test_support::*;
      use super::*;
      use crate::tool_overrides::*;
@@ -123,4 +118,3 @@ index 01b37c6..56359d4 100644
      /// normalize `0` to "unreported" (see `stream/chat_completions.rs`).
 -- 
 2.50.1 (Apple Git-155)
-

@@ -520,6 +520,7 @@ pub fn current_value_for(
         "combine_queued_prompts" => Some(SettingValue::Bool(
             crate::appearance::cache::load_combine_queued_prompts(),
         )),
+        "confirm_before_rewind" => Some(SettingValue::Bool(ui.confirm_before_rewind_enabled())),
         "simple_mode" => Some(SettingValue::Bool(ui.simple_mode.unwrap_or(true))),
         // Per-tip contextual hints — `None` (inherit) reads as the default ON.
         "contextual_hints.undo" => {
@@ -616,14 +617,14 @@ pub fn current_value_for(
             ui.theme
                 .as_deref()
                 .and_then(crate::theme::canonical_name)
-                .unwrap_or("deepseeknight-v2"),
+                .unwrap_or("deepseeknight"),
         )),
         "auto_dark_theme" => Some(SettingValue::Enum(
             ui.auto_dark_theme
                 .as_deref()
                 .and_then(crate::theme::canonical_name)
                 .filter(|s| *s != "auto")
-                .unwrap_or("deepseeknight-v2"),
+                .unwrap_or("deepseeknight"),
         )),
         "auto_light_theme" => Some(SettingValue::Enum(
             ui.auto_light_theme
@@ -840,6 +841,13 @@ mod tests {
                         "page_flip_on_send default drifts from UiConfig::default()"
                     );
                 }
+                ("confirm_before_rewind", SettingKind::Bool { default }) => {
+                    assert_eq!(
+                        *default,
+                        ui.confirm_before_rewind_enabled(),
+                        "confirm_before_rewind default drifts from UiConfig::default()"
+                    );
+                }
                 ("combine_queued_prompts", SettingKind::Bool { default }) => {
                     assert_eq!(
                         *default,
@@ -863,7 +871,7 @@ mod tests {
                         .theme
                         .as_deref()
                         .and_then(crate::theme::canonical_name)
-                        .unwrap_or("deepseeknight-v2");
+                        .unwrap_or("deepseeknight");
                     assert_eq!(
                         *default, expected,
                         "theme default drifts from UiConfig::default()",
@@ -879,7 +887,7 @@ mod tests {
                         .as_deref()
                         .and_then(crate::theme::canonical_name)
                         .filter(|s| *s != "auto")
-                        .unwrap_or("deepseeknight-v2");
+                        .unwrap_or("deepseeknight");
                     assert_eq!(
                         *default, expected,
                         "auto_dark_theme default drifts from UiConfig::default()",
@@ -1421,7 +1429,7 @@ mod tests {
         let value = current_value_for("auto_dark_theme", &ui, &pager).expect("must resolve");
         assert_eq!(
             value,
-            SettingValue::Enum("deepseeknight-v2"),
+            SettingValue::Enum("deepseeknight"),
             "corrupted `auto_dark_theme = \"auto\"` must fall back to canonical default",
         );
     }
@@ -1450,7 +1458,7 @@ mod tests {
         };
         let pager = PagerLocalSnapshot::default();
         let value = current_value_for("auto_dark_theme", &ui, &pager).expect("must resolve");
-        assert_eq!(value, SettingValue::Enum("deepseeknight-v2"));
+        assert_eq!(value, SettingValue::Enum("deepseeknight"));
     }
 
     /// The persisted `fork_secondary_model` slug resolves to the catalog

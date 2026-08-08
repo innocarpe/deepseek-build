@@ -130,6 +130,66 @@ fn failed_is_silent_and_keeps_state() {
 }
 
 #[test]
+fn transient_failure_keeps_polling_for_current_session() {
+    let mut app = test_app_with_agent();
+    let effects = dispatch(
+        Action::TaskComplete(TaskResult::DeepSeekStatusFailed {
+            agent_id: AgentId(0),
+            session_id: "test-session".to_string().into(),
+            error: "connection reset".into(),
+        }),
+        &mut app,
+    );
+    assert!(effects.is_empty(), "failure is silent: {effects:?}");
+    assert!(app.deepseek_poll_wanted(), "transient failure must retry");
+    assert_eq!(maybe_refresh_deepseek_status(&mut app, AgentId(0)).len(), 1);
+}
+
+#[test]
+fn unsupported_status_stops_only_matching_session() {
+    let mut app = test_app_with_agent();
+    let _ = dispatch(
+        Action::TaskComplete(TaskResult::DeepSeekStatusFailed {
+            agent_id: AgentId(0),
+            session_id: "test-session".to_string().into(),
+            error: "not supported by this agent version".into(),
+        }),
+        &mut app,
+    );
+    assert!(!app.deepseek_poll_wanted(), "unsupported capability is terminal");
+
+    let _ = dispatch(
+        Action::TaskComplete(TaskResult::DeepSeekStatusFailed {
+            agent_id: AgentId(0),
+            session_id: "old-session".to_string().into(),
+            error: "not supported by this agent version".into(),
+        }),
+        &mut app,
+    );
+    assert!(!app.deepseek_poll_wanted(), "stale failure cannot reopen polling");
+}
+
+#[test]
+fn stale_unsupported_failure_does_not_disable_new_session() {
+    let mut app = test_app_with_agent();
+    app.agents
+        .get_mut(&AgentId(0))
+        .unwrap()
+        .session
+        .session_id = Some("new-session".into());
+    let _ = dispatch(
+        Action::TaskComplete(TaskResult::DeepSeekStatusFailed {
+            agent_id: AgentId(0),
+            session_id: "old-session".to_string().into(),
+            error: "not supported by this agent version".into(),
+        }),
+        &mut app,
+    );
+    assert!(app.deepseek_poll_wanted(), "new session must retain first probe");
+    assert_eq!(maybe_refresh_deepseek_status(&mut app, AgentId(0)).len(), 1);
+}
+
+#[test]
 fn not_deepseek_flips_poll_wanted_off() {
     let mut app = test_app_with_agent();
     complete_deepseek(&mut app, "test-session", ds_status(false, None));

@@ -105,7 +105,6 @@ impl Theme {
 
             accent_plan: AMBER,
             accent_verify: VIOLET,
-            accent_feedback: GREEN,
             accent_remember: GREEN,
             accent_model: GRAY_BRIGHT,
 
@@ -256,7 +255,6 @@ mod tests {
             ("accent_model", t.accent_model),
             ("accent_plan", t.accent_plan),
             ("accent_verify", t.accent_verify),
-            ("accent_feedback", t.accent_feedback),
             ("accent_remember", t.accent_remember),
             ("md_heading_h1", t.md_heading_h1),
             ("md_heading_h2", t.md_heading_h2),

@@ -20,7 +20,7 @@ Tags and line PRDs do **not** override that file.
 | **2.x** | [PRD-v2.md](../PRD-v2.md) | **Shipped shell cut** | Grok-derived full-screen agent + DeepSeek entry/UI/npm |
 | **3.x** | [PRD-v3.md](../PRD-v3.md) | **Tagged `3.0.0` — owner-bar NOT MET** | Heart fusion *attempt*; Path A fusion incomplete (library / dead wiring) — [OWNER_BAR_ACCEPTANCE.md](../OWNER_BAR_ACCEPTANCE.md) |
 | **4.x** | [PRD-v4.md](../PRD-v4.md) | **Tagged `4.0.0`–`4.0.2` — owner-bar NOT MET** | L3 productization *attempt*; machinery + docs, not full product identity |
-| **5.x** | [PRD-v5.md](../PRD-v5.md) | **Owner-bar MET (`5.0.0`)** · **`5.1.0` on main** · vision-complete train active | Owner-bar cut [CUT_5_0_0](../evidence/CUT_5_0_0_2026-08-07.md) · vision residual [VISION_COMPLETE_5X_GOALS.md](../VISION_COMPLETE_5X_GOALS.md) (next feature minor **`5.2.0`+**) |
+| **5.x** | [PRD-v5.md](../PRD-v5.md) | **Owner-bar MET (`5.0.0`)** · **`5.3.0` Spec 45 cut in PR #138** · vision-complete train active | Owner-bar cut [CUT_5_0_0](../evidence/CUT_5_0_0_2026-08-07.md) · vision residual [VISION_COMPLETE_5X_GOALS.md](../VISION_COMPLETE_5X_GOALS.md) |
 
 Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** product major PRDs.
 
@@ -52,6 +52,7 @@ Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** p
 | 2026-08-07 | **`5.1.0`** DeepSeek Night v2 measured default theme | (this release) |
 | 2026-08-08 | **`5.2.0`** theme classic default + vision complete + theme picker restore | PR #_(fill in)_ |
 | 2026-08-08 | **`5.2.1`** DeepSeek Night v2 markdown hierarchy restore (h2/code/command hues) | PR #131 |
+| 2026-08-08 | **`5.2.2`** installer self-check + fresh inode (fix silent corrupt install) | PR #_(fill in)_ |
 | 2026-08-08 | **`5.3.0`** Spec 45 Path A snippet_id multi-edit R0A Deep Code cut | PR #138 |
 | 2026-08-07 | **`5.0.1`** widen the DeepSeek whale logo to official terminal proportions | PR #113 |
 | 2026-08-07 | **`4.0.4`** Image attachments on text-only DeepSeek endpoints (persist to session assets + OCR hint); DeepSeek status line with account balance & cache hit rate; G003 mint file_version on Path A read_file | PR #_(fill in)_ |
@@ -71,5 +72,3 @@ Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** p
 | [REPLAN_2.0.md](../REPLAN_2.0.md) | Historical replan that defined 2.0.0 intent |
 | [KNOWN_LIMITS.md](../KNOWN_LIMITS.md) | Runtime honesty for current SemVer on disk |
 | [CHANGELOG.md](../../../CHANGELOG.md) | Per-release notes |
-
-

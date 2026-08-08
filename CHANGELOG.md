@@ -8,18 +8,20 @@
   Grok throughput + V4 product finish criteria closed on public Path A evidence
 - Closes V3-60-3 residual: parent `snippet_id` mint → implement-class worker
   mutates same path → parent pre-mutation edit rejected (`snippet_stale`)
-- Dual adversarial review is external; npm / GitHub Latest publish remains
-  pending after the main merge
+- Published to npm (`5.5.0`) and GitHub Releases (`v5.5.0`) on 2026-08-08;
+  dual adversarial review is external
 
 ## 5.4.0 — 2026-08-08
 
 - L3 Path A R0A train cut (multi-tool/bg, subagent/worker-cache, worktree dogfood) + optional live L3 matrix
+- **Not published:** in-repo cut merged on `main` (PR #145) only — npm and GitHub Releases skipped `5.4.0` (published `5.2.2` → `5.5.0`)
 
 ## 5.3.0 — 2026-08-08
 
 - Spec 45 Path A Deep Code cut: public `deepseek-build`/`dsb` agent R0A multi-edit
   with session-local `snippet_id`, plus stale-id / bash invalidation fail-closed proof
   (stacked on VC003–VC005 mint/require/expire laws)
+- **Not published:** in-repo cut merged on `main` (PR #138) only — npm and GitHub Releases skipped `5.3.0` (published `5.2.2` → `5.5.0`)
 
 ## 5.2.2 — 2026-08-08
 

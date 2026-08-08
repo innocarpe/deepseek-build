@@ -5,14 +5,14 @@ This file is standing instructions for any coding agent working in this repo.
 ## Current phase
 
 **No active product ultragoal train.** The **`vision-complete-5x`** train is
-completed on `main` at **`5.5.0`**; the release lane is still pending, so npm and
-GitHub Latest may remain behind until publish completes. Do **not** re-plan
+completed on `main` at **`5.5.0`** and published to npm and GitHub Latest
+(`5.5.0`, 2026-08-08). Do **not** re-plan
 `5.0.1` through `5.5.0` as future feature cuts.
 
 **Archived board:** [`docs/product/VISION_COMPLETE_5X_GOALS.md`](docs/product/VISION_COMPLETE_5X_GOALS.md) · DAG [`WAVE_5x_VISION_PR_DAG.md`](docs/product/WAVE_5x_VISION_PR_DAG.md)
 
 **Completed trains:**
-- **`vision-complete-5x`** → **`5.5.0` on `main`** (release publish pending)
+- **`vision-complete-5x`** → **`5.5.0`** (published to npm + GitHub Releases, 2026-08-08)
 - **`owner-bar-5x`** → **`v5.0.0`** (owner-bar complete product)
 - **`fleet-4x`** → **`v4.0.0`** L3 productization *attempt* · patches **`4.0.1`** / **`4.0.2`** / **`4.0.x`**
 - **`heart-3x`** → **`v3.0.0`** heart fusion *attempt*

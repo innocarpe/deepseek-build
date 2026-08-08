@@ -20,7 +20,7 @@ Tags and line PRDs do **not** override that file.
 | **2.x** | [PRD-v2.md](../PRD-v2.md) | **Shipped shell cut** | Grok-derived full-screen agent + DeepSeek entry/UI/npm |
 | **3.x** | [PRD-v3.md](../PRD-v3.md) | **Tagged `3.0.0` — owner-bar NOT MET** | Heart fusion *attempt*; Path A fusion incomplete (library / dead wiring) — [OWNER_BAR_ACCEPTANCE.md](../OWNER_BAR_ACCEPTANCE.md) |
 | **4.x** | [PRD-v4.md](../PRD-v4.md) | **Tagged `4.0.0`–`4.0.2` — owner-bar NOT MET** | L3 productization *attempt*; machinery + docs, not full product identity |
-| **5.x** | [PRD-v5.md](../PRD-v5.md) | **Owner-bar MET (`5.0.0`)** · **vision-complete `5.5.0` merged on `main`** · release publish pending | Owner-bar cut [CUT_5_0_0](../evidence/CUT_5_0_0_2026-08-07.md) · completed vision board [VISION_COMPLETE_5X_GOALS.md](../VISION_COMPLETE_5X_GOALS.md) |
+| **5.x** | [PRD-v5.md](../PRD-v5.md) | **Owner-bar MET (`5.0.0`)** · **vision-complete `5.5.0` merged on `main`** · **published `5.5.0`** (npm + GitHub Releases, 2026-08-08) | Owner-bar cut [CUT_5_0_0](../evidence/CUT_5_0_0_2026-08-07.md) · completed vision board [VISION_COMPLETE_5X_GOALS.md](../VISION_COMPLETE_5X_GOALS.md) |
 
 Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** product major PRDs.
 
@@ -55,7 +55,7 @@ Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** p
 | 2026-08-08 | **`5.2.2`** installer self-check + fresh inode (fix silent corrupt install) | PR #_(fill in)_ |
 | 2026-08-08 | **`5.3.0`** Spec 45 Path A snippet_id multi-edit R0A Deep Code cut | PR #138 |
 | 2026-08-08 | **`5.4.0`** L3 Path A R0A train cut (multi-tool/bg, subagent/worker-cache, worktree dogfood) + optional live L3 matrix | PR #145 |
-| 2026-08-08 | **`5.5.0`** vision-complete freeze: V1-V4 Path A criteria + V3-60-3 parent snippet after worker R0A (merged on `main`; release publish pending) | PR #147 |
+| 2026-08-08 | **`5.5.0`** vision-complete freeze: V1-V4 Path A criteria + V3-60-3 parent snippet after worker R0A (merged on `main`; **published** npm `5.5.0` + GitHub Release `v5.5.0` on 2026-08-08) | PR #147 |
 | 2026-08-07 | **`5.0.1`** widen the DeepSeek whale logo to official terminal proportions | PR #113 |
 | 2026-08-07 | **`4.0.4`** Image attachments on text-only DeepSeek endpoints (persist to session assets + OCR hint); DeepSeek status line with account balance & cache hit rate; G003 mint file_version on Path A read_file | PR #_(fill in)_ |
 | 2026-08-07 | **release-cycle harness** — `bump-version.sh` + `release.sh` + CI sccache/fast-path + runbook | PR #94 |

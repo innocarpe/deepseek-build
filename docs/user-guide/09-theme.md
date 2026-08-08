@@ -38,8 +38,9 @@ Night v2**, and the hue-neutral ramp as **DeepSeek Night Neutral**.
 - Switch any time inside the TUI with `/theme` or the Settings theme sheet.
 - On first launch, the picker offers all three (`1` = classic default, `2` = v2,
   `3` = neutral).
-- Legacy `theme = "dark"` configs resolve to the classic DeepSeek Night skin
-  (the retired GrokNight theme is no longer reachable).
+- Legacy `theme = "dark"` configs resolve to the classic DeepSeek Night skin.
+  Explicit `theme = "groknight"` / `"grok-night"` configs are still accepted
+  for compatibility, but GrokNight is hidden from pickers.
 
 All three themes are DeepSeek blue (`#4D6BFE`) based; v2 tunes the palette ramp for
 legibility, neutral trades the blue-tinted grays for a hue-neutral ramp, classic

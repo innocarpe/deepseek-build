@@ -158,7 +158,7 @@ fn session_created_sets_session_id() {
     assert!(matches!(
         &effects[6],
         Effect::FetchDeepSeekStatus { agent_id, session_id }
-            if *agent_id == id && session_id.as_ref() == "new-session-123"
+            if *agent_id == id && session_id.0.as_ref() == "new-session-123"
     ));
     assert!(matches!(&effects[7], Effect::RegisterActiveSession { .. }));
     assert_eq!(

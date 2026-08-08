@@ -17,7 +17,7 @@ fn assert_billing_then_deepseek_status(effects: &[Effect], id: AgentId) {
                 }
             ] if *agent_id == id
                 && *deepseek_agent_id == id
-                && session_id.as_ref() == "test-session"
+                && session_id.0.as_ref() == "test-session"
         ),
         "expected billing then DeepSeek status refresh, got {effects:?}"
     );
@@ -44,7 +44,7 @@ fn assert_send_prompt_then_billing_then_deepseek_status(
             ] if text.as_str() == expected_text
                 && *agent_id == id
                 && *deepseek_agent_id == id
-                && session_id.as_ref() == "test-session"
+                && session_id.0.as_ref() == "test-session"
         ),
         "expected SendPrompt({expected_text:?}), billing, then DeepSeek status refresh, got {effects:?}"
     );
@@ -1455,7 +1455,7 @@ fn turn_end_fetches_prompt_suggestion_when_enabled() {
             Effect::FetchDeepSeekStatus {
                 agent_id,
                 session_id
-            } if *agent_id == id && session_id.as_ref() == "test-session"
+            } if *agent_id == id && session_id.0.as_ref() == "test-session"
         ),
         "expected DeepSeek status refresh third, got {effects:?}"
     );

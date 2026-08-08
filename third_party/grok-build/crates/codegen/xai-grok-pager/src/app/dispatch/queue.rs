@@ -1107,7 +1107,7 @@ mod tests {
                     }
                 ] if *agent_id == id
                     && *deepseek_agent_id == id
-                    && session_id.as_ref() == "test-session"
+                    && session_id.0.as_ref() == "test-session"
             ),
             "expected billing then DeepSeek status refresh, got {effects:?}"
         );
@@ -1199,7 +1199,7 @@ mod tests {
                 ] if text.as_str() == "second"
                     && *agent_id == id
                     && *deepseek_agent_id == id
-                    && session_id.as_ref() == "test-session"
+                    && session_id.0.as_ref() == "test-session"
             ),
             "expected drain, billing, and DeepSeek status refresh, got {effects:?}"
         );

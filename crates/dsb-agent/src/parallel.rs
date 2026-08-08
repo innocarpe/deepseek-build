@@ -111,9 +111,6 @@ mod tests {
         assert!(is_mutating_tool("bash", &json!({"command": "true"})));
         assert!(!is_mutating_tool("read", &json!({})));
         // bash_collect remains read-only for scheduling (collect does not mutate workspace)
-        assert!(!is_mutating_tool(
-            "bash_collect",
-            &json!({"job_id": "j1"})
-        ));
+        assert!(!is_mutating_tool("bash_collect", &json!({"job_id": "j1"})));
     }
 }

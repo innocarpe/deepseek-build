@@ -10,7 +10,9 @@ test fixture so it is killed and waited even if the test panics, and run
 auth retry budget turn tests on a large-stack current-thread runtime. Align
 gcloud-storage's JWT feature with the shell's rust_crypto jsonwebtoken backend
 so provider selection cannot race into the aws-lc-rs default-provider
-placeholder in vendored auth tests.
+placeholder in vendored auth tests. Allow memory-trace sample rotation tests to
+tolerate unrelated valid process-global trace events while retaining sample
+coverage.
 
 ---
  third_party/grok-build/Cargo.lock                  |  1 -
@@ -19,11 +21,12 @@ placeholder in vendored auth tests.
  .../codegen/xai-grok-config/src/managed_text/tests.rs |  4 +--
  .../xai-grok-pager/src/app/session_startup.rs      |  5 +---
  .../xai-grok-pager/src/diagnostics/fix_tests.rs    |  2 +-
+ .../codegen/xai-grok-pager/src/memory_trace.rs     |  9 +++++++--
  .../crates/codegen/xai-grok-pager/src/test_util.rs |  4 +--
  .../xai-grok-pager/tests/doctor_early_dispatch.rs  |  7 ++---
  .../turn/auth_retry_budget_tests.rs                | 64 +++++++++++++++++-----
  .../xai-grok-shell/src/session/unified_list/mod.rs | 17 ++++--------
- 10 files changed, 93 insertions(+), 55 deletions(-)
+ 11 files changed, 100 insertions(+), 57 deletions(-)
 
 diff --git a/third_party/grok-build/Cargo.lock b/third_party/grok-build/Cargo.lock
 index b8cf9e4..70d6ba4 100644
@@ -203,6 +206,34 @@ index 5066555..6fb9576 100644
      let home = root.join("home`dir");
      let target_dir = root.join("target`dir");
      std::fs::create_dir_all(&home).unwrap();
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/memory_trace.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/memory_trace.rs
+index 665996f..3932b48 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/memory_trace.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/memory_trace.rs
+@@ -574,16 +574,21 @@ mod tests {
+             test_support::record_sample_for_tests();
+         }
+         // Rotation happened at the tiny cap: a `.1` exists and both files
+-        // hold only valid JSON lines with the expected shape.
++        // hold only valid JSON lines with positive timestamps. The sink is
++        // process-global, so unrelated valid events may interleave here.
+         let rotated = dir.path().join("t.jsonl.1");
+         assert!(rotated.exists(), "rotation must produce a .1 file");
+         assert!(path.exists(), "rotation reopens the live file eagerly");
++        let mut sample_count = 0;
+         for p in [&path, &rotated] {
+             let body = std::fs::read_to_string(p).unwrap();
+             for line in body.lines() {
+                 let v: serde_json::Value = serde_json::from_str(line).expect("valid JSON line");
+-                assert_eq!(v["kind"], "sample");
+                 assert!(v["ts_ms"].as_u64().unwrap() > 0);
++                if v["kind"] == "sample" {
++                    sample_count += 1;
++                }
+             }
+         }
++        assert!(sample_count > 0, "at least one sample event must be retained");
+     }
 diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/test_util.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/test_util.rs
 index 2ccc5cc..b7c3453 100644
 --- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/test_util.rs

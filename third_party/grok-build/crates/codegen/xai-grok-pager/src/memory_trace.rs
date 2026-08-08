@@ -574,18 +574,23 @@ mod tests {
             test_support::record_sample_for_tests();
         }
         // Rotation happened at the tiny cap: a `.1` exists and both files
-        // hold only valid JSON lines with the expected shape.
+        // hold only valid JSON lines with positive timestamps. The sink is
+        // process-global, so unrelated valid events may interleave here.
         let rotated = dir.path().join("t.jsonl.1");
         assert!(rotated.exists(), "rotation must produce a .1 file");
         assert!(path.exists(), "rotation reopens the live file eagerly");
+        let mut sample_count = 0;
         for p in [&path, &rotated] {
             let body = std::fs::read_to_string(p).unwrap();
             for line in body.lines() {
                 let v: serde_json::Value = serde_json::from_str(line).expect("valid JSON line");
-                assert_eq!(v["kind"], "sample");
                 assert!(v["ts_ms"].as_u64().unwrap() > 0);
+                if v["kind"] == "sample" {
+                    sample_count += 1;
+                }
             }
         }
+        assert!(sample_count > 0, "at least one sample event must be retained");
     }
 
     #[test]

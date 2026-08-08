@@ -85,7 +85,7 @@ jobs:
           shared-key: workspace-v1
           cache-targets: false
           cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all -- --check
 
   clippy:
@@ -105,7 +105,7 @@ jobs:
           shared-key: workspace-v1
           cache-all-crates: true
           cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
       - run: cargo clippy --workspace --all-targets -- -W clippy::all
 
   test:
@@ -124,7 +124,7 @@ jobs:
           shared-key: workspace-v1
           cache-all-crates: true
           cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
       - run: cargo test --workspace
 
   semver:
@@ -168,7 +168,7 @@ jobs:
           workspaces: third_party/grok-build -> target
           cache-targets: false
           cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all -- --check
 
   grok_clippy:
@@ -196,7 +196,7 @@ jobs:
           shared-key: grok-build-clippy-v1
           workspaces: third_party/grok-build -> target
           cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
       - run: cargo clippy --all-targets --workspace -- -D warnings
 
   grok_test:
@@ -226,7 +226,7 @@ jobs:
           shared-key: grok-build-test-v1
           workspaces: third_party/grok-build -> target
           cache-on-failure: true
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
       - run: cargo test --workspace
 
   # ---------------------------------------------------------------------------

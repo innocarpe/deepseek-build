@@ -44,8 +44,8 @@ report `test` and could not merge. So:
 | Setting | Value |
 |---------|--------|
 | Action | `Swatinem/rust-cache@v2` |
-| `shared-key` | `workspace-v1` |
-| `save-if` | `main` only |
+| `shared-key` | Stable keys shared with `main`: `workspace-v1`, `grok-build-fmt-v1`, `grok-build-clippy-v1`, `grok-build-test-v1` |
+| `save-if` | PR + `main`; PR saves are automatically scoped to the `refs/pull/.../merge` ref, so later runs of the same PR can reuse them while the first run can still restore caches from `main` |
 | `cache-on-failure` | `true` |
 
 ## Path filters (skip expensive work)

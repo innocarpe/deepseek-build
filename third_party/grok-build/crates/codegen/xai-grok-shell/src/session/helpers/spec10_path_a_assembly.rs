@@ -285,14 +285,18 @@ pub fn discover_project_instructions(workspace_root: &std::path::Path) -> String
         }
     }
     let agents = workspace_root.join("AGENTS.md");
-    if agents.is_file() && let Ok(body) = std::fs::read_to_string(&agents) {
+    if agents.is_file()
+        && let Ok(body) = std::fs::read_to_string(&agents)
+    {
         let body = body.replace("\r\n", "\n").replace('\r', "\n");
         parts.push(format!("### AGENTS.md\n\n{}", body.trim_end()));
     }
     let nested = workspace_root
         .join(".deepseek-build")
         .join("instructions.md");
-    if nested.is_file() && let Ok(body) = std::fs::read_to_string(&nested) {
+    if nested.is_file()
+        && let Ok(body) = std::fs::read_to_string(&nested)
+    {
         let body = body.replace("\r\n", "\n").replace('\r', "\n");
         parts.push(format!("### instructions.md\n\n{}", body.trim_end()));
     }

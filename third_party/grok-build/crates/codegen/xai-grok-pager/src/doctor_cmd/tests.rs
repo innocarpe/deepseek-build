@@ -261,10 +261,7 @@ fn fake_standalone_facts_compose_through_shared_view() {
         .map(|finding| finding.id)
         .collect::<Vec<_>>();
     assert!(finding_ids.contains(&DiagnosticId::new("terminal", "tmux-clipboard")));
-    assert!(finding_ids.contains(&DiagnosticId::new(
-        "terminal",
-        "dcs-passthrough"
-    )));
+    assert!(finding_ids.contains(&DiagnosticId::new("terminal", "dcs-passthrough")));
 }
 
 #[test]

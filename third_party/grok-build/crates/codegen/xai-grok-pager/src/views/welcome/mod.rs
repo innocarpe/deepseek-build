@@ -3775,10 +3775,7 @@ mod tests {
             ..Default::default()
         });
         assert!(without.has_hero_box());
-        assert_eq!(
-            hero_box::min_content_height(0, 3, 0, 0),
-            boundary.height
-        );
+        assert_eq!(hero_box::min_content_height(0, 3, 0, 0), boundary.height);
         assert_eq!(
             hero_box::min_content_height(0, 3, 0, 1),
             boundary.height + 1

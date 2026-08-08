@@ -44,7 +44,7 @@ index faf8d38..59dee7c 100644
 -    assert_eq!(report.issue_count(), 1);
 +    assert_eq!(report.issue_count(), 2);
      assert!(
-@@ -257,6 +257,12 @@ fn fake_standalone_facts_compose_through_shared_view() {
+@@ -257,6 +257,9 @@ fn fake_standalone_facts_compose_through_shared_view() {
      );
 -    assert_eq!(
 -        report.findings[0].id,
@@ -56,10 +56,7 @@ index faf8d38..59dee7c 100644
 +        .map(|finding| finding.id)
 +        .collect::<Vec<_>>();
 +    assert!(finding_ids.contains(&DiagnosticId::new("terminal", "tmux-clipboard")));
-+    assert!(finding_ids.contains(&DiagnosticId::new(
-+        "terminal",
-+        "dcs-passthrough"
-+    )));
++    assert!(finding_ids.contains(&DiagnosticId::new("terminal", "dcs-passthrough")));
  }
 diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/views/welcome/mod.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/views/welcome/mod.rs
 index 2010b98..a8141f5 100644
@@ -80,12 +77,9 @@ index 2010b98..a8141f5 100644
 -            content_area: area,
 +            content_area: boundary,
              menu_height: 3,
-@@ -3777,2 +3777,21 @@ mod tests {
+@@ -3777,2 +3777,18 @@ mod tests {
          assert!(without.has_hero_box());
-+        assert_eq!(
-+            hero_box::min_content_height(0, 3, 0, 0),
-+            boundary.height
-+        );
++        assert_eq!(hero_box::min_content_height(0, 3, 0, 0), boundary.height);
 +        assert_eq!(
 +            hero_box::min_content_height(0, 3, 0, 1),
 +            boundary.height + 1

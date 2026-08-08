@@ -18,9 +18,15 @@ pub fn extract_builtin_files(grok_home: &std::path::Path) {
 
     let _ = std::fs::create_dir_all(grok_home);
 
-    // Clean up cached changelog files from previous version so
-    // /release-notes fetches fresh content for the new version.
-    for stale in &["CHANGELOG.json", "CHANGELOG.md"] {
+    // Clean up the cached JSON changelog from a previous version so
+    // /release-notes fetches fresh structured entries for the new version.
+    // The markdown cache ($GROK_HOME/CHANGELOG.md) is deliberately NOT
+    // deleted: DeepSeek Build seeds it with the product changelog at every
+    // launch (dsb-cli `seed_product_changelog`), and removing it here made
+    // the welcome-screen CHANGELOG click silently no-op after a version bump
+    // (the seed is written before the agent starts, then deleted by this
+    // cleanup on the version-transition first run).
+    for stale in &["CHANGELOG.json"] {
         let _ = std::fs::remove_file(grok_home.join(stale));
     }
 
@@ -83,6 +89,39 @@ mod tests {
                 "keep"
             );
         }
+    }
+
+    #[test]
+    fn version_bump_keeps_seeded_changelog_markdown() {
+        // DeepSeek Build seeds $GROK_HOME/CHANGELOG.md with the product
+        // changelog at launch; the version-transition cleanup must NOT delete
+        // it, or the welcome-screen CHANGELOG click silently no-ops.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        std::fs::create_dir_all(home).unwrap();
+
+        // A stale marker from the previous version (as after a product
+        // upgrade) plus a seeded changelog markdown cache.
+        std::fs::write(home.join(".metadata_version"), "0.0.0-stale").unwrap();
+        std::fs::write(home.join("CHANGELOG.md"), "# Changelog\n\n## Unreleased\n").unwrap();
+
+        extract_builtin_files(home);
+
+        assert_eq!(
+            std::fs::read_to_string(home.join("CHANGELOG.md")).unwrap(),
+            "# Changelog\n\n## Unreleased\n",
+            "seeded CHANGELOG.md must survive the version-transition cleanup"
+        );
+        // The JSON cache is CDN-derived and still refreshed on version bumps.
+        assert!(
+            !home.join("CHANGELOG.json").exists(),
+            "CHANGELOG.json (CDN-derived) may be cleaned for a fresh fetch"
+        );
+        // Marker advanced so the next launch skips the cleanup entirely.
+        assert_eq!(
+            std::fs::read_to_string(home.join(".metadata_version")).unwrap(),
+            xai_grok_version::VERSION
+        );
     }
 
     #[test]

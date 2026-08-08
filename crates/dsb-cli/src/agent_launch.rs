@@ -360,16 +360,20 @@ fn ensure_deepseek_model_system_prompt_label(body: String, model_id: &str) -> St
         }
         if in_section && t.starts_with('[') {
             if !found {
-                out.push(format!("system_prompt_label = \"{PRODUCT_SYSTEM_PROMPT_LABEL}\""));
+                out.push(format!(
+                    "system_prompt_label = \"{PRODUCT_SYSTEM_PROMPT_LABEL}\""
+                ));
                 patched = true;
             }
             in_section = false;
         }
-        if in_section && t.starts_with("system_prompt_label") {
+        let key = t.split_once('=').map(|(key, _)| key.trim());
+        if in_section && key == Some("system_prompt_label") {
             found = true;
-            let lower = t.to_ascii_lowercase();
-            if lower.contains("grok") || lower.contains("xai") {
-                out.push(format!("system_prompt_label = \"{PRODUCT_SYSTEM_PROMPT_LABEL}\""));
+            if toml_rhs_contains_any(t, &["grok", "xai"]) {
+                out.push(format!(
+                    "system_prompt_label = \"{PRODUCT_SYSTEM_PROMPT_LABEL}\""
+                ));
                 patched = true;
                 continue;
             }
@@ -378,7 +382,9 @@ fn ensure_deepseek_model_system_prompt_label(body: String, model_id: &str) -> St
     }
     // Section ran to end of file with no label and no closing header.
     if in_section && !found {
-        out.push(format!("system_prompt_label = \"{PRODUCT_SYSTEM_PROMPT_LABEL}\""));
+        out.push(format!(
+            "system_prompt_label = \"{PRODUCT_SYSTEM_PROMPT_LABEL}\""
+        ));
         patched = true;
     }
     if patched {
@@ -401,9 +407,17 @@ fn ensure_deepseek_model_system_prompt_label(body: String, model_id: &str) -> St
 fn scrub_grok_fork_secondary_model(body: String) -> String {
     let mut out: Vec<&str> = Vec::with_capacity(body.lines().count());
     let mut changed = false;
+    let mut in_ui_section = false;
     for line in body.lines() {
         let t = line.trim();
-        if t.starts_with("fork_secondary_model") && t.to_ascii_lowercase().contains("grok") {
+        if t.starts_with('[') {
+            in_ui_section = t == "[ui]";
+        }
+        let key = t.split_once('=').map(|(key, _)| key.trim());
+        if in_ui_section
+            && key == Some("fork_secondary_model")
+            && toml_rhs_contains_any(t, &["grok"])
+        {
             changed = true;
             continue;
         }
@@ -418,6 +432,39 @@ fn scrub_grok_fork_secondary_model(body: String) -> String {
     } else {
         body
     }
+}
+
+fn toml_rhs_contains_any(line: &str, needles: &[&str]) -> bool {
+    let Some((_, rhs)) = line.split_once('=') else {
+        return false;
+    };
+    let value = toml_rhs_without_comment(rhs).trim();
+    let value = value
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .or_else(|| value.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+        .unwrap_or(value);
+    let lower = value.to_ascii_lowercase();
+    needles.iter().any(|needle| lower.contains(needle))
+}
+
+fn toml_rhs_without_comment(rhs: &str) -> &str {
+    let mut string_quote: Option<char> = None;
+    let mut escaped = false;
+    for (idx, ch) in rhs.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' if string_quote == Some('"') => escaped = true,
+            '"' | '\'' if string_quote == Some(ch) => string_quote = None,
+            '"' | '\'' if string_quote.is_none() => string_quote = Some(ch),
+            '#' if string_quote.is_none() => return &rhs[..idx],
+            _ => {}
+        }
+    }
+    rhs
 }
 
 /// Inject TOML keys into a `[model.*]` section when absent (section-scoped).
@@ -1242,8 +1289,10 @@ fn seed_injects_deepseek_system_prompt_label_and_no_grok_branding() {
     let body = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
     // Both DeepSeek model stanzas carry the product identity label.
     assert_eq!(
-        body.matches(&format!("system_prompt_label = \"{PRODUCT_SYSTEM_PROMPT_LABEL}\""))
-            .count(),
+        body.matches(&format!(
+            "system_prompt_label = \"{PRODUCT_SYSTEM_PROMPT_LABEL}\""
+        ))
+        .count(),
         2,
         "seed must label both models: {body}"
     );
@@ -1282,7 +1331,10 @@ env_key = "DEEPSEEK_API_KEY"
 "#;
     let fixed = repair_product_agent_config(raw);
     assert_eq!(
-        fixed.matches(&format!("system_prompt_label = \"{PRODUCT_SYSTEM_PROMPT_LABEL}\""))
+        fixed
+            .matches(&format!(
+                "system_prompt_label = \"{PRODUCT_SYSTEM_PROMPT_LABEL}\""
+            ))
             .count(),
         2,
         "repair must label both models: {fixed}"
@@ -1300,10 +1352,35 @@ system_prompt_label = "Grok"
 "#;
     let fixed = repair_product_agent_config(raw);
     assert!(
-        fixed.contains(&format!("system_prompt_label = \"{PRODUCT_SYSTEM_PROMPT_LABEL}\"")),
+        fixed.contains(&format!(
+            "system_prompt_label = \"{PRODUCT_SYSTEM_PROMPT_LABEL}\""
+        )),
         "stale Grok label must be replaced: {fixed}"
     );
     assert!(!fixed.contains("system_prompt_label = \"Grok\""));
+}
+
+#[test]
+fn repair_ignores_grok_valued_system_prompt_label_backup() {
+    let raw = r#"
+[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+system_prompt_label_backup = "Grok"
+
+[other]
+keep = true
+"#;
+    let fixed = ensure_deepseek_model_system_prompt_label(raw.to_string(), "deepseek-v4-flash");
+    assert!(
+        fixed.contains("system_prompt_label_backup = \"Grok\""),
+        "backup label key must be preserved: {fixed}"
+    );
+    assert!(
+        fixed.contains(&format!(
+            "system_prompt_label = \"{PRODUCT_SYSTEM_PROMPT_LABEL}\"\n[other]"
+        )),
+        "missing true label must be injected before the next section: {fixed}"
+    );
 }
 
 #[test]
@@ -1317,6 +1394,20 @@ system_prompt_label = "My Custom Agent"
     assert!(
         fixed.contains("system_prompt_label = \"My Custom Agent\""),
         "custom label must be preserved: {fixed}"
+    );
+}
+
+#[test]
+fn repair_keeps_custom_system_prompt_label_when_comment_mentions_grok() {
+    let raw = r#"
+[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+system_prompt_label = "My Custom Agent" # not Grok
+"#;
+    let fixed = repair_product_agent_config(raw);
+    assert!(
+        fixed.contains("system_prompt_label = \"My Custom Agent\" # not Grok"),
+        "comment text must not make a custom label stale: {fixed}"
     );
 }
 
@@ -1346,5 +1437,53 @@ fn scrub_keeps_non_grok_fork_target() {
     assert!(
         fixed.contains("fork_secondary_model = \"deepseek-v4-pro\""),
         "non-grok fork target must be preserved: {fixed}"
+    );
+}
+
+#[test]
+fn scrub_keeps_non_grok_fork_target_when_comment_mentions_grok() {
+    let raw = "[ui]\nfork_secondary_model = \"deepseek-v4-pro\" # replaces Grok\n";
+    let fixed = repair_product_agent_config(raw);
+    assert!(
+        fixed.contains("fork_secondary_model = \"deepseek-v4-pro\" # replaces Grok"),
+        "comment text must not make a non-grok fork target stale: {fixed}"
+    );
+}
+
+#[test]
+fn scrub_keeps_grok_fork_secondary_model_outside_ui() {
+    let raw = r#"
+[custom]
+fork_secondary_model = "grok-4.5"
+"#;
+    let fixed = repair_product_agent_config(raw);
+    assert!(
+        fixed.contains("[custom]\nfork_secondary_model = \"grok-4.5\""),
+        "custom section fork target must be preserved: {fixed}"
+    );
+}
+
+#[test]
+fn scrub_only_removes_grok_fork_secondary_model_from_ui() {
+    let raw = r#"
+[ui]
+fork_secondary_model = "grok-4.5"
+fork_secondary_model_backup = "grok-4.5"
+
+[custom]
+fork_secondary_model = "grok-4.5"
+"#;
+    let fixed = repair_product_agent_config(raw);
+    assert!(
+        !fixed.contains("[ui]\nfork_secondary_model = \"grok-4.5\""),
+        "ui grok fork target must be scrubbed: {fixed}"
+    );
+    assert!(
+        fixed.contains("fork_secondary_model_backup = \"grok-4.5\""),
+        "ui backup key must be preserved: {fixed}"
+    );
+    assert!(
+        fixed.contains("[custom]\nfork_secondary_model = \"grok-4.5\""),
+        "custom grok fork target must be preserved: {fixed}"
     );
 }

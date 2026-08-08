@@ -5,8 +5,9 @@ Subject: [PATCH 12/12] fix(vendor): satisfy strict clippy baseline
 
 Use portable dunce canonicalization in pager tests and test helpers,
 rewrite boolean comparisons as boolean assertions, collapse an identical
-feature-gated expected value, and make the fast-worktree GC sleeper a
-guarded test fixture so it is killed and waited even if the test panics.
+feature-gated expected value, make the fast-worktree GC sleeper a guarded
+test fixture so it is killed and waited even if the test panics, and run
+auth retry budget turn tests on a large-stack current-thread runtime.
 
 ---
  .../crates/codegen/xai-fast-worktree/src/api.rs    | 32 +++++++++++++++++-----
@@ -15,8 +16,9 @@ guarded test fixture so it is killed and waited even if the test panics.
  .../xai-grok-pager/src/diagnostics/fix_tests.rs    |  2 +-
  .../crates/codegen/xai-grok-pager/src/test_util.rs |  4 +--
  .../xai-grok-pager/tests/doctor_early_dispatch.rs  |  7 ++---
+ .../turn/auth_retry_budget_tests.rs                | 64 +++++++++++++++++-----
  .../xai-grok-shell/src/session/unified_list/mod.rs | 17 ++++--------
- 7 files changed, 44 insertions(+), 37 deletions(-)
+ 8 files changed, 92 insertions(+), 53 deletions(-)
 
 diff --git a/third_party/grok-build/crates/codegen/xai-fast-worktree/src/api.rs b/third_party/grok-build/crates/codegen/xai-fast-worktree/src/api.rs
 index 697ccd5..1f7a33a 100644
@@ -204,6 +206,111 @@ index 4c0468d..cc5cc24 100644
      let temp = tempfile::tempdir().unwrap();
      let home = temp.path().join("home");
      let grok_home = temp.path().join("qhome");
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_tests/turn/auth_retry_budget_tests.rs b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_tests/turn/auth_retry_budget_tests.rs
+index e8ff488..9412577 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_tests/turn/auth_retry_budget_tests.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_tests/turn/auth_retry_budget_tests.rs
+@@ -7,6 +7,7 @@
+ use super::support::*;
+ use super::*;
+ use crate::auth::{AuthManager, AuthMode, GrokAuth, GrokComConfig};
++use std::future::Future;
+ use std::sync::Arc;
+ use std::sync::atomic::{AtomicU32, Ordering};
+ use std::time::Duration;
+@@ -15,6 +16,39 @@ use xai_grok_test_support::{MockInferenceServer, MockModelEntry};
+ /// The token the mock server accepts and the refresher mints on success.
+ const FRESH_TOKEN: &str = "refreshed-test-token";
+-
++
++/// `SessionActor` turn futures overflow the default test thread stack.
++fn block_on_session(f: impl FnOnce() + Send + 'static) {
++    std::thread::Builder::new()
++        .stack_size(16 * 1024 * 1024)
++        .spawn(f)
++        .expect("spawn large-stack test thread")
++        .join()
++        .expect("test thread");
++}
++
++fn current_thread_local<F>(f: F)
++where
++    F: Future<Output = ()> + 'static,
++{
++    let rt = tokio::runtime::Builder::new_current_thread()
++        .enable_all()
++        .build()
++        .expect("test runtime");
++    tokio::task::LocalSet::new().block_on(&rt, f);
++}
++
++fn current_thread_local_paused<F>(f: F)
++where
++    F: Future<Output = ()> + 'static,
++{
++    let rt = tokio::runtime::Builder::new_current_thread()
++        .enable_all()
++        .start_paused(true)
++        .build()
++        .expect("test runtime");
++    tokio::task::LocalSet::new().block_on(&rt, f);
++}
++
+ /// With `fail_pre_request`, mimics the post-wake sequence: pre-send
+ /// (`PreRequest`) refreshes fail transiently so the send goes out
+ /// fail-closed, while the 401-triggered recovery (`ServerRejected`)
+@@ -235,11 +269,10 @@ async fn run_prompt(
+ /// The wake sequence: the resolver has nothing wire-valid, the send goes
+ /// out with no `Authorization` header, the server 401s it, recovery lands a
+ /// fresh token. The turn must survive and resubmit with the fresh bearer.
+-#[tokio::test(flavor = "current_thread")]
+-async fn fail_closed_401_is_uncharged_and_turn_survives() {
+-    let local = tokio::task::LocalSet::new();
+-    local
+-        .run_until(async {
++#[test]
++fn fail_closed_401_is_uncharged_and_turn_survives() {
++    block_on_session(|| {
++        current_thread_local(async {
+             let server = MockInferenceServer::start_with_required_auth(
+                 vec![MockModelEntry::new("test")],
+                 FRESH_TOKEN,
+@@ -287,19 +320,18 @@ async fn fail_closed_401_is_uncharged_and_turn_survives() {
+                 calls.load(Ordering::SeqCst) >= 2,
+                 "both the failing pre-flight and the recovery refresh must run"
+             );
+-        })
+-        .await;
++        });
++    });
+ }
+-
++
+ /// Real credential rejections must still terminate: when every request
+ /// carries a bearer the server rejects, the escalating budget exhausts after
+ /// `MAX_RETRIES` and the failure names authenticated rejections — not a
+ /// generic budget message. `start_paused` auto-advances the backoff ladder.
+-#[tokio::test(flavor = "current_thread", start_paused = true)]
+-async fn authenticated_401s_still_exhaust_after_three_retries() {
+-    let local = tokio::task::LocalSet::new();
+-    local
+-        .run_until(async {
++#[test]
++fn authenticated_401s_still_exhaust_after_three_retries() {
++    block_on_session(|| {
++        current_thread_local_paused(async {
+             // The server only accepts a token the refresher never mints, so
+             // every authenticated send is rejected.
+             let server = MockInferenceServer::start_with_required_auth(
+@@ -349,6 +381,6 @@ async fn authenticated_401s_still_exhaust_after_three_retries() {
+                 message.contains("authenticated inference requests were still rejected"),
+                 "the notification must carry the same story as the error: {message}"
+             );
+-        })
+-        .await;
++        });
++    });
+ }
 diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/unified_list/mod.rs b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/unified_list/mod.rs
 index 3977cd6..ca02a8a 100644
 --- a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/unified_list/mod.rs

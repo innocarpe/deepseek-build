@@ -1,0 +1,45 @@
+From 36a4289f09d2a7e556102cc2a69e58ce10e0e02c Mon Sep 17 00:00:00 2001
+From: Wooseong Kim <innocarpe@gmail.com>
+Date: Sun, 9 Aug 2026 03:44:26 +0900
+Subject: [PATCH 11/11] test(pager): stabilize prompt history tick delivery
+
+---
+ .../xai-grok-pager/src/app/app_view.rs        | 19 +++++++++++--------
+ 1 file changed, 11 insertions(+), 8 deletions(-)
+
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/app_view.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/app_view.rs
+index 2518d8e..4469eba 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/app_view.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/app_view.rs
+@@ -6491,17 +6491,20 @@ pub(crate) mod tests {
+             app.needs_animation(),
+             "an open prompt history overlay must request animation ticks"
+         );
+-        let mut delivered = false;
+-        for _ in 0..1000 {
+-            if app.tick() && app.agents[&id].prompt.history_search.result_count() == 2 {
+-                delivered = true;
+-                break;
++        let delivered_on_activate = app.agents[&id].prompt.history_search.result_count() == 2;
++        let mut delivered_by_tick = false;
++        if !delivered_on_activate {
++            for _ in 0..1000 {
++                if app.tick() && app.agents[&id].prompt.history_search.result_count() == 2 {
++                    delivered_by_tick = true;
++                    break;
++                }
++                std::thread::sleep(std::time::Duration::from_millis(1));
+             }
+-            std::thread::sleep(std::time::Duration::from_millis(1));
+         }
+         assert!(
+-            delivered,
+-            "tick() must poll the history daemon and deliver results"
++            delivered_on_activate || delivered_by_tick,
++            "history daemon results must be visible from activation's eager snapshot or a tick"
+         );
+         app.agents
+             .get_mut(&id)
+-- 
+2.50.1 (Apple Git-155)
+

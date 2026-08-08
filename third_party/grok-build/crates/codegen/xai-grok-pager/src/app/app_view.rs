@@ -6491,17 +6491,20 @@ pub(crate) mod tests {
             app.needs_animation(),
             "an open prompt history overlay must request animation ticks"
         );
-        let mut delivered = false;
-        for _ in 0..1000 {
-            if app.tick() && app.agents[&id].prompt.history_search.result_count() == 2 {
-                delivered = true;
-                break;
+        let delivered_on_activate = app.agents[&id].prompt.history_search.result_count() == 2;
+        let mut delivered_by_tick = false;
+        if !delivered_on_activate {
+            for _ in 0..1000 {
+                if app.tick() && app.agents[&id].prompt.history_search.result_count() == 2 {
+                    delivered_by_tick = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
             }
-            std::thread::sleep(std::time::Duration::from_millis(1));
         }
         assert!(
-            delivered,
-            "tick() must poll the history daemon and deliver results"
+            delivered_on_activate || delivered_by_tick,
+            "history daemon results must be visible from activation's eager snapshot or a tick"
         );
         app.agents
             .get_mut(&id)

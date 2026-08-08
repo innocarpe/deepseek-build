@@ -3,10 +3,10 @@
 //! All colors come from the `Theme` struct. No hardcoded colors elsewhere.
 //! The default **product** theme is DeepSeek Night (classic) (DeepSeek blue
 //! `#4D6BFE` on a blue-tinted ramp). The measured C-balanced palette is
-//! selectable as **DeepSeek Night v2**. Retired names
-//! (`deepseeknight-neutral`, `groknight`) still parse for config back-compat,
-//! and the legacy `"dark"` alias now resolves to the classic DeepSeek Night
-//! skin.
+//! selectable as **DeepSeek Night v2**. The hue-neutral DeepSeek Night variant
+//! is first-class/selectable, while retired Grok Night names (`groknight`,
+//! `grok-night`) still parse for config back-compat. The legacy `"dark"` alias
+//! now resolves to the classic DeepSeek Night skin.
 //!
 //! ## Color support
 //!
@@ -44,9 +44,8 @@ pub enum ThemeKind {
     /// Current DeepSeek Build product/default skin — DeepSeek blue `#4D6BFE`
     /// accents on the original blue-tinted ramp.
     DeepSeekNight = 6,
-    /// Legacy DeepSeek Night Neutral compatibility skin — DeepSeek blue
-    /// `#4D6BFE` accents on a hue-neutral ramp (same luminance, max gray-ramp
-    /// legibility).
+    /// Selectable DeepSeek Night Neutral skin — DeepSeek blue `#4D6BFE`
+    /// accents on a hue-neutral ramp (same luminance, max gray-ramp legibility).
     DeepSeekNightNeutral = 7,
     /// Selectable DeepSeek Night v2 alternate — measured C-balanced palette.
     DeepSeekNightV2 = 8,
@@ -758,7 +757,7 @@ mod tests {
     }
 
     #[test]
-    fn retired_theme_names_still_parse() {
+    fn current_and_compat_theme_names_still_parse() {
         for name in [
             "groknight",
             "grok-night",
@@ -770,7 +769,7 @@ mod tests {
         ] {
             assert!(
                 ThemeKind::from_name(name).is_some(),
-                "{name} must still parse for back-compat"
+                "{name} must still parse"
             );
         }
     }
@@ -1348,7 +1347,7 @@ mod tests {
             ThemeKind::from_name("groknight"),
             Some(ThemeKind::GrokNight)
         );
-        assert_eq!(ThemeKind::from_name("dark"), Some(ThemeKind::GrokNight));
+        assert_eq!(ThemeKind::from_name("dark"), Some(ThemeKind::DeepSeekNight));
         assert_eq!(ThemeKind::from_name("grokday"), Some(ThemeKind::GrokDay));
         assert_eq!(ThemeKind::from_name("light"), Some(ThemeKind::GrokDay));
         assert_eq!(
@@ -1394,7 +1393,7 @@ mod tests {
             ("system", ThemeKind::Auto),
             ("groknight", ThemeKind::GrokNight),
             ("grok-night", ThemeKind::GrokNight),
-            ("dark", ThemeKind::GrokNight),
+            ("dark", ThemeKind::DeepSeekNight),
             ("tokyonight", ThemeKind::TokyoNight),
             ("tokyo-night", ThemeKind::TokyoNight),
             ("tokyo", ThemeKind::TokyoNight),

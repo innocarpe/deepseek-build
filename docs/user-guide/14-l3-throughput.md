@@ -36,14 +36,18 @@ Bare `dsb` / `deepseek-build` is a **single-session** TUI. Worktree isolation is
 | **V3-50-2** | Background shell + collect-by-id | VC010 · re-prove VC013 |
 | **V3-60-1** | Explore + implement-class subagents | VC011 · re-prove VC013 |
 | **V3-60-2** | Worker reuses parent stable-prefix epoch | VC011 stamp · re-prove VC013 |
-| **V3-60-3** | Parent snippet expire after worker mutation | **Residual** (not Path A sole green) |
+| **V3-60-3** | Parent snippet invalidate after worker mutation | **Proven** VC015 Path A R0A (`snippet_stale` after implement-class mutates same path) |
 | **V3-WT** | Worktree CLI dogfood + bare-session honesty | VC012 · re-prove VC013 |
 
-On-branch packaging of this L3 train is product **`5.4.0`** (VC013 cut). That is
-**not** the same as “already on npm/GitHub Latest” — see
-[KNOWN_LIMITS](../product/KNOWN_LIMITS.md).
+**VC013** packaged the L3 Path A R0A train as on-branch product **`5.4.0`** (L3 cut
+history). **VC015** freeze packaging on this stack is on-branch **`5.5.0`** (vision
+freeze unit; includes V3-60-3 close). Neither is “already on npm/GitHub Latest” —
+see [KNOWN_LIMITS](../product/KNOWN_LIMITS.md).
 
-Cut evidence: [`VC013_L3_5_4_0_CUT_2026-08-08.md`](../product/evidence/VC013_L3_5_4_0_CUT_2026-08-08.md)
+Cut / freeze evidence:
+
+- L3 train cut: [`VC013_L3_5_4_0_CUT_2026-08-08.md`](../product/evidence/VC013_L3_5_4_0_CUT_2026-08-08.md)
+- Vision freeze: [`VC015_VISION_FREEZE_5_5_0_2026-08-08.md`](../product/evidence/VC015_VISION_FREEZE_5_5_0_2026-08-08.md)
 
 ## Verify on your machine
 
@@ -86,8 +90,8 @@ gates remain the product regression bar:
 | **5.0.0** | Owner-bar complete product (Path A P0) |
 | **5.2.x on main** | Live floor at docs pass may still be **5.2.2** on main/npm/GitHub |
 | **5.3.0 stack** | Spec 45 Path A `snippet_id` Deep Code cut (vision; may be unmerged) |
-| **5.4.0 stack** | L3 Path A R0A train cut (vision; may be unmerged) |
-| **5.5.0** | Vision freeze — **not** claimed by this guide |
+| **5.4.0 stack** | L3 Path A R0A train cut — **VC013** history (vision; may be unmerged) |
+| **5.5.0 stack** | Vision freeze packaging — **VC015** on-branch (incl. V3-60-3 Path A R0A); **not** live npm/GitHub Latest by itself |
 
 ## Related
 

@@ -3,7 +3,7 @@
 **Applies to:** `deepseek-build` / `dsb` → product agent (Grok-derived TUI)
 **Not the same as:** thin `dsb-tools` in-process `subagent` helper
 **Upstream detail:** vendored guide under `third_party/grok-build/`
-**Evidence:** Path A hermetic R0A **VC011** · re-prove on L3 cut **VC013** (**5.4.0** on-branch)
+**Evidence:** Path A hermetic R0A **VC011** · re-prove on L3 cut **VC013** · parent snippet after worker **VC015** (**V3-60-3**)
 
 ## What it is
 
@@ -53,7 +53,7 @@ not forced for every implement worker (Spec 60 non-goal). See
 | Explore subagent on public Path A | **Proven** hermetic R0A (VC011 / VC013) |
 | Implement-class subagent mutation | **Proven** hermetic R0A (disk mutation) |
 | Worker reuses parent stable-prefix epoch | **Proven** stamp `worker_epochs_match=true` |
-| Worker mutation **expires parent snippet table** on Path A | **Residual V3-60-3** — thin-path unit support only; **not** Path A sole green |
+| Worker mutation **invalidates parent snippets** on Path A | **Proven** VC015 R0A: parent pre-mutation `snippet_id` → `snippet_stale` after implement-class mutates same path (Spec 45 version gate). Explicit parent `expire_all` after spawn remains optional product default, not required for this proof. |
 
 Live API spawn dogfood is available when a DeepSeek key is present:
 
@@ -65,20 +65,26 @@ Hermetic public-entry matrix (no live key required for scripted wire):
 
 ```bash
 ./scripts/test-path-a-vc011-r0a.sh
+./scripts/test-path-a-vc015-r0a.sh   # V3-60-3 parent snippet after worker
 ```
 
 Evidence:
 
 - [`VC011_SUBAGENT_WORKER_CACHE_PATH_A_2026-08-08.md`](../product/evidence/VC011_SUBAGENT_WORKER_CACHE_PATH_A_2026-08-08.md)
 - [`VC013_L3_5_4_0_CUT_2026-08-08.md`](../product/evidence/VC013_L3_5_4_0_CUT_2026-08-08.md)
+- [`VC015_VISION_FREEZE_5_5_0_2026-08-08.md`](../product/evidence/VC015_VISION_FREEZE_5_5_0_2026-08-08.md)
 
 ## Honesty
 
 - Subagents are **product Path A machinery** under hearts — not a “future 4.0.0 plan.”
-- On-branch vision packaging for the L3 train is **5.4.0** (unmerged stack); live
-  `main` / npm / GitHub Latest may still be **5.2.2** until the stack merges and
-  the release lane publishes.
-- Do not claim **V3-60-3** closed without fresh Path A proof.
+- **VC013** cut the L3 Path A R0A train as on-branch product **`5.4.0`** (history).
+  **VC015** freeze packaging on this stack is on-branch **`5.5.0`** (vision-complete
+  freeze unit; still unmerged vs live). Live `main` / npm / GitHub Latest may still
+  be **`5.2.2`** until the stack merges and the release lane publishes.
+- **V3-60-3** is closed by **VC015** Path A R0A (`snippet_stale` after implement-class
+  mutates the same path). Do not re-open it without a regression. Explicit parent
+  `expire_all` after spawn remains an optional Spec 60 honesty residual, not the
+  freeze close bar.
 
 ## Related
 

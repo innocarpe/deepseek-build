@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 5.5.0 — 2026-08-08
+
+- Vision-complete freeze cut (on-branch): V1 Deep Code + V2 Reasonix + V3 Grok
+  throughput + V4 product finish criteria closed on public Path A evidence
+- Closes V3-60-3 residual: parent `snippet_id` mint → implement-class worker
+  mutates same path → parent pre-mutation edit rejected (`snippet_stale`)
+- Dual adversarial review is external; no tag / npm / GitHub publish in-story
+
 ## 5.4.0 — 2026-08-08
 
 - L3 Path A R0A train cut (multi-tool/bg, subagent/worker-cache, worktree dogfood) + optional live L3 matrix

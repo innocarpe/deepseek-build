@@ -3764,17 +3764,36 @@ mod tests {
 
     #[test]
     fn hero_box_announcement_clamped_when_tight() {
-        // A real announcement can't disable the hero box: the slot is clamped to
-        // whatever still fits (the renderer trails a `…`), so the box stays
-        // active rather than falling back to the stacked layout.
-        let area = Rect::new(0, 0, 100, 17);
+        // With the current 8-row full logo, 17 rows is the no-announcement
+        // boundary for a 3-row menu; adding an announcement needs one more row
+        // so the clamped info slot can occupy at least one row.
+        let boundary = Rect::new(0, 0, 100, 17);
         let a = long_ann();
         let without = WelcomeLayout::compute(WelcomeLayoutInput {
-            content_area: area,
+            content_area: boundary,
             menu_height: 3,
             ..Default::default()
         });
         assert!(without.has_hero_box());
+        assert_eq!(
+            hero_box::min_content_height(0, 3, 0, 0),
+            boundary.height
+        );
+        assert_eq!(
+            hero_box::min_content_height(0, 3, 0, 1),
+            boundary.height + 1
+        );
+        let too_tight_with_ann = WelcomeLayout::compute(WelcomeLayoutInput {
+            content_area: boundary,
+            menu_height: 3,
+            announcement: Some(&a),
+            ..Default::default()
+        });
+        assert!(
+            !too_tight_with_ann.has_hero_box(),
+            "announcement should not force a zero-row info hero box at the exact no-info boundary"
+        );
+        let area = Rect::new(0, 0, 100, 18);
         let with_ann = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             menu_height: 3,

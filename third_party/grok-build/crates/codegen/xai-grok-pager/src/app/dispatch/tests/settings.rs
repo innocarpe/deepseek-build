@@ -3149,7 +3149,7 @@ fn set_auto_dark_theme_emits_persist_setting_with_correct_payload() {
             } => {
                 assert_eq!(*key, "auto_dark_theme");
                 assert_eq!(*value, SettingValue::Enum("grokday"));
-                assert_eq!(*rollback_value, SettingValue::Enum("deepseeknight-v2"));
+                assert_eq!(*rollback_value, SettingValue::Enum("deepseeknight"));
             }
             other => panic!("expected PersistSetting, got {other:?}"),
         }

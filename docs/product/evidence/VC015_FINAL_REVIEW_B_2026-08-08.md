@@ -36,10 +36,10 @@
 
 ## 1. Mandate and fail-close rules applied
 
-1. Review **only** exact target `b9fd4b2` at worktree HEAD (no remote chase / fetch / pull / merge).  
-2. Challenge freeze honesty: Path A sole proof vs thin Path B; staged binary identity vs packaging SemVer; residual over-claim; whether integrated review reports overstate process completeness.  
-3. Anchors: Spec 45 (`snippet_id` / `snippet_stale`), Spec 60 T3 spirit vs VC015 freeze bar, V4 floor/docs/assets/SemVer, PR **#147** surface.  
-4. Disk ~5 GiB free — **no** full cargo builds; **no** owner-bar / heart / live agent R0A re-execution this lane.  
+1. Review **only** exact target `b9fd4b2` at worktree HEAD (no remote chase / fetch / pull / merge).
+2. Challenge freeze honesty: Path A sole proof vs thin Path B; staged binary identity vs packaging SemVer; residual over-claim; whether integrated review reports overstate process completeness.
+3. Anchors: Spec 45 (`snippet_id` / `snippet_stale`), Spec 60 T3 spirit vs VC015 freeze bar, V4 floor/docs/assets/SemVer, PR **#147** surface.
+4. Disk ~5 GiB free — **no** full cargo builds; **no** owner-bar / heart / live agent R0A re-execution this lane.
 5. Write **only** this report; commit **only** this report on the review branch.
 
 ---
@@ -183,11 +183,11 @@ Artifacts (unchanged content vs `01215c2`):
 
 Wire chain (condensed, offline):
 
-1. Parent `read_file` → mints **`snippet_id: snp_01KZF6YD9HNNZ3M9C0X931X7XE`**  
-2. Parent `spawn_subagent` `general-purpose` (implement-class)  
-3. Child mutates disk (`worker-mutated-parent`)  
-4. Parent `search_replace` reuses pre-mutation `snippet_id` → **`snippet_stale`**  
-5. Final token **`parent-worker-snippet-stale-ok`**; disk META residual is worker content  
+1. Parent `read_file` → mints **`snippet_id: snp_01KZF6YD9HNNZ3M9C0X931X7XE`**
+2. Parent `spawn_subagent` `general-purpose` (implement-class)
+3. Child mutates disk (`worker-mutated-parent`)
+4. Parent `search_replace` reuses pre-mutation `snippet_id` → **`snippet_stale`**
+5. Final token **`parent-worker-snippet-stale-ok`**; disk META residual is worker content
 
 ### 3.6 Incidental staged bin corroboration (not a gate)
 
@@ -369,29 +369,29 @@ Acceptable because freeze PR product crates are packaging/docs/harness for the f
 
 ## 8. Residuals to carry
 
-1. **Spec 60 T3 / parent `expire_all` after implement worker** — honesty residual; not Path A sole green.  
-2. **Interactive TTY worktree create** sole green — carry (VC012).  
-3. **Non-darwin prebuilts** — carry (ADR 0009).  
-4. **Human-gated npm/GitHub publish** — carry (ADR 0007).  
-5. **Live main/npm/GitHub = 5.2.2** until merge + publish — carry.  
-6. **PR #147 body dual-review residual lag** — refresh English body when allowed (**FB-2**); not done by this lane.  
-7. **Staged CLI 5.4.0 under packaging 5.5.0** — keep disclosed if re-proving under `--skip-build`.  
-8. **META `git_sha` pre-commit chicken-egg** — process note.  
-9. **Board “pending” rows** vs stacked READY evidence — board refresh later.  
+1. **Spec 60 T3 / parent `expire_all` after implement worker** — honesty residual; not Path A sole green.
+2. **Interactive TTY worktree create** sole green — carry (VC012).
+3. **Non-darwin prebuilts** — carry (ADR 0009).
+4. **Human-gated npm/GitHub publish** — carry (ADR 0007).
+5. **Live main/npm/GitHub = 5.2.2** until merge + publish — carry.
+6. **PR #147 body dual-review residual lag** — refresh English body when allowed (**FB-2**); not done by this lane.
+7. **Staged CLI 5.4.0 under packaging 5.5.0** — keep disclosed if re-proving under `--skip-build`.
+8. **META `git_sha` pre-commit chicken-egg** — process note.
+9. **Board “pending” rows** vs stacked READY evidence — board refresh later.
 10. **Independent re-run** of owner-bar / heart / Path A R0A / npm install when disk allows — strengthens confidence; not required to invent BLOCK given committed wire integrity + docs honesty at tip.
 
 ---
 
 ## 9. Explicit non-claims of this review
 
-- Does **not** merge PR **#147** or **#146**.  
-- Does **not** tag/publish **5.5.0**.  
-- Does **not** claim Spec **60 T3** table-expire is implemented on Path A.  
-- Does **not** claim live registry already serves **5.5.0**.  
-- Does **not** claim the latest META run used a tree-built **5.5.0** CLI (staged **5.4.0**, disclosed).  
-- Does **not** replace a separate final Lane A if process requires two final lanes; this is **Final B** only.  
-- Does **not** re-execute full owner-bar / heart / live agent R0A / npm install this session.  
-- Does **not** fetch/pull/move remotes or follow a moving branch tip beyond the pinned SHA.  
+- Does **not** merge PR **#147** or **#146**.
+- Does **not** tag/publish **5.5.0**.
+- Does **not** claim Spec **60 T3** table-expire is implemented on Path A.
+- Does **not** claim live registry already serves **5.5.0**.
+- Does **not** claim the latest META run used a tree-built **5.5.0** CLI (staged **5.4.0**, disclosed).
+- Does **not** replace a separate final Lane A if process requires two final lanes; this is **Final B** only.
+- Does **not** re-execute full owner-bar / heart / live agent R0A / npm install this session.
+- Does **not** fetch/pull/move remotes or follow a moving branch tip beyond the pinned SHA.
 - Does **not** mutate product code, versions, PR body, tags, releases, npm, or GitHub.
 
 ---
@@ -419,16 +419,16 @@ FINAL_RANGE_PRODUCT_DELTA=docs_only
 
 ### **READY**
 
-Final independent adversarial **Lane B** of exact target  
-`b9fd4b2142ad91b5b0eaa81a31911c94daee1295`  
+Final independent adversarial **Lane B** of exact target
+`b9fd4b2142ad91b5b0eaa81a31911c94daee1295`
 finds **no blocking** integrity failure in public Path A V3-60-3 provenance, staged skip-build honesty, Spec 60 residual disclosure, V4 floor/assets/SemVer/docs alignment, PR head/labels integrity, or integrated HEAD012 dual-review report fidelity.
 
-- Path A V3-60-3 close via **`snippet_stale`** remains wire-backed (unchanged since dual-reviewed `01215c2`).  
-- Final tip **clears** prior MEDIUM docs/path lags without product mutation.  
-- Spec 60 **`expire_all`** remains a disclosed residual, not silent green.  
+- Path A V3-60-3 close via **`snippet_stale`** remains wire-backed (unchanged since dual-reviewed `01215c2`).
+- Final tip **clears** prior MEDIUM docs/path lags without product mutation.
+- Spec 60 **`expire_all`** remains a disclosed residual, not silent green.
 - PR body dual-review residual wording lags tip commits (**FB-2**) but does not invent mechanism green.
 
-**READY** means: freeze packaging tip is acceptable for dual-review **pass** on V3 Path A freeze bar + V4 honesty + integrated review fidelity, with disclosed residuals.  
+**READY** means: freeze packaging tip is acceptable for dual-review **pass** on V3 Path A freeze bar + V4 honesty + integrated review fidelity, with disclosed residuals.
 **Not** a merge / tag / npm / GitHub publish authorization.
 
 ---

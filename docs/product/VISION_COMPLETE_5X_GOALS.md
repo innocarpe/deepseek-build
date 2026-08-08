@@ -1,16 +1,22 @@
 # Vision-complete train — **`5.x`** (after owner-bar `5.0.0`)
 
+> [!IMPORTANT]
+> **ARCHIVED / COMPLETED.** This board is no longer an active execution plan.
+> The vision-complete stack is merged on `main` at **`5.5.0`**. npm and GitHub
+> Latest remain **`5.2.2`** until the separate release lane publishes `5.5.0`.
+
 | Field | Value |
 |-------|--------|
 | **Plan id** | `vision-complete-5x` |
-| **SemVer band** | **`5.2.0` – `5.Y.0`** (vision close-out). Floor = **`5.1.0`** aligned on **`main`**, GitHub Release, and npm |
-| **Depends on** | **`v5.0.0` owner-bar CUT** (done) · **`5.0.1`+ product version fix** (npm) · **`5.1.0` theme/product chrome** (shipped: `main` + Release + npm) |
+| **SemVer path** | **`5.2.0` → `5.2.1` → `5.2.2` → `5.3.0` → `5.4.0` → `5.5.0`** on `main`; publish lane pending for `5.5.0` |
+| **Depends on** | **`v5.0.0` owner-bar CUT** (done) · **`5.0.1`+ product version fix** (npm) · **`5.1.0` theme/product chrome** (shipped) |
 | **North star** | [VISION.md](./VISION.md) + [HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.md) |
 | **PR planning** | [ULTRAGOAL_PR_PLANNING.md](./ULTRAGOAL_PR_PLANNING.md) · DAG [WAVE_5x_VISION_PR_DAG.md](./WAVE_5x_VISION_PR_DAG.md) |
 | **Cold start** | [ULTRAGOAL_PROMPT_COLD_START_VISION_5X.md](./ULTRAGOAL_PROMPT_COLD_START_VISION_5X.md) |
 | **Child runtime** | **Grok only** (parent = Grok Build) |
 
-**Do not** plan releases as `5.0.1` or `5.1.0` — those targets are **already used / shipped**. Next **feature** minor for Deep Code snippet_id is **`5.2.0`**.
+**Do not** plan releases as `5.0.1` through `5.5.0` — those targets are
+already used on `main` or in published history.
 
 ---
 
@@ -54,8 +60,8 @@ From [VISION.md](./VISION.md):
 | ~~`5.0.1`~~ | **Used** | npm; version/update line — **do not re-plan as future** |
 | ~~`5.1.0`~~ | **Used / shipped** | `main` + GitHub Release + npm **`5.1.0`** — **do not re-plan as future** |
 | **`5.1.x` patch** | Only for **deploy fix** of 5.1.0 (broken release, missing asset, hot banner) | Not for Spec 45 / L3 |
-| **`5.2.0`** | Spec 45 **snippet_id** Path A (Deep Code primary contract) | First **vision** minor |
-| **`5.3.0`** | Spec 10 assembly-in-Grok + effort-on-wire (+ cache visibility) | Reasonix minor |
+| **`5.2.0`–`5.2.2`** | Published installer/floor line | Superseded the original `5.2.0` Deep Code target before VC006 landed |
+| **`5.3.0`** | Spec 45 **snippet_id** Path A + Spec 10 / effort / cache visibility | Actual SemVer cut was VC006 / PR #138; VC007–VC009 are part of the same source line |
 | **`5.4.0`** | L3 Path A R0A (parallel / bg / subagent / worker / worktree dogfood) | Grok throughput minor |
 | **`5.Y.0`** | Vision-complete freeze (dual review + CUT) | Prefer **`5.5.0`** if Y free; never below 5.2 |
 
@@ -82,7 +88,7 @@ Next free **feature** minor = max(on-disk minor, npm minor) + 1 for the **next p
 
 Ship is **vision-complete** only when **all** of the following are true on **Path A** (public `dsb` / `deepseek-build` → product agent), with R0A evidence:
 
-### V1 — Deep Code (L1) complete → target minor **`5.2.0`**
+### V1 — Deep Code (L1) complete → actual source line **`5.3.0`**
 
 | ID | Requirement | Evidence |
 |----|-------------|---------|
@@ -93,7 +99,7 @@ Ship is **vision-complete** only when **all** of the following are true on **Pat
 | **V1-90** | Perms matrix still green under new edit surface | Heart regression |
 | **V1-70** | Skills index stable; body load thrash-free under multi-turn | Wire + unit |
 
-### V2 — Reasonix (L2) complete → target minor **`5.3.0`**
+### V2 — Reasonix (L2) complete → actual source line **`5.3.0`**
 
 | ID | Requirement | Evidence |
 |----|-------------|---------|
@@ -129,7 +135,7 @@ Ship is **vision-complete** only when **all** of the following are true on **Pat
 
 ## 3. Gap inventory (actionable — same substance, new versions)
 
-### Deep Code (L1) → **5.2.0**
+### Deep Code (L1) → **5.3.0**
 
 | Gap | Severity | Close with |
 |-----|----------|------------|
@@ -173,20 +179,20 @@ Ship is **vision-complete** only when **all** of the following are true on **Pat
 | **VC001** | Product SemVer / update fix ship | ~~5.0.1~~ | — | **DONE** (npm 5.0.1; fix PR #117) |
 | **VC001b** | Theme / chrome **5.1.0** | ~~5.1.0~~ | — | **DONE** (on `main`; e.g. theme v2) |
 | **VC001c** | Finish **5.1.0** GitHub Release + npm if lagging | **5.1.0** (same) or **5.1.1** patch | VC001b | **COMPLETE / SKIP** — Release + npm **`5.1.0`/`latest`** aligned ([evidence](./evidence/VC001C_5_1_0_SHIP_2026-08-07.md) §8) |
-| **VC002** | Spec 45 ADR + SnippetStore design | none | after 5.1.0 stable (**floor met**) | may proceed / pending |
-| **VC003** | Path A `read_file` mints `snippet_id` | none | VC002 | pending |
-| **VC004** | Path A edit requires `snippet_id` | part of **5.2.0** | VC003 | pending |
-| **VC005** | Write/bash snippet invalidation | part of **5.2.0** | VC004 | pending |
-| **VC006** | Heart regression under snippet_id | **5.2.0** cut unit | VC005 | pending |
-| **VC007** | Spec 10 assembly on Grok Path A turns | part of **5.3.0** | VC006 prefer | pending |
-| **VC008** | `reasoning_effort` on DeepSeek wire | part of **5.3.0** | VC007 prefer | pending |
-| **VC009** | Cache-hit visibility | **5.3.0** cut unit | VC008 soft | pending |
-| **VC010** | L3 multi-tool + bg Path A R0A | part of **5.4.0** | VC006 | pending |
-| **VC011** | Subagent + worker cache Path A R0A | part of **5.4.0** | VC010 | pending |
-| **VC012** | Worktree dogfood + docs honesty | part of **5.4.0** | VC011 | pending |
-| **VC013** | Live extended matrix when key present | **5.4.0** cut unit | VC012 | pending |
-| **VC014** | User-guide + KNOWN_LIMITS vision pass | none | VC013 | pending |
-| **VC015** | Dual review + CUT **`v5.Y.0`** (prefer **5.5.0**) | **5.Y.0** | VC014 | pending |
+| **VC002** | Spec 45 ADR + SnippetStore design | none | after 5.1.0 stable (**floor met**) | **MERGED** — PR #125 |
+| **VC003** | Path A `read_file` mints `snippet_id` | none | VC002 | **MERGED** — PR #130 |
+| **VC004** | Path A edit requires `snippet_id` | part of **5.3.0** source line | VC003 | **MERGED** — PR #135 |
+| **VC005** | Write/bash snippet invalidation | part of **5.3.0** source line | VC004 | **MERGED** — PR #137 |
+| **VC006** | Deep Code snippet_id cut + heart regression | **5.3.0** cut unit | VC005 | **MERGED** — PR #138 |
+| **VC007** | Spec 10 assembly on Grok Path A turns | part of **5.3.0** | VC006 prefer | **MERGED** — PR #139 |
+| **VC008** | `reasoning_effort` on DeepSeek wire | part of **5.3.0** | VC007 prefer | **MERGED** — PR #140 |
+| **VC009** | Cache-hit visibility | part of **5.3.0** source line | VC008 soft | **MERGED** — PR #141 |
+| **VC010** | L3 multi-tool + bg Path A R0A | part of **5.4.0** | VC006 | **MERGED** — PR #142 |
+| **VC011** | Subagent + worker cache Path A R0A | part of **5.4.0** | VC010 | **MERGED** — PR #143 |
+| **VC012** | Worktree dogfood + docs honesty | part of **5.4.0** | VC011 | **MERGED** — PR #144 |
+| **VC013** | Live extended matrix when key present | **5.4.0** cut unit | VC012 | **MERGED** — PR #145 |
+| **VC014** | User-guide + KNOWN_LIMITS vision pass | none | VC013 | **MERGED** — PR #146 |
+| **VC015** | Dual review + CUT **`5.5.0`** | **5.5.0** | VC014 | **MERGED** — PR #147; release lane pending |
 
 ### Parallel tracks (after 5.1.0 floor stable)
 
@@ -194,11 +200,11 @@ Ship is **vision-complete** only when **all** of the following are true on **Pat
 5.1.0 shipped (main + Release + npm) ──► do not plan 5.0.1 / 5.1.0 as future goals
         │
         ▼
-   VC002–VC006  →  tag/ship 5.2.0   (Deep Code)
+   VC002–VC006  →  5.3.0 source line (Deep Code; 5.2.x target superseded)
         │
-        ├─► VC007–VC009 → 5.3.0   (Reasonix)
+        ├─► VC007–VC009 → 5.3.0   (Reasonix; same source-line bump)
         │
-        └─► VC010–VC013 → 5.4.0   (Grok L3; after 5.2 hearts green)
+        └─► VC010–VC013 → 5.4.0   (Grok L3; after VC006 Deep Code hearts green)
                 │
                 ▼
            VC014–VC015 → 5.5.0 (or free 5.Y.0) vision freeze
@@ -235,10 +241,12 @@ Optional: `docs/product/evidence/VISION_STATUS.tsv`.
 
 ---
 
-## 7. First actions (rebased “now”)
+## 7. Closeout / release lane
 
-1. **5.1.0 floor is closed** (main + GitHub Release + npm **`5.1.0`/`latest`**). **VC001c COMPLETE / SKIP** — do not re-run packaging catch-up unless ship breaks.
-2. **VC002** Spec 45 design — start **5.2.0** track (floor met).
-3. Do **not** open a PR titled “ship 5.1.0 theme” or re-plan **`5.1.0`** as a future feature target.
+1. The product train through **VC015 / PR #147** is complete and merged on
+   `main` at **`5.5.0`**.
+2. The final stabilization PR must pass remote CI before release work starts.
+3. The separate maintainer-controlled release sequence is:
+   `v5.5.0` tag → `release-prebuilt` asset → human npm publish → verification.
 
-Board owner: continuous session until VC015 or hard block.
+Board owner/status: complete. Release lane remains pending outside this board.

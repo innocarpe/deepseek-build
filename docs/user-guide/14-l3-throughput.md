@@ -39,10 +39,10 @@ Bare `dsb` / `deepseek-build` is a **single-session** TUI. Worktree isolation is
 | **V3-60-3** | Parent snippet invalidate after worker mutation | **Proven** VC015 Path A R0A (`snippet_stale` after implement-class mutates same path) |
 | **V3-WT** | Worktree CLI dogfood + bare-session honesty | VC012 · re-prove VC013 |
 
-**VC013** packaged the L3 Path A R0A train as on-branch product **`5.4.0`** (L3 cut
-history). **VC015** freeze packaging on this stack is on-branch **`5.5.0`** (vision
-freeze unit; includes V3-60-3 close). Neither is “already on npm/GitHub Latest” —
-see [KNOWN_LIMITS](../product/KNOWN_LIMITS.md).
+**VC013** packaged the L3 Path A R0A train as merged product **`5.4.0`** (L3 cut
+history). **VC015** freeze packaging is merged on `main` as **`5.5.0`** (vision
+freeze unit; includes V3-60-3 close). `5.5.0` is not on npm/GitHub Latest until
+the release lane publishes — see [KNOWN_LIMITS](../product/KNOWN_LIMITS.md).
 
 Cut / freeze evidence:
 
@@ -88,10 +88,10 @@ gates remain the product regression bar:
 | **3.x tagged** | Heart fusion *attempt* — not owner-bar green |
 | **4.x tagged** | L3 machinery *attempt* — not owner-bar green |
 | **5.0.0** | Owner-bar complete product (Path A P0) |
-| **5.2.x on main** | Live floor at docs pass may still be **5.2.2** on main/npm/GitHub |
-| **5.3.0 stack** | Spec 45 Path A `snippet_id` Deep Code cut (vision; may be unmerged) |
-| **5.4.0 stack** | L3 Path A R0A train cut — **VC013** history (vision; may be unmerged) |
-| **5.5.0 stack** | Vision freeze packaging — **VC015** on-branch (incl. V3-60-3 Path A R0A); **not** live npm/GitHub Latest by itself |
+| **5.2.x published** | npm/GitHub Latest may still be **5.2.2** until publish |
+| **5.3.0 merged** | Spec 45 Path A `snippet_id` Deep Code cut |
+| **5.4.0 merged** | L3 Path A R0A train cut — **VC013** history |
+| **5.5.0 on main** | Vision freeze packaging — **VC015** (incl. V3-60-3 Path A R0A); release publish pending |
 
 ## Related
 

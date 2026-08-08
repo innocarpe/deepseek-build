@@ -12,7 +12,7 @@
 | **Normative** | [`docs/specs/60-subagents.md`](../../specs/60-subagents.md) · Spec 45 snippet invalidation · [`HARNESS_PHILOSOPHY.md`](../../architecture/HARNESS_PHILOSOPHY.md) § L3 under L2 · owner-bar L3-60-* · vision V3-60-1/2/3 |
 | **Prior** | G010 L3 stamp + thin units ([`G010_L3_UNDER_HEARTS_2026-08-07.md`](./G010_L3_UNDER_HEARTS_2026-08-07.md)); VC010 multi-tool + bg Path A R0A ([`VC010_L3_MULTI_TOOL_BG_PATH_A_2026-08-08.md`](./VC010_L3_MULTI_TOOL_BG_PATH_A_2026-08-08.md)) |
 
-**This file is the mandatory ultragoal PR unit plan for VC011 plus (later) implementation evidence.**  
+**This file is the mandatory ultragoal PR unit plan for VC011 plus (later) implementation evidence.**
 It does **not** claim VISION L3 / **5.4.0** freeze complete. Thin Path B (`dsb-agent` `subagent` tool units) alone is **not** Path A R0A proof. Live API `spawn_subagent` dogfood remains residual unless a key is present and explicitly recorded.
 
 ---

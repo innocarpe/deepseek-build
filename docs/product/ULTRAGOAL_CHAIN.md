@@ -6,16 +6,19 @@
 
 ---
 
-## Active product chain
+## Product chain status
 
-**Active:** plan id **`vision-complete-5x`** (close VISION north star inside **`5.x.y`** after owner-bar).
+**Active:** none. The **`vision-complete-5x`** train is complete on `main` at
+**`5.5.0`**; npm/GitHub Latest publication remains a separate release lane.
 
 | Order | Plan / stage | Role | Prompt / board |
 |-------|--------------|------|----------------|
-| **1** | **`vision-complete-5x`** | **Active** — Deep Code + Reasonix + Grok feel under `5.x` | [VISION_COMPLETE_5X_GOALS.md](./VISION_COMPLETE_5X_GOALS.md) · [WAVE_5x_VISION_PR_DAG.md](./WAVE_5x_VISION_PR_DAG.md) · [ULTRAGOAL_PROMPT_COLD_START_VISION_5X.md](./ULTRAGOAL_PROMPT_COLD_START_VISION_5X.md) · [VISION.md](./VISION.md) |
+| **1** | **`vision-complete-5x`** | **Complete on `main` at `5.5.0`** — release publish pending | [VISION_COMPLETE_5X_GOALS.md](./VISION_COMPLETE_5X_GOALS.md) · [WAVE_5x_VISION_PR_DAG.md](./WAVE_5x_VISION_PR_DAG.md) · [VISION.md](./VISION.md) |
 | — | **`owner-bar-5x`** | **Complete** owner-bar product cut **`5.0.0`** | [CUT_5_0_0_2026-08-07.md](./evidence/CUT_5_0_0_2026-08-07.md) · [OWNER_BAR_5X_GOALS.md](./OWNER_BAR_5X_GOALS.md) · [PRD-v5.md](./PRD-v5.md) |
 
-**SemVer floor (do not re-plan as future feature cuts):** `5.0.0` owner-bar · `5.0.1` npm version fix · **`5.1.0` on `main`** (chrome/theme; deploy may lag). **Next vision minors:** **`5.2.0`** Deep Code · **`5.3.0`** Reasonix · **`5.4.0`** L3 · **`5.5.0`** freeze (re-check `main`/npm before every bump).
+**SemVer floor:** `main` carries **`5.5.0`** after the completed vision train.
+npm/GitHub Latest still carry **`5.2.2`** until publish completes. Do not
+re-plan `5.0.1` through `5.5.0` as future feature cuts.
 
 ```text
 G001 TruthHarness (RED gate)
@@ -28,12 +31,15 @@ G001 TruthHarness (RED gate)
   → G012 Freeze + dual review + tag v5.0.0
 ```
 
-Owner-bar train is frozen complete. **Active** plan-id is **`vision-complete-5x`** only; do not invent a third product plan-id mid-train.
+Owner-bar and vision-complete trains are frozen complete. Start no new product
+plan-id without a fresh PRD/board update.
 
 ### Completed / superseded trains (not owner-bar green)
 
 | Plan id | Role | Owner-bar? |
 |---------|------|------------|
+| **`vision-complete-5x`** | 5.5.0 vision-complete stack merged on `main`; publish lane pending | **YES** |
+| **`owner-bar-5x`** | 5.0.0 owner-bar complete product cut | **YES** |
 | **`fleet-4x`** | 4.0.0 L3 productization *attempt* — tagged `v4.0.0`; install/UX `4.0.1`/`4.0.2` | **NO** |
 | **`heart-3x`** | 3.0.0 heart fusion *attempt* — tagged `v3.0.0` | **NO** |
 | **`ship-3.0.0`** | 3.0.0 ship closeout (tag/release/npm verify) | closeout only |
@@ -54,7 +60,7 @@ Cut evidence (historical tags): [CUT_4_0_0_2026-08-07.md](./evidence/CUT_4_0_0_2
 
 ---
 
-## Operator loop (until 12/12 owner-bar-5x)
+## Historical operator loop
 
 ```bash
 git fetch origin && git checkout main && git pull origin main

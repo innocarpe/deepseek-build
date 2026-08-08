@@ -1,10 +1,19 @@
 # Ultragoal cold start — **`vision-complete-5x`**
 
-Paste this into a new agent session to resume without re-deriving versions.
+> [!WARNING]
+> **ARCHIVED / DO NOT RUN.** The `vision-complete-5x` train has completed on
+> `main` at **`5.5.0`**. This prompt is retained only as historical execution
+> provenance; do not paste it into a new live session.
+
+Everything below is preserved original historical prompt text. Its imperatives
+are non-normative and must not be executed. Its original **`5.2.0`** Spec 45
+target was superseded by the actual **`5.3.0`** Spec 45 cut.
 
 ---
 
-## Immutable
+## Original historical prompt body (do not execute)
+
+### Immutable
 
 - **Plan id:** `vision-complete-5x` only (active).  
 - **Owner-bar** `v5.0.0` is **DONE** — do not re-open G001–G012.  

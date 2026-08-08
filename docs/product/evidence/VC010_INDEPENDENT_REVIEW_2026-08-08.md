@@ -41,10 +41,10 @@ Docs-only tips after this file that only point at the review do **not** require 
 
 This independent lane verified by **static inspection** of branch sources, wire/META artifacts, and SemVer files. **Shell gates were not re-executed in this session** (no live `./scripts/test-path-a-vc010-r0a.sh` / owner-bar / heart / cargo re-run from the reviewer process). Verdict therefore rests on:
 
-1. Consistency of recorded META (exit 0, final tokens, stamps, public-path flags) with harness asserts  
-2. Wire content matching scenario contracts (multi-`tool_calls`, snippet mutate, bg+collect)  
-3. Source review of fixture + harness + support unit  
-4. Implementer gate table in `VC010_L3_MULTI_TOOL_BG_PATH_A_2026-08-08.md` §6.1  
+1. Consistency of recorded META (exit 0, final tokens, stamps, public-path flags) with harness asserts
+2. Wire content matching scenario contracts (multi-`tool_calls`, snippet mutate, bg+collect)
+3. Source review of fixture + harness + support unit
+4. Implementer gate table in `VC010_L3_MULTI_TOOL_BG_PATH_A_2026-08-08.md` §6.1
 
 ```text
 # Artifact head identity (from META files)
@@ -143,34 +143,34 @@ Stage 1: **PASS** for story scope.
 
 ### P2 (MEDIUM / residual honesty — do not block READY)
 
-1. **No live shell gate re-execution in this independent session**  
-   File: evidence §6.1 claims; this report §2.1.  
-   Confidence: **HIGH** (method limit of this lane).  
-   Issue: READY rests on artifact + source consistency, not a second process re-running R0A / owner-bar / heart / linkage.  
+1. **No live shell gate re-execution in this independent session**
+   File: evidence §6.1 claims; this report §2.1.
+   Confidence: **HIGH** (method limit of this lane).
+   Issue: READY rests on artifact + source consistency, not a second process re-running R0A / owner-bar / heart / linkage.
    Fix (recommended before stack merge by owner): re-run `./scripts/test-path-a-vc010-r0a.sh`, `./scripts/check-path-a-linkage.sh`, `./scripts/test-owner-bar.sh`, `./scripts/test-heart-regression.sh` on the PR tip and paste SHAs into the PR body.
 
-2. **`path_a_l3` is launch-time synthetic partition, not runtime scheduler telemetry**  
-   File: `crates/dsb-cli/src/agent_launch.rs` (`stamp_path_a_l3`) + `PATH_A_R0_VC010_L3_last.txt`.  
-   Confidence: **HIGH**.  
-   Issue: Stamp proves name-map classifier honesty at public launch; multi-tool **execution** proof is the scenario wire, not the stamp indices for that turn.  
+2. **`path_a_l3` is launch-time synthetic partition, not runtime scheduler telemetry**
+   File: `crates/dsb-cli/src/agent_launch.rs` (`stamp_path_a_l3`) + `PATH_A_R0_VC010_L3_last.txt`.
+   Confidence: **HIGH**.
+   Issue: Stamp proves name-map classifier honesty at public launch; multi-tool **execution** proof is the scenario wire, not the stamp indices for that turn.
    Fix: Keep residual language (already present). Do not market stamp as “this turn ran RO parallel.”
 
-3. **Wall-clock concurrency unproven**  
-   File: plan §2.4 non-claims; harness asserts batch + results only.  
-   Confidence: **HIGH**.  
-   Issue: Spec 50 T1 “concurrent path used” is only partially closed under hermetic scripted model (multi-call fan-out + product path existence, not timer overlap).  
+3. **Wall-clock concurrency unproven**
+   File: plan §2.4 non-claims; harness asserts batch + results only.
+   Confidence: **HIGH**.
+   Issue: Spec 50 T1 “concurrent path used” is only partially closed under hermetic scripted model (multi-call fan-out + product path existence, not timer overlap).
    Fix: Residual until optional instrumented timing dogfood (out of VC010).
 
-4. **Turn-summary / later wire rows re-emit scenario tool_calls**  
-   File: e.g. `PATH_A_R0_VC010_bg-collect-by-id_WIRE_last.jsonl` n≈4 second `is_background` emit; multi-read n≈3/4 re-batch.  
-   Confidence: **HIGH**.  
-   Issue: After final text, auxiliary requests can re-trigger fixture tool_results==0 logic; harness still passes on primary sequence.  
+4. **Turn-summary / later wire rows re-emit scenario tool_calls**
+   File: e.g. `PATH_A_R0_VC010_bg-collect-by-id_WIRE_last.jsonl` n≈4 second `is_background` emit; multi-read n≈3/4 re-batch.
+   Confidence: **HIGH**.
+   Issue: After final text, auxiliary requests can re-trigger fixture tool_results==0 logic; harness still passes on primary sequence.
    Fix (optional): fixture gate on turn-summary / client mode, or stop scenario after first final text — cleanliness only.
 
 ### P3 (LOW — optional)
 
-1. **Product-name map duplicated** in `parallel.rs` test and `agent_launch::stamp_path_a_l3` — drift risk if a third name is added. Extract shared map later if stamps grow.  
-2. **mixed-mutate** wire assert for `search_replace`+snippet is soft (disk golden primary) — acceptable honesty; could hard-fail if `search_replace` never appears in any `response_tool_calls` for defense-in-depth.  
+1. **Product-name map duplicated** in `parallel.rs` test and `agent_launch::stamp_path_a_l3` — drift risk if a third name is added. Extract shared map later if stamps grow.
+2. **mixed-mutate** wire assert for `search_replace`+snippet is soft (disk golden primary) — acceptable honesty; could hard-fail if `search_replace` never appears in any `response_tool_calls` for defense-in-depth.
 3. Board table in `VISION_COMPLETE_5X_GOALS.md` still shows VC010 **pending** — expected until PR lands; not a code defect.
 
 ### Open Questions (low-confidence — not blocking)
@@ -240,7 +240,7 @@ Independent verify this session (static): **wire/META + harness/fixture source c
 
 ## Code Review Summary (machine-oriented)
 
-**Files Reviewed:** 7 primary surfaces (plan evidence, scripted server, R0A harness, `parallel.rs` tests, 3× WIRE+META families, L3 stamp, SemVer)  
+**Files Reviewed:** 7 primary surfaces (plan evidence, scripted server, R0A harness, `parallel.rs` tests, 3× WIRE+META families, L3 stamp, SemVer)
 **Total Issues:** 7 (0 P0, 0 P1, 4 P2, 3 P3)
 
 ### By Severity

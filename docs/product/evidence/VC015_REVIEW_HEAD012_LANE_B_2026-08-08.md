@@ -177,11 +177,11 @@ Committed artifacts:
 
 Wire tool sequence (condensed):
 
-1. Parent `read_file` `parent_seed.txt` → tool result mints **`snippet_id: snp_01KZF6YD9HNNZ3M9C0X931X7XE`**  
-2. Parent `spawn_subagent` `subagent_type=general-purpose` (implement-class)  
-3. Child `run_terminal_command` mutates disk → success  
-4. Parent `search_replace` reuses **pre-mutation** `snippet_id` → tool result **`snippet_stale`**  
-5. Final assistant text **`parent-worker-snippet-stale-ok`**  
+1. Parent `read_file` `parent_seed.txt` → tool result mints **`snippet_id: snp_01KZF6YD9HNNZ3M9C0X931X7XE`**
+2. Parent `spawn_subagent` `subagent_type=general-purpose` (implement-class)
+3. Child `run_terminal_command` mutates disk → success
+4. Parent `search_replace` reuses **pre-mutation** `snippet_id` → tool result **`snippet_stale`**
+5. Final assistant text **`parent-worker-snippet-stale-ok`**
 6. Disk META residual **`worker-mutated-parent`** (not `should-not-apply-after-worker`)
 
 ### 3.5 Incidental staged bin observation (not executed as gate)
@@ -233,13 +233,13 @@ This corroborates META provenance but is **not** a substitute for committed wire
 
 ### 4.2 What is proven (public Path A @ committed wire)
 
-- Hermetic scripted DeepSeek wire under public CLI entry with **`DEEPSEEK_BUILD_AGENT_BIN` unset** (META).  
-- Parent mints real `snippet_id` on Path A `read_file`.  
-- Implement-class **`spawn_subagent` / `general-purpose`** mutates the **same path** via child shell.  
-- Parent reuses pre-mutation id → **fail-closed** `snippet_stale` (not silent apply).  
-- Disk remains worker content; false apply string absent.  
-- Offline harness-equivalent asserts pass.  
-- No product invent stamp file; no Path B thin unit claimed as sole green.  
+- Hermetic scripted DeepSeek wire under public CLI entry with **`DEEPSEEK_BUILD_AGENT_BIN` unset** (META).
+- Parent mints real `snippet_id` on Path A `read_file`.
+- Implement-class **`spawn_subagent` / `general-purpose`** mutates the **same path** via child shell.
+- Parent reuses pre-mutation id → **fail-closed** `snippet_stale` (not silent apply).
+- Disk remains worker content; false apply string absent.
+- Offline harness-equivalent asserts pass.
+- No product invent stamp file; no Path B thin unit claimed as sole green.
 - Tip commit improves skip-build selection honesty (staged env; no home install fallback).
 
 ### 4.3 What is **not** proven (honest residual)
@@ -386,26 +386,26 @@ Owner-bar/heart non-re-run is a **review residual**, not by itself product fraud
 
 ## 8. Residuals to carry after Lane B (HEAD012)
 
-1. **Spec 60 T3 / parent `expire_all` after implement worker** — still optional honesty residual; not Path A sole green.  
-2. **Interactive TTY worktree create** sole green — carry (VC012).  
-3. **Non-darwin prebuilts** — carry (ADR 0009).  
-4. **Human-gated npm/GitHub publish** — carry (ADR 0007).  
-5. **Live main/npm/GitHub = 5.2.2** until merge + publish — carry.  
-6. **Docs lag** — user-guide 11 honesty 5.4.0 wording + KNOWN_LIMITS floor sentence + non-claim V3-60-3 wording (B-V4-1/2/3). Prefer docs follow-up; **not** freeze blockers if dual review otherwise green.  
-7. **Evidence path lag** — VC015 §8.0 tree-release agent path vs staged META path (B-V3-3); META `git_sha` parent-of-tip (B-V3-4).  
+1. **Spec 60 T3 / parent `expire_all` after implement worker** — still optional honesty residual; not Path A sole green.
+2. **Interactive TTY worktree create** sole green — carry (VC012).
+3. **Non-darwin prebuilts** — carry (ADR 0009).
+4. **Human-gated npm/GitHub publish** — carry (ADR 0007).
+5. **Live main/npm/GitHub = 5.2.2** until merge + publish — carry.
+6. **Docs lag** — user-guide 11 honesty 5.4.0 wording + KNOWN_LIMITS floor sentence + non-claim V3-60-3 wording (B-V4-1/2/3). Prefer docs follow-up; **not** freeze blockers if dual review otherwise green.
+7. **Evidence path lag** — VC015 §8.0 tree-release agent path vs staged META path (B-V3-3); META `git_sha` parent-of-tip (B-V3-4).
 8. **Independent re-run** of owner-bar / heart / Path A R0A when disk + binaries allow — strengthens confidence; not required to invent BLOCK given committed wire integrity + stage-aware disclosure.
 
 ---
 
 ## 9. Explicit non-claims of this review
 
-- Does **not** merge PR **#147** or **#146**.  
-- Does **not** tag/publish **5.5.0**.  
-- Does **not** re-certify full V1–V2 Path A matrix from scratch.  
-- Does **not** claim Spec **60 T3** table-expire is implemented on Path A.  
-- Does **not** claim live registry already serves **5.5.0**.  
-- Does **not** claim the latest META run used a tree-built **5.5.0** CLI (it used staged **5.4.0**, disclosed).  
-- Does **not** replace Lane A; dual review requires the other lane’s verdict as well for process completeness.  
+- Does **not** merge PR **#147** or **#146**.
+- Does **not** tag/publish **5.5.0**.
+- Does **not** re-certify full V1–V2 Path A matrix from scratch.
+- Does **not** claim Spec **60 T3** table-expire is implemented on Path A.
+- Does **not** claim live registry already serves **5.5.0**.
+- Does **not** claim the latest META run used a tree-built **5.5.0** CLI (it used staged **5.4.0**, disclosed).
+- Does **not** replace Lane A; dual review requires the other lane’s verdict as well for process completeness.
 - Does **not** fetch/pull/move remotes or follow a moving branch tip beyond the pinned SHA.
 
 ---
@@ -429,5 +429,5 @@ AGENT_SHA256=a56897aa2cdab00eb2b47a53796007d55bc4aa73c983c9fc59ffe9f7de370e54
 WIRE_OFFLINE_ASSERTS=PASS
 ```
 
-**READY** means: freeze packaging cut at exact target SHA is acceptable for dual-review **pass** on V3 public Path A V3-60-3 (plan bar) + stage-aware skip-build honesty + V4 floor/asset/SemVer/PR honesty, with disclosed Spec 60 table-expire residual and medium docs/path lag.  
+**READY** means: freeze packaging cut at exact target SHA is acceptable for dual-review **pass** on V3 public Path A V3-60-3 (plan bar) + stage-aware skip-build honesty + V4 floor/asset/SemVer/PR honesty, with disclosed Spec 60 table-expire residual and medium docs/path lag.
 **Not** a ship/publish authorization.

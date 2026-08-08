@@ -76,11 +76,12 @@ turn repeated builds into incremental ones.
 - **Pure version literals** (the `# → deepseek-build X.Y.Z` / `dsb X.Y.Z` /
   `check-semver: ok (X.Y.Z)` lines under the install header) are updated
   automatically by `bump-version.sh`.
-- **MAJOR bump gate (fail-close):** cutting a new major (e.g. `5.0.0`) is
-  rejected by `release.sh` unless README's product-status banner already
-  references that major (a `**5.0.0** …` row). Update `docs/product/` + README
-  *before* running the release — the tag must never ship ahead of the
-  documented story.
+- **MAJOR bump gate (fail-close):** cutting a new major (e.g. `6.0.0`) is
+  rejected by `release.sh` unless the product version history
+  (`docs/product/versions/README.md`) already logs that major (the row is
+  added by `bump-version.sh`). The user-facing README intentionally stays
+  clean of release-process signals; the version log is the internal record
+  the gate checks — the tag must never ship ahead of the documented story.
 
 ## Human gates
 

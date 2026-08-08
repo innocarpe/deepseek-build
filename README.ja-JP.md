@@ -36,14 +36,6 @@
   <img src="assets/deepseek-build-welcome.png" alt="DeepSeek Build のウェルカム画面 — dsb で開くフルスクリーンの DeepSeek エージェント TUI" width="85%">
 </p>
 
-> [!NOTE]
-> **製品ステータス:** `5.x` 系は owner-bar 完了製品です。**`5.5.0`** は
-> vision-complete フリーズ版です — Path A 上で Deep Code（L1）、Reasonix（L2）、
-> Grok スループット（L3）をすべてクローズしました。
-> [`5.0.0` カット](docs/product/evidence/CUT_5_0_0_2026-08-07.md) は Path A 台帳と
-> 独立レビューを通過しました。**npm と GitHub Latest は `5.5.0` を公開しています。**以前の `3.x` / `4.x` タグは
-> [バージョン履歴](docs/product/versions/README.md) に部分的な試行として記録されています。
-
 ## クイックスタート
 
 npm からインストールし、DeepSeek API キーを追加して TUI を開きます:

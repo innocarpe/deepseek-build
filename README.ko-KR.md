@@ -36,14 +36,6 @@
   <img src="assets/deepseek-build-welcome.png" alt="DeepSeek Build 웰컴 화면 — dsb로 여는 풀스크린 DeepSeek 에이전트 TUI" width="85%">
 </p>
 
-> [!NOTE]
-> **제품 상태:** `5.x` 라인은 owner-bar 완료 제품입니다. **`5.5.0`** 은
-> vision-complete 프리즈 버전입니다 — Path A에서 Deep Code(L1), Reasonix(L2),
-> Grok 스루풋(L3)을 모두 클로즈했습니다.
-> [`5.0.0` 컷](docs/product/evidence/CUT_5_0_0_2026-08-07.md)은 Path A 원장과
-> 독립 리뷰를 통과했습니다. **npm과 GitHub Latest는 `5.5.0`을 게시했습니다.** 이전 `3.x`/`4.x` 태그는
-> [버전 이력](docs/product/versions/README.md)에 부분 시도로 기록되어 있습니다.
-
 ## 빠른 시작
 
 npm에서 설치하고 DeepSeek API 키를 추가한 뒤 TUI를 엽니다:

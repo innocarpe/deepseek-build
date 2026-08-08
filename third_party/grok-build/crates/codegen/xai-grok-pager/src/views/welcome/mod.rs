@@ -3764,10 +3764,8 @@ mod tests {
 
     #[test]
     fn hero_box_announcement_clamped_when_tight() {
-        // With the current 8-row full logo, 17 rows is the no-announcement
-        // boundary for a 3-row menu; adding an announcement needs one more row
-        // so the clamped info slot can occupy at least one row.
-        let boundary = Rect::new(0, 0, 100, 17);
+        let boundary_height = hero_box::min_content_height(0, 3, 0, 0);
+        let boundary = Rect::new(0, 0, 100, boundary_height);
         let a = long_ann();
         let without = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: boundary,
@@ -3776,8 +3774,9 @@ mod tests {
         });
         assert!(without.has_hero_box());
         assert_eq!(hero_box::min_content_height(0, 3, 0, 0), boundary.height);
+        assert_eq!(hero_box::min_content_height(0, 3, 0, 2), boundary.height);
         assert_eq!(
-            hero_box::min_content_height(0, 3, 0, 1),
+            hero_box::min_content_height(0, 3, 0, 3),
             boundary.height + 1
         );
         let too_tight_with_ann = WelcomeLayout::compute(WelcomeLayoutInput {
@@ -3786,11 +3785,9 @@ mod tests {
             announcement: Some(&a),
             ..Default::default()
         });
-        assert!(
-            !too_tight_with_ann.has_hero_box(),
-            "announcement should not force a zero-row info hero box at the exact no-info boundary"
-        );
-        let area = Rect::new(0, 0, 100, 18);
+        assert!(too_tight_with_ann.has_hero_box());
+        assert_eq!(too_tight_with_ann.hero_info.height, 2);
+        let area = Rect::new(0, 0, 100, boundary_height + 1);
         let with_ann = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             menu_height: 3,
@@ -3801,7 +3798,7 @@ mod tests {
             with_ann.has_hero_box(),
             "announcement clamps to fit instead of disabling the box"
         );
-        assert!(with_ann.hero_info.height > 0);
+        assert_eq!(with_ann.hero_info.height, 3);
         assert!(
             hero_box::min_content_height(0, 3, 0, with_ann.hero_info.height) <= area.height,
             "clamped slot must keep the box within the area"

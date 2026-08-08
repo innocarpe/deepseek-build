@@ -33,7 +33,7 @@
 </div>
 
 <p align="center">
-  <img src="assets/deepseek-build-welcome.png" alt="DeepSeek Build のウェルカム画面 — dsb で開くフルスクリーンの DeepSeek エージェント TUI" width="85%">
+  <img src="assets/dsb-welcome.jpg" alt="DeepSeek Build のウェルカム画面 — dsb で開くフルスクリーンの DeepSeek エージェント TUI" width="85%">
 </p>
 
 ## クイックスタート

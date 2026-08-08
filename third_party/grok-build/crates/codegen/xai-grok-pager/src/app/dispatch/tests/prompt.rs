@@ -2,6 +2,54 @@
 
 use super::*;
 
+fn assert_billing_then_deepseek_status(effects: &[Effect], id: AgentId) {
+    assert!(
+        matches!(
+            effects,
+            [
+                Effect::FetchBilling {
+                    agent_id,
+                    silent: true
+                },
+                Effect::FetchDeepSeekStatus {
+                    agent_id: deepseek_agent_id,
+                    session_id
+                }
+            ] if *agent_id == id
+                && *deepseek_agent_id == id
+                && session_id.as_ref() == "test-session"
+        ),
+        "expected billing then DeepSeek status refresh, got {effects:?}"
+    );
+}
+
+fn assert_send_prompt_then_billing_then_deepseek_status(
+    effects: &[Effect],
+    id: AgentId,
+    expected_text: &str,
+) {
+    assert!(
+        matches!(
+            effects,
+            [
+                Effect::SendPrompt { text, .. },
+                Effect::FetchBilling {
+                    agent_id,
+                    silent: true
+                },
+                Effect::FetchDeepSeekStatus {
+                    agent_id: deepseek_agent_id,
+                    session_id
+                }
+            ] if text.as_str() == expected_text
+                && *agent_id == id
+                && *deepseek_agent_id == id
+                && session_id.as_ref() == "test-session"
+        ),
+        "expected SendPrompt({expected_text:?}), billing, then DeepSeek status refresh, got {effects:?}"
+    );
+}
+
 /// Sending a prompt is a submit: it retires the active ephemeral tip.
 #[test]
 fn send_prompt_clears_active_ephemeral_tip() {
@@ -1191,13 +1239,9 @@ fn turn_end_drains_next_queued_prompt() {
         &mut app,
     );
 
-    // No re-send (the prompt was already sent at enqueue time): only the
-    // billing refresh effect.
-    assert_eq!(effects.len(), 1);
-    assert!(matches!(
-        &effects[0],
-        Effect::FetchBilling { silent: true, .. }
-    ));
+    // No re-send (the prompt was already sent at enqueue time): billing then
+    // the intentional DeepSeek status refresh.
+    assert_billing_then_deepseek_status(&effects, id);
     assert!(app.agents[&id].session.state.is_turn_running());
     // current_prompt_id was handed off to the second prompt for correlation.
     assert_eq!(
@@ -1275,12 +1319,8 @@ fn turn_end_with_empty_queue_stays_idle() {
         &mut app,
     );
 
-    // Silent billing refresh after turn completion.
-    assert_eq!(effects.len(), 1);
-    assert!(matches!(
-        &effects[0],
-        Effect::FetchBilling { silent: true, .. }
-    ));
+    // Silent billing refresh, followed by DeepSeek status, after turn completion.
+    assert_billing_then_deepseek_status(&effects, id);
     assert!(app.agents[&id].session.state.is_idle());
     // Session event "Worked for" added.
     assert_eq!(app.agents[&id].scrollback.len(), 1);
@@ -1309,31 +1349,19 @@ fn multiple_queued_prompts_drain_one_per_turn() {
         })
     };
 
-    // Turn end → drain "b" + FetchBilling.
+    // Turn end → drain "b", FetchBilling, then DeepSeek status.
     let effects = dispatch(end_turn(), &mut app);
-    assert!(matches!(&effects[0], Effect::SendPrompt { text, .. } if text == "b"));
-    assert!(matches!(
-        &effects[1],
-        Effect::FetchBilling { silent: true, .. }
-    ));
+    assert_send_prompt_then_billing_then_deepseek_status(&effects, id, "b");
     assert_eq!(app.agents[&id].session.queue_len(), 1);
 
-    // Turn end → drain "c" + FetchBilling.
+    // Turn end → drain "c", FetchBilling, then DeepSeek status.
     let effects = dispatch(end_turn(), &mut app);
-    assert!(matches!(&effects[0], Effect::SendPrompt { text, .. } if text == "c"));
-    assert!(matches!(
-        &effects[1],
-        Effect::FetchBilling { silent: true, .. }
-    ));
+    assert_send_prompt_then_billing_then_deepseek_status(&effects, id, "c");
     assert_eq!(app.agents[&id].session.queue_len(), 0);
 
-    // Turn end → FetchBilling only.
+    // Turn end → FetchBilling then DeepSeek status only.
     let effects = dispatch(end_turn(), &mut app);
-    assert_eq!(effects.len(), 1);
-    assert!(matches!(
-        &effects[0],
-        Effect::FetchBilling { silent: true, .. }
-    ));
+    assert_billing_then_deepseek_status(&effects, id);
     assert!(app.agents[&id].session.state.is_idle());
 }
 
@@ -1355,12 +1383,8 @@ fn prompt_response_resets_turn_state() {
         }),
         &mut app,
     );
-    // Silent billing refresh after turn completion.
-    assert_eq!(effects.len(), 1);
-    assert!(matches!(
-        &effects[0],
-        Effect::FetchBilling { silent: true, .. }
-    ));
+    // Silent billing refresh, followed by DeepSeek status, after turn completion.
+    assert_billing_then_deepseek_status(&effects, id);
     assert!(app.agents[&id].session.state.is_idle());
     assert!(app.agents[&id].turn_started_at.is_none());
     // mark_turn_finished must stamp the activity anchor used by the
@@ -1395,7 +1419,11 @@ fn turn_end_fetches_prompt_suggestion_when_enabled() {
         &mut app,
     );
 
-    assert_eq!(effects.len(), 2, "suggestion fetch + billing: {effects:?}");
+    assert_eq!(
+        effects.len(),
+        3,
+        "suggestion fetch + billing + DeepSeek status: {effects:?}"
+    );
     let Effect::FetchPromptSuggestion {
         agent_id,
         generation,
@@ -1411,6 +1439,26 @@ fn turn_end_fetches_prompt_suggestion_when_enabled() {
     // `None` on the wire; the shell then uses its own `grok-build-0.1`
     // default (suggestion calls never use the session model).
     assert_eq!(*model, None);
+    assert!(
+        matches!(
+            &effects[1],
+            Effect::FetchBilling {
+                agent_id,
+                silent: true
+            } if *agent_id == id
+        ),
+        "expected billing refresh second, got {effects:?}"
+    );
+    assert!(
+        matches!(
+            &effects[2],
+            Effect::FetchDeepSeekStatus {
+                agent_id,
+                session_id
+            } if *agent_id == id && session_id.as_ref() == "test-session"
+        ),
+        "expected DeepSeek status refresh third, got {effects:?}"
+    );
 
     // The loaded suggestion lands in the right agent's controller.
     let generation = *generation;
@@ -2032,12 +2080,9 @@ fn turn_complete_notification_suppressed_when_queue_non_empty() {
         }),
         &mut app,
     );
-    // No re-send; only billing refresh. The second prompt is adopted.
-    assert_eq!(effects.len(), 1);
-    assert!(matches!(
-        &effects[0],
-        Effect::FetchBilling { silent: true, .. }
-    ));
+    // No re-send; only billing and DeepSeek status refreshes. The second
+    // prompt is adopted.
+    assert_billing_then_deepseek_status(&effects, id);
     assert!(app.agents[&id].session.state.is_turn_running());
     assert!(
         app.deferred_notification.is_none(),
@@ -2348,12 +2393,8 @@ fn prompt_response_resets_cancelling_to_idle() {
         }),
         &mut app,
     );
-    // Silent billing refresh after turn completion.
-    assert_eq!(effects.len(), 1);
-    assert!(matches!(
-        &effects[0],
-        Effect::FetchBilling { silent: true, .. }
-    ));
+    // Silent billing refresh, followed by DeepSeek status, after turn completion.
+    assert_billing_then_deepseek_status(&effects, id);
     assert!(app.agents[&id].session.state.is_idle());
     // Cancellation produces a "Turn cancelled" session event.
     assert_eq!(app.agents[&id].scrollback.len(), 1);
@@ -2390,12 +2431,7 @@ fn cancel_with_queued_prompt_drains_on_completion() {
         &mut app,
     );
 
-    assert_eq!(effects.len(), 2);
-    assert!(matches!(&effects[0], Effect::SendPrompt { text, .. } if text == "queued"));
-    assert!(matches!(
-        &effects[1],
-        Effect::FetchBilling { silent: true, .. }
-    ));
+    assert_send_prompt_then_billing_then_deepseek_status(&effects, id, "queued");
     assert!(app.agents[&id].session.state.is_turn_running());
     assert_eq!(app.agents[&id].session.queue_len(), 0);
 }
@@ -2417,12 +2453,8 @@ fn cancel_with_empty_queue_stays_idle() {
         }),
         &mut app,
     );
-    // Silent billing refresh after turn completion.
-    assert_eq!(effects.len(), 1);
-    assert!(matches!(
-        &effects[0],
-        Effect::FetchBilling { silent: true, .. }
-    ));
+    // Silent billing refresh, followed by DeepSeek status, after turn completion.
+    assert_billing_then_deepseek_status(&effects, id);
     assert!(app.agents[&id].session.state.is_idle());
 }
 
@@ -2472,12 +2504,7 @@ fn cancel_with_multiple_queued_prompts_drains_only_front_prompt() {
         &mut app,
     );
 
-    assert_eq!(effects.len(), 2);
-    assert!(matches!(&effects[0], Effect::SendPrompt { text, .. } if text == "queued-1"));
-    assert!(matches!(
-        &effects[1],
-        Effect::FetchBilling { silent: true, .. }
-    ));
+    assert_send_prompt_then_billing_then_deepseek_status(&effects, id, "queued-1");
     assert!(app.agents[&id].session.state.is_turn_running());
     assert_eq!(app.agents[&id].session.queue_len(), 1);
     assert_eq!(app.agents[&id].session.pending_prompts[0].text, "queued-2");
@@ -2518,12 +2545,8 @@ fn cancel_drain_is_blocked_when_editing_front_prompt() {
         &mut app,
     );
 
-    // Drain blocked but billing refresh still happens.
-    assert_eq!(effects.len(), 1);
-    assert!(matches!(
-        &effects[0],
-        Effect::FetchBilling { silent: true, .. }
-    ));
+    // Drain blocked but billing and DeepSeek status refreshes still happen.
+    assert_billing_then_deepseek_status(&effects, id);
     assert!(app.agents[&id].session.state.is_idle());
     assert_eq!(app.agents[&id].session.queue_len(), 2);
     assert_eq!(app.agents[&id].session.pending_prompts[0].text, "queued-1");

@@ -1092,6 +1092,27 @@ mod tests {
         }
     }
 
+    fn assert_billing_then_deepseek_status(effects: &[Effect], id: AgentId) {
+        assert!(
+            matches!(
+                effects,
+                [
+                    Effect::FetchBilling {
+                        agent_id,
+                        silent: true
+                    },
+                    Effect::FetchDeepSeekStatus {
+                        agent_id: deepseek_agent_id,
+                        session_id
+                    }
+                ] if *agent_id == id
+                    && *deepseek_agent_id == id
+                    && session_id.as_ref() == "test-session"
+            ),
+            "expected billing then DeepSeek status refresh, got {effects:?}"
+        );
+    }
+
     #[test]
     fn format_cron_prompt_includes_framing() {
         let out = super::format_cron_prompt("do stuff", "task-1", "every 5m");
@@ -1130,13 +1151,10 @@ mod tests {
             kind: crate::app::agent::QueueEntryKind::Prompt,
         };
 
-        // Turn ends → should NOT drain "second" (user is editing it), only FetchBilling.
+        // Turn ends → should NOT drain "second" (user is editing it), only
+        // FetchBilling followed by the intentional DeepSeek status refresh.
         let effects = dispatch(end_turn(), &mut app);
-        assert_eq!(effects.len(), 1);
-        assert!(matches!(
-            &effects[0],
-            Effect::FetchBilling { silent: true, .. }
-        ));
+        assert_billing_then_deepseek_status(&effects, id);
         assert!(app.agents[&id].session.state.is_idle());
         // "second" should still be in the queue.
         assert_eq!(app.agents[&id].session.queue_len(), 2);
@@ -1162,14 +1180,29 @@ mod tests {
             kind: crate::app::agent::QueueEntryKind::Prompt,
         };
 
-        // Turn ends → should drain "second" (front, not being edited) + FetchBilling.
+        // Turn ends → should drain "second" (front, not being edited),
+        // then refresh billing and DeepSeek status.
         let effects = dispatch(end_turn(), &mut app);
-        assert_eq!(effects.len(), 2);
-        assert!(matches!(&effects[0], Effect::SendPrompt { text, .. } if text == "second"));
-        assert!(matches!(
-            &effects[1],
-            Effect::FetchBilling { silent: true, .. }
-        ));
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [
+                    Effect::SendPrompt { text, .. },
+                    Effect::FetchBilling {
+                        agent_id,
+                        silent: true
+                    },
+                    Effect::FetchDeepSeekStatus {
+                        agent_id: deepseek_agent_id,
+                        session_id
+                    }
+                ] if text.as_str() == "second"
+                    && *agent_id == id
+                    && *deepseek_agent_id == id
+                    && session_id.as_ref() == "test-session"
+            ),
+            "expected drain, billing, and DeepSeek status refresh, got {effects:?}"
+        );
         // "third" should still be in queue.
         assert_eq!(app.agents[&id].session.queue_len(), 1);
         assert_eq!(app.agents[&id].session.pending_prompts[0].text, "third");
@@ -2317,13 +2350,10 @@ mod tests {
             kind: crate::app::agent::QueueEntryKind::Prompt,
         };
 
-        // End turn for p2 → should NOT drain p3 (being edited), only FetchBilling.
+        // End turn for p2 → should NOT drain p3 (being edited), only
+        // FetchBilling followed by the intentional DeepSeek status refresh.
         let effects = dispatch(end_turn(), &mut app);
-        assert_eq!(effects.len(), 1);
-        assert!(
-            matches!(&effects[0], Effect::FetchBilling { silent: true, .. }),
-            "drain should be blocked, only billing refresh"
-        );
+        assert_billing_then_deepseek_status(&effects, id);
         assert_eq!(app.agents[&id].session.queue_len(), 2); // p3, p4
 
         // Simulate user saving edited text.

@@ -204,6 +204,9 @@ jobs:
     if: needs.changes.outputs.grok == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    env:
+      # SessionActor turn futures can exceed Rust's 2 MiB default test-thread stack.
+      RUST_MIN_STACK: "16777216"
     defaults:
       run:
         working-directory: third_party/grok-build

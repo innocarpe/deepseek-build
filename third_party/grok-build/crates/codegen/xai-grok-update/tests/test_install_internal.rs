@@ -1,5 +1,6 @@
-//! End-to-end tests for `install_internal` — the GCS-bucket installer used
-//! when `installer = "internal"` is configured.
+//! End-to-end tests for the GCS-bucket install pipeline (via the test-only
+//! entry points `install_internal_from_base` / `install_internal_from_bases`,
+//! used when `installer = "internal"` is configured).
 //!
 //! Wires together a wiremock-mocked GCS bucket + an isolated `GROK_HOME`
 //! tempdir so we can verify the full install pipeline:

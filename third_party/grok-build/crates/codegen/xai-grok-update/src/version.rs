@@ -14,19 +14,6 @@ const TTL_SECONDS_BEFORE_AUTO_UPDATE: Duration = Duration::from_secs(60 * 30);
 const NPM_PACKAGE: &str = "@innocarpe/deepseek-build";
 pub const GH_RELEASE_REPO: &str = "innocarpe/deepseek-build";
 
-/// Primary CLI base URL: Cloudflare-fronted x.ai endpoint with edge caching
-/// for binaries and origin-respecting no-cache for channel pointers.
-pub(crate) const CLI_BASE_URL_PRIMARY: &str = "https://x.ai/cli";
-
-/// Fallback CLI base URL: direct GCS, used when the primary is unreachable
-/// (Cloudflare outage, regional CF egress issue, DNS hijack, etc.).
-pub(crate) const CLI_BASE_URL_FALLBACK: &str =
-    "https://storage.googleapis.com/grok-build-public-artifacts/cli";
-
-/// CLI base URLs in preference order. Callers (channel-pointer fetch, binary
-/// download, in-app updater) try each in turn and stop at the first success.
-pub(crate) const CLI_BASE_URLS: &[&str] = &[CLI_BASE_URL_PRIMARY, CLI_BASE_URL_FALLBACK];
-
 /// Minimal configuration the update system needs from the environment.
 ///
 /// Constructed once from `GrokBuildEnvironment` at startup and threaded through the
@@ -225,41 +212,9 @@ async fn fetch_gh_release_latest(exclude_pre: bool) -> Result<String> {
     Ok(version)
 }
 
-/// Fetch the latest version from a public CLI channel pointer.
-///
-/// Reads `{base}/{channel}` which contains a plain-text semver string
-/// (e.g. `0.1.181`). No auth required — the upstream bucket is public.
-///
-/// For the alpha channel, fetches both `alpha` and `stable` pointers and
-/// returns the semver-greater, matching the behavior of the npm and
-/// gh-release paths.
-///
-/// Tries each base URL in [`CLI_BASE_URLS`] in order and stops at the first
-/// success. Each individual base also retries up to 3 times with exponential
-/// backoff (1s, 2s, 4s) on transient failures before falling through to the
-/// next base.
-pub(crate) async fn fetch_gcs_version(channel: &str) -> Result<String> {
-    let mut last_err: Option<anyhow::Error> = None;
-    for (i, base) in CLI_BASE_URLS.iter().enumerate() {
-        match fetch_gcs_version_from_base(channel, base).await {
-            Ok(v) => return Ok(v),
-            Err(e) => {
-                if i + 1 < CLI_BASE_URLS.len() {
-                    tracing::warn!(
-                        "channel pointer fetch from {} failed ({:#}); trying next base URL",
-                        base,
-                        e
-                    );
-                }
-                last_err = Some(e);
-            }
-        }
-    }
-    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("no CLI base URLs configured")))
-}
-
-/// Test-only entry point: same as [`fetch_gcs_version`] but reads from
-/// `base_url` instead of the hardcoded GCS bucket.
+/// Test-only entry point: fetch the latest version from a GCS-style channel
+/// pointer at `base_url` (used by hermetic install tests with a wiremock
+/// server). The product itself never reads GCS / x.ai pointers.
 #[doc(hidden)]
 pub async fn fetch_gcs_version_from_base(channel: &str, base_url: &str) -> Result<String> {
     if channel == "alpha" {
@@ -347,7 +302,12 @@ pub async fn fetch_latest_version(installer: &str, config: &UpdateConfig) -> Res
     match installer {
         "npm" => fetch_npm_version(&config.channel, config.npm_registry.as_deref()).await,
         "gh-release" => fetch_gh_release_version(&config.channel).await,
-        _ => fetch_gcs_version(&config.channel).await,
+        // DeepSeek Build has no internal binary CDN: the product ships only
+        // via npm / GitHub Releases, so "internal" installs (source builds,
+        // legacy classification) consult the same product npm feed. Never
+        // fall through to the upstream Grok x.ai channel pointers — those
+        // advertise Grok Build versions (e.g. 1.0.0) to DeepSeek Build users.
+        _ => fetch_npm_version(&config.channel, config.npm_registry.as_deref()).await,
     }
 }
 
@@ -477,26 +437,24 @@ pub(crate) fn version_from_versioned_binary_name(name: &str, bin_prefix: &str) -
     Some(ver_str)
 }
 
-/// Fetch the stable channel pointer for caching alongside the version.
+/// Fetch the product stable pointer for caching alongside the version.
 ///
-/// Tries each base URL in [`CLI_BASE_URLS`] and returns the first success.
+/// DeepSeek Build's stable channel is the npm `@latest` dist-tag of the
+/// product package; there is no x.ai/GCS pointer to read (those advertise
+/// Grok Build versions).
 /// Best-effort: returns `None` on any failure (the caller will simply omit
 /// the stable pointer from the cache, and `channel_label()` will return `""`
 /// until the next successful fetch).
 ///
-/// The entire operation is capped at 500 ms. The stable pointer is only used
+/// The entire operation is capped at 1500 ms (an `npm view` spawn). The
+/// stable pointer is only used
 /// to derive the `[alpha]`/`[stable]` channel label — it is never required
 /// for correctness. On slow or unreachable networks the timeout fires and we
 /// return `None`; the label will populate on the next successful TTL check
 /// (~30 min). This keeps startup and post-install paths fast.
 pub(crate) async fn try_fetch_stable_pointer() -> Option<String> {
-    tokio::time::timeout(Duration::from_millis(500), async {
-        for base in CLI_BASE_URLS {
-            if let Ok(v) = fetch_gcs_channel_pointer("stable", base).await {
-                return Some(v);
-            }
-        }
-        None
+    tokio::time::timeout(Duration::from_millis(1500), async {
+        fetch_npm_tag("latest", None).await.ok()
     })
     .await
     .unwrap_or(None)

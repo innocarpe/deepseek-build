@@ -640,6 +640,30 @@ fn stamp_path_a_l3(home: &BuildHome) {
     let _ = std::fs::write(path, stamp);
 }
 
+/// Seed the pager's changelog disk cache with the product changelog.
+///
+/// The vendored pager (`xai-grok-pager`) fetches per-version changelogs from
+/// Grok's CDN (`https://x.ai/cli/changelogs/{version}.external.md`) and falls
+/// back to `$GROK_HOME/CHANGELOG.md` on a miss. Product versions (`5.x.y`)
+/// are never published there, so without a seed the welcome-screen CHANGELOG
+/// click and `/release-notes` silently no-op. Writing the repo `CHANGELOG.md`
+/// (embedded at build time) into that cache path makes both open the product
+/// changelog — offline, matching the Grok Build UX.
+///
+/// Best-effort: writes only when missing or stale; failures never block
+/// agent launch.
+fn seed_product_changelog(home: &BuildHome) {
+    const PRODUCT_CHANGELOG: &str = include_str!("../../../CHANGELOG.md");
+    let _ = home.ensure_dir();
+    let path = home.path().join("CHANGELOG.md");
+    let up_to_date = std::fs::read_to_string(&path)
+        .map(|existing| existing == PRODUCT_CHANGELOG)
+        .unwrap_or(false);
+    if !up_to_date {
+        let _ = std::fs::write(&path, PRODUCT_CHANGELOG);
+    }
+}
+
 /// Exec the Grok-class agent, replacing this process (Unix).
 ///
 /// On failure to find the binary, returns an error with install guidance.
@@ -655,6 +679,10 @@ pub fn exec_agent(args: &[String]) -> Result<()> {
     stamp_path_a_routing(&home);
     // Spec 50/60 / G010: production Path A L3 schedule + worker cache stamp.
     stamp_path_a_l3(&home);
+    // Changelog port fix: the Grok CDN has no changelog for product versions
+    // (5.x.y), so seed the pager's disk cache — otherwise the welcome-screen
+    // CHANGELOG click and `/release-notes` silently no-op (non-blocking).
+    seed_product_changelog(&home);
     print_product_splash();
 
     let Some(bin) = find_agent_bin() else {
@@ -848,6 +876,36 @@ mod tests {
         // Mutating indices must include edit/bash/mcp/unknown (1,2,3,5 after map).
         assert!(body.contains("mu_indices="), "{body}");
         assert!(body.contains("ro_indices="), "{body}");
+    }
+
+    /// Changelog port fix: pager cache seed writes the repo changelog.
+    #[test]
+    fn seed_product_changelog_writes_repo_changelog_to_pager_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dsb_config::BuildHome::from_path(dir.path());
+        seed_product_changelog(&home);
+        let path = dir.path().join("CHANGELOG.md");
+        let body = std::fs::read_to_string(&path).expect("seeded changelog file");
+        assert!(
+            body.starts_with("# Changelog"),
+            "must be the repo CHANGELOG.md: {body}"
+        );
+        assert!(
+            body.contains("## Unreleased"),
+            "newest-first changelog invariant missing: {body}"
+        );
+        // Up-to-date cache is not rewritten (byte-stable, no churn).
+        seed_product_changelog(&home);
+        let body2 = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(body, body2, "re-seed must not rewrite an up-to-date cache");
+        // Stale cache (e.g. leftover from an older release) is refreshed.
+        std::fs::write(&path, "stale\n").unwrap();
+        seed_product_changelog(&home);
+        let body3 = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            body3, body,
+            "stale cache must be refreshed to repo changelog"
+        );
     }
 }
 

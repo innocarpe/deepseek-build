@@ -944,17 +944,11 @@ mod tests {
     #[test]
     fn tui_forward_flags_worktree_opt_in() {
         let named = Cli::try_parse_from(["dsb", "--worktree", "feat-foo"]).unwrap();
-        assert_eq!(
-            tui_forward_flags(&named),
-            vec!["--worktree", "feat-foo"]
-        );
+        assert_eq!(tui_forward_flags(&named), vec!["--worktree", "feat-foo"]);
         let bare = Cli::try_parse_from(["dsb", "--worktree"]).unwrap();
         assert_eq!(tui_forward_flags(&bare), vec!["--worktree"]);
         let short = Cli::try_parse_from(["dsb", "-w", "feat-bar"]).unwrap();
-        assert_eq!(
-            tui_forward_flags(&short),
-            vec!["--worktree", "feat-bar"]
-        );
+        assert_eq!(tui_forward_flags(&short), vec!["--worktree", "feat-bar"]);
         let with_ref =
             Cli::try_parse_from(["dsb", "--worktree", "feat", "--worktree-ref", "main"]).unwrap();
         assert_eq!(
@@ -967,8 +961,7 @@ mod tests {
     fn reject_worktree_flags_on_line_mode() {
         let cli = Cli::try_parse_from(["dsb", "run", "hi", "--worktree", "x"]).unwrap();
         assert!(reject_tui_only_flags(&cli).is_err());
-        let with_ref =
-            Cli::try_parse_from(["dsb", "chat", "--worktree-ref", "main"]).unwrap();
+        let with_ref = Cli::try_parse_from(["dsb", "chat", "--worktree-ref", "main"]).unwrap();
         assert!(reject_tui_only_flags(&with_ref).is_err());
     }
 

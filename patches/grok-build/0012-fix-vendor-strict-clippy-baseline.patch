@@ -10,12 +10,13 @@ guarded test fixture so it is killed and waited even if the test panics.
 
 ---
  .../crates/codegen/xai-fast-worktree/src/api.rs    | 32 +++++++++++++++++-----
+ .../codegen/xai-grok-config/src/managed_text/tests.rs |  4 +--
  .../xai-grok-pager/src/app/session_startup.rs      |  5 +---
  .../xai-grok-pager/src/diagnostics/fix_tests.rs    |  2 +-
  .../crates/codegen/xai-grok-pager/src/test_util.rs |  4 +--
  .../xai-grok-pager/tests/doctor_early_dispatch.rs  |  7 ++---
  .../xai-grok-shell/src/session/unified_list/mod.rs | 17 ++++--------
- 6 files changed, 37 insertions(+), 30 deletions(-)
+ 7 files changed, 44 insertions(+), 37 deletions(-)
 
 diff --git a/third_party/grok-build/crates/codegen/xai-fast-worktree/src/api.rs b/third_party/grok-build/crates/codegen/xai-fast-worktree/src/api.rs
 index 697ccd5..1f7a33a 100644
@@ -46,7 +47,7 @@ index 697ccd5..1f7a33a 100644
 @@ -3632,11 +3647,15 @@ mod tests {
              };
              db.register(&record).unwrap();
- 
+
 -            let mut child = std::process::Command::new("sleep")
 -                .arg("30")
 -                .current_dir(&nested)
@@ -74,10 +75,50 @@ index 697ccd5..1f7a33a 100644
              assert!(
                  wait_until(|| !scan_has_cwd_under(&want)),
                  "child CWD must leave the scan after exit before reclaim"
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-config/src/managed_text/tests.rs b/third_party/grok-build/crates/codegen/xai-grok-config/src/managed_text/tests.rs
+index 605fc52..70504b0 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-config/src/managed_text/tests.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-config/src/managed_text/tests.rs
+@@ -271,7 +271,7 @@ fn symlink_resolution_depth_cycles_and_parent_symlinks_are_refused() {
+     let plan = ManagedConfig::plan(request(&relative, &[("item", "body")])).unwrap();
+     assert_eq!(
+         plan.target_path(),
+-        fs::canonicalize(&physical).unwrap().as_path()
++        dunce::canonicalize(&physical).unwrap().as_path()
+     );
+     ManagedConfig::apply(plan).unwrap();
+     assert!(
+@@ -304,7 +304,7 @@ fn symlink_resolution_depth_cycles_and_parent_symlinks_are_refused() {
+         ManagedConfig::plan(request(&linked_parent.join("rc"), &[("item", "body")])).unwrap();
+     assert_eq!(
+         plan.target_path().parent(),
+-        Some(fs::canonicalize(&real_parent).unwrap().as_path())
++        Some(dunce::canonicalize(&real_parent).unwrap().as_path())
+     );
+ }
+ 
 diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/session_startup.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/session_startup.rs
-index 55ad30a..ee2e8a4 100644
+index 55ad30a..9f14807 100644
 --- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/session_startup.rs
 +++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/session_startup.rs
+@@ -495,7 +495,7 @@ pub fn validate_local_workspace_cwd(path: &std::path::Path) -> anyhow::Result<st
+             .unwrap_or_else(|_| std::path::PathBuf::from("."))
+             .join(path)
+     };
+-    let canon = abs.canonicalize().map_err(|e| {
++    let canon = dunce::canonicalize(&abs).map_err(|e| {
+         anyhow::anyhow!(
+             "local workspace cwd must exist and be canonicalizable: {}: {e}",
+             abs.display()
+@@ -514,7 +514,7 @@ pub fn validate_local_workspace_cwd(path: &std::path::Path) -> anyhow::Result<st
+         anyhow::bail!("{LOCAL_WORKSPACE_HOME_DENIED}");
+     }
+     if let Some(home_path) = dirs::home_dir().or_else(|| std::env::var_os("HOME").map(Into::into)) {
+-        let home_canon = home_path.canonicalize().unwrap_or(home_path);
++        let home_canon = dunce::canonicalize(&home_path).unwrap_or(home_path);
+         if canon == home_canon {
+             anyhow::bail!("{LOCAL_WORKSPACE_HOME_DENIED}");
+         }
 @@ -1547,10 +1547,7 @@ mod tests {
      /// hardcoded `false` here once disabled it everywhere.
      #[test]
@@ -90,6 +131,33 @@ index 55ad30a..ee2e8a4 100644
      }
      #[test]
      fn from_pager_args_does_not_probe_tty_for_progress() {
+@@ -2141,7 +2138,7 @@ mod tests {
+             .expect("attach config");
+         assert_eq!(cfg.mode, LocalWorkspaceMode::Attach);
+         assert_eq!(cfg.server_id.as_deref(), Some("srv-dogfood"));
+-        let canon = tmp.path().canonicalize().unwrap();
++        let canon = dunce::canonicalize(tmp.path()).unwrap();
+         assert_eq!(cfg.cwd.as_deref(), Some(canon.as_path()));
+     }
+     #[cfg(feature = "local-workspace")]
+@@ -2196,7 +2193,7 @@ mod tests {
+             cfg.server_id.is_none(),
+             "own leaves server_id to supervisor"
+         );
+-        let canon = tmp.path().canonicalize().unwrap();
++        let canon = dunce::canonicalize(tmp.path()).unwrap();
+         assert_eq!(cfg.cwd.as_deref(), Some(canon.as_path()));
+     }
+     #[cfg(feature = "local-workspace")]
+@@ -2217,7 +2214,7 @@ mod tests {
+             .expect("env own");
+         assert_eq!(cfg.mode, LocalWorkspaceMode::Own);
+         assert!(cfg.server_id.is_none());
+-        let canon = cwd.path().canonicalize().unwrap();
++        let canon = dunce::canonicalize(cwd.path()).unwrap();
+         assert_eq!(cfg.cwd.as_deref(), Some(canon.as_path()));
+     }
+     #[cfg(feature = "local-workspace")]
 diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/diagnostics/fix_tests.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/diagnostics/fix_tests.rs
 index 5066555..6fb9576 100644
 --- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/diagnostics/fix_tests.rs

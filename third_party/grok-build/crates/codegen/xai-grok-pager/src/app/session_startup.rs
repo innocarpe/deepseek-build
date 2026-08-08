@@ -495,7 +495,7 @@ pub fn validate_local_workspace_cwd(path: &std::path::Path) -> anyhow::Result<st
             .unwrap_or_else(|_| std::path::PathBuf::from("."))
             .join(path)
     };
-    let canon = abs.canonicalize().map_err(|e| {
+    let canon = dunce::canonicalize(&abs).map_err(|e| {
         anyhow::anyhow!(
             "local workspace cwd must exist and be canonicalizable: {}: {e}",
             abs.display()
@@ -514,7 +514,7 @@ pub fn validate_local_workspace_cwd(path: &std::path::Path) -> anyhow::Result<st
         anyhow::bail!("{LOCAL_WORKSPACE_HOME_DENIED}");
     }
     if let Some(home_path) = dirs::home_dir().or_else(|| std::env::var_os("HOME").map(Into::into)) {
-        let home_canon = home_path.canonicalize().unwrap_or(home_path);
+        let home_canon = dunce::canonicalize(&home_path).unwrap_or(home_path);
         if canon == home_canon {
             anyhow::bail!("{LOCAL_WORKSPACE_HOME_DENIED}");
         }
@@ -2138,7 +2138,7 @@ mod tests {
             .expect("attach config");
         assert_eq!(cfg.mode, LocalWorkspaceMode::Attach);
         assert_eq!(cfg.server_id.as_deref(), Some("srv-dogfood"));
-        let canon = tmp.path().canonicalize().unwrap();
+        let canon = dunce::canonicalize(tmp.path()).unwrap();
         assert_eq!(cfg.cwd.as_deref(), Some(canon.as_path()));
     }
     #[cfg(feature = "local-workspace")]
@@ -2193,7 +2193,7 @@ mod tests {
             cfg.server_id.is_none(),
             "own leaves server_id to supervisor"
         );
-        let canon = tmp.path().canonicalize().unwrap();
+        let canon = dunce::canonicalize(tmp.path()).unwrap();
         assert_eq!(cfg.cwd.as_deref(), Some(canon.as_path()));
     }
     #[cfg(feature = "local-workspace")]
@@ -2214,7 +2214,7 @@ mod tests {
             .expect("env own");
         assert_eq!(cfg.mode, LocalWorkspaceMode::Own);
         assert!(cfg.server_id.is_none());
-        let canon = cwd.path().canonicalize().unwrap();
+        let canon = dunce::canonicalize(cwd.path()).unwrap();
         assert_eq!(cfg.cwd.as_deref(), Some(canon.as_path()));
     }
     #[cfg(feature = "local-workspace")]

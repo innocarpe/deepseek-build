@@ -41,8 +41,7 @@
 > vision-complete フリーズ版です — Path A 上で Deep Code（L1）、Reasonix（L2）、
 > Grok スループット（L3）をすべてクローズしました。
 > [`5.0.0` カット](docs/product/evidence/CUT_5_0_0_2026-08-07.md) は Path A 台帳と
-> 独立レビューを通過し、`main` は `5.5.0` にあり、リリース経路が現在バージョン
-> として公開します。以前の `3.x` / `4.x` タグは
+> 独立レビューを通過しました。**npm と GitHub Latest は `5.5.0` を公開しています。**以前の `3.x` / `4.x` タグは
 > [バージョン履歴](docs/product/versions/README.md) に部分的な試行として記録されています。
 
 ## クイックスタート

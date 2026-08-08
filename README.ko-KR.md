@@ -41,8 +41,7 @@
 > vision-complete 프리즈 버전입니다 — Path A에서 Deep Code(L1), Reasonix(L2),
 > Grok 스루풋(L3)을 모두 클로즈했습니다.
 > [`5.0.0` 컷](docs/product/evidence/CUT_5_0_0_2026-08-07.md)은 Path A 원장과
-> 독립 리뷰를 통과했고, `main`은 `5.5.0`에 있으며 릴리스 채널이 현재 버전으로
-> 게시합니다. 이전 `3.x`/`4.x` 태그는
+> 독립 리뷰를 통과했습니다. **npm과 GitHub Latest는 `5.5.0`을 게시했습니다.** 이전 `3.x`/`4.x` 태그는
 > [버전 이력](docs/product/versions/README.md)에 부분 시도로 기록되어 있습니다.
 
 ## 빠른 시작

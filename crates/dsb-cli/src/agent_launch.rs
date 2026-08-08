@@ -285,7 +285,10 @@ reasoning_effort = "high"
     inject_model_section_keys_if_missing(
         body,
         &header,
-        &[("base_url", &format!("base_url = \"{DEEPSEEK_API_BASE_URL}\""))],
+        &[(
+            "base_url",
+            &format!("base_url = \"{DEEPSEEK_API_BASE_URL}\""),
+        )],
     )
 }
 
@@ -301,7 +304,10 @@ fn ensure_deepseek_model_reasoning_effort(body: String, model_id: &str) -> Strin
         body,
         &header,
         &[
-            ("supports_reasoning_effort", "supports_reasoning_effort = true"),
+            (
+                "supports_reasoning_effort",
+                "supports_reasoning_effort = true",
+            ),
             ("reasoning_effort", "reasoning_effort = \"high\""),
         ],
     )

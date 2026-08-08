@@ -897,10 +897,7 @@ mod tests {
     #[test]
     fn tui_forward_flags_effort_as_reasoning_effort() {
         let cli = Cli::try_parse_from(["dsb", "--effort", "high"]).unwrap();
-        assert_eq!(
-            tui_forward_flags(&cli),
-            vec!["--reasoning-effort", "high"]
-        );
+        assert_eq!(tui_forward_flags(&cli), vec!["--reasoning-effort", "high"]);
         let cli = Cli::try_parse_from(["dsb", "--effort", "max", "--minimal"]).unwrap();
         assert_eq!(
             tui_forward_flags(&cli),

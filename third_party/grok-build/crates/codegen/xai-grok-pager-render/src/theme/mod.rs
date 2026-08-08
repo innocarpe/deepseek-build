@@ -4,7 +4,9 @@
 //! The default **product** theme is DeepSeek Night (classic) (DeepSeek blue
 //! `#4D6BFE` on a blue-tinted ramp). The measured C-balanced palette is
 //! selectable as **DeepSeek Night v2**. Retired names
-//! (`deepseeknight-neutral`, `groknight`) still parse for config back-compat.
+//! (`deepseeknight-neutral`, `groknight`) still parse for config back-compat,
+//! and the legacy `"dark"` alias now resolves to the classic DeepSeek Night
+//! skin.
 //!
 //! ## Color support
 //!
@@ -146,10 +148,10 @@ impl ThemeKind {
             "deepseeknight-neutral" | "deepseek-neutral" | "dsb-neutral" => {
                 Some(Self::DeepSeekNightNeutral)
             }
-            "deepseeknight" | "deepseek-night" | "deepseek" | "dsb" => {
+            "deepseeknight" | "deepseek-night" | "deepseek" | "dsb" | "dark" => {
                 Some(Self::DeepSeekNight)
             }
-            "groknight" | "grok-night" | "dark" => Some(Self::GrokNight),
+            "groknight" | "grok-night" => Some(Self::GrokNight),
             "tokyonight" | "tokyo-night" | "tokyo" => Some(Self::TokyoNight),
             "grokday" | "grok-day" | "light" | "day" => Some(Self::GrokDay),
             "rosepine" | "rose-pine" | "rosepine-moon" | "rose-pine-moon" => {
@@ -768,6 +770,15 @@ mod tests {
                 "{name} must still parse for back-compat"
             );
         }
+    }
+
+    #[test]
+    fn dark_alias_maps_to_classic_deepseek_night() {
+        // The legacy `"dark"` value must land on the product/default skin
+        // (classic DeepSeek Night), not the retired GrokNight theme.
+        assert_eq!(ThemeKind::from_name("dark"), Some(ThemeKind::DeepSeekNight));
+        assert_eq!(ThemeKind::from_name("DARK"), Some(ThemeKind::DeepSeekNight));
+        assert_eq!(ThemeKind::from_name("Dark"), Some(ThemeKind::DeepSeekNight));
     }
 
     #[test]

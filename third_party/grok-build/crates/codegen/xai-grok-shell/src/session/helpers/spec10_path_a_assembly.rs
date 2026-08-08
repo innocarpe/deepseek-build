@@ -285,20 +285,16 @@ pub fn discover_project_instructions(workspace_root: &std::path::Path) -> String
         }
     }
     let agents = workspace_root.join("AGENTS.md");
-    if agents.is_file() {
-        if let Ok(body) = std::fs::read_to_string(&agents) {
-            let body = body.replace("\r\n", "\n").replace('\r', "\n");
-            parts.push(format!("### AGENTS.md\n\n{}", body.trim_end()));
-        }
+    if agents.is_file() && let Ok(body) = std::fs::read_to_string(&agents) {
+        let body = body.replace("\r\n", "\n").replace('\r', "\n");
+        parts.push(format!("### AGENTS.md\n\n{}", body.trim_end()));
     }
     let nested = workspace_root
         .join(".deepseek-build")
         .join("instructions.md");
-    if nested.is_file() {
-        if let Ok(body) = std::fs::read_to_string(&nested) {
-            let body = body.replace("\r\n", "\n").replace('\r', "\n");
-            parts.push(format!("### instructions.md\n\n{}", body.trim_end()));
-        }
+    if nested.is_file() && let Ok(body) = std::fs::read_to_string(&nested) {
+        let body = body.replace("\r\n", "\n").replace('\r', "\n");
+        parts.push(format!("### instructions.md\n\n{}", body.trim_end()));
     }
     parts.join("\n\n---\n\n")
 }
@@ -354,16 +350,16 @@ pub fn discover_skills_index(
 fn extract_skill_description(raw: &str) -> String {
     // Prefer YAML frontmatter description: lines; else first non-empty body line.
     let text = raw.trim();
-    if let Some(rest) = text.strip_prefix("---") {
-        if let Some(end) = rest.find("\n---") {
-            let fm = &rest[..end];
-            for line in fm.lines() {
-                let line = line.trim();
-                if let Some(v) = line.strip_prefix("description:") {
-                    let v = v.trim().trim_matches('"').trim_matches('\'');
-                    if !v.is_empty() {
-                        return v.to_string();
-                    }
+    if let Some(rest) = text.strip_prefix("---")
+        && let Some(end) = rest.find("\n---")
+    {
+        let fm = &rest[..end];
+        for line in fm.lines() {
+            let line = line.trim();
+            if let Some(v) = line.strip_prefix("description:") {
+                let v = v.trim().trim_matches('"').trim_matches('\'');
+                if !v.is_empty() {
+                    return v.to_string();
                 }
             }
         }

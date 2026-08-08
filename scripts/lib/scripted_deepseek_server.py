@@ -81,9 +81,29 @@ def _completion_id() -> str:
     return f"chatcmpl-scripted-{_now()}"
 
 
+def _usage_block(text: str, *, prompt_tokens: int = 100) -> dict[str, Any]:
+    """DeepSeek-style usage with cache hit/miss fields (ADR 0005 / V2-cache).
+
+    Hermetic fixture: most prompt tokens are reported as cache hits so Path A
+    can exercise mapping → status chip / stamp without a live provider.
+    """
+    completion = max(1, len(text.split()))
+    hit = max(0, prompt_tokens - 20)
+    miss = prompt_tokens - hit
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion,
+        "total_tokens": prompt_tokens + completion,
+        # DeepSeek top-level fields (not prompt_tokens_details.cached_tokens).
+        "prompt_cache_hit_tokens": hit,
+        "prompt_cache_miss_tokens": miss,
+    }
+
+
 def _sse_text(model: str, text: str) -> bytes:
     """OpenAI-style chat.completion.chunk SSE stream ending with [DONE]."""
     cid = _completion_id()
+    usage = _usage_block(text)
     chunks = [
         {
             "id": cid,
@@ -117,11 +137,7 @@ def _sse_text(model: str, text: str) -> bytes:
             "created": _now(),
             "model": model,
             "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-            "usage": {
-                "prompt_tokens": 8,
-                "completion_tokens": max(1, len(text.split())),
-                "total_tokens": 8 + max(1, len(text.split())),
-            },
+            "usage": usage,
         },
     ]
     out = b""
@@ -144,11 +160,7 @@ def _json_text(model: str, text: str) -> bytes:
                 "finish_reason": "stop",
             }
         ],
-        "usage": {
-            "prompt_tokens": 8,
-            "completion_tokens": max(1, len(text.split())),
-            "total_tokens": 8 + max(1, len(text.split())),
-        },
+        "usage": _usage_block(text),
     }
     return json.dumps(body, separators=(",", ":")).encode()
 
@@ -249,6 +261,7 @@ class ScriptedState:
             rec = {
                 "n": n,
                 "ts": time.time(),
+                "kind": "request",
                 "method": method,
                 "path": path,
                 "headers": {
@@ -260,6 +273,22 @@ class ScriptedState:
             with self.wire_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
             return n
+
+    def record_response_usage(
+        self, n: int, path: str, model: str, usage: dict[str, Any]
+    ) -> None:
+        """VC009: append response-side usage so Path A e2e can assert cache fields."""
+        with self.lock:
+            rec = {
+                "n": n,
+                "ts": time.time(),
+                "kind": "response_usage",
+                "path": path,
+                "model": model,
+                "usage": usage,
+            }
+            with self.wire_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
 def make_handler(state: ScriptedState):
@@ -798,6 +827,12 @@ def make_handler(state: ScriptedState):
                     else _json_text(model, state.final_text)
                 )
 
+            # VC009: surface DeepSeek cache usage on the wire transcript
+            # (response_usage line) whenever the payload carries usage.
+            usage_rec = _extract_usage_from_payload(payload, stream=stream)
+            if usage_rec is not None:
+                state.record_response_usage(n, path, model, usage_rec)
+
             self.send_response(200)
             if stream:
                 self.send_header("Content-Type", "text/event-stream")
@@ -809,6 +844,32 @@ def make_handler(state: ScriptedState):
             self.wfile.write(payload)
 
     return Handler
+
+
+def _extract_usage_from_payload(payload: bytes, *, stream: bool) -> dict[str, Any] | None:
+    """Best-effort parse of usage object from SSE or JSON completion body."""
+    try:
+        if not stream:
+            body = json.loads(payload.decode("utf-8"))
+            u = body.get("usage") if isinstance(body, dict) else None
+            return u if isinstance(u, dict) else None
+        # SSE: scan data lines for the last object that carries usage.
+        last: dict[str, Any] | None = None
+        for line in payload.decode("utf-8", errors="replace").splitlines():
+            if not line.startswith("data: "):
+                continue
+            data = line[len("data: ") :].strip()
+            if not data or data == "[DONE]":
+                continue
+            try:
+                obj = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict) and isinstance(obj.get("usage"), dict):
+                last = obj["usage"]
+        return last
+    except Exception:
+        return None
 
 
 def main() -> int:

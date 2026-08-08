@@ -318,6 +318,15 @@ else
   warn "path_a_l3.txt missing under DEEPSEEK_BUILD_HOME (G010 stamp)"
 fi
 
+# VC009: Path A cache-hit signal stamp (written on turns with usage).
+CACHE_STAMP="${HOME_DIR}/path_a_cache_signal.txt"
+if [[ -f "${CACHE_STAMP}" ]]; then
+  cp "${CACHE_STAMP}" "${OUT_DIR}/PATH_A_CACHE_SIGNAL_last.txt"
+  log "path_a_cache_signal stamp present (VC009)"
+else
+  warn "path_a_cache_signal.txt missing — rebuild agent binary for VC009 cache stamp"
+fi
+
 # Persist wire + meta for evidence (redacted)
 if [[ -f "${WIRE}" ]]; then
   cp "${WIRE}" "${EVIDENCE_WIRE}"
@@ -360,6 +369,12 @@ fi
   else
     echo "path_a_l3_stamp=missing"
   fi
+  if [[ -f "${CACHE_STAMP}" ]]; then
+    echo "path_a_cache_signal_stamp=present"
+    cat "${CACHE_STAMP}"
+  else
+    echo "path_a_cache_signal_stamp=missing"
+  fi
 } >"${EVIDENCE_META}"
 
 # --- assertions ---
@@ -387,6 +402,7 @@ elif ! rg -q 'worker_epochs_match=true' "${L3_STAMP}" \
 fi
 # L2-20-1: default deepseek turns use Flash wire id
 # V2-30 / VC008: DeepSeek chat/completions bodies carry non-null reasoning_effort
+# V2-cache / VC009: scripted responses carry prompt_cache_hit_tokens (response_usage)
 if [[ -s "${WIRE}" ]]; then
   if ! python3 - "${WIRE}" <<'PY'
 import json, sys
@@ -396,8 +412,20 @@ pro = 0
 other = []
 effort_ok = 0
 effort_samples = []
+cache_usage_ok = 0
+cache_samples = []
 for line in open(path, encoding="utf-8"):
     o = json.loads(line)
+    kind = o.get("kind") or "request"
+    if kind == "response_usage":
+        usage = o.get("usage") or {}
+        hit = usage.get("prompt_cache_hit_tokens")
+        if isinstance(hit, int) and hit > 0:
+            cache_usage_ok += 1
+            cache_samples.append(
+                f"hit={hit}/prompt={usage.get('prompt_tokens')}"
+            )
+        continue
     body = o.get("body", o)
     if isinstance(body, str):
         try:
@@ -429,13 +457,56 @@ if effort_ok < 1:
         file=sys.stderr,
     )
     sys.exit(1)
-print(f"wire_models flash={flash} pro={pro} effort_ok={effort_ok} samples={effort_samples}")
+if cache_usage_ok < 1:
+    print(
+        f"VC009: no response_usage with prompt_cache_hit_tokens>0 "
+        f"(samples={cache_samples})",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+print(
+    f"wire_models flash={flash} pro={pro} effort_ok={effort_ok} "
+    f"samples={effort_samples} cache_usage_ok={cache_usage_ok} "
+    f"cache_samples={cache_samples}"
+)
 sys.exit(0)
 PY
   then
-    warn "L2-20-1/V2-30: expected deepseek-v4-flash + reasoning_effort on Path A wire"
+    warn "L2-20-1/V2-30/V2-cache: expected flash + effort + cache usage on Path A wire"
     FAIL=1
   fi
+fi
+
+# VC009 / V2-cache: hard Path A stamp — proves agent consumed usage and mapped
+# cached_prompt_tokens (not fixture-only response_usage). Rebuild agent if missing.
+if [[ ! -f "${CACHE_STAMP}" ]]; then
+  warn "VC009: path_a_cache_signal.txt missing — rebuild agent binary for V2-cache stamp"
+  FAIL=1
+elif ! python3 - "${CACHE_STAMP}" <<'PY'
+import re, sys
+body = open(sys.argv[1], encoding="utf-8").read()
+if "path_a_cache_signal=present" not in body:
+    print("missing path_a_cache_signal=present", file=sys.stderr)
+    sys.exit(1)
+m = re.search(r"(?m)^cached_prompt_tokens=(\d+)\s*$", body)
+if not m:
+    print("missing cached_prompt_tokens=N", file=sys.stderr)
+    sys.exit(1)
+cached = int(m.group(1))
+if cached < 1:
+    print(f"cached_prompt_tokens must be >0 under hermetic fixture, got {cached}", file=sys.stderr)
+    sys.exit(1)
+if "cache_chip=cache " not in body:
+    print("missing cache_chip=cache N%", file=sys.stderr)
+    sys.exit(1)
+print(f"cache_stamp_ok cached_prompt_tokens={cached}")
+sys.exit(0)
+PY
+then
+  warn "VC009: path_a_cache_signal stamp incomplete or zero cache hit"
+  FAIL=1
+else
+  ok "VC009 path_a_cache_signal stamp"
 fi
 if ! rg -q 'chat/completions' "${WIRE}" 2>/dev/null; then
   warn "wire missing chat/completions path"

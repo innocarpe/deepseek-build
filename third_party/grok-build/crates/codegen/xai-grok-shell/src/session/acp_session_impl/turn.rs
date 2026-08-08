@@ -2401,6 +2401,10 @@ impl SessionActor {
                 })),
             );
             if let Some(usage) = response.usage.as_ref() {
+                // VC009 / V2-cache: loggable Path A stamp under DEEPSEEK_BUILD_HOME.
+                crate::session::helpers::path_a_cache_signal::stamp_path_a_cache_signal(
+                    usage, None,
+                );
                 self.chat_state_handle
                     .record_token_usage(u64::from(usage.total_tokens));
                 self.send_available_commands_update().await;

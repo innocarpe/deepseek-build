@@ -44,9 +44,30 @@ report `test` and could not merge. So:
 | Setting | Value |
 |---------|--------|
 | Action | `Swatinem/rust-cache@v2` |
-| `shared-key` | Stable keys shared with `main`: `workspace-v1`, `grok-build-fmt-v1`, `grok-build-clippy-v1`, `grok-build-test-v1` |
-| `save-if` | PR + `main`; PR saves are automatically scoped to the `refs/pull/.../merge` ref, so later runs of the same PR can reuse them while the first run can still restore caches from `main` |
-| `cache-on-failure` | `true` |
+| Compile cache families | `workspace-clippy-v2`, `workspace-test-v2`, `grok-build-clippy-v2`, `grok-build-test-v2` |
+| Base restore | PR clippy/test jobs first restore the stable `main` cache family with `save-if: false` |
+| PR/main save layer | A second cache step saves `*-pr-${{ github.event.pull_request.number }}` on pull requests and the stable `*-v2` key on `main` |
+| `cache-workspace-crates` | `true`, so workspace artifacts are retained instead of caching only dependencies |
+| `cache-on-failure` | `true`, so a failing PR clippy/test run can still save artifacts for reruns |
+| `cache-provider` | Explicitly `github` |
+
+The first run for a PR may restore a stable base cache from `main`, compile the
+delta, and save a PR-number-scoped layer even when the job fails. Later runs of
+the same PR can restore that PR layer directly.
+
+GitHub Actions caches are immutable: for a given PR/cache key, the first
+successfully saved entry is the one later runs restore until the key changes or
+GitHub evicts it. Bumping the cache family to `v2` lets `main` and PRs create
+fresh entries instead of full-hitting older `v1` caches and reporting
+`Cache up-to-date`.
+
+Sibling PRs do not share saved PR layers because pull request runs are scoped to
+their `refs/pull/.../merge` refs. They can still restore the stable `main` base
+cache before saving their own PR layer. This improves rerun latency but uses more
+GitHub cache storage; old entries remain subject to GitHub cache eviction.
+
+`fmt` and `grok fmt` do not use rust-cache because they only run rustfmt and do
+not compile artifacts.
 
 ## Path filters (skip expensive work)
 

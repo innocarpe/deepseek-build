@@ -80,12 +80,6 @@ jobs:
         with:
           toolchain: "1.94.0"
           components: rustfmt
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: workspace-v1
-          cache-targets: false
-          cache-on-failure: true
-          save-if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all -- --check
 
   clippy:
@@ -100,11 +94,21 @@ jobs:
         with:
           toolchain: "1.94.0"
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - name: Restore base Rust cache
+        if: github.event_name == 'pull_request'
+        uses: Swatinem/rust-cache@v2
         with:
-          shared-key: workspace-v1
-          cache-all-crates: true
+          shared-key: workspace-clippy-v2
+          cache-workspace-crates: true
+          cache-provider: github
+          save-if: false
+      - name: Cache PR/main Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ github.event_name == 'pull_request' && format('workspace-clippy-v2-pr-{0}', github.event.pull_request.number) || 'workspace-clippy-v2' }}
+          cache-workspace-crates: true
           cache-on-failure: true
+          cache-provider: github
           save-if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
       - run: cargo clippy --workspace --all-targets -- -W clippy::all
 
@@ -119,11 +123,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.94.0"
-      - uses: Swatinem/rust-cache@v2
+      - name: Restore base Rust cache
+        if: github.event_name == 'pull_request'
+        uses: Swatinem/rust-cache@v2
         with:
-          shared-key: workspace-v1
-          cache-all-crates: true
+          shared-key: workspace-test-v2
+          cache-workspace-crates: true
+          cache-provider: github
+          save-if: false
+      - name: Cache PR/main Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ github.event_name == 'pull_request' && format('workspace-test-v2-pr-{0}', github.event.pull_request.number) || 'workspace-test-v2' }}
+          cache-workspace-crates: true
           cache-on-failure: true
+          cache-provider: github
           save-if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
       - run: cargo test --workspace
 
@@ -162,13 +176,6 @@ jobs:
         with:
           toolchain: "1.94.0"
           components: rustfmt
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: grok-build-fmt-v1
-          workspaces: third_party/grok-build -> target
-          cache-targets: false
-          cache-on-failure: true
-          save-if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all -- --check
 
   grok_clippy:
@@ -191,11 +198,23 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq protobuf-compiler
           echo "PROTOC=$(command -v protoc)" >> "$GITHUB_ENV"
-      - uses: Swatinem/rust-cache@v2
+      - name: Restore base Grok Rust cache
+        if: github.event_name == 'pull_request'
+        uses: Swatinem/rust-cache@v2
         with:
-          shared-key: grok-build-clippy-v1
+          shared-key: grok-build-clippy-v2
           workspaces: third_party/grok-build -> target
+          cache-workspace-crates: true
+          cache-provider: github
+          save-if: false
+      - name: Cache PR/main Grok Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ github.event_name == 'pull_request' && format('grok-build-clippy-v2-pr-{0}', github.event.pull_request.number) || 'grok-build-clippy-v2' }}
+          workspaces: third_party/grok-build -> target
+          cache-workspace-crates: true
           cache-on-failure: true
+          cache-provider: github
           save-if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
       - run: cargo clippy --all-targets --workspace -- -D warnings
 
@@ -221,11 +240,23 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq protobuf-compiler
           echo "PROTOC=$(command -v protoc)" >> "$GITHUB_ENV"
-      - uses: Swatinem/rust-cache@v2
+      - name: Restore base Grok Rust cache
+        if: github.event_name == 'pull_request'
+        uses: Swatinem/rust-cache@v2
         with:
-          shared-key: grok-build-test-v1
+          shared-key: grok-build-test-v2
           workspaces: third_party/grok-build -> target
+          cache-workspace-crates: true
+          cache-provider: github
+          save-if: false
+      - name: Cache PR/main Grok Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ github.event_name == 'pull_request' && format('grok-build-test-v2-pr-{0}', github.event.pull_request.number) || 'grok-build-test-v2' }}
+          workspaces: third_party/grok-build -> target
+          cache-workspace-crates: true
           cache-on-failure: true
+          cache-provider: github
           save-if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
       - run: cargo test --workspace
 

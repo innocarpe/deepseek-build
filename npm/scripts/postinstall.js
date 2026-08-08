@@ -111,6 +111,13 @@ function main() {
   }
 
   printPathHint(binDir);
+
+  // Fail-close: a half-installed package (e.g. the agent self-check failed
+  // and the binary was removed from the bin dir) must NOT report a
+  // successful npm install — otherwise `dsb` silently runs a stale agent
+  // and the fix the user installed never takes effect.
+  console.error('deepseek-build postinstall: install FAILED — npm install will report failure.');
+  process.exit(1);
 }
 
 main();

@@ -1,0 +1,28 @@
+From 09e9bbf86540a162e51855a9125f1db4f30f882f Mon Sep 17 00:00:00 2001
+From: Wooseong Kim <innocarpe@gmail.com>
+Date: Sun, 9 Aug 2026 03:10:12 +0900
+Subject: [PATCH] fix(vendor): drop hardcoded "released by xAI" from agent
+ prompt template
+
+The vendored prompt template hardcoded "released by xAI" after the
+system_prompt_label placeholder, so every DeepSeek Build session opened
+with "You are Grok released by xAI." even though the backend is
+api.deepseek.com. The label stays configurable; the false vendor claim
+is gone. Product overlay sets system_prompt_label = "DeepSeek Build".
+---
+ .../crates/codegen/xai-grok-agent/templates/prompt.md           | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-agent/templates/prompt.md b/third_party/grok-build/crates/codegen/xai-grok-agent/templates/prompt.md
+index 2bd05dc..5cd019d 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-agent/templates/prompt.md
++++ b/third_party/grok-build/crates/codegen/xai-grok-agent/templates/prompt.md
+@@ -1,4 +1,4 @@
+-You are ${{ system_prompt_label }} released by xAI. You are ${%- if is_non_interactive %} an autonomous agent that completes software engineering tasks.${%- else %} an interactive CLI tool that helps users with software engineering tasks.${%- endif %} Your main goal is to complete the user's request, denoted within the <user_query> tag.
++You are ${{ system_prompt_label }}. You are ${%- if is_non_interactive %} an autonomous agent that completes software engineering tasks.${%- else %} an interactive CLI tool that helps users with software engineering tasks.${%- endif %} Your main goal is to complete the user's request, denoted within the <user_query> tag.
+ 
+ <action_safety>
+ Weigh each action by how easily it can be undone and how far its effects reach. Local, reversible work such as editing files and running tests is fine to do freely. Before executing any actions that are hard to reverse, reach shared external systems, or are otherwise risky or destructive, check with the user first.
+-- 
+2.50.1 (Apple Git-155)
+

@@ -256,6 +256,12 @@ fn tui_forward_flags(cli: &Cli) -> Vec<String> {
             out.push(id.to_string());
         }
     }
+    // Spec 30 / VC008: product `--effort` must reach Path A Grok agent wire.
+    // Grok pager accepts `--reasoning-effort` and `--effort` as aliases.
+    if let Some(effort) = cli.effort.as_deref() {
+        out.push("--reasoning-effort".to_string());
+        out.push(effort.to_string());
+    }
     out
 }
 
@@ -885,6 +891,17 @@ mod tests {
         assert_eq!(
             tui_forward_flags(&cli),
             vec!["--minimal", "--resume", "sess-abc"]
+        );
+    }
+
+    #[test]
+    fn tui_forward_flags_effort_as_reasoning_effort() {
+        let cli = Cli::try_parse_from(["dsb", "--effort", "high"]).unwrap();
+        assert_eq!(tui_forward_flags(&cli), vec!["--reasoning-effort", "high"]);
+        let cli = Cli::try_parse_from(["dsb", "--effort", "max", "--minimal"]).unwrap();
+        assert_eq!(
+            tui_forward_flags(&cli),
+            vec!["--minimal", "--reasoning-effort", "max"]
         );
     }
 

@@ -72,16 +72,17 @@ The tree ships "as upstream", but a small set of **deliberate local deviations**
 |------|-------|-----|
 | `crates/codegen/xai-grok-pager/src/app/mod.rs` | `print_exit_resume_hint` prints the command from env `GROK_INVOCATION_NAME` (default `grok`) via `invocation_name()` + pure `resume_hint_line()` | dsb-cli brands quit hints `dsb --resume <id>` so the printed command is pasteable |
 | `crates/codegen/xai-grok-pager/src/app/screen_mode_relaunch.rs` | `screen_mode_relaunch_resume_hint` uses `super::invocation_name()` (pure `_with` variant for tests) | Same branding for the screen-mode relaunch failure hint |
-| `crates/codegen/xai-grok-pager-render/src/theme/deepseeknight.rs` | Adds `deepseeknight_neutral()` (hue-neutral ramp, r≈g≈b) alongside `deepseeknight()` (blue ramp) via shared `deepseeknight_inner(neutral)` + ramp/blue-accent unit tests | Product ships two selectable DeepSeek skins |
-| `crates/codegen/xai-grok-pager-render/src/theme/mod.rs` | New `ThemeKind::DeepSeekNightNeutral = 7` (ALL / available / display_name / requires_truecolor / from_name / Default / current / clamp); product default = neutral; `"dark"` alias restored to GrokNight | Theme choice UX + neutral default skin; restores upstream `"dark"` alias |
-| `crates/codegen/xai-grok-pager-render/src/theme/cache.rs` | `CURRENT` + config/appearance resolution defaults → `DeepSeekNightNeutral` | Product default follows the neutral skin |
-| `crates/codegen/xai-grok-pager-render/src/theme/system_appearance.rs` | Dark appearance fallback → `DeepSeekNightNeutral` | Same default skin for auto dark mode |
-| `crates/codegen/xai-grok-pager-render/src/syntax.rs` | Night syntax group includes `DeepSeekNightNeutral` | Neutral skin keeps the same syntax palette |
-| `crates/codegen/xai-grok-pager/src/settings/defs.rs` | `THEME_CHOICES` / `CONCRETE_THEME_CHOICES` add `deepseeknight` + `deepseeknight-neutral` | Both skins selectable from `/theme` and the settings modal |
-| `crates/codegen/xai-grok-pager/src/views/settings_modal/tests.rs` | Exhaustive preview match adds `DeepSeekNightNeutral` arm | Compile + preview coverage for the new skin |
-| `crates/dsb-cli/src/agent_launch.rs` | First-launch picker writes the chosen skin into the seed config; `GROK_THEME`/`LC_GROK_THEME` only set from explicit env (`DEEPSEEK_BUILD_THEME`/`GROK_THEME`) so in-pager `/theme` persists | Two-skin onboarding + persistent theme changes |
+| `crates/codegen/xai-grok-pager-render/src/theme/deepseeknight.rs` | Keeps the classic blue-ramp and neutral-ramp DeepSeek constructors via shared `deepseeknight_inner(neutral)` plus ramp/blue-accent unit tests | Classic `deepseeknight` remains picker-selectable; neutral `deepseeknight-neutral` remains accepted through legacy names/config but is compatibility-only and hidden from pickers |
+| `crates/codegen/xai-grok-pager-render/src/theme/deepseeknight_v2.rs` | Defines the measured C-balanced `deepseeknight_v2()` palette and its integrity tests | Selectable DeepSeek Night v2 alternate, exposed as `deepseeknight-v2`; classic remains the product/default skin |
+| `crates/codegen/xai-grok-pager-render/src/theme/mod.rs` | Registers `DeepSeekNightV2` as the first picker-visible alternate; keeps classic in `ALL` and `NO_TRUECOLOR` as the product/default skin; retains neutral/GrokNight parser aliases for compatibility; preserves the `"dark"` alias to `GrokNight` | Classic owns product/runtime defaults while V2 remains selectable and neutral/GrokNight stay compatibility-only and hidden |
+| `crates/codegen/xai-grok-pager-render/src/theme/cache.rs` | `CURRENT` plus config/appearance resolution defaults to `DeepSeekNight`; terminal-native lock intentionally reports nominal `GrokNight` | Classic is the product/default dark fallback while explicit V2 and legacy theme values remain honored |
+| `crates/codegen/xai-grok-pager-render/src/theme/system_appearance.rs` | Dark appearance fallback → `DeepSeekNight`; light appearance fallback → `GrokDay`; explicit overrides remain honored | Auto mode follows the classic dark and GrokDay light defaults |
+| `crates/codegen/xai-grok-pager-render/src/syntax.rs` | Night syntax group includes V2, classic/neutral DeepSeek kinds, `GrokNight`, `TokyoNight`, `RosePineMoon`, and `OscuraMidnight` | All supported dark variants share the night syntax palette; terminal-native mode remains nominal `GrokNight` |
+| `crates/codegen/xai-grok-pager/src/settings/defs.rs` | `THEME_CHOICES` / `CONCRETE_THEME_CHOICES` place `deepseeknight-v2` before canonical `deepseeknight` (`DeepSeek Night (classic)`); neutral remains omitted from picker catalogs but accepted for compatibility | Settings pickers surface V2 and classic; classic is the product/default choice, V2 remains selectable, and neutral remains compatibility-only |
+| `crates/codegen/xai-grok-pager/src/views/settings_modal/tests.rs` | Exhaustive preview coverage retains V2, classic, and neutral `ThemeKind` arms | Preview remains compatible with legacy/config values while the picker catalogs expose classic after the V2 picker entry |
+| `crates/dsb-cli/src/agent_launch.rs` | First-launch picker writes the chosen skin into the seed config; `GROK_THEME`/`LC_GROK_THEME` only set from explicit env (`DEEPSEEK_BUILD_THEME`/`GROK_THEME`) so in-pager `/theme` persists | First-launch classic/V2 onboarding plus persistent theme changes; classic remains the product/default and V2 remains selectable |
 
-Tests: `resume_hint_line_brands_invocation_name` and `failed_relaunch_hint_brands_invocation_name` pin the `dsb` output; upstream default (`grok`) assertions keep passing. Theme tests pin the official `#4D6BFE` accent on both skins, the neutral ramp's hue neutrality, and the `deepseeknight-neutral` resolution default.
+Tests: `resume_hint_line_brands_invocation_name` and `failed_relaunch_hint_brands_invocation_name` pin the `dsb` output; upstream default (`grok`) assertions keep passing. Theme tests pin the official `#4D6BFE` accent on the classic and neutral compatibility constructors, the v2 palette invariants, the classic dark/GrokDay light resolution defaults, and the picker contract (V2 first; classic in `ALL`/`NO_TRUECOLOR`; neutral and GrokNight hidden). Settings preview coverage retains legacy theme kinds while both settings catalogs expose `deepseeknight-v2` before `DeepSeek Night (classic)`; classic remains product/default and neutral remains compatibility-only.
 
 ### Carried as patch files under `patches/grok-build/`
 
@@ -93,12 +94,17 @@ refresh cannot wipe them.
 |-------|------------------------|
 | `0001-*.patch` | `feat(sampling-types): map DeepSeek prompt_cache_hit_tokens into cached_read_tokens` |
 | `0002-*.patch` | `feat(shell): add x.ai/deepseek/status extension for balance and session usage` |
-| `0003-*.patch` | `fix(shell): repair pre-existing lib-test build breakage on main` |
-| `0004-*.patch` | `test(pager): cover DeepSeekNight kind in settings preview test` |
-| `0005-*.patch` | `feat(pager): render bottom status row with DeepSeek balance and cache-hit chips` |
+| `0003-*.patch` | `fix(shell): preserve one-pass repair and repair pre-existing lib-test build breakage` |
+| `0004-*.patch` | `test(pager): cover DeepSeekNight kinds in settings preview test` |
+| `0005-*.patch` | `feat(pager): render DeepSeek status with session-safe polling` |
+| `0006-*.patch` | `test(shell): cover large MCP image persistence and resume` |
 
-These patches are the **DeepSeek status line** feature plus the shell test-build
-fix it depends on. A refresh must never silently drop them.
+These patches are the **DeepSeek status line** feature, its shell-side repair
+dependency, and the focused large-MCP-image persistence/resume regression. The
+status patch records session-bound unsupported capability handling, transient
+retry, and stale-result safety; patch 0006 keeps the DSB image regression
+durable instead of relying on the upstream changelog claim. A refresh must
+never silently drop them.
 
 - **Re-apply after refresh:** `./scripts/apply-grok-build-patches.sh`
   (add `--check` for a dry run; already-applied patches are skipped).

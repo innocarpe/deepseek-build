@@ -39,13 +39,14 @@ pub enum ThemeKind {
     TokyoNight = 2,
     RosePineMoon = 3,
     OscuraMidnight = 5,
-    /// DeepSeek Build product skin — DeepSeek blue `#4D6BFE` accents on a
-    /// blue-tinted ramp (the original dsb signature look).
+    /// Current DeepSeek Build product/default skin — DeepSeek blue `#4D6BFE`
+    /// accents on the original blue-tinted ramp.
     DeepSeekNight = 6,
-    /// DeepSeek Build product default — DeepSeek blue `#4D6BFE` accents on
-    /// a hue-neutral ramp (same luminance, max gray-ramp legibility).
+    /// Legacy DeepSeek Night Neutral compatibility skin — DeepSeek blue
+    /// `#4D6BFE` accents on a hue-neutral ramp (same luminance, max gray-ramp
+    /// legibility).
     DeepSeekNightNeutral = 7,
-    /// DeepSeek Build product default v2 — measured C-balanced palette.
+    /// Selectable DeepSeek Night v2 alternate — measured C-balanced palette.
     DeepSeekNightV2 = 8,
     /// Meta-variant: follow system dark/light appearance.
     ///
@@ -57,8 +58,21 @@ pub enum ThemeKind {
     Auto = 4,
 }
 
+/// Picker-visible themes on terminals without truecolor.
+///
+/// DeepSeek Night v2 remains the first picker entry, while the original
+/// DeepSeek Night is the product/default skin and remains selectable as
+/// "DeepSeek Night (classic)". `DeepSeekNightNeutral` and `GrokNight` are
+/// compatibility-only and stay hidden from this catalog.
+const NO_TRUECOLOR: &[ThemeKind] = &[
+    ThemeKind::DeepSeekNightV2,
+    ThemeKind::DeepSeekNight,
+    ThemeKind::GrokDay,
+];
+
 impl ThemeKind {
-    /// All theme kinds (including those that may not work on the current terminal).
+    /// All picker-visible theme kinds (including those that may not work on
+    /// the current terminal).
     pub const ALL: &[ThemeKind] = &[
         ThemeKind::DeepSeekNightV2,
         // Original DeepSeek Night (v1) — re-listed as "DeepSeek Night (classic)".
@@ -77,11 +91,6 @@ impl ThemeKind {
         // Two possible results — pick the right const slice based on
         // the detected color level. No heap allocation needed.
         const ALL: &[ThemeKind] = ThemeKind::ALL;
-        const NO_TRUECOLOR: &[ThemeKind] = &[
-            ThemeKind::DeepSeekNightV2,
-            ThemeKind::DeepSeekNight,
-            ThemeKind::GrokDay,
-        ];
 
         if color_support::detect().has_truecolor() {
             ALL
@@ -242,8 +251,6 @@ impl Theme {
 
             accent_verify: q(self.accent_verify),
 
-            accent_feedback: q(self.accent_feedback),
-
             accent_remember: q(self.accent_remember),
 
             selection_border: q(self.selection_border),
@@ -318,7 +325,7 @@ impl Theme {
             ThemeKind::RosePineMoon => Self::rosepine_moon(),
             ThemeKind::OscuraMidnight => Self::oscura_midnight(),
             // Auto is resolved to a concrete theme before being stored;
-            // if reached, fall back to product default.
+            // if reached, fall back to the classic product default.
             ThemeKind::Auto => Self::deepseeknight(),
         };
         // Sample polarity pre-quantization — post-quantize `bg_base` may
@@ -641,12 +648,8 @@ impl Theme {
             accent_system: blue,
             accent_skill: blue,
             fuzzy_accent: blue,
-            // Cyan family — feedback mode, model name, and the legacy
-            // `running` indicator (distinct from the magenta
-            // `accent_running` used for subagents). ANSI16 has no
-            // separate teal slot, so the truecolor teal accents
-            // (feedback, model) fold onto cyan here.
-            accent_feedback: cyan,
+            // Cyan family: model name and the legacy `running` indicator (distinct from the magenta `accent_running` used for subagents).
+            // ANSI16 has no separate teal slot, so the truecolor teal model accent folds onto cyan here.
             accent_model: cyan,
             running: cyan,
             // Yellow family — warning text, plan-mode gold, shell
@@ -745,7 +748,7 @@ mod tests {
     }
 
     #[test]
-    fn default_theme_is_v2() {
+    fn default_theme_is_classic() {
         assert_eq!(Theme::default().bg_base, Theme::deepseeknight().bg_base);
     }
 
@@ -777,8 +780,12 @@ mod tests {
     fn classic_deepseek_theme_is_selectable_again() {
         // The original DeepSeek Night (v1) was hidden in the v2 switch; it is
         // re-listed as "DeepSeek Night (classic)" so users can keep the original
-        // look while v2 stays the product default.
+        // look while classic remains the product default.
+        assert_eq!(ThemeKind::ALL[0], ThemeKind::DeepSeekNightV2);
         assert!(ThemeKind::ALL.contains(&ThemeKind::DeepSeekNight));
+        assert!(NO_TRUECOLOR.contains(&ThemeKind::DeepSeekNight));
+        assert!(!NO_TRUECOLOR.contains(&ThemeKind::DeepSeekNightNeutral));
+        assert!(!NO_TRUECOLOR.contains(&ThemeKind::GrokNight));
         assert!(ThemeKind::available().contains(&ThemeKind::DeepSeekNight));
     }
 
@@ -1029,13 +1036,10 @@ mod tests {
 
     #[test]
     fn ansi16_overrides_cyan_family_absorbs_teal() {
-        // ANSI16 has no teal slot — feedback / model teal both fold
-        // onto cyan. The `running` indicator (legacy cyan, distinct
-        // from the magenta `accent_running` used for subagents) also
-        // lives here.
+        // ANSI16 has no teal slot; the model teal folds onto cyan.
+        // The `running` indicator (legacy cyan, distinct from the magenta `accent_running` used for subagents) also lives here.
         use ratatui::style::Color;
         let t = Theme::groknight().ansi16_chrome_overrides(true);
-        assert_eq!(t.accent_feedback, Color::LightCyan);
         assert_eq!(t.accent_model, Color::LightCyan);
         assert_eq!(t.running, Color::LightCyan);
     }

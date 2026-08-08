@@ -5,9 +5,22 @@
 > 리뷰어가 개별적으로 반려할 수 있는 경계로 나눴습니다.
 > 스텝은 체크박스(`- [ ]`)로 추적합니다.
 
-**Goal:** DeepSeek Build의 기본 색 테마를 측정 검증된 DeepSeek Night v2(C-balanced)로 교체하고, 테마 선택 경로의 기존 결함을 함께 수정한다.
+> **Status — superseded historical plan:** 이 계획은 v2를 제품 기본으로 삼던
+> 당시의 설계와 실행 순서를 기록합니다. 아래 v2-default 지시와 예제는 모두
+> historical intent이며 현재 계약이 우선합니다. 현재 계약은 classic `deepseeknight`가
+> 제품/runtime/config 기본이고, `deepseeknight-v2`는 선택 가능한 첫 번째 picker
+> alternate이며, `DeepSeekNightNeutral`과 `GrokNight`은 parser/config 호환성만
+> 유지하고 picker에서 숨기는 것입니다.
 
-**Architecture:** 기존 `deepseeknight.rs`는 **손대지 않고** 새 파일 `deepseeknight_v2.rs`를 추가한 뒤, `ThemeKind`에 새 variant를 등록한다. 그다음 렌더 레이어 기본값 → 설정 레이어 기본값 → 제품 레이어 상수 순으로 전환한다. 마지막에 픽커 목록을 정리한다. 각 단계는 앞 단계가 없어도 컴파일되며, 되돌릴 때도 역순으로 한 스토리씩 되돌릴 수 있다.
+**[역사적 목표 — superseded] Goal:** DeepSeek Build의 기본 색 테마를 측정 검증된
+DeepSeek Night v2(C-balanced)로 교체하고, 테마 선택 경로의 기존 결함을 함께
+수정한다.
+
+**[역사적 아키텍처 — superseded] Architecture:** 기존 `deepseeknight.rs`는
+**손대지 않고** 새 파일 `deepseeknight_v2.rs`를 추가한 뒤, `ThemeKind`에 새
+variant를 등록한다. 그다음 렌더 레이어 기본값 → 설정 레이어 기본값 → 제품
+레이어 상수 순으로 전환한다. 마지막에 픽커 목록을 정리한다. 각 단계는 앞
+단계가 없어도 컴파일되며, 되돌릴 때도 역순으로 한 스토리씩 되돌릴 수 있다.
 
 **Tech Stack:** Rust 2021, `ratatui::style::{Color, Modifier}`, `cargo test`
 
@@ -218,7 +231,6 @@ mod tests {
             ("accent_model", t.accent_model),
             ("accent_plan", t.accent_plan),
             ("accent_verify", t.accent_verify),
-            ("accent_feedback", t.accent_feedback),
             ("accent_remember", t.accent_remember),
             ("md_heading_h1", t.md_heading_h1),
             ("md_heading_h2", t.md_heading_h2),
@@ -475,7 +487,8 @@ const DIFF_DEL_BG: Color = rgb(69, 19, 31); // #45131F  RED reads 5.46:1
 
 ```rust
 impl Theme {
-    /// DeepSeek Build product theme v2 — measured C-balanced palette.
+    /// Historical DeepSeek Build v2 palette proposal (not the current
+    /// product default) — measured C-balanced palette.
     ///
     /// Blue carries 10 roles; all of them are identity or "you can go here"
     /// affordances. Everything else is the gray ramp plus four semantic hues.
@@ -518,7 +531,6 @@ impl Theme {
 
             accent_plan: AMBER,
             accent_verify: VIOLET,
-            accent_feedback: GREEN,
             accent_remember: GREEN,
             accent_model: GRAY_BRIGHT,
 
@@ -661,7 +673,8 @@ Expected: FAIL — `no variant named DeepSeekNightV2`
 `theme/mod.rs:33` `ThemeKind`에 추가. **판별값 7 고정** (디스크 직렬화 대상):
 
 ```rust
-    /// DeepSeek Build product default v2 — measured C-balanced palette.
+    /// Historical v2 palette proposal (superseded); classic is the current
+    /// DeepSeek Build product default.
     DeepSeekNightV2 = 7,
 ```
 
@@ -731,7 +744,7 @@ git commit -m "feat(theme): register DeepSeekNightV2 kind and fix missing oscura
 
 ---
 
-## Task G003: 렌더 레이어 기본값 전환
+## Task G003: 렌더 레이어 기본값 전환 (역사적 v2-default 단계 — superseded)
 
 여기서부터 **모든 사용자의 기본 화면이 바뀐다.** 앞 두 스토리와 리뷰 경계를 나눈 이유다.
 
@@ -739,6 +752,10 @@ git commit -m "feat(theme): register DeepSeekNightV2 kind and fix missing oscura
 - Modify: `third_party/grok-build/crates/codegen/xai-grok-pager-render/src/theme/mod.rs:170, 297, 361`
 
 - [ ] **Step 1: 실패하는 테스트 작성**
+
+> 다음 테스트와 fallback 예시는 v2-default 단계의 역사적 기대값이며
+> superseded입니다. 현재 기본/fallback 계약은 classic `deepseeknight`이고,
+> v2는 첫 번째 선택 가능 alternate입니다.
 
 ```rust
 #[test]
@@ -796,7 +813,7 @@ git commit -m "feat(theme): make DeepSeek Night v2 the render-layer default"
 
 ---
 
-## Task G004: 설정 레이어 — 선택지 추가 + 기본값 전환
+## Task G004: 설정 레이어 — 선택지 추가 + 기본값 전환 (역사적 v2-default 단계 — superseded)
 
 **리포트 §1-1의 결함이 여기서 고쳐진다.** 지금은 Settings 시트에서 DeepSeek 테마를 고를 수 없다.
 
@@ -808,6 +825,10 @@ git commit -m "feat(theme): make DeepSeek Night v2 the render-layer default"
 - [ ] **Step 1: 실패하는 테스트 작성**
 
 `tests/settings_e2e.rs`에 추가:
+
+> 다음 설정 테스트와 기대값은 v2를 기본으로 전환하던 역사적 단계의 기록이며
+> superseded입니다. 현재 `theme`/dark 기본은 classic `deepseeknight`이고,
+> v2는 선택 가능하며 picker에서 첫 번째 concrete alternate입니다.
 
 ```rust
 #[test]
@@ -905,14 +926,15 @@ git commit -m "fix(settings): list DeepSeek Night in the theme picker and defaul
 
 ---
 
-## Task G005: 픽커 목록 정리 — 파싱 하위호환 유지
+## Task G005: 픽커 목록 정리 — 파싱 하위호환 유지 (역사적 결정 — superseded)
 
 기준: **브랜드 정합성 / 사용자가 이름을 알아보는가 / 역할이 겹치지 않는가.**
 
 | 테마 | 처리 | 근거 |
 |---|---|---|
-| DeepSeek Night v2 | 유지 (기본) | 제품 정체성 |
-| DeepSeek Night (v1) | **목록에서 제거** | v2로 대체됨. 같은 이름 두 개가 보이면 안 된다 |
+| DeepSeek Night v2 | **역사적 기본 (superseded)** | 당시 제품 정체성 제안; 현재는 첫 번째 picker alternate |
+| DeepSeek Night (classic) | **현재 기본 + 선택 가능** | DSB 제품/runtime/config 기본 |
+| DeepSeek Night (v1) | **역사적 결정 (superseded): 목록에서 제거** | v2로 대체됨. 같은 이름 두 개가 보이면 안 된다 |
 | Grok Night | **목록에서 제거** | 타 제품 브랜드명 노출 + 역할이 v2와 완전 중복 |
 | Grok Day | 유지 | 유일한 라이트 테마 — 기능적으로 필요 |
 | Tokyo Night / Rose Pine Moon / Oscura Midnight | 유지 | 커뮤니티 표준, 사용자가 이름으로 인지 |
@@ -925,6 +947,10 @@ git commit -m "fix(settings): list DeepSeek Night in the theme picker and defaul
 - [ ] **Step 1: 하위호환 테스트부터 작성**
 
 `theme/mod.rs`의 `mod tests`에:
+
+> 아래 hidden-picker 테스트는 classic까지 숨기던 역사적 결정의 기록이며
+> superseded입니다. 현재 classic `deepseeknight`는 `ALL`과 `NO_TRUECOLOR`에서
+> 선택 가능하고, neutral/GrokNight만 compatibility-only로 숨깁니다.
 
 ```rust
 #[test]
@@ -1019,7 +1045,7 @@ git commit -m "refactor(theme): retire superseded themes from pickers, keep name
 
 ---
 
-## Task G006: 제품 레이어 상수 + fixture
+## Task G006: 제품 레이어 상수 + fixture (역사적 v2 injection 단계 — superseded)
 
 **Files:**
 - Modify: `crates/dsb-cli/src/agent_launch.rs:78` 및 fixture `:407 :428 :440 :443 :465`
@@ -1033,6 +1059,9 @@ Expected: 아직 PASS (상수와 fixture가 서로 일치) — 이 스토리는 
 - [ ] **Step 2: 상수 교체**
 
 `crates/dsb-cli/src/agent_launch.rs:78`:
+> 아래 상수는 v2를 주입하던 역사적 제안이며 superseded입니다. 현재
+> `PRODUCT_THEME`는 classic `deepseeknight`이고, v2는 picker alternate입니다.
+
 ```rust
 pub const PRODUCT_THEME: &str = "deepseeknight-v2";
 ```
@@ -1093,6 +1122,10 @@ Expected: 전부 PASS
 현재 "단조 감소하는 밝기 사다리"는 h1에 대해 사실이 아니다 (h1 7.31 < h2 15.04).
 
 - [ ] **Step 4: CHANGELOG 추가**
+
+> 다음 changelog 초안은 v2-default 및 classic picker 제거를 전제로 한
+> 역사적 문안이며 superseded입니다. 현재 동작 계약은 문서 상단의 classic
+> default/V2 alternate/compatibility-only 규칙을 따릅니다.
 
 ```markdown
 ### Changed

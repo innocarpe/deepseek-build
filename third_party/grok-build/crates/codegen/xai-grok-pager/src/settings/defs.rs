@@ -34,10 +34,17 @@ pub(crate) const MAX_THOUGHTS_WIDTH_KEY: &str = "max_thoughts_width";
 // Canonical names MUST match `ThemeKind::display_name()`.
 // Shared by `theme`, `auto_dark_theme`, and `auto_light_theme`;
 // auto-* sub-pickers drop "auto" to avoid circular reference.
+// The catalogs expose both DeepSeek picker choices in stable order:
+// `deepseeknight-v2` remains the first concrete picker entry, while
+// `deepseeknight` is the product/default "DeepSeek Night (classic)" entry.
+// `deepseeknight-neutral` remains accepted through legacy config/parser
+// aliases only and is intentionally not a picker entry.
 // Bounded by `MAX_PICKER_CHOICES`.
 // ---------------------------------------------------------------------------
 
 /// Full theme catalog including the "auto" meta-variant. Used by `theme` only.
+/// V2 is the first concrete picker entry after `auto`; classic is the
+/// product/default choice; neutral is compatibility-only.
 const THEME_CHOICES: &[EnumChoice] = &[
     EnumChoice {
         canonical: "auto",
@@ -479,8 +486,10 @@ const VOICE_STT_LANGUAGE_CHOICES: &[EnumChoice] = &[
 ];
 
 /// Concrete-only theme catalog (excludes "auto"). Used by both
-/// `auto_dark_theme` and `auto_light_theme`. No dark/light filtering —
-/// the user can pair any theme with any system-appearance bucket.
+/// `auto_dark_theme` and `auto_light_theme`. V2 is first and classic is the
+/// product/default choice; neutral remains compatibility-only. No dark/light
+/// filtering — the user can pair any listed theme with any system-appearance
+/// bucket.
 const CONCRETE_THEME_CHOICES: &[EnumChoice] = &[
     EnumChoice {
         canonical: "deepseeknight-v2",
@@ -643,6 +652,20 @@ pub fn default_settings() -> Vec<SettingMeta> {
             hidden_in_minimal: false,
         },
         SettingMeta {
+            key: "confirm_before_rewind",
+            category: SettingCategory::Editor,
+            owner: SettingOwner::Shared,
+            label: "Confirm before rewind",
+            description: "Ask before rewinding conversation history. Turn off to rewind \
+                          immediately when you pick a turn.",
+            keywords: &["rewind", "confirm", "undo", "history", "ask", "prompt"],
+            kind: SettingKind::Bool {
+                default: ui_default.confirm_before_rewind_enabled(),
+            },
+            restart_required: false,
+            hidden_in_minimal: false,
+        },
+        SettingMeta {
             // Persisted key stays `simple_mode`; the user-facing label
             // distinguishes the PROMPT vim-mode (this setting) from the
             // scrollback `vim_mode` keybindings below.
@@ -713,8 +736,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
                 "light",
             ],
             kind: SettingKind::Enum {
-                // `Option<String>` — `None` resolved to "groknight".
-                default: "deepseeknight-v2",
+                // `Option<String>` — `None` resolves to the classic product default.
+                default: "deepseeknight",
                 choices: THEME_CHOICES,
                 supports_preview: true,
             },
@@ -729,8 +752,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             description: "Theme to use when the system is in dark mode (only with theme=auto).",
             keywords: &["auto", "dark", "theme", "system", "appearance", "night"],
             kind: SettingKind::Enum {
-                // `Option<String>` — `None` falls back to "groknight".
-                default: "deepseeknight-v2",
+                // `Option<String>` — `None` falls back to the classic product default.
+                default: "deepseeknight",
                 choices: CONCRETE_THEME_CHOICES,
                 supports_preview: true,
             },

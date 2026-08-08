@@ -1,22 +1,12 @@
-From b7d37cd58315973ea4a3c2d3941488369b0f8d67 Mon Sep 17 00:00:00 2001
+From 0d0642c0c53e11f4c5cd800131399666566bce4b Mon Sep 17 00:00:00 2001
 From: Wooseong Kim <innocarpe@gmail.com>
-Date: Fri, 7 Aug 2026 15:18:02 +0900
-Subject: [PATCH 2/5] feat(shell): add x.ai/deepseek/status extension for
- balance and session usage
+Date: Fri, 7 Aug 2026 22:00:51 +0900
+Subject: [PATCH 2/6] feat(shell): add x.ai/deepseek/status extension for balance and session usage
 
-DeepSeek exposes account balance via GET {base}/user/balance and reports
-prompt-cache hits as a top-level prompt_cache_hit_tokens field. This new
-ACP extension answers both from one call:
+Expose a fail-soft `x.ai/deepseek/status` extension for the DeepSeek status
+row. Balance requests are gated to DeepSeek endpoints, while session usage is
+projected from the in-memory ledger without changing xAI session behavior.
 
-- is_deepseek: true only when the session's base URL is a DeepSeek host
-  (api.deepseek.com / *.deepseek.com, with a suffix-attack guard). Gates
-  the pager's bottom status row.
-- balance: currency-preference resolved (USD -> CNY -> first reported),
-  fail-soft None on any non-DeepSeek/missing-key/HTTP/parse failure.
-- usage: cumulative session usage projected from the in-memory ledger
-  (same shape as x.ai/session/usage, no HTTP).
-
-Wired into the MVP agent's extension dispatch under x.ai/deepseek/status.
 ---
  .../src/agent/mvp_agent/acp_agent.rs          |   3 +
  .../xai-grok-shell/src/extensions/deepseek.rs | 329 ++++++++++++++++++
@@ -25,10 +15,10 @@ Wired into the MVP agent's extension dispatch under x.ai/deepseek/status.
  create mode 100644 third_party/grok-build/crates/codegen/xai-grok-shell/src/extensions/deepseek.rs
 
 diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs b/third_party/grok-build/crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs
-index 1a1721b..6c9f5af 100644
+index ce14fca..3ce785f 100644
 --- a/third_party/grok-build/crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs
 +++ b/third_party/grok-build/crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs
-@@ -2449,6 +2449,9 @@ impl acp::Agent for MvpAgent {
+@@ -2454,6 +2454,9 @@ impl acp::Agent for MvpAgent {
              "x.ai/auto-topup-rule" => {
                  crate::extensions::billing::handle(self, &args).await
              }
@@ -387,4 +377,3 @@ index d381e95..ccbbcc0 100644
  pub mod git;
 -- 
 2.50.1 (Apple Git-155)
-

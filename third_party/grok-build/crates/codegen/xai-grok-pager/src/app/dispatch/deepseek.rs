@@ -25,11 +25,21 @@ use xai_grok_shell::extensions::deepseek::DeepSeekStatusResponse;
 /// transient failures keep `None`/previous state so the next poll
 /// self-heals.
 fn deepseek_poll_wanted(agent: &AgentView) -> bool {
-    agent
-        .deepseek_status
-        .as_ref()
-        .map(|s| s.is_deepseek)
-        .unwrap_or(true)
+    let Some(session_id) = agent.session.session_id.as_ref() else {
+        return false;
+    };
+    if agent.deepseek_status_unsupported_for.as_ref() == Some(session_id) {
+        return false;
+    }
+    match (
+        agent.deepseek_status_session_id.as_ref(),
+        agent.deepseek_status.as_ref(),
+    ) {
+        (Some(status_session_id), Some(status)) if status_session_id == session_id => {
+            status.is_deepseek
+        }
+        _ => true,
+    }
 }
 
 /// Fetch DeepSeek status after a turn (and on session init via the
@@ -69,6 +79,8 @@ pub(super) fn handle_deepseek_status_complete(
     }
     if let Some(agent) = app.agents.get_mut(&agent_id) {
         agent.deepseek_status = Some(status);
+        agent.deepseek_status_session_id = Some(session_id.clone());
+        agent.deepseek_status_unsupported_for = None;
     }
     vec![]
 }
@@ -81,9 +93,20 @@ pub(super) fn handle_deepseek_status_failed(
     session_id: &acp::SessionId,
     error: &str,
 ) -> Vec<Effect> {
-    let _ = app;
-    let _ = agent_id;
-    let _ = session_id;
+    let Some(agent) = app.agents.get_mut(&agent_id) else {
+        return vec![];
+    };
+    if agent.session.session_id.as_ref() != Some(session_id) {
+        return vec![];
+    }
+    // Method-not-found is a stable capability result for this session: stop
+    // probing it. Network/transport/parse errors remain transient and leave
+    // the prior status intact so the next timer or turn retries safely.
+    if error == "not supported by this agent version" {
+        agent.deepseek_status = None;
+        agent.deepseek_status_session_id = None;
+        agent.deepseek_status_unsupported_for = Some(session_id.clone());
+    }
     tracing::debug!("deepseek status fetch failed: {error}");
     vec![]
 }

@@ -239,6 +239,95 @@ def _sse_tool_then_text(
     return _sse_text(model, text)
 
 
+def _sse_multi_tools(
+    model: str,
+    tools: list[tuple[str, dict[str, Any]]],
+) -> bytes:
+    """Stream one assistant message with multiple tool_calls (Spec 50 multi-tool).
+
+    Each entry is (tool_name, arguments_dict). Arguments are JSON-encoded in one
+    delta so clients do not see partial arg fragments.
+    """
+    if not tools:
+        raise ValueError("tools must be non-empty")
+    cid = _completion_id()
+    tool_calls = []
+    for i, (tname, targs) in enumerate(tools):
+        tool_calls.append(
+            {
+                "index": i,
+                "id": f"call_scripted_m{i + 1}",
+                "type": "function",
+                "function": {
+                    "name": tname,
+                    "arguments": json.dumps(targs, separators=(",", ":")),
+                },
+            }
+        )
+    chunks = [
+        {
+            "id": cid,
+            "object": "chat.completion.chunk",
+            "created": _now(),
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": tool_calls,
+                    },
+                    "finish_reason": None,
+                }
+            ],
+        },
+        {
+            "id": cid,
+            "object": "chat.completion.chunk",
+            "created": _now(),
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "tool_calls",
+                }
+            ],
+        },
+    ]
+    out = b""
+    for ch in chunks:
+        out += b"data: " + json.dumps(ch, separators=(",", ":")).encode() + b"\n\n"
+    out += b"data: [DONE]\n\n"
+    return out
+
+
+_TASK_ID_RE = re.compile(
+    r"<task-id>\s*([^<\s]+)\s*</task-id>|task_id[\"'=\s:]+([A-Za-z0-9_.:-]+)",
+    re.IGNORECASE,
+)
+
+
+def _latest_task_id(msgs: list[Any]) -> str | None:
+    """Extract the most recent background task id from tool results."""
+    for content in reversed(_tool_contents_after_user_query(msgs)):
+        m = _TASK_ID_RE.search(content or "")
+        if m:
+            return (m.group(1) or m.group(2) or "").strip() or None
+    return None
+
+
+def _snippet_id_for_content_marker(msgs: list[Any], marker: str) -> str | None:
+    """Snippet id from the tool result whose content contains marker (path-safe)."""
+    for content in reversed(_tool_contents_after_user_query(msgs)):
+        if marker in (content or ""):
+            sid = _extract_snippet_id(content)
+            if sid:
+                return sid
+    return None
+
+
 class ScriptedState:
     def __init__(self, wire_path: Path, scenario: str, final_text: str) -> None:
         self.wire_path = wire_path
@@ -273,6 +362,23 @@ class ScriptedState:
             with self.wire_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
             return n
+
+    def record_response_tool_calls(
+        self, n: int, path: str, model: str, tool_calls: list[dict[str, Any]]
+    ) -> None:
+        """Record multi/single tool_calls emitted by the fixture (response-side)."""
+        with self.lock:
+            rec = {
+                "n": n,
+                "ts": time.time(),
+                "kind": "response_tool_calls",
+                "path": path,
+                "model": model,
+                "tool_calls": tool_calls,
+                "count": len(tool_calls),
+            }
+            with self.wire_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
     def record_response_usage(
         self, n: int, path: str, model: str, usage: dict[str, Any]
@@ -801,6 +907,137 @@ def make_handler(state: ScriptedState):
                         if stream
                         else _json_text(model, "snippet-bash-stale-ok")
                     )
+            elif state.scenario == "multi-read-parallel" and state.liveness_dir is not None:
+                # VC010: one assistant message with two read_file tool_calls (RO batch).
+                tool_results = _tool_results_after_user_query(msgs)
+
+                def emit_multi(tools: list[tuple[str, dict[str, Any]]]) -> bytes:
+                    return (
+                        _sse_multi_tools(model, tools)
+                        if stream
+                        else _json_text(model, state.final_text)
+                    )
+
+                if tool_results == 0:
+                    payload = emit_multi(
+                        [
+                            ("read_file", {"target_file": "a.txt"}),
+                            ("read_file", {"target_file": "b.txt"}),
+                        ]
+                    )
+                else:
+                    payload = (
+                        _sse_text(model, "multi-read-parallel-ok")
+                        if stream
+                        else _json_text(model, "multi-read-parallel-ok")
+                    )
+            elif state.scenario == "mixed-mutate-serial" and state.liveness_dir is not None:
+                # VC010: multi-read RO batch, then serial search_replace with the
+                # snippet_id bound to a.txt (not the later b.txt sibling id).
+                tool_results = _tool_results_after_user_query(msgs)
+                a_sid = _snippet_id_for_content_marker(msgs, "alpha-marker")
+
+                def emit_tool_m(tname: str, targs: dict[str, Any]) -> bytes:
+                    return (
+                        _sse_tool_then_text(
+                            model,
+                            0,
+                            state.final_text,
+                            tool_name=tname,
+                            tool_args=json.dumps(targs),
+                        )
+                        if stream
+                        else _json_text(model, state.final_text)
+                    )
+
+                def emit_multi_m(tools: list[tuple[str, dict[str, Any]]]) -> bytes:
+                    return (
+                        _sse_multi_tools(model, tools)
+                        if stream
+                        else _json_text(model, state.final_text)
+                    )
+
+                if tool_results == 0:
+                    payload = emit_multi_m(
+                        [
+                            ("read_file", {"target_file": "a.txt"}),
+                            ("read_file", {"target_file": "b.txt"}),
+                        ]
+                    )
+                elif tool_results == 2:
+                    if not a_sid:
+                        payload = (
+                            _sse_text(model, "mixed-mutate-FAIL-no-snippet-id")
+                            if stream
+                            else _json_text(model, "mixed-mutate-FAIL-no-snippet-id")
+                        )
+                    else:
+                        a = state.liveness_dir / "a.txt"
+                        targs_m: dict[str, Any] = {
+                            "file_path": "a.txt",
+                            "old_string": "alpha-marker",
+                            "new_string": "alpha-mutated",
+                            "snippet_id": a_sid,
+                        }
+                        if a.exists():
+                            targs_m["file_version"] = _file_sha256(a)
+                        payload = emit_tool_m("search_replace", targs_m)
+                else:
+                    payload = (
+                        _sse_text(model, "mixed-mutate-serial-ok")
+                        if stream
+                        else _json_text(model, "mixed-mutate-serial-ok")
+                    )
+            elif state.scenario == "bg-collect-by-id":
+                # VC010: background shell then collect-by-id (Path A product tools).
+                # Sequence: 0 = run_terminal_command is_background; 1 = collect by task_id;
+                # ≥2 tool results → final text.
+                tool_results = _tool_results_after_user_query(msgs)
+                task_id = _latest_task_id(msgs)
+
+                def emit_tool_bg(tname: str, targs: dict[str, Any]) -> bytes:
+                    return (
+                        _sse_tool_then_text(
+                            model,
+                            0,
+                            state.final_text,
+                            tool_name=tname,
+                            tool_args=json.dumps(targs),
+                        )
+                        if stream
+                        else _json_text(model, state.final_text)
+                    )
+
+                if tool_results == 0:
+                    payload = emit_tool_bg(
+                        "run_terminal_command",
+                        {
+                            "command": "sleep 0.2; echo bg-ok-77",
+                            "description": "VC010 hermetic background shell",
+                            "is_background": True,
+                        },
+                    )
+                elif tool_results == 1:
+                    if not task_id:
+                        payload = (
+                            _sse_text(model, "bg-collect-FAIL-no-task-id")
+                            if stream
+                            else _json_text(model, "bg-collect-FAIL-no-task-id")
+                        )
+                    else:
+                        payload = emit_tool_bg(
+                            "get_command_or_subagent_output",
+                            {
+                                "task_ids": [task_id],
+                                "timeout_ms": 15000,
+                            },
+                        )
+                else:
+                    payload = (
+                        _sse_text(model, "bg-collect-ok")
+                        if stream
+                        else _json_text(model, "bg-collect-ok")
+                    )
             elif state.scenario == "tool-then-text":
                 if not has_tool_result:
                     payload = (
@@ -832,6 +1069,11 @@ def make_handler(state: ScriptedState):
             usage_rec = _extract_usage_from_payload(payload, stream=stream)
             if usage_rec is not None:
                 state.record_response_usage(n, path, model, usage_rec)
+
+            # VC010: record emitted tool_calls (incl. multi-tool batches) on wire.
+            tcs = _extract_tool_calls_from_payload(payload, stream=stream)
+            if tcs:
+                state.record_response_tool_calls(n, path, model, tcs)
 
             self.send_response(200)
             if stream:
@@ -872,6 +1114,45 @@ def _extract_usage_from_payload(payload: bytes, *, stream: bool) -> dict[str, An
         return None
 
 
+def _extract_tool_calls_from_payload(
+    payload: bytes, *, stream: bool
+) -> list[dict[str, Any]]:
+    """Best-effort extract tool_calls from SSE/JSON completion body."""
+    try:
+        if not stream:
+            body = json.loads(payload.decode("utf-8"))
+            if not isinstance(body, dict):
+                return []
+            choices = body.get("choices") or []
+            if not choices or not isinstance(choices[0], dict):
+                return []
+            msg = choices[0].get("message") or {}
+            tcs = msg.get("tool_calls") if isinstance(msg, dict) else None
+            return tcs if isinstance(tcs, list) else []
+        found: list[dict[str, Any]] = []
+        for line in payload.decode("utf-8", errors="replace").splitlines():
+            if not line.startswith("data: "):
+                continue
+            data = line[len("data: ") :].strip()
+            if not data or data == "[DONE]":
+                continue
+            try:
+                obj = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            choices = obj.get("choices") or []
+            if not choices or not isinstance(choices[0], dict):
+                continue
+            delta = choices[0].get("delta") or {}
+            if isinstance(delta, dict) and isinstance(delta.get("tool_calls"), list):
+                found = delta["tool_calls"]
+        return found if isinstance(found, list) else []
+    except Exception:
+        return []
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--host", default="127.0.0.1")
@@ -891,6 +1172,10 @@ def main() -> int:
             "snippet-multiedit",
             "snippet-stale-id",
             "snippet-bash-stale",
+            # VC010 L3 multi-tool parallel + background collect Path A R0A
+            "multi-read-parallel",
+            "mixed-mutate-serial",
+            "bg-collect-by-id",
         ),
         default="text-pong",
     )
@@ -898,7 +1183,7 @@ def main() -> int:
         "--liveness-dir",
         default="",
         help=(
-            "Workspace dir with a.txt/b.txt for liveness / VC006 snippet scenarios "
+            "Workspace dir with a.txt/b.txt for liveness / VC006 / VC010 scenarios "
             "(hashes and files computed live)"
         ),
     )

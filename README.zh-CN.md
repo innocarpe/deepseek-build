@@ -36,13 +36,6 @@
   <img src="assets/deepseek-build-welcome.png" alt="DeepSeek Build 欢迎界面——由 dsb 打开的全屏 DeepSeek 代理 TUI" width="85%">
 </p>
 
-> [!NOTE]
-> **产品状态：** `5.x` 系列是 owner-bar 完整产品线。**`5.5.0`** 是 vision-complete
-> 冻结版本——Path A 上的 Deep Code（L1）、Reasonix（L2）与 Grok 吞吐能力（L3）
-> 已全部完成。[`5.0.0` 切割](docs/product/evidence/CUT_5_0_0_2026-08-07.md) 通过了
-> Path A 账本与独立评审。**npm 与 GitHub Latest 已发布 `5.5.0`。**
-> 更早的 `3.x` 与 `4.x` 标签在[版本历史](docs/product/versions/README.md)中记录为部分尝试。
-
 ## 快速开始
 
 从 npm 安装、添加你的 DeepSeek API 密钥，然后打开 TUI：

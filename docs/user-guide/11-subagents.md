@@ -77,10 +77,10 @@ Evidence:
 ## Honesty
 
 - Subagents are **product Path A machinery** under hearts — not a “future 4.0.0 plan.”
-- **VC013** cut the L3 Path A R0A train as on-branch product **`5.4.0`** (history).
-  **VC015** freeze packaging on this stack is on-branch **`5.5.0`** (vision-complete
-  freeze unit; still unmerged vs live). Live `main` / npm / GitHub Latest may still
-  be **`5.2.2`** until the stack merges and the release lane publishes.
+- **VC013** cut the L3 Path A R0A train as merged product **`5.4.0`** (history).
+  **VC015** freeze packaging is merged on `main` as **`5.5.0`** (vision-complete
+  freeze unit). npm / GitHub Latest may still be **`5.2.2`** until the release
+  lane publishes.
 - **V3-60-3** is closed by **VC015** Path A R0A (`snippet_stale` after implement-class
   mutates the same path). Do not re-open it without a regression. Explicit parent
   `expire_all` after spawn remains an optional Spec 60 honesty residual, not the

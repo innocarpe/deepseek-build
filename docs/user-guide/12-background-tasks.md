@@ -2,7 +2,7 @@
 
 **Applies to:** product agent tool loop (`deepseek-build` / `dsb` → agent)
 **Upstream:** vendored background-task guide in `third_party/grok-build/`
-**Evidence:** Path A hermetic R0A **VC010** · re-prove on L3 cut **VC013** (**5.4.0** on-branch)
+**Evidence:** Path A hermetic R0A **VC010** · re-prove on L3 cut **VC013** (**5.4.0** merged history)
 
 ## What it is
 
@@ -53,8 +53,8 @@ Evidence:
   `base_url = https://api.deepseek.com`.
 - This is **shipped Path A machinery** under the vision L3 train — not a residual
   “wait for 4.0.0” story.
-- On-branch cut **5.4.0** packages the L3 R0A train; live registry/GitHub may lag
-  until merge + human-gated publish.
+- Merged cut **5.4.0** packages the L3 R0A train; live registry/GitHub may lag
+  until the release lane publishes current `main`.
 
 ## Related
 

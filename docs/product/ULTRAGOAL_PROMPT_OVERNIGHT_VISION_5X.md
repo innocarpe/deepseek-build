@@ -1,14 +1,21 @@
 # Overnight ultragoal paste — **`vision-complete-5x`**
 
+> [!WARNING]
+> **ARCHIVED / DO NOT RUN.** The `vision-complete-5x` train has completed on
+> `main` at **`5.5.0`**. This prompt is retained only as historical execution
+> provenance; do not paste it into a new live session.
+
+Everything below is preserved original historical prompt text. Its imperatives
+are non-normative and must not be executed. Its original **`5.2.0`** Spec 45
+target was superseded by the actual **`5.3.0`** Spec 45 cut.
+
 **Worktree:** `~/Projects/OpenSources/deepseek-build-vision-5x`  
 **Branch:** `feat/vision-complete-5x` (tracks `origin/main` at create)  
 **Runtime:** **Grok only** for this session and any children (no Claude/Codex spawn).
 
-Copy **§ PASTE BELOW** into a new Grok Build / ultragoal session opened **in this worktree**.
-
 ---
 
-## PASTE BELOW
+## Original historical prompt body (do not execute)
 
 ```text
 You are running an overnight ultragoal on DeepSeek Build.
@@ -80,7 +87,8 @@ dsb
 # or: grok …
 ```
 
-Then paste **§ PASTE BELOW** as the first user message (or load ultragoal with that text).
+Historical note: the original run pasted the preserved prompt body above as the
+first user message. Do not repeat that workflow.
 
 ## Worktree facts
 

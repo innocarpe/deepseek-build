@@ -37,9 +37,10 @@
 > [!NOTE]
 > **Product status:** the `5.x` line is the owner-bar-complete product. The
 > [`5.0.0` cut](docs/product/evidence/CUT_5_0_0_2026-08-07.md) passed the Path A
-> ledger and independent reviews; `main` currently reports `5.1.0`. Earlier
-> `3.x` and `4.x` tags are documented as partial attempts in the
-> [version history](docs/product/versions/README.md).
+> ledger and independent reviews; `main` currently reports `5.5.0` after the
+> vision-complete stack merged. npm and GitHub Latest still report `5.2.2` until
+> the release lane publishes `5.5.0`. Earlier `3.x` and `4.x` tags are
+> documented as partial attempts in the [version history](docs/product/versions/README.md).
 
 ## Quick start
 

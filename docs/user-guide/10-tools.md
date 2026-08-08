@@ -27,7 +27,8 @@ On Path A, safe edits are **snippet-scoped**, not free-form whole-file primary:
 
 Compatibility: older **`file_version` (sha256)** wording remains a version alias in
 hearts docs; Path A vision stack closed **snippet_id** multi-edit R0A on the
-Deep Code cut (on-branch packaging **5.3.0** under live floor **5.2.2** — see
+Deep Code cut (merged **5.3.0** history; `main` now carries **5.5.0** while
+npm/GitHub Latest remain **5.2.2** pending publish — see
 [KNOWN_LIMITS](../product/KNOWN_LIMITS.md)).
 
 Evidence: [`docs/product/evidence/VC006_PATH_A_HEART_R0A_2026-08-08.md`](../product/evidence/VC006_PATH_A_HEART_R0A_2026-08-08.md)

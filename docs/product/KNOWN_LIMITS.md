@@ -5,7 +5,7 @@
 **Owner-bar (true complete product):** [OWNER_BAR_ACCEPTANCE.md](./OWNER_BAR_ACCEPTANCE.md) · train **[PRD-v5.md](./PRD-v5.md)** (`5.0.0` / `owner-bar-5x`)
 **Tagged but not owner-bar green:** [PRD-v4.md](./PRD-v4.md) (`4.x`) · [PRD-v3.md](./PRD-v3.md) (`3.x`)
 **Legacy:** `2.x` shell — [PRD-v2.md](./PRD-v2.md) · `1.x` scaffold — [PRD-v1.md](./PRD-v1.md)
-**Active vision train:** [VISION_COMPLETE_5X_GOALS.md](./VISION_COMPLETE_5X_GOALS.md) · DAG [WAVE_5x_VISION_PR_DAG.md](./WAVE_5x_VISION_PR_DAG.md)
+**Completed vision train:** [VISION_COMPLETE_5X_GOALS.md](./VISION_COMPLETE_5X_GOALS.md) · DAG [WAVE_5x_VISION_PR_DAG.md](./WAVE_5x_VISION_PR_DAG.md)
 
 ## Honesty: majors and live floor
 
@@ -16,18 +16,22 @@
 | **4.0.0 / 4.0.1 (tagged)** | L3 productization *attempt* — machinery + docs; **owner-bar NOT MET**. Historical only — **not** the current residual story. |
 | **5.0.0** | Owner-bar complete product — [OWNER_BAR_P0_LEDGER.md](./OWNER_BAR_P0_LEDGER.md) all PASS on Path A. |
 | **5.0.1 / 5.1.0** | Patches/chrome after owner-bar; **not** vision-complete. |
-| **5.2.0 – 5.2.2** | Live packaging line on **`main` / npm / GitHub Latest`** as of the VC014 docs pass (**`5.2.2`**). Includes early vision floor work; **not** the full unmerged vision stack. |
-| **5.3.0 (on-branch stack)** | Spec 45 Path A `snippet_id` Deep Code cut (VC006) — **may be unmerged** relative to live main. |
-| **5.4.0 (on-branch stack)** | L3 Path A R0A train cut (VC010–VC013) — **may be unmerged** relative to live main. |
-| **5.5.0 (on-branch freeze)** | Vision-complete freeze cut (VC015) — **on-branch only** until dual review + merge + human-gated publish; **not** live npm/GitHub Latest by itself. |
+| **5.2.0 – 5.2.2** | Published packaging line on npm / GitHub Latest as of this stabilization pass (**`5.2.2`**). Includes early vision floor work. |
+| **5.3.0** | Spec 45 Path A `snippet_id` Deep Code cut (VC006) — merged on `main`. |
+| **5.4.0** | L3 Path A R0A train cut (VC010–VC013) — merged on `main`. |
+| **5.5.0** | Vision-complete freeze cut (VC015) — merged on `main`; release publish pending, so not live npm/GitHub Latest yet. |
 
-**Floor rule:** live install from npm/GitHub Latest can still report **`5.2.2`** while this monorepo stack tip already carries **`5.5.0`** (on-branch vision freeze packaging; L3 train history cut was **`5.4.0`** / VC013). Treat stack SemVer and registry SemVer as different until merge + human-gated publish.
+**Floor rule:** source checkouts of `main` carry **`5.5.0`** while live install
+from npm/GitHub Latest can still report **`5.2.2`**. Treat source SemVer and
+registry SemVer as different until the maintainer-controlled release lane
+publishes `5.5.0`.
 
 User-facing behavior for the vision stack is documented under [user-guide](../user-guide/README.md). Docs pass evidence: [VC014_USER_GUIDE_KNOWN_LIMITS_2026-08-08.md](./evidence/VC014_USER_GUIDE_KNOWN_LIMITS_2026-08-08.md).
 
 ## Path A vision stack — what is evidenced (not residual)
 
-These are **on Path A** (public `deepseek-build` / `dsb` → product agent) under the unmerged vision train. They are **not** “wait for 4.0.0” items.
+These are **on Path A** (public `deepseek-build` / `dsb` → product agent) and
+merged on `main`. They are **not** “wait for 4.0.0” items.
 
 | Area | Evidenced | Pointer |
 |------|-----------|---------|
@@ -58,8 +62,8 @@ Only items below are treated as **open residual** for vision honesty. Do **not**
 |-------|---------|-------|
 | **Interactive TTY worktree create** | Product flag forward + headless no-create + opt-in stamp proven; **interactive create after process `exec`** not asserted as sole green | VC012 residual · carried by VC013 |
 | **Non-darwin packaging / assets** | Prebuilt platform is **`darwin-arm64`** (Apple Silicon macOS) only; other targets deferred | Install / ADR 0009 · [05-npm.md](../user-guide/05-npm.md) |
-| **Human-gated npm / GitHub publish** | Registry publish and Release attach remain **human-gated** (ADR 0007). Docs and on-branch cuts do **not** auto-publish | Release lane |
-| **Stack vs live SemVer lag** | On-branch stack may carry **`5.5.0`** freeze while live `main` / npm / GitHub Latest remain **`5.2.2`** until stack merges and publish runs | Floor re-check every session |
+| **Release publish lane** | npm publish remains maintainer-gated per ADR 0007. A maintainer-controlled `v5.5.0` tag push triggers `release-prebuilt` for GitHub Release assets. Docs and main merges do **not** auto-publish | Release lane |
+| **Source vs live SemVer lag** | `main` carries **`5.5.0`** while npm / GitHub Latest remain **`5.2.2`** until the release lane completes | Floor re-check every session |
 | **Explicit parent `expire_all` after spawn** | V3-60-3 is **closed** via Path A parent **`snippet_stale`** after implement-class worker mutates the same path (VC015). Product-default **table clear** (`expire_all`) on parent after worker is **not** separately proven as a Path A sole green path | Spec 60 spirit · VC015 honesty |
 
 ### L2 scope notes (not blockers if over-claimed elsewhere)
@@ -99,7 +103,9 @@ Binding map: [HEART_3X_SPEC_BINDING.md](../architecture/HEART_3X_SPEC_BINDING.md
 - Source compile only with `DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD=1` or `./scripts/install.sh` (dev).
 - Prebuilt platform: **`darwin-arm64` only** (see residual table).
 - **npm registry publish** remains **human-gated** (ADR 0007).
-- **GitHub Release assets** for a new SemVer are a separate release lane after merge — an on-branch cut is not a published Release.
+- **GitHub Release assets** for `5.5.0` are produced by `release-prebuilt` after
+  a maintainer-controlled `v5.5.0` tag push; a main merge alone is not a
+  published Release.
 
 ### Auth / network
 
@@ -124,8 +130,8 @@ Do **not** run vendor-full cargo as everyday gate (disk bomb).
 
 ## Explicit non-claims
 
-- **Not** vision-complete freeze shipped (**5.5.0** on npm / GitHub Latest) until dual adversarial review + merge + human-gated publish; on-branch freeze packaging ≠ live registry.
+- **Not** vision-complete freeze shipped (**5.5.0** on npm / GitHub Latest) until the release lane publishes; main `5.5.0` ≠ live registry.
 - **Not** reopening **V3-60-3** as residual: it is **closed** by VC015 public Path A R0A (`snippet_stale` after implement-class same-path mutation). Still **not** claiming product-default parent table `expire_all` after every spawn as a separate sole green path (honesty residual above).
 - **Not** “interactive TTY worktree create sole green” closed without fresh Path A R0A — that remains an evidenced residual (VC012 / residual table).
-- **Not** claiming live npm/GitHub Latest already ships unmerged stack SemVers.
+- **Not** claiming live npm/GitHub Latest already ships main `5.5.0`.
 - **Not** conflating thin Path B unit greens with Path A sole proof.

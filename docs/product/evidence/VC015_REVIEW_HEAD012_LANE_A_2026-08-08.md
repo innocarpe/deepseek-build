@@ -19,10 +19,10 @@
 
 ## 0. Mandate and fail-close rules applied
 
-1. Review **only** exact target `01215c2` at worktree HEAD (no remote chase).  
-2. Challenge freeze honesty: Path A sole proof vs thin Path B; staged binary identity vs packaging SemVer; residual over-claim.  
-3. Spec anchors: Spec 45 (`snippet_id` mint/require/stale), Spec 10 (stable prefix / epoch / no snippets in prefix), Spec 30 (`reasoning_effort` on DeepSeek wire), Spec 60 T3 spirit (worker mutate → parent snippet safety) as closed by VC015 bar.  
-4. Disk ~5 GiB free — **no** full cargo builds; focused read-only gates only.  
+1. Review **only** exact target `01215c2` at worktree HEAD (no remote chase).
+2. Challenge freeze honesty: Path A sole proof vs thin Path B; staged binary identity vs packaging SemVer; residual over-claim.
+3. Spec anchors: Spec 45 (`snippet_id` mint/require/stale), Spec 10 (stable prefix / epoch / no snippets in prefix), Spec 30 (`reasoning_effort` on DeepSeek wire), Spec 60 T3 spirit (worker mutate → parent snippet safety) as closed by VC015 bar.
+4. Disk ~5 GiB free — **no** full cargo builds; focused read-only gates only.
 5. Write **only** this report; commit **only** this report on the review branch.
 
 ---
@@ -153,9 +153,9 @@ Agent sha **matches VC013 cut pin** (`a56897aa…` / `c3857a9`).
 
 **What improved (integrity positive):**
 
-1. Under `--skip-build`, **no** silent resolution to `~/.deepseek-build` (older **5.2.x / 5.3.0** risk → false green / false red).  
-2. Explicit staged pair env: `PATH_A_R0A_CLI` / `PATH_A_R0A_AGENT` / `PATH_A_R0A_BIN_DIR`.  
-3. META now records `cli_version`, `agent_sha256`, `agent_version`, staged env, `skip_build` — **reproducible identity**.  
+1. Under `--skip-build`, **no** silent resolution to `~/.deepseek-build` (older **5.2.x / 5.3.0** risk → false green / false red).
+2. Explicit staged pair env: `PATH_A_R0A_CLI` / `PATH_A_R0A_AGENT` / `PATH_A_R0A_BIN_DIR`.
+3. META now records `cli_version`, `agent_sha256`, `agent_version`, staged env, `skip_build` — **reproducible identity**.
 4. Re-prove uses agent sha **pinned to VC013** (`a56897aa…`), matching freeze evidence agent identity.
 
 **Honesty about staged SemVer vs freeze packaging:**
@@ -170,7 +170,7 @@ Product crates between L3 cut and freeze are **packaging/docs/test** for the fre
 
 **Residual harness gaps (non-blocking):**
 
-- Under `--skip-build`, CLI may still resolve `ROOT/target/release/deepseek-build` without a hard pin to staged pair if env unset (agent path also falls through to tree). Operator must set `PATH_A_R0A_*` for disk-constrained re-prove; fail-closed message steers correctly when neither tree nor staged pair exists.  
+- Under `--skip-build`, CLI may still resolve `ROOT/target/release/deepseek-build` without a hard pin to staged pair if env unset (agent path also falls through to tree). Operator must set `PATH_A_R0A_*` for disk-constrained re-prove; fail-closed message steers correctly when neither tree nor staged pair exists.
 - META `git_sha=8a6e951` is the **pre-commit** tip of the re-prove, not `01215c2` (expected chicken-egg: evidence generated then committed). Reviewers must treat **target** as packaging commit + **artifact identity** as staged pair, not assume META `git_sha == review SHA`.
 
 ### 3.4 SemVer / documentation integrity at tip
@@ -186,9 +186,9 @@ Product crates between L3 cut and freeze are **packaging/docs/test** for the fre
 
 **Documentation drift residuals (pre-existing at tip; not introduced by product code in `01215c2`, still visible at review SHA):**
 
-1. `KNOWN_LIMITS.md` floor-rule sentence still says monorepo tip “carries **`5.4.0`**” while Cargo is **`5.5.0`** (table rows above correctly list 5.5.0 freeze).  
-2. Explicit non-claims still couple “V3-60-3 … without fresh Path A R0A” in a sentence that can be misread against the residual table that marks V3-60-3 **closed via `snippet_stale`**. Residual table + VC015 §8.3 remain the clearer SSOT.  
-3. Board story table in `VISION_COMPLETE_5X_GOALS.md` still shows many VC rows as “pending” (historical board lag vs stacked READY evidence).  
+1. `KNOWN_LIMITS.md` floor-rule sentence still says monorepo tip “carries **`5.4.0`**” while Cargo is **`5.5.0`** (table rows above correctly list 5.5.0 freeze).
+2. Explicit non-claims still couple “V3-60-3 … without fresh Path A R0A” in a sentence that can be misread against the residual table that marks V3-60-3 **closed via `snippet_stale`**. Residual table + VC015 §8.3 remain the clearer SSOT.
+3. Board story table in `VISION_COMPLETE_5X_GOALS.md` still shows many VC rows as “pending” (historical board lag vs stacked READY evidence).
 4. VC015 freeze evidence §8.0 does not yet narrate the **stage-aware** `/tmp/…stage…` pair; identity is in META + commit `01215c2` message.
 
 None of these re-open the Path A **`snippet_stale`** wire proof.
@@ -231,13 +231,13 @@ None of these re-open the Path A **`snippet_stale`** wire proof.
 
 ### **READY**
 
-Lane A adversarial review of exact target  
-`01215c25c6f9fc0fd33419be01f23a8a5c22b814`  
+Lane A adversarial review of exact target
+`01215c25c6f9fc0fd33419be01f23a8a5c22b814`
 finds **no blocking integrity, SemVer, or Spec 45 / 10 / 30 / cache regression** introduced by the stage-aware VC015 harness/evidence change.
 
-- Path A V3-60-3 close via **`snippet_stale`** remains wire-backed.  
-- Stage-aware `--skip-build` is an **integrity fix** (no home-bin false pair).  
-- Freeze packaging **`5.5.0`** remains on-branch-only; not conflated with live **5.2.2**.  
+- Path A V3-60-3 close via **`snippet_stale`** remains wire-backed.
+- Stage-aware `--skip-build` is an **integrity fix** (no home-bin false pair).
+- Freeze packaging **`5.5.0`** remains on-branch-only; not conflated with live **5.2.2**.
 - Residuals **F1–F6** must stay visible; none re-open the mechanism bar.
 
 **Not claimed by this verdict:** dual-review complete; merge; tag; npm/GitHub publish; parent `expire_all` sole green; live registry **5.5.0**.
@@ -262,11 +262,11 @@ finds **no blocking integrity, SemVer, or Spec 45 / 10 / 30 / cache regression**
 
 ## 8. Non-actions (this lane honored)
 
-- No fetch / pull / merge  
-- No product code, version bump, PR edit, tag, npm, or GitHub write  
-- No Claude/Codex; no subagents  
-- No full build / full owner-bar re-run (disk)  
-- Only this report file authored for commit on the review branch  
+- No fetch / pull / merge
+- No product code, version bump, PR edit, tag, npm, or GitHub write
+- No Claude/Codex; no subagents
+- No full build / full owner-bar re-run (disk)
+- Only this report file authored for commit on the review branch
 
 ---
 

@@ -20,10 +20,10 @@
 
 ## 0. Mandate and fail-close rules applied
 
-1. Review **only** exact target `b9fd4b2` at worktree HEAD (no remote chase).  
-2. Treat dual-lane reports at `01215c2` as inputs to audit, not as self-approval of this tip.  
-3. Spec anchors: Spec **45** mint/require/`snippet_stale`; Spec **10** stable prefix / no session snippet table in prefix; Spec **30** `reasoning_effort` on DeepSeek wire; cache visibility via prior VC009.  
-4. Disk ~**5.1 GiB** free — **no** full cargo builds; focused read-only gates only.  
+1. Review **only** exact target `b9fd4b2` at worktree HEAD (no remote chase).
+2. Treat dual-lane reports at `01215c2` as inputs to audit, not as self-approval of this tip.
+3. Spec anchors: Spec **45** mint/require/`snippet_stale`; Spec **10** stable prefix / no session snippet table in prefix; Spec **30** `reasoning_effort` on DeepSeek wire; cache visibility via prior VC009.
+4. Disk ~**5.1 GiB** free — **no** full cargo builds; focused read-only gates only.
 5. Write **only** this report; commit **only** this report on the review branch.
 
 ---
@@ -49,7 +49,7 @@
 | `docs/user-guide/11-subagents.md` | Packaging honesty **5.4.0** history / **5.5.0** freeze; V3-60-3 `snippet_stale` close |
 | `docs/user-guide/14-l3-throughput.md` | Same packaging honesty + freeze pointer |
 
-**6 files, +755 / −18.**  
+**6 files, +755 / −18.**
 **No** `crates/**`, `third_party/**`, `scripts/**`, `Cargo.toml`, or `package.json` delta in this range.
 
 Blob identity (product proof surface) **unchanged** tip-to-tip vs `01215c2`:
@@ -282,13 +282,13 @@ Dual lanes at `01215c2` flagged:
 
 ### **READY**
 
-Final independent adversarial Lane A review of exact target  
-`b9fd4b2142ad91b5b0eaa81a31911c94daee1295`  
+Final independent adversarial Lane A review of exact target
+`b9fd4b2142ad91b5b0eaa81a31911c94daee1295`
 finds **no blocking product, Spec 45 / 10 / 30 / cache, SemVer, or ship-honesty regression** introduced by integrating dual READY reports and the docs-only freeze honesty cleanup.
 
-- Path A V3-60-3 close via Spec **45** **`snippet_stale`** remains wire-backed and **byte-identical** to dual-lane product tip `01215c2`.  
-- Docs cleanup **repairs** prior medium packaging/floor wording lags called out by dual lanes.  
-- Residual **FA-D1** (freeze-doc dual-review status wording) is a **docs consistency** issue under-claiming completeness; it does **not** invent live **5.5.0** ship or Spec 60 table-expire green.  
+- Path A V3-60-3 close via Spec **45** **`snippet_stale`** remains wire-backed and **byte-identical** to dual-lane product tip `01215c2`.
+- Docs cleanup **repairs** prior medium packaging/floor wording lags called out by dual lanes.
+- Residual **FA-D1** (freeze-doc dual-review status wording) is a **docs consistency** issue under-claiming completeness; it does **not** invent live **5.5.0** ship or Spec 60 table-expire green.
 - Live floor remains **`5.2.2`**; on-branch packaging remains **`5.5.0`**.
 
 **Not claimed by this verdict:** merge of PR **#147** / **#146**; tag `v5.5.0`; npm/GitHub publish; parent `expire_all` sole Path A green; live registry **5.5.0**; automatic dual-review process complete for ship without any further process bar the owner applies to post-cleanup HEAD.
@@ -314,11 +314,11 @@ finds **no blocking product, Spec 45 / 10 / 30 / cache, SemVer, or ship-honesty 
 
 ## 8. Non-actions (this lane honored)
 
-- No fetch / pull / merge  
-- No product code, version bump, PR edit, tag, npm, or GitHub write  
-- No Claude/Codex; no subagents  
-- No full build / full owner-bar re-run (disk)  
-- Only this report file authored for commit on the review branch  
+- No fetch / pull / merge
+- No product code, version bump, PR edit, tag, npm, or GitHub write
+- No Claude/Codex; no subagents
+- No full build / full owner-bar re-run (disk)
+- Only this report file authored for commit on the review branch
 
 ---
 

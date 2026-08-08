@@ -12,7 +12,7 @@
 | **Normative** | [`docs/specs/50-parallelism-background.md`](../../specs/50-parallelism-background.md) · [`HARNESS_PHILOSOPHY.md`](../../architecture/HARNESS_PHILOSOPHY.md) § L3 · owner-bar L3-50-* |
 | **Prior** | G010 L3 stamp + offline smoke ([`G010_L3_UNDER_HEARTS_2026-08-07.md`](./G010_L3_UNDER_HEARTS_2026-08-07.md)); thin `dsb-agent` parallel + `dsb-tools` bg unit greens |
 
-**This file is the mandatory ultragoal PR unit plan for VC010 plus (later) implementation evidence.**  
+**This file is the mandatory ultragoal PR unit plan for VC010 plus (later) implementation evidence.**
 It does **not** claim VISION L3 / **5.4.0** freeze complete. Thin Path B (`dsb-agent` loop / `dsb-tools` bg store) alone is **not** Path A R0A proof. Live API multi-tool dogfood remains residual unless a key is present and explicitly recorded.
 
 ---

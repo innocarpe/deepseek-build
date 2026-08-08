@@ -1,6 +1,6 @@
 # User guide
 
-Shipped and on-branch user-facing behavior is documented here. Intent for
+Shipped and merged user-facing behavior is documented here. Intent for
 unshipped features stays in `docs/specs/`.
 **Known limits:** [../product/KNOWN_LIMITS.md](../product/KNOWN_LIMITS.md) ·
 **Changelog:** [../../CHANGELOG.md](../../CHANGELOG.md)
@@ -16,8 +16,9 @@ Both must print the **same** full SemVer (`MAJOR.MINOR.PATCH`) from product
 packaging. Config/home stays under `~/.deepseek-build/` (path ≠ command name).
 
 **Version honesty:** read root `Cargo.toml` / `package.json` in the tree you
-built from. Live `main` / npm / GitHub Release may lag an unmerged vision stack
-(see [KNOWN_LIMITS](../product/KNOWN_LIMITS.md)).
+built from. `main` currently carries `5.5.0`; npm and GitHub Latest can remain
+at `5.2.2` until the release lane publishes (see
+[KNOWN_LIMITS](../product/KNOWN_LIMITS.md)).
 
 ## Guides
 

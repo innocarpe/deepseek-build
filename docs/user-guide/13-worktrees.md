@@ -3,7 +3,7 @@
 **Applies to:** public `deepseek-build` / `dsb` (primary) → agent binary
 **Alias:** both commands are the same product CLI; agent flags are forwarded via
 `deepseek-build agent …` / `dsb agent …` (or bare TTY launch).
-**Evidence:** Path A dogfood **VC012** · re-prove on L3 cut **VC013** (**5.4.0** on-branch)
+**Evidence:** Path A dogfood **VC012** · re-prove on L3 cut **VC013** (**5.4.0** merged history)
 
 ## Honesty (fail-close)
 

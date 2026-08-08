@@ -146,6 +146,7 @@ fn mixed_report() -> DiagnosticReport {
         available_themes: vec![
             ThemeKind::DeepSeekNightV2,
             ThemeKind::DeepSeekNight,
+            ThemeKind::DeepSeekNightNeutral,
             ThemeKind::GrokDay,
         ],
         total_themes: ThemeKind::ALL.len(),
@@ -692,7 +693,7 @@ fn json_empty_fixture_pins_null_policy() {
                 "color": {
                     "level": {"status": "unavailable", "value": null},
                     "availableThemes": [],
-                    "totalThemes": 6
+                    "totalThemes": 7
                 },
                 "keyboard": null,
                 "newline": null,
@@ -739,8 +740,13 @@ fn json_contract_is_structural_stable_ordered_and_ansi_free() {
                 "ssh": true,
                 "color": {
                     "level": {"status": "available", "value": "256"},
-                    "availableThemes": ["deepseeknight-v2", "deepseeknight", "grokday"],
-                    "totalThemes": 6
+                    "availableThemes": [
+                        "deepseeknight-v2",
+                        "deepseeknight",
+                        "deepseeknight-neutral",
+                        "grokday"
+                    ],
+                    "totalThemes": 7
                 },
                 "keyboard": {"cmd": "dropped", "opt": "native", "os": "macos"},
                 "newline": {"kind": "xterm_js", "terminalName": "cursor"},

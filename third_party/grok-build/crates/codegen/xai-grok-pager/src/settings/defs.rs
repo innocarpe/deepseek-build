@@ -34,17 +34,18 @@ pub(crate) const MAX_THOUGHTS_WIDTH_KEY: &str = "max_thoughts_width";
 // Canonical names MUST match `ThemeKind::display_name()`.
 // Shared by `theme`, `auto_dark_theme`, and `auto_light_theme`;
 // auto-* sub-pickers drop "auto" to avoid circular reference.
-// The catalogs expose both DeepSeek picker choices in stable order:
-// `deepseeknight-v2` remains the first concrete picker entry, while
-// `deepseeknight` is the product/default "DeepSeek Night (classic)" entry.
-// `deepseeknight-neutral` remains accepted through legacy config/parser
+// The catalogs expose the three DeepSeek picker choices in stable order:
+// `deepseeknight-v2` remains the first concrete picker entry, `deepseeknight`
+// is the product/default "DeepSeek Night (classic)" entry, and
+// `deepseeknight-neutral` is listed as the hue-neutral DeepSeek ramp.
+// Retired `groknight` remains accepted through legacy config/parser
 // aliases only and is intentionally not a picker entry.
 // Bounded by `MAX_PICKER_CHOICES`.
 // ---------------------------------------------------------------------------
 
 /// Full theme catalog including the "auto" meta-variant. Used by `theme` only.
 /// V2 is the first concrete picker entry after `auto`; classic is the
-/// product/default choice; neutral is compatibility-only.
+/// product/default choice; neutral is the hue-neutral DeepSeek ramp.
 const THEME_CHOICES: &[EnumChoice] = &[
     EnumChoice {
         canonical: "auto",
@@ -60,6 +61,11 @@ const THEME_CHOICES: &[EnumChoice] = &[
         canonical: "deepseeknight",
         display: "DeepSeek Night (classic)",
         description: "Product default - original blue-tinted DeepSeek palette.",
+    },
+    EnumChoice {
+        canonical: "deepseeknight-neutral",
+        display: "DeepSeek Night Neutral",
+        description: "DeepSeek accents on a hue-neutral gray ramp.",
     },
     EnumChoice {
         canonical: "grokday",
@@ -486,10 +492,10 @@ const VOICE_STT_LANGUAGE_CHOICES: &[EnumChoice] = &[
 ];
 
 /// Concrete-only theme catalog (excludes "auto"). Used by both
-/// `auto_dark_theme` and `auto_light_theme`. V2 is first and classic is the
-/// product/default choice; neutral remains compatibility-only. No dark/light
-/// filtering — the user can pair any listed theme with any system-appearance
-/// bucket.
+/// `auto_dark_theme` and `auto_light_theme`. V2 is first, classic is the
+/// product/default choice, and neutral is the hue-neutral DeepSeek ramp. No
+/// dark/light filtering — the user can pair any listed theme with any
+/// system-appearance bucket.
 const CONCRETE_THEME_CHOICES: &[EnumChoice] = &[
     EnumChoice {
         canonical: "deepseeknight-v2",
@@ -500,6 +506,11 @@ const CONCRETE_THEME_CHOICES: &[EnumChoice] = &[
         canonical: "deepseeknight",
         display: "DeepSeek Night (classic)",
         description: "Product default - original blue-tinted DeepSeek palette.",
+    },
+    EnumChoice {
+        canonical: "deepseeknight-neutral",
+        display: "DeepSeek Night Neutral",
+        description: "DeepSeek accents on a hue-neutral gray ramp.",
     },
     EnumChoice {
         canonical: "grokday",

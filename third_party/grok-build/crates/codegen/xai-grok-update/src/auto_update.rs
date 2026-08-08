@@ -372,7 +372,10 @@ pub async fn get_installer() -> Option<&'static str> {
     match cfg.cli.installer.as_deref() {
         Some("npm") => Some("npm"),
         Some("gh-release") => Some("gh-release"),
-        _ => Some("internal"),
+        // DeepSeek Build ships only via npm / GitHub Releases; there is no
+        // product "internal" binary CDN. Default to npm so update checks
+        // consult the product feed, never the upstream Grok x.ai pointers.
+        _ => Some("npm"),
     }
 }
 
@@ -406,19 +409,15 @@ fn needs_update(current: &str, target: &str, channel: &str, allow_downgrade: boo
     })
 }
 
-/// Returns `true` for installer backends whose version source is authoritative
-/// (managed by xAI directly), meaning a pointer rollback is intentional and
-/// should trigger a client downgrade. Returns `false` for backends like npm
-/// where stale corporate registries/proxies can return arbitrarily old versions.
-///
-/// Users who installed via `install.sh` are classified as `"internal"` by
-/// `get_installer()`, so they also get rollback support.
-fn installer_allows_downgrade(installer: &str) -> bool {
-    match installer {
-        "internal" | "gh-release" => true,
-        "npm" => false,
-        _ => false,
-    }
+/// The DeepSeek Build product never auto-downgrades, regardless of how the
+/// install is classified. Pointer rollback is an upstream Grok / x.ai-managed
+/// install concept (x.ai CDN pointers can be rolled back); DeepSeek Build has
+/// no such pointer, and a "newer" version advertised from any source that is
+/// actually older (e.g. the Grok Build channel) must never be installed over
+/// the product. The signature is kept so the decision stays explicit at every
+/// call site.
+fn installer_allows_downgrade(_installer: &str) -> bool {
+    false
 }
 
 /// Result of a background update availability check.
@@ -777,7 +776,14 @@ pub async fn run_install_script(
             update_config.npm_registry.as_deref(),
         ),
         "gh-release" => install_gh_release(target).await,
-        _ => install_internal(target, update_config).await,
+        // Any other classification (e.g. legacy "internal") is still a
+        // DeepSeek Build install: reinstall the product npm package rather
+        // than downloading an upstream Grok binary from the x.ai CDN.
+        _ => install_npm(
+            target,
+            &update_config.channel,
+            update_config.npm_registry.as_deref(),
+        ),
     };
     if result.is_ok() {
         remove_stale_models_cache().await;
@@ -1169,10 +1175,6 @@ async fn download_cli_artifact_from_gcs(
     }
 }
 
-async fn install_internal(target: Option<&str>, update_config: &UpdateConfig) -> Result<()> {
-    install_internal_from_bases(target, update_config, crate::version::CLI_BASE_URLS).await
-}
-
 /// Try the base-dependent install phase ([`download_verified_from_base`]:
 /// version resolution, download, smoke test) against each base URL in turn,
 /// falling through to the next on any failure. Used to keep installs working
@@ -1249,8 +1251,9 @@ async fn smoke_test_binary(binary_path: &std::path::Path) -> bool {
     false
 }
 
-/// Test-only entry point: same as [`install_internal`] but reads from
-/// `gcs_base_url` instead of the hardcoded GCS bucket. Persists installer
+/// Test-only entry point: run the GCS-style install phase against
+/// `gcs_base_url` (used by hermetic install tests with a wiremock server).
+/// The product itself never downloads from GCS / x.ai. Persists installer
 /// config and writes to `~/.grok/bin/`, so callers must isolate
 /// `GROK_HOME`.
 #[doc(hidden)]
@@ -4025,13 +4028,15 @@ mod tests {
     // ──────────────────────────────────────────────────────────────────────
 
     #[test]
-    fn test_installer_allows_downgrade_internal() {
-        assert!(installer_allows_downgrade("internal"));
+    fn test_installer_allows_downgrade_internal_blocked() {
+        // DeepSeek Build has no x.ai pointer to roll back to; a lower version
+        // from any source must never be installed over the product.
+        assert!(!installer_allows_downgrade("internal"));
     }
 
     #[test]
-    fn test_installer_allows_downgrade_gh_release() {
-        assert!(installer_allows_downgrade("gh-release"));
+    fn test_installer_allows_downgrade_gh_release_blocked() {
+        assert!(!installer_allows_downgrade("gh-release"));
     }
 
     #[test]

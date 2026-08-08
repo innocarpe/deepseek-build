@@ -908,7 +908,7 @@ mod tests {
         }
         {
             let _on = xai_grok_test_support::EnvGuard::set("GROK_SESSION_LIST_CONVERSATIONS", "1");
-            assert_eq!(conversations_lane_enabled(), false);
+            assert!(!conversations_lane_enabled());
         }
         {
             let _off = xai_grok_test_support::EnvGuard::set("GROK_SESSION_LIST_CONVERSATIONS", "0");
@@ -931,13 +931,12 @@ mod tests {
         {
             let _desktop =
                 xai_grok_test_support::EnvGuard::set("GROK_SESSION_LIST_CONVERSATIONS", "1");
-            assert_eq!(conversations_lane_active(), false);
+            assert!(!conversations_lane_active());
         }
         {
             let _chat = xai_grok_test_support::EnvGuard::set(GROK_CHAT_MODE_ENV, "1");
-            assert_eq!(
-                conversations_lane_active(),
-                false,
+            assert!(
+                !conversations_lane_active(),
                 "process chat mode must enable the lane (chat feature only)"
             );
         }
@@ -966,14 +965,10 @@ mod tests {
             let _on = xai_grok_test_support::EnvGuard::set(GROK_CHAT_MODE_ENV, "1");
             let req = parse_list_req(&raw).expect("parse");
             let parsed = ParsedMeta::parse(req.meta.as_ref());
-            let expected_build = if cfg!(feature = "local-workspace") {
-                Some(&vec![serde_json::json!("build")])
-            } else {
-                Some(&vec![serde_json::json!("build")])
-            };
+            let expected_build = vec![serde_json::json!("build")];
             assert_eq!(
                 parsed.facet_filters.get(KIND_FACET_KEY),
-                expected_build,
+                Some(&expected_build),
                 "client kind=build under process chat mode"
             );
             assert_eq!(

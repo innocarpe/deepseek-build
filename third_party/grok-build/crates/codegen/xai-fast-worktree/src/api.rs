@@ -3608,6 +3608,21 @@ mod tests {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         #[test]
         fn gc_cwd_guard_skips_then_reclaims_expired_worktree() {
+            struct ChildGuard(std::process::Child);
+
+            impl ChildGuard {
+                fn kill_and_wait(&mut self) {
+                    self.0.kill().ok();
+                    self.0.wait().ok();
+                }
+            }
+
+            impl Drop for ChildGuard {
+                fn drop(&mut self) {
+                    self.kill_and_wait();
+                }
+            }
+
             let _cwd_lock = crate::api::cwd_test_guard();
             let tmp = tempfile::TempDir::new().unwrap();
             let db = db_at(&tmp);
@@ -3632,11 +3647,15 @@ mod tests {
             };
             db.register(&record).unwrap();
 
-            let mut child = std::process::Command::new("sleep")
-                .arg("30")
-                .current_dir(&nested)
-                .spawn()
-                .expect("spawn sleep");
+            // Guarded test fixture; killed and waited below, including on panic.
+            #[allow(clippy::disallowed_methods)]
+            let mut child = ChildGuard(
+                std::process::Command::new("sleep")
+                    .arg("30")
+                    .current_dir(&nested)
+                    .spawn()
+                    .expect("spawn sleep"),
+            );
             let want = dunce::canonicalize(&nested).unwrap();
             assert!(
                 wait_until(|| scan_has_cwd_under(&want)),
@@ -3658,8 +3677,7 @@ mod tests {
             assert!(dir.exists());
 
             // Once the process exits, the same expired worktree is reclaimed.
-            child.kill().ok();
-            child.wait().ok();
+            child.kill_and_wait();
             assert!(
                 wait_until(|| !scan_has_cwd_under(&want)),
                 "child CWD must leave the scan after exit before reclaim"

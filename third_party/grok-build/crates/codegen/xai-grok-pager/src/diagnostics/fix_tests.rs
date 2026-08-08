@@ -330,7 +330,7 @@ fn full_preview_safely_renders_backtick_requested_symlink_target_and_backup_path
     use std::os::unix::fs::symlink;
 
     let temp = tempfile::tempdir().unwrap();
-    let root = temp.path().canonicalize().unwrap();
+    let root = dunce::canonicalize(temp.path()).unwrap();
     let home = root.join("home`dir");
     let target_dir = root.join("target`dir");
     std::fs::create_dir_all(&home).unwrap();

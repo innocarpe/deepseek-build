@@ -161,6 +161,9 @@ context_window = 128000
 api_backend = "chat_completions"
 base_url = "{DEEPSEEK_API_BASE_URL}"
 {api_key_line}env_key = "DEEPSEEK_API_KEY"
+# Spec 30 / VC008: Path A chat_completions must stamp reasoning_effort on wire.
+supports_reasoning_effort = true
+reasoning_effort = "high"
 
 [model.deepseek-v4-pro]
 model = "deepseek-v4-pro"
@@ -169,6 +172,9 @@ context_window = 128000
 api_backend = "chat_completions"
 base_url = "{DEEPSEEK_API_BASE_URL}"
 {api_key_line}env_key = "DEEPSEEK_API_KEY"
+# Spec 30 / VC008: Path A chat_completions must stamp reasoning_effort on wire.
+supports_reasoning_effort = true
+reasoning_effort = "high"
 
 [endpoints]
 xai_api_base_url = "{DEEPSEEK_API_BASE_URL}"
@@ -202,6 +208,8 @@ enabled = true
 /// 1. DeepSeek Night theme when no `theme` key exists (default neutral skin)
 /// 2. `base_url` on DeepSeek model stanzas (or appends full model blocks)
 /// 3. Explicit `yolo = false` when the key is missing (Spec 90 product default)
+/// 4. Spec 30 / VC008: `supports_reasoning_effort` + default `reasoning_effort`
+///    on DeepSeek model stanzas when those keys are missing
 fn repair_product_agent_config(body: &str) -> String {
     repair_product_agent_config_with_theme(body, PRODUCT_THEME)
 }
@@ -234,6 +242,8 @@ fn repair_product_agent_config_with_theme(body: &str, theme: &str) -> String {
 
     next = ensure_deepseek_model_base_url(next, "deepseek-v4-flash", "DeepSeek V4 Flash");
     next = ensure_deepseek_model_base_url(next, "deepseek-v4-pro", "DeepSeek V4 Pro");
+    next = ensure_deepseek_model_reasoning_effort(next, "deepseek-v4-flash");
+    next = ensure_deepseek_model_reasoning_effort(next, "deepseek-v4-pro");
 
     if !next.contains("xai_api_base_url") {
         if !next.contains("[endpoints]") {
@@ -264,41 +274,75 @@ context_window = 128000
 api_backend = "chat_completions"
 base_url = "{DEEPSEEK_API_BASE_URL}"
 env_key = "DEEPSEEK_API_KEY"
+supports_reasoning_effort = true
+reasoning_effort = "high"
 "#
         ));
         return next;
     }
 
     // Inject base_url into the model section if missing (section-scoped).
+    inject_model_section_keys_if_missing(
+        body,
+        &header,
+        &[("base_url", &format!("base_url = \"{DEEPSEEK_API_BASE_URL}\""))],
+    )
+}
+
+/// Spec 30 / VC008: ensure DeepSeek model stanzas enable effort and default high.
+///
+/// Does not overwrite an explicit user `reasoning_effort` / `supports_reasoning_effort`.
+fn ensure_deepseek_model_reasoning_effort(body: String, model_id: &str) -> String {
+    let header = format!("[model.{model_id}]");
+    if !body.contains(&header) {
+        return body;
+    }
+    inject_model_section_keys_if_missing(
+        body,
+        &header,
+        &[
+            ("supports_reasoning_effort", "supports_reasoning_effort = true"),
+            ("reasoning_effort", "reasoning_effort = \"high\""),
+        ],
+    )
+}
+
+/// Inject TOML keys into a `[model.*]` section when absent (section-scoped).
+///
+/// `keys` are `(prefix, full_line)` where `prefix` matches the start of a
+/// non-comment line in the section (e.g. `"base_url"`, `"reasoning_effort"`).
+fn inject_model_section_keys_if_missing(
+    body: String,
+    header: &str,
+    keys: &[(&str, &str)],
+) -> String {
     let lines: Vec<&str> = body.lines().collect();
-    let mut out: Vec<String> = Vec::with_capacity(lines.len() + 2);
+    let mut out: Vec<String> = Vec::with_capacity(lines.len() + keys.len());
     let mut i = 0;
     let mut patched = false;
     while i < lines.len() {
         let line = lines[i];
         out.push(line.to_string());
         if line.trim() == header {
-            // Scan this section for base_url; inject after header if absent.
             let mut j = i + 1;
-            let mut has_base = false;
+            let mut present = vec![false; keys.len()];
             while j < lines.len() {
                 let t = lines[j].trim();
-                if t.starts_with('[') && !t.starts_with("[model.") {
-                    // end of contiguous model sections? any new table ends section
-                    break;
-                }
                 if t.starts_with('[') {
                     break;
                 }
-                if t.starts_with("base_url") {
-                    has_base = true;
-                    break;
+                for (idx, (prefix, _)) in keys.iter().enumerate() {
+                    if t.starts_with(prefix) {
+                        present[idx] = true;
+                    }
                 }
                 j += 1;
             }
-            if !has_base {
-                out.push(format!("base_url = \"{DEEPSEEK_API_BASE_URL}\""));
-                patched = true;
+            for (idx, (_, full_line)) in keys.iter().enumerate() {
+                if !present[idx] {
+                    out.push(full_line.to_string());
+                    patched = true;
+                }
             }
         }
         i += 1;
@@ -830,6 +874,15 @@ fn product_config_seed_contains_deepseek_defaults() {
         body.contains(&format!("base_url = \"{DEEPSEEK_API_BASE_URL}\"")),
         "seed missing model base_url: {body}"
     );
+    // Spec 30 / VC008: Path A wire effort defaults.
+    assert!(
+        body.contains("supports_reasoning_effort = true"),
+        "seed missing supports_reasoning_effort: {body}"
+    );
+    assert!(
+        body.contains("reasoning_effort = \"high\""),
+        "seed missing reasoning_effort high: {body}"
+    );
     // Existing file without theme gets theme injected (not full rewrite).
     std::fs::write(dir.path().join("config.toml"), "keep=1\n").unwrap();
     ensure_product_agent_config(&home).unwrap();
@@ -884,6 +937,57 @@ theme = "deepseeknight"
     assert!(flash_sec.contains("base_url = \"https://api.deepseek.com\""));
     assert!(pro_sec.contains("base_url = \"https://api.deepseek.com\""));
     // Idempotent
+    assert_eq!(repair_product_agent_config(&fixed), fixed);
+}
+
+#[test]
+fn repair_injects_reasoning_effort_defaults_without_clobber() {
+    let raw = r#"
+[models]
+default = "deepseek-v4-flash"
+
+[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+api_backend = "chat_completions"
+base_url = "https://api.deepseek.com"
+env_key = "DEEPSEEK_API_KEY"
+
+[model.deepseek-v4-pro]
+model = "deepseek-v4-pro"
+api_backend = "chat_completions"
+base_url = "https://api.deepseek.com"
+reasoning_effort = "max"
+
+[ui]
+theme = "deepseeknight"
+yolo = false
+"#;
+    let fixed = repair_product_agent_config(raw);
+    let flash_idx = fixed.find("[model.deepseek-v4-flash]").unwrap();
+    let pro_idx = fixed.find("[model.deepseek-v4-pro]").unwrap();
+    let flash_sec = &fixed[flash_idx..pro_idx];
+    let pro_sec = &fixed[pro_idx..];
+    assert!(
+        flash_sec.contains("supports_reasoning_effort = true"),
+        "flash missing supports: {flash_sec}"
+    );
+    assert!(
+        flash_sec.contains("reasoning_effort = \"high\""),
+        "flash missing default high: {flash_sec}"
+    );
+    assert!(
+        pro_sec.contains("reasoning_effort = \"max\""),
+        "pro explicit max must be preserved: {pro_sec}"
+    );
+    assert!(
+        !pro_sec.contains("reasoning_effort = \"high\""),
+        "pro must not get high when max already set: {pro_sec}"
+    );
+    // supports still injected when missing on pro
+    assert!(
+        pro_sec.contains("supports_reasoning_effort = true"),
+        "pro missing supports: {pro_sec}"
+    );
     assert_eq!(repair_product_agent_config(&fixed), fixed);
 }
 

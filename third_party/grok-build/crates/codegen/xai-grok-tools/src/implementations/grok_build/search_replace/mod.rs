@@ -682,13 +682,15 @@ async fn authorize_snippet_safe_edit(
         ));
     }
     // Optional wire file_version: when supplied, must match current (compat alias).
-    if let Some(fv) = input.file_version.as_deref() {
-        if fv != current {
-            return Err(SearchReplaceOutput::InvalidInput(
-                "snippet_stale: file_version does not match current file content; re-read before edit"
-                    .to_owned(),
-            ));
-        }
+    if input
+        .file_version
+        .as_deref()
+        .is_some_and(|fv| fv != current.as_str())
+    {
+        return Err(SearchReplaceOutput::InvalidInput(
+            "snippet_stale: file_version does not match current file content; re-read before edit"
+                .to_owned(),
+        ));
     }
     Ok(AuthorizedSnippetScope {
         start_line: snippet.start_line,

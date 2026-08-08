@@ -18,9 +18,7 @@ use crate::types::resources::{
     Cwd, DisplayCwd, FileSystem, GitignoreFilter, PathNotFoundHints, RespectGitignore,
     SharedResources, TruncationCfg, display_cwd_or_cwd, resolve_model_path,
 };
-use crate::types::snippet_store::{
-    SessionSnippet, SessionSnippetStore, is_valid_snippet_id, snippet_line_range,
-};
+use crate::types::snippet_store::{SessionSnippet, SessionSnippetStore, snippet_line_range};
 use crate::types::template_renderer::TemplateRenderer;
 use crate::types::tool::{ToolKind, ToolNamespace};
 use std::sync::LazyLock;
@@ -866,6 +864,7 @@ mod tests {
     use crate::types::context::TruncationConfig;
     #[allow(unused_imports)]
     use crate::types::resources::{NotificationHandle, Resources, TruncationCfg};
+    use crate::types::snippet_store::is_valid_snippet_id;
     use crate::types::tool_metadata::test_ctx;
     use std::sync::Arc;
     use tempfile::TempDir;

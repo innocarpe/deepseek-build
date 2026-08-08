@@ -207,14 +207,12 @@ pub fn is_valid_snippet_id(id: &str) -> bool {
 
 fn truncate_preview(text: &str, max_scalars: usize) -> String {
     let mut out = String::new();
-    let mut count = 0usize;
-    for ch in text.chars() {
+    for (count, ch) in text.chars().enumerate() {
         if count >= max_scalars {
             out.push('…');
             break;
         }
         out.push(ch);
-        count += 1;
     }
     out
 }
@@ -258,7 +256,7 @@ pub fn snippet_paths_equal(a: &Path, b: &Path) -> bool {
 
 /// Absolute path suitable for snippet binding / expire after the file may be gone.
 pub fn canonicalize_or_absolute(path: &Path) -> PathBuf {
-    if let Ok(c) = std::fs::canonicalize(path) {
+    if let Ok(c) = dunce::canonicalize(path) {
         return c;
     }
     if path.is_absolute() {
@@ -272,15 +270,13 @@ pub fn canonicalize_or_absolute(path: &Path) -> PathBuf {
 fn normalize_path_key(path: &Path) -> String {
     let s = path.to_string_lossy();
     // macOS: /var -> /private/var, /tmp -> /private/tmp when canonicalized.
-    let stripped = s
-        .strip_prefix("/private/tmp")
+    s.strip_prefix("/private/tmp")
         .map(|rest| format!("/tmp{rest}"))
         .or_else(|| {
             s.strip_prefix("/private/var")
                 .map(|rest| format!("/var{rest}"))
         })
-        .unwrap_or_else(|| s.into_owned());
-    stripped
+        .unwrap_or_else(|| s.into_owned())
 }
 
 /// VC005 / ADR 0010 §6.2 plan after a dispatched bash (or equivalent) command.

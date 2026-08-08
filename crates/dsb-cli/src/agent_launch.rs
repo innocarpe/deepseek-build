@@ -78,6 +78,8 @@ pub fn find_agent_bin() -> Option<PathBuf> {
 pub const PRODUCT_THEME: &str = "deepseeknight";
 /// Measured C-balanced DeepSeek palette (original v2 skin; picker option 2).
 pub const PRODUCT_THEME_V2: &str = "deepseeknight-v2";
+/// Hue-neutral DeepSeek ramp — same accents, gray-ramp legibility (option 3).
+pub const PRODUCT_THEME_NEUTRAL: &str = "deepseeknight-neutral";
 /// Env override for product theme name (passed as GROK_THEME to the agent).
 pub const ENV_PRODUCT_THEME: &str = "DEEPSEEK_BUILD_THEME";
 
@@ -371,8 +373,8 @@ fn escape_toml_basic(s: &str) -> String {
 /// First-launch theme picker (fresh product home + interactive tty only).
 ///
 /// Asks the user to choose between the original blue-tinted `deepseeknight`
-/// skin (default) and the measured `deepseeknight-v2` palette. Returns the chosen
-/// canonical name, or `None` when:
+/// skin (default), the measured `deepseeknight-v2` palette, and the hue-neutral
+/// `deepseeknight-neutral` ramp. Returns the chosen canonical name, or `None` when:
 /// - the home already has a `config.toml` (theme already chosen / configured)
 /// - stdin is not a terminal (scripted / CI launches)
 /// - the user hits EOF or keeps answering invalid input
@@ -395,6 +397,10 @@ fn prompt_first_launch_theme(home: &BuildHome) -> Option<&'static str> {
         let _ = writeln!(
             out,
             "  2) DeepSeek Night v2         — measured C-balanced palette"
+        );
+        let _ = writeln!(
+            out,
+            "  3) DeepSeek Night Neutral   — hue-neutral gray ramp, blue accents"
         );
         let _ = write!(out, "Select [1]: ");
         let _ = out.flush();
@@ -422,6 +428,11 @@ fn picker_answer_to_theme(answer: &str) -> Option<&'static str> {
         "2" | PRODUCT_THEME_V2 | "deepseeknight-v2" | "deepseek-night-v2" | "dsb2" => {
             Some(PRODUCT_THEME_V2)
         }
+        "3"
+        | PRODUCT_THEME_NEUTRAL
+        | "deepseeknight-neutral"
+        | "deepseek-neutral"
+        | "dsb-neutral" => Some(PRODUCT_THEME_NEUTRAL),
         _ => None,
     }
 }
@@ -1073,6 +1084,15 @@ fn picker_maps_numbers_names_and_defaults() {
     assert_eq!(
         picker_answer_to_theme("deepseeknight-v2"),
         Some(PRODUCT_THEME_V2)
+    );
+    assert_eq!(picker_answer_to_theme("3"), Some(PRODUCT_THEME_NEUTRAL));
+    assert_eq!(
+        picker_answer_to_theme(PRODUCT_THEME_NEUTRAL),
+        Some(PRODUCT_THEME_NEUTRAL)
+    );
+    assert_eq!(
+        picker_answer_to_theme("dsb-neutral"),
+        Some(PRODUCT_THEME_NEUTRAL)
     );
     assert_eq!(picker_answer_to_theme("bogus"), None);
     assert_eq!(picker_answer_to_theme("0"), None);

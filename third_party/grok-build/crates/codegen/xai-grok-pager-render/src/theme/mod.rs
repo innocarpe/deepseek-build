@@ -4,7 +4,9 @@
 //! The default **product** theme is DeepSeek Night (classic) (DeepSeek blue
 //! `#4D6BFE` on a blue-tinted ramp). The measured C-balanced palette is
 //! selectable as **DeepSeek Night v2**. Retired names
-//! (`deepseeknight-neutral`, `groknight`) still parse for config back-compat.
+//! (`deepseeknight-neutral`, `groknight`) still parse for config back-compat,
+//! and the legacy `"dark"` alias now resolves to the classic DeepSeek Night
+//! skin.
 //!
 //! ## Color support
 //!
@@ -60,13 +62,14 @@ pub enum ThemeKind {
 
 /// Picker-visible themes on terminals without truecolor.
 ///
-/// DeepSeek Night v2 remains the first picker entry, while the original
-/// DeepSeek Night is the product/default skin and remains selectable as
-/// "DeepSeek Night (classic)". `DeepSeekNightNeutral` and `GrokNight` are
-/// compatibility-only and stay hidden from this catalog.
+/// DeepSeek Night v2 remains the first picker entry, the original DeepSeek
+/// Night is the product/default skin ("DeepSeek Night (classic)"), and the
+/// hue-neutral **DeepSeek Night Neutral** is listed alongside them. Only the
+/// retired `GrokNight` stays hidden from this catalog.
 const NO_TRUECOLOR: &[ThemeKind] = &[
     ThemeKind::DeepSeekNightV2,
     ThemeKind::DeepSeekNight,
+    ThemeKind::DeepSeekNightNeutral,
     ThemeKind::GrokDay,
 ];
 
@@ -77,6 +80,8 @@ impl ThemeKind {
         ThemeKind::DeepSeekNightV2,
         // Original DeepSeek Night (v1) — re-listed as "DeepSeek Night (classic)".
         ThemeKind::DeepSeekNight,
+        // Hue-neutral DeepSeek ramp — same accents, max gray-ramp legibility.
+        ThemeKind::DeepSeekNightNeutral,
         ThemeKind::GrokDay,
         ThemeKind::TokyoNight,
         ThemeKind::RosePineMoon,
@@ -146,10 +151,10 @@ impl ThemeKind {
             "deepseeknight-neutral" | "deepseek-neutral" | "dsb-neutral" => {
                 Some(Self::DeepSeekNightNeutral)
             }
-            "deepseeknight" | "deepseek-night" | "deepseek" | "dsb" => {
+            "deepseeknight" | "deepseek-night" | "deepseek" | "dsb" | "dark" => {
                 Some(Self::DeepSeekNight)
             }
-            "groknight" | "grok-night" | "dark" => Some(Self::GrokNight),
+            "groknight" | "grok-night" => Some(Self::GrokNight),
             "tokyonight" | "tokyo-night" | "tokyo" => Some(Self::TokyoNight),
             "grokday" | "grok-day" | "light" | "day" => Some(Self::GrokDay),
             "rosepine" | "rose-pine" | "rosepine-moon" | "rose-pine-moon" => {
@@ -771,22 +776,36 @@ mod tests {
     }
 
     #[test]
-    fn retired_themes_are_hidden_from_pickers() {
+    fn dark_alias_maps_to_classic_deepseek_night() {
+        // The legacy `"dark"` value must land on the product/default skin
+        // (classic DeepSeek Night), not the retired GrokNight theme.
+        assert_eq!(ThemeKind::from_name("dark"), Some(ThemeKind::DeepSeekNight));
+        assert_eq!(ThemeKind::from_name("DARK"), Some(ThemeKind::DeepSeekNight));
+        assert_eq!(ThemeKind::from_name("Dark"), Some(ThemeKind::DeepSeekNight));
+    }
+
+    #[test]
+    fn groknight_stays_hidden_but_neutral_is_listed() {
+        // GrokNight is a retired compatibility theme and stays out of every
+        // picker catalog; DeepSeekNightNeutral is now a first-class choice.
         assert!(!ThemeKind::ALL.contains(&ThemeKind::GrokNight));
-        assert!(!ThemeKind::ALL.contains(&ThemeKind::DeepSeekNightNeutral));
+        assert!(!NO_TRUECOLOR.contains(&ThemeKind::GrokNight));
+        assert!(ThemeKind::ALL.contains(&ThemeKind::DeepSeekNightNeutral));
     }
 
     #[test]
     fn classic_deepseek_theme_is_selectable_again() {
         // The original DeepSeek Night (v1) was hidden in the v2 switch; it is
         // re-listed as "DeepSeek Night (classic)" so users can keep the original
-        // look while classic remains the product default.
+        // look while classic remains the product default. Neutral is listed
+        // alongside it and survives 256-color terminals too.
         assert_eq!(ThemeKind::ALL[0], ThemeKind::DeepSeekNightV2);
         assert!(ThemeKind::ALL.contains(&ThemeKind::DeepSeekNight));
         assert!(NO_TRUECOLOR.contains(&ThemeKind::DeepSeekNight));
-        assert!(!NO_TRUECOLOR.contains(&ThemeKind::DeepSeekNightNeutral));
+        assert!(NO_TRUECOLOR.contains(&ThemeKind::DeepSeekNightNeutral));
         assert!(!NO_TRUECOLOR.contains(&ThemeKind::GrokNight));
         assert!(ThemeKind::available().contains(&ThemeKind::DeepSeekNight));
+        assert!(ThemeKind::available().contains(&ThemeKind::DeepSeekNightNeutral));
     }
 
     #[test]

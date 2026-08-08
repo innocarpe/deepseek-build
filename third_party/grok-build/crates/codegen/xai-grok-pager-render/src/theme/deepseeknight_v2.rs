@@ -115,7 +115,7 @@ impl Theme {
             prompt_border_active: BLUE,
 
             // Scrollbar
-            scrollbar_bg: BG_RAISED,
+            scrollbar_bg: BG_DARK,
             scrollbar_fg: SCROLL_FG,
 
             // Diff
@@ -453,5 +453,19 @@ mod tests {
     fn official_blue_value_is_unchanged() {
         assert!(matches!(BLUE, Color::Rgb(77, 107, 254)));
         assert!(matches!(DEEPSEEK_BLUE_V2, Color::Rgb(77, 107, 254)));
+    }
+
+    #[test]
+    fn scrollbar_track_distinguishes_following_from_not() {
+        // `scrollbar_styles()` renders the "following" track with
+        // `theme.scrollbar_bg` and the "scrolled-up" track with
+        // `theme.bg_highlight`. v2 used the same BG_RAISED for both, so the
+        // two states rendered identically. The track colors must differ.
+        let t = Theme::deepseeknight_v2();
+        assert_ne!(
+            t.scrollbar_bg,
+            t.bg_highlight,
+            "following vs not-following scrollbar states must be visually distinct"
+        );
     }
 }

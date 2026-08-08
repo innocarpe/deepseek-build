@@ -363,7 +363,7 @@ mod tests {
             let result = cmd.run(&mut ctx, "");
             match result {
                 CommandResult::Action(Action::SetTheme(name)) => {
-                    // available[0] = GrokNight; next is available[1].
+                    // available[0] = DeepSeekNightV2; next is available[1].
                     let expected = ThemeKind::available()[1].display_name();
                     assert_eq!(name, expected);
                 }
@@ -422,13 +422,13 @@ mod tests {
                     ..crate::settings::PagerLocalSnapshot::default()
                 },
             };
-            // "dark" is an alias for GrokNight.
+            // "dark" is a legacy alias for the classic DeepSeek Night skin.
             let result = cmd.run(&mut ctx, "dark");
             match result {
                 CommandResult::Action(Action::SetTheme(name)) => {
-                    assert_eq!(name, "groknight", "alias must normalise to canonical");
+                    assert_eq!(name, "deepseeknight", "alias must normalise to canonical");
                 }
-                other => panic!("expected Action::SetTheme(\"groknight\"), got {other:?}"),
+                other => panic!("expected Action::SetTheme(\"deepseeknight\"), got {other:?}"),
             }
         });
     }

@@ -1,5 +1,7 @@
 <div align="center">
 
+**[English](README.md)** · [简体中文](README.zh-CN.md) · [日本語](README.ja-JP.md) · [한국어](README.ko-KR.md)
+
 <!-- Temporary hero source: deepseek-ai/DeepSeek-V2 figures/logo.svg, as used by DeepSeek-V3. -->
 <a href="https://github.com/deepseek-ai/DeepSeek-V3">
   <img src="assets/deepseek-logo.svg" width="60%" alt="DeepSeek logo">

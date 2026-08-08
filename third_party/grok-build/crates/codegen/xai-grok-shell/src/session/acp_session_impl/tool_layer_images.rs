@@ -301,4 +301,81 @@ mod tests {
         assert_eq!(vision[0].mime_type, "image/png");
         assert_eq!(vision[0].data, "existing");
     }
+
+    /// Regression for the large-MCP-image path: preserve the extracted payload
+    /// through hub serialization, keep it off a text-only DeepSeek wire, and
+    /// make resume validation discard only a genuinely truncated image.
+    #[test]
+    fn large_mcp_screenshot_survives_text_only_split_and_resume_validation() {
+        use base64::Engine as _;
+        use image::{ImageBuffer, Rgba};
+        use xai_grok_sampling_types::{ContentPart, ConversationItem};
+
+        let mut state = 0x9e37_79b9_u32;
+        let source: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_fn(512, 512, |_, _| {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            Rgba([
+                (state >> 24) as u8,
+                (state >> 16) as u8,
+                (state >> 8) as u8,
+                255,
+            ])
+        });
+        let mut bytes = Vec::new();
+        source
+            .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
+            .expect("encode screenshot fixture");
+        let payload = base64::engine::general_purpose::STANDARD.encode(bytes);
+        assert!(payload.len() > 100_000, "fixture must exercise a large result");
+
+        let mut mcp = MCPOutput::okay_output(
+            "browser_screenshot".into(),
+            "browser-use".into(),
+            IMAGE_CONTENT_PLACEHOLDER.into(),
+        );
+        mcp.extracted_images = vec![img(&payload, "image/png")];
+
+        let serialized = serde_json::to_value(ToolOutput::MCP(mcp)).unwrap();
+        let ToolOutput::MCP(roundtripped) = serde_json::from_value(serialized).unwrap() else {
+            panic!("expected MCP output after serialization roundtrip");
+        };
+        assert_eq!(roundtripped.extracted_images[0].data, payload);
+
+        let drained = DrainedToolSuccess::new(run_result(ToolOutput::MCP(roundtripped)));
+        let (_result, tool_layer_images) = drained.into_parts();
+        let mut text_only_vision = Vec::new();
+        split_tool_layer_for_harness(true, &mut text_only_vision, tool_layer_images.clone());
+        assert!(
+            text_only_vision.is_empty(),
+            "text-only DeepSeek wire must not carry MCP image bytes"
+        );
+        let mut multimodal_vision = Vec::new();
+        split_tool_layer_for_harness(false, &mut multimodal_vision, tool_layer_images);
+        assert_eq!(multimodal_vision[0].data, payload);
+
+        let image_url = format!("data:image/png;base64,{payload}");
+        let persisted = vec![ConversationItem::user_with_parts(vec![
+            ContentPart::Text {
+                text: IMAGE_CONTENT_PLACEHOLDER.into(),
+            },
+            ContentPart::Image {
+                url: image_url.into(),
+            },
+        ])];
+        let encoded_history = serde_json::to_string(&persisted).unwrap();
+        let mut resumed: Vec<ConversationItem> = serde_json::from_str(&encoded_history).unwrap();
+        assert_eq!(crate::session::storage::jsonl::strip_invalid_images(&mut resumed), 0);
+
+        let truncated_url = format!("data:image/png;base64,{}", &payload[..payload.len() / 2]);
+        let mut poisoned = vec![ConversationItem::user_with_parts(vec![
+            ContentPart::Image {
+                url: truncated_url.into(),
+            },
+        ])];
+        assert_eq!(
+            crate::session::storage::jsonl::strip_invalid_images(&mut poisoned),
+            1,
+            "resume must strip the truncated screenshot rather than replay it"
+        );
+    }
 }

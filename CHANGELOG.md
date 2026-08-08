@@ -8,6 +8,9 @@
   with session-local `snippet_id`, plus stale-id / bash invalidation fail-closed proof
   (stacked on VC003–VC005 mint/require/expire laws)
 
+## 5.2.2 — 2026-08-08
+
+- installer self-check + fresh inode (fix silent corrupt install)
 ## 5.2.1 — 2026-08-08
 
 - DeepSeek Night v2 markdown hierarchy restore: h2 headings, code, and command

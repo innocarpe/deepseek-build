@@ -1,28 +1,43 @@
-From 2d96d6751fd4d2a4d7412921d81ddbc2a98caae8 Mon Sep 17 00:00:00 2001
+From eb22d8e276308e8c609dc495d5080dad7f3b1449 Mon Sep 17 00:00:00 2001
 From: Wooseong Kim <innocarpe@gmail.com>
-Date: Fri, 7 Aug 2026 15:18:10 +0900
-Subject: [PATCH 3/5] fix(shell): repair pre-existing lib-test build breakage
- on main
+Date: Fri, 7 Aug 2026 22:00:51 +0900
+Subject: [PATCH 3/6] fix(shell): preserve one-pass repair and repair pre-existing lib-test build breakage
 
-xai-grok-shell lib tests fail to compile on origin/main with two errors:
+Keep the owner-bar one-pass JSON repair on dispatch and carry the
+`file_version` constructor update required by the refreshed tool schema. The
+bridge image fixture imports the base64 `Engine` trait so its encoding remains
+explicit and reviewable.
 
-- tool_calls.rs: SearchReplaceInput gained a file_version field upstream;
-  the test helper literal was missing it (E0063).
-- tool_layer_images_bridge_tests.rs: base64 0.22 moved the encode method
-  behind the Engine trait; the test lacked use base64::Engine (E0599).
-
-Both are test-only, verified pre-existing via empty git diff against the
-base before fixing. Required to build the shell lib test binary at all.
 ---
- .../xai-grok-shell/src/session/acp_session_impl/tool_calls.rs    | 1 +
- .../session/acp_session_tests/tool_layer_images_bridge_tests.rs  | 1 +
- 2 files changed, 2 insertions(+)
+ .../src/session/acp_session_impl/tool_calls.rs       | 12 +++++++++++-
+ .../tool_layer_images_bridge_tests.rs                |  2 ++
+ 2 files changed, 13 insertions(+), 1 deletion(-)
 
 diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
-index a751997..559139e 100644
+index 96d2e72..f7d0df7 100644
 --- a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
 +++ b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
-@@ -3128,6 +3128,7 @@ mod plan_mode_edit_gate_tests {
+@@ -971,9 +971,18 @@ impl SessionActor {
+                 }
+             }
+         }
+-        let args_str = crate::session::helpers::tool_input_parsing::normalize_empty_arguments(
++        // Spec 15 / owner-bar G007: one-pass repair on Grok dispatch before execute.
++        let repaired = crate::session::helpers::tool_input_parsing::repair_tool_arguments_one_pass(
+             &call.function.arguments,
+         );
++        if repaired.repair_applied {
++            tracing::info!(
++                tool_name = %call.function.name,
++                call_id = %call.id,
++                "Spec 15 one-pass tool argument repair applied on Path A dispatch"
++            );
++        }
++        let args_str = repaired.arguments.as_str();
+         let parse_result = serde_json::from_str::<serde_json::Value>(args_str);
+         let mut concatenated_json_count: usize = 0;
+         let raw_input = match &parse_result {
+@@ -3110,6 +3119,7 @@ mod plan_mode_edit_gate_tests {
              old_string: "a".into(),
              new_string: "b".into(),
              replace_all: false,
@@ -31,11 +46,12 @@ index a751997..559139e 100644
      }
      fn write(path: &str) -> ToolInput {
 diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs
-index b84ecab..5665800 100644
+index b84ecab..b30de7e 100644
 --- a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs
 +++ b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs
-@@ -1,6 +1,7 @@
+@@ -1,6 +1,8 @@
  //! Wiring tests for MCP tool-layer images through `handle_bridge_tool_success`.
++use base64::Engine as _;
  use super::support::*;
  use super::*;
 +use base64::Engine;
@@ -44,4 +60,3 @@ index b84ecab..5665800 100644
  use xai_grok_tools::util::base64_images::{ExtractedImage, IMAGE_CONTENT_PLACEHOLDER};
 -- 
 2.50.1 (Apple Git-155)
-

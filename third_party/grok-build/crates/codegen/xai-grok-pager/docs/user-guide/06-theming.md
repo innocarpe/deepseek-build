@@ -1,20 +1,23 @@
 # Theming and Appearance Customization
 
-Grok Build draws all TUI colors from a central theme. You can switch themes while Grok is running, follow your operating system's light or dark appearance, and adjust scrollback layout, animations, and block styling through configuration files.
+DeepSeek Build draws all TUI colors from a central theme. You can switch themes while the TUI is running, follow your operating system's light or dark appearance, and adjust scrollback layout, animations, and block styling through configuration files.
 
 ---
 
 ## Available Themes
 
-Grok includes five built-in themes, plus an `auto` option that follows your system appearance:
+The DSB picker exposes six built-in themes, plus an `auto` option that follows your system appearance. Classic `deepseeknight` is the product/runtime/config default; `deepseeknight-v2` remains selectable as the first picker alternate:
 
 | Theme | Config Names | Description | Truecolor Required |
 |-------|-------------|-------------|--------------------|
-| **GrokNight** | `groknight`, `grok-night`, `dark` | Neutral dark base with a magenta accent. Default theme. Survives quantization cleanly on 256-color and 16-color terminals. | No |
+| **DeepSeek Night (v2)** | `deepseeknight-v2`, `deepseek-night-v2`, `deepseek2`, `dsb2` | Selectable first picker alternate with the measured C-balanced DeepSeek palette. | No |
+| **DeepSeek Night (classic)** | `deepseeknight`, `deepseek-night`, `deepseek`, `dsb` | DSB product/runtime/config default with the original blue-tinted DeepSeek palette. | No |
 | **GrokDay** | `grokday`, `grok-day`, `light`, `day` | Light theme for bright terminal backgrounds. | No |
 | **TokyoNight** | `tokyonight`, `tokyo-night`, `tokyo` | Dark, blue-tinted backgrounds from the Tokyo Night palette. Loses its character when quantized. | Yes |
 | **RosePineMoon** | `rosepine`, `rose-pine`, `rosepine-moon`, `rose-pine-moon` | Muted dark palette with mauve accents, from the Rosé Pine family. | Yes |
 | **OscuraMidnight** | `oscura`, `oscura-midnight` | Deep dark base with purple accents. | Yes |
+
+`DeepSeekNightNeutral` (`deepseeknight-neutral`, `deepseek-neutral`, `dsb-neutral`) and `GrokNight` (`groknight`, `grok-night`, `dark`) remain accepted for parser/config compatibility, but are hidden from the theme pickers.
 
 Theme names are case-insensitive. The `auto` option (alias `system`) is documented under [Auto Theme (System Appearance)](#auto-theme-system-appearance).
 
@@ -60,7 +63,7 @@ Set `theme = "auto"` to have Grok follow your operating system's light/dark appe
 theme = "auto"
 ```
 
-By default, dark mode maps to **GrokNight** and light mode maps to **GrokDay**. Override either mapping with `auto_dark_theme` and `auto_light_theme`:
+By default, dark mode maps to **DeepSeek Night (classic)** and light mode maps to **GrokDay**. Override either mapping with `auto_dark_theme` and `auto_light_theme`:
 
 ```toml
 [ui]
@@ -112,7 +115,7 @@ Every theme is defined using full RGB values. At startup, Grok quantizes all col
 - On **256-color** terminals, each RGB value is mapped to the nearest indexed palette entry.
 - On **16-color** terminals, colors map to ANSI names.
 
-GrokNight and GrokDay use neutral grays that quantize cleanly. TokyoNight, RosePineMoon, and OscuraMidnight use distinctive tinted backgrounds that lose their character when quantized, which is why the theme picker hides them on non-truecolor terminals.
+DeepSeek Night v2, DeepSeek Night (classic), and GrokDay remain available on non-truecolor terminals. DeepSeekNightNeutral and GrokNight are compatibility-only and hidden from pickers; TokyoNight, RosePineMoon, and OscuraMidnight use distinctive tinted backgrounds that lose their character when quantized, which is why those themes are also hidden on non-truecolor terminals.
 
 ### Runtime-Generated Colors
 
@@ -329,7 +332,7 @@ Each theme defines the following color slots that are used throughout the TUI:
 
 **Backgrounds:** `bg_base`, `bg_light`, `bg_dark`, `bg_highlight`, `bg_hover`, `bg_terminal`, `bg_visual`
 
-**Accents:** `accent_user`, `accent_assistant`, `accent_thinking`, `accent_tool`, `accent_system`, `accent_error`, `accent_success`, `accent_running`, `accent_skill`, `accent_plan`, `accent_verify`, `accent_feedback`, `accent_remember`, `accent_model`
+**Accents:** `accent_user`, `accent_assistant`, `accent_thinking`, `accent_tool`, `accent_system`, `accent_error`, `accent_success`, `accent_running`, `accent_skill`, `accent_plan`, `accent_verify`, `accent_remember`, `accent_model`
 
 **Text:** `text_primary`, `text_secondary`
 

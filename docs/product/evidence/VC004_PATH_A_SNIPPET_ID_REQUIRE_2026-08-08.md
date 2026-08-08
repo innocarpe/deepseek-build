@@ -20,7 +20,7 @@ It does **not** claim VISION L1 complete, owner-bar re-cut, Path A multi-edit R0
 
 ## 0. Floor and dependency facts
 
-### 0.1 Live floor (re-check; post-rebase onto `origin/main`)
+### 0.1 Historical live floor (re-check; post-rebase onto `origin/main`)
 
 | Probe | Live result |
 |-------|-------------|
@@ -34,11 +34,23 @@ It does **not** claim VISION L1 complete, owner-bar re-cut, Path A multi-edit R0
 | VC003 | **on main** via #130; Path A mint remains prerequisite for this require gate |
 | Thin Path B | `crates/dsb-tools` `SnippetStore` remains **reference/oracle**, not Path A proof |
 
+### 0.1a Pre-merge refresh after #127 landed
+
+The table above is historical evidence from the VC004 rebase at `origin/main`
+`@4696e28`. Before merging PR #135, the branch was merge-forwarded with current
+`origin/main` `@d1f942f`, which includes PR #127 and product floor **`5.2.2`**.
+
+| Probe | Current result |
+|-------|----------------|
+| Merge-forward base | **`origin/main` `@d1f942f`** |
+| Working tree product `Cargo.toml` / `package.json` after merge-forward | **`5.2.2`** inherited from main; **not** bumped by this story |
+| npm latest / GitHub Latest release | **`5.2.2` / `v5.2.2`** |
+| SemVer impact | **none** — this PR remains an unversioned feature unit |
+
 ### 0.2 Floor interpretation (fail-close)
 
-- **`5.2.0` and `5.2.1` are already used** on the product line (main product version **`5.2.1`**). This story **must not** reuse or cut either.
-- npm/GitHub release lag for **5.2.1** is **out of scope** here (separate Grok release lane).
-- Remaining Spec 45 completion (VC004 → VC005 → cut unit) belongs to the **next free feature minor**. With main at **`5.2.1`**, that remains **`5.3.0`** unless a later board/npm re-check shows another free `5.Y.0`.
+- **`5.2.0`, `5.2.1`, and `5.2.2` are already used** on the product line (current main product version **`5.2.2`**). This story **must not** reuse or cut any of them.
+- Remaining Spec 45 completion (VC004 → VC005 → cut unit) belongs to the **next free feature minor**. With main at **`5.2.2`**, that remains **`5.3.0`** unless a later board/npm re-check shows another free `5.Y.0`.
 - Feature PRs (VC003–VC005) stay **unversioned**. Only a dedicated cut unit (historical VC006 slot, rebased) bumps SemVer.
 - Owner-bar **`file_version` (sha256)** remains a **compatibility alias** of snippet `version`; do not remove it from wire/output.
 - Safe open base after #130 merge: **`main`** (`origin/main` `@4696e28` at rebase time).
@@ -294,7 +306,7 @@ Post-rebase onto `origin/main` `@4696e28` (SHAs rewritten; subjects preserved):
 | VC003 mint regressions still green | **PASS** — **11** tests, 0 failed | **unit** |
 | Thin oracle still green | **PASS** — `dsb-tools` `snippets` 9 + `path_a_edit` 8 | thin oracle (**not** Path A proof) |
 | Public Path A R0A wire | **not run / not claimed** | — |
-| SemVer bump | **none** | no version files touched; live `origin/main` is **`5.2.1`** (do not cut) |
+| SemVer bump | **none** | no VC004 version bump; current `origin/main` is **`5.2.2`** after PR #127 (do not cut) |
 
 ### 7.4 Commands actually run (exact)
 
@@ -353,9 +365,14 @@ cargo test -p dsb-tools path_a_edit
 git show origin/main:Cargo.toml | rg version
 # 5.2.1
 # npm latest / gh Latest still 5.2.0 lag — separate release lane
+
+# Pre-merge refresh after PR #127 landed (no build/test run)
+git merge --no-ff origin/main
+# merge base origin/main @d1f942f; current product floor 5.2.2 inherited from main
+# npm latest / gh Latest: 5.2.2 / v5.2.2
 ```
 
-**Honesty:** All Path A require claims above are **unit tests inside `xai-grok-tools`**. No public `deepseek-build`/`dsb` agent wire harness (R0A) was run for this story. Gate TSV rewrites (`OWNER_BAR_STATUS.tsv`, heart regression last TSV) were **restored to HEAD** and **not** committed. Live product floor on `origin/main` is **`5.2.1`** — VC004 does not ship any SemVer cut or release packaging; remaining Spec 45 completion stays at the **next free feature minor (`5.3.0` under current live floor)**.
+**Honesty:** All Path A require claims above are **unit tests inside `xai-grok-tools`**. No public `deepseek-build`/`dsb` agent wire harness (R0A) was run for this story. Gate TSV rewrites (`OWNER_BAR_STATUS.tsv`, heart regression last TSV) were **restored to HEAD** and **not** committed. Live product floor on `origin/main` is **`5.2.2`** after PR #127 — VC004 does not ship any SemVer cut or release packaging; remaining Spec 45 completion stays at the **next free feature minor (`5.3.0` under current live floor)**.
 
 ### Required project gates (verified post-rebase)
 

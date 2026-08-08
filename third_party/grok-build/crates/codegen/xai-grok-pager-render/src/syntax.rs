@@ -1,7 +1,8 @@
 //! Syntax highlighting initialization.
 //!
 //! Provides lazily-initialized `Syntect` instances for code highlighting.
-//! Dark themes (GrokNight, TokyoNight) share `grok-night.tmTheme`;
+//! DeepSeek Night v2, the classic/neutral compatibility skins, GrokNight,
+//! TokyoNight, RosePineMoon, and OscuraMidnight share `grok-night.tmTheme`;
 //! GrokDay uses `grok-day.tmTheme` with deepened colors for light backgrounds.
 //!
 //! ## Minimal / terminal-native lock

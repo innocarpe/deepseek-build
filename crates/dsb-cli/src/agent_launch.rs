@@ -205,7 +205,7 @@ enabled = true
 /// Best-effort repair of an existing product `config.toml`.
 ///
 /// Idempotent. Does not rewrite unrelated user settings. Ensures:
-/// 1. DeepSeek Night theme when no `theme` key exists (default neutral skin)
+/// 1. DeepSeek Night (classic) theme when no `theme` key exists (product default)
 /// 2. `base_url` on DeepSeek model stanzas (or appends full model blocks)
 /// 3. Explicit `yolo = false` when the key is missing (Spec 90 product default)
 /// 4. Spec 30 / VC008: `supports_reasoning_effort` + default `reasoning_effort`

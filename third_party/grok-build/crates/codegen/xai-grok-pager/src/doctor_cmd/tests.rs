@@ -143,7 +143,11 @@ fn mixed_report() -> DiagnosticReport {
     report.facts.ssh = true;
     report.facts.color = ColorFacts {
         level: RuntimeFact::Available(ColorLevel::Ansi256),
-        available_themes: vec![ThemeKind::GrokNight, ThemeKind::GrokDay],
+        available_themes: vec![
+            ThemeKind::DeepSeekNightV2,
+            ThemeKind::DeepSeekNight,
+            ThemeKind::GrokDay,
+        ],
         total_themes: ThemeKind::ALL.len(),
     };
     report.facts.keyboard = Some(KeyboardFact {
@@ -688,7 +692,7 @@ fn json_empty_fixture_pins_null_policy() {
                 "color": {
                     "level": {"status": "unavailable", "value": null},
                     "availableThemes": [],
-                    "totalThemes": 5
+                    "totalThemes": 6
                 },
                 "keyboard": null,
                 "newline": null,
@@ -735,8 +739,8 @@ fn json_contract_is_structural_stable_ordered_and_ansi_free() {
                 "ssh": true,
                 "color": {
                     "level": {"status": "available", "value": "256"},
-                    "availableThemes": ["deepseeknight-v2", "grokday"],
-                    "totalThemes": 5
+                    "availableThemes": ["deepseeknight-v2", "deepseeknight", "grokday"],
+                    "totalThemes": 6
                 },
                 "keyboard": {"cmd": "dropped", "opt": "native", "os": "macos"},
                 "newline": {"kind": "xterm_js", "terminalName": "cursor"},

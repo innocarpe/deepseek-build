@@ -7,6 +7,15 @@
   always consult the product npm feed (`@innocarpe/deepseek-build`), never the
   upstream Grok x.ai channel pointers, npm installs are classified as npm, and
   the product never auto-downgrades for any installer classification.
+- Release hardening: stop the pager's version-transition cleanup from deleting
+  the seeded `$GROK_HOME/CHANGELOG.md` (the welcome-screen CHANGELOG click
+  silently no-oped after a version bump); make the compiled product version
+  sccache-proof (a version-derived `--cfg` marker forces a cache miss, so a
+  release binary can no longer be labeled with the previous version); the
+  release workflow always rebuilds the agent for the release version and
+  verifies `agent --version` before packaging; npm postinstall now fails the
+  install (non-zero exit) instead of silently shipping a half-installed
+  package when the agent self-check fails.
 
 ## 5.5.1 — 2026-08-09
 

@@ -3120,6 +3120,7 @@ mod plan_mode_edit_gate_tests {
             new_string: "b".into(),
             replace_all: false,
             file_version: None,
+            snippet_id: None,
         })
     }
     fn write(path: &str) -> ToolInput {

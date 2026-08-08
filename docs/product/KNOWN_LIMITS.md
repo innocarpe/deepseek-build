@@ -34,7 +34,7 @@ Binding map: [HEART_3X_SPEC_BINDING.md](../architecture/HEART_3X_SPEC_BINDING.md
 | Full Spec 45 **snippet_id** mint inside Grok `read_file` | 3.0.0 uses **file_version (sha256) equivalent** + product `SnippetStore` adapter | 3.x minor polish if needed |
 | Every Grok compaction path byte-identical to `assemble_path_a_context` | Contract + tests on product assembly API; deep shell prompt paths may still differ | dogfood / minor |
 | Live agent dogfood without API key / agent binary | Contract tests green offline; live T4/T5 env-gated | ops |
-| L3 worktree forced on bare `dsb` | Worktree remains **opt-in** (`--worktree`); bare `dsb` is single-session TUI | product choice (4.0.0 / G010 honesty) |
+| L3 worktree forced on bare `dsb` | Worktree remains **opt-in** (`--worktree`); bare `dsb` / `deepseek-build` is single-session TUI; headless `-p --worktree` does **not** create a worktree; implement workers are **not** forced into worktree isolation (Spec 60 non-goal) | product choice (G010 stamp + **VC012** Path A dogfood) |
 | Live L3 extended smoke without API key | Offline CLI green (`test-l3-smoke --offline-only` + heart regression); live env-gated | ops |
 | Hollow `~/.deepseek-build/bin/deepseek-build-agent` | Prefer runnable `xai-grok-pager` / rebuilt agent; `find_agent_bin` probes `--help` for worktree | install / G011 |
 | TUI update banner showed `v1.0.0` while product is `5.0.0` | **Fixed:** product SemVer via `DEEPSEEK_BUILD_VERSION` + update checks against `@innocarpe/deepseek-build` / `innocarpe/deepseek-build` (not Grok/`0.2.x` vs stale `1.0.0` cache). Rebuild agent + clear `~/.deepseek-build/version.json` after upgrade | product version/update |

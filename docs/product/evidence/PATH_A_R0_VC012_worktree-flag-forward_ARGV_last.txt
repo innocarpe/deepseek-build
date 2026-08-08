@@ -1,0 +1,10 @@
+argc=8
+arg[1]=--worktree
+arg[2]=vc012-bound-forward
+arg[3]=--worktree-ref
+arg[4]=HEAD
+arg[5]=-p
+arg[6]=stub-only-no-model
+arg[7]=--max-turns
+arg[8]=1
+raw: --worktree vc012-bound-forward --worktree-ref HEAD -p stub-only-no-model --max-turns 1

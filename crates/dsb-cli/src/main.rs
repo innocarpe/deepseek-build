@@ -118,6 +118,22 @@ struct Cli {
     )]
     fullscreen: bool,
 
+    /// Opt-in: start the full-screen agent in a new git worktree (bare `dsb` /
+    /// `dsb agent` only). Name optional. Headless `-p` still does not create a
+    /// worktree from this flag (vendor honesty; see user-guide 13 / VC012).
+    #[arg(
+        long,
+        short = 'w',
+        global = true,
+        num_args = 0..=1,
+        default_missing_value = ""
+    )]
+    worktree: Option<String>,
+
+    /// Branch, tag, or commit to base `--worktree` on (TUI path only).
+    #[arg(long, global = true)]
+    worktree_ref: Option<String>,
+
     /// Reasoning effort: low | high | max (default: from preset / model).
     #[arg(long, global = true)]
     effort: Option<String>,
@@ -256,6 +272,20 @@ fn tui_forward_flags(cli: &Cli) -> Vec<String> {
             out.push(id.to_string());
         }
     }
+    // L3 / VC012: product `--worktree` must reach the agent (opt-in isolation).
+    if let Some(name) = cli.worktree.as_deref() {
+        if name.is_empty() {
+            // `dsb --worktree` (no name) → agent picks a default worktree label.
+            out.push("--worktree".to_string());
+        } else {
+            out.push("--worktree".to_string());
+            out.push(name.to_string());
+        }
+    }
+    if let Some(r) = cli.worktree_ref.as_deref() {
+        out.push("--worktree-ref".to_string());
+        out.push(r.to_string());
+    }
     // Spec 30 / VC008: product `--effort` must reach Path A Grok agent wire.
     // Grok pager accepts `--reasoning-effort` and `--effort` as aliases.
     if let Some(effort) = cli.effort.as_deref() {
@@ -265,11 +295,17 @@ fn tui_forward_flags(cli: &Cli) -> Vec<String> {
     out
 }
 
-/// `--resume` / `--minimal` / `--fullscreen` target the full-screen TUI only.
+/// `--resume` / `--minimal` / `--fullscreen` / `--worktree*` target the full-screen TUI only.
 fn reject_tui_only_flags(cli: &Cli) -> Result<()> {
-    if cli.minimal || cli.fullscreen || cli.resume.is_some() {
+    if cli.minimal
+        || cli.fullscreen
+        || cli.resume.is_some()
+        || cli.worktree.is_some()
+        || cli.worktree_ref.is_some()
+    {
         bail!(
-            "--resume/--minimal/--fullscreen are TUI-only flags (use bare `{inv}` or `{inv} agent`).\n\
+            "--resume/--minimal/--fullscreen/--worktree/--worktree-ref are TUI-only flags \
+             (use bare `{inv}` or `{inv} agent`).\n\
              Line-mode sessions use `--session <id>` instead.",
             inv = invocation_name()
         );
@@ -903,6 +939,37 @@ mod tests {
             tui_forward_flags(&cli),
             vec!["--minimal", "--reasoning-effort", "max"]
         );
+    }
+
+    #[test]
+    fn tui_forward_flags_worktree_opt_in() {
+        let named = Cli::try_parse_from(["dsb", "--worktree", "feat-foo"]).unwrap();
+        assert_eq!(
+            tui_forward_flags(&named),
+            vec!["--worktree", "feat-foo"]
+        );
+        let bare = Cli::try_parse_from(["dsb", "--worktree"]).unwrap();
+        assert_eq!(tui_forward_flags(&bare), vec!["--worktree"]);
+        let short = Cli::try_parse_from(["dsb", "-w", "feat-bar"]).unwrap();
+        assert_eq!(
+            tui_forward_flags(&short),
+            vec!["--worktree", "feat-bar"]
+        );
+        let with_ref =
+            Cli::try_parse_from(["dsb", "--worktree", "feat", "--worktree-ref", "main"]).unwrap();
+        assert_eq!(
+            tui_forward_flags(&with_ref),
+            vec!["--worktree", "feat", "--worktree-ref", "main"]
+        );
+    }
+
+    #[test]
+    fn reject_worktree_flags_on_line_mode() {
+        let cli = Cli::try_parse_from(["dsb", "run", "hi", "--worktree", "x"]).unwrap();
+        assert!(reject_tui_only_flags(&cli).is_err());
+        let with_ref =
+            Cli::try_parse_from(["dsb", "chat", "--worktree-ref", "main"]).unwrap();
+        assert!(reject_tui_only_flags(&with_ref).is_err());
     }
 
     #[test]

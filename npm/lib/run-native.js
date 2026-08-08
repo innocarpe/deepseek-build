@@ -127,6 +127,11 @@ function productEnv() {
   const env = {
     ...process.env,
     GROK_HOME: process.env.GROK_HOME || home,
+    // This wrapper IS an npm-managed install: classify as "npm" so update
+    // checks consult the product npm registry instead of falling through to
+    // the upstream Grok x.ai channel pointers (which advertise Grok Build
+    // versions and would otherwise downgrade/overwrite the product).
+    GROK_INSTALLER: process.env.GROK_INSTALLER || 'npm',
   };
   // Only force a theme via env when the user explicitly asked
   // (DEEPSEEK_BUILD_THEME / GROK_THEME). Injecting a default here overrode

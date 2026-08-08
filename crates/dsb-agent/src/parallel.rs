@@ -79,4 +79,41 @@ mod tests {
         assert_eq!(ro, vec![0, 2]);
         assert_eq!(mu, vec![1, 3]);
     }
+
+    /// Path A / G010 stamp maps product tool names → short ToolName before
+    /// partition. Keep this mapping honest for Spec 50 RO parallel / mutate serial.
+    #[test]
+    fn product_path_a_names_partition_like_stamp() {
+        let batch = vec![
+            ("read_file".into(), json!({"target_file": "a.txt"})),
+            ("search_replace".into(), json!({"file_path": "a.txt"})),
+            ("run_terminal_command".into(), json!({"command": "echo x"})),
+            ("mcp__demo__ping".into(), json!({})),
+            ("grep".into(), json!({"pattern": "x"})),
+            ("unknown_tool_xyz".into(), json!({})),
+        ];
+        let class_input: Vec<(String, Value)> = batch
+            .iter()
+            .map(|(n, a): &(String, Value)| {
+                let short = match n.as_str() {
+                    "read_file" => "read",
+                    "search_replace" => "edit",
+                    "run_terminal_command" => "bash",
+                    other => other,
+                };
+                (short.to_string(), a.clone())
+            })
+            .collect();
+        let (ro, mu) = partition_indices(&class_input);
+        // read + grep → RO; edit + bash + mcp + unknown → mutating
+        assert_eq!(ro, vec![0, 4]);
+        assert_eq!(mu, vec![1, 2, 3, 5]);
+        assert!(is_mutating_tool("bash", &json!({"command": "true"})));
+        assert!(!is_mutating_tool("read", &json!({})));
+        // bash_collect remains read-only for scheduling (collect does not mutate workspace)
+        assert!(!is_mutating_tool(
+            "bash_collect",
+            &json!({"job_id": "j1"})
+        ));
+    }
 }

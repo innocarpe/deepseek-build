@@ -1,0 +1,3 @@
+{"n": 0, "model": "grok-4.5", "reasoning_effort": null, "keys": ["max_tokens", "messages", "model", "stream", "stream_options", "temperature", "tool_choice", "tools"]}
+{"n": 1, "model": "deepseek-v4-flash", "reasoning_effort": "high", "keys": ["messages", "model", "reasoning_effort", "stream", "stream_options", "tools"]}
+{"n": 2, "model": "deepseek-v4-flash", "reasoning_effort": "high", "keys": ["messages", "model", "reasoning_effort", "stream", "stream_options", "tools"]}

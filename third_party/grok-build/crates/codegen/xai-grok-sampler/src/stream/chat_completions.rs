@@ -670,6 +670,7 @@ mod tests {
             prompt_tokens_details: None,
             completion_tokens_details: None,
             cost_in_usd_ticks: None,
+            prompt_cache_hit_tokens: None,
         });
 
         let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> = vec![
@@ -697,6 +698,48 @@ mod tests {
         }
     }
 
+    /// VC009: DeepSeek top-level `prompt_cache_hit_tokens` maps through the
+    /// chat_completions stream into `TokenUsage.cached_prompt_tokens`.
+    #[tokio::test]
+    async fn deepseek_prompt_cache_hit_tokens_map_to_cached_prompt_tokens() {
+        let mut chunk_with_usage = make_chunk(vec![ChatChunkDelta::default()]);
+        chunk_with_usage.usage = Some(Usage {
+            prompt_tokens: 100,
+            completion_tokens: 10,
+            total_tokens: 110,
+            prompt_tokens_details: None,
+            completion_tokens_details: None,
+            cost_in_usd_ticks: None,
+            prompt_cache_hit_tokens: Some(80),
+        });
+
+        let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> = vec![
+            Ok(text_chunk("ok")),
+            Ok(chunk_with_usage),
+            Ok(final_chunk(FinishReason::Stop)),
+        ];
+        let raw = stream::iter(chunks).boxed();
+        let events = collect(stream_chat_completions(
+            raw,
+            None,
+            rid(),
+            Duration::from_secs(60),
+        ))
+        .await;
+
+        match events.last().unwrap() {
+            SamplingEvent::Completed { response, .. } => {
+                let u = response.usage.as_ref().expect("usage extracted");
+                assert_eq!(u.prompt_tokens, 100);
+                assert_eq!(
+                    u.cached_prompt_tokens, 80,
+                    "DeepSeek prompt_cache_hit_tokens must map to cached_prompt_tokens"
+                );
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+    }
+
     /// Server-reported cost lands on the response; the REST mapper's `0`
     /// backfill means "unreported" and must yield `None`.
     #[tokio::test]
@@ -710,6 +753,7 @@ mod tests {
                 prompt_tokens_details: None,
                 completion_tokens_details: None,
                 cost_in_usd_ticks: wire,
+                prompt_cache_hit_tokens: None,
             });
             let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> = vec![
                 Ok(text_chunk("ok")),
@@ -743,6 +787,7 @@ mod tests {
             prompt_tokens_details: None,
             completion_tokens_details: None,
             cost_in_usd_ticks: Some(99),
+            prompt_cache_hit_tokens: None,
         });
         let mut second = make_chunk(vec![ChatChunkDelta::default()]);
         second.usage = Some(Usage {
@@ -752,6 +797,7 @@ mod tests {
             prompt_tokens_details: None,
             completion_tokens_details: None,
             cost_in_usd_ticks: Some(0),
+            prompt_cache_hit_tokens: None,
         });
         let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> = vec![
             Ok(text_chunk("ok")),

@@ -14,7 +14,9 @@ Prints "READY host:port" on stdout when listening. SIGTERM/SIGINT to stop.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 import signal
 import sys
 import threading
@@ -23,6 +25,52 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+
+# ADR 0010 / Spec 45: snp_ + 26 Crockford base32 ULID chars
+_SNIPPET_ID_RE = re.compile(r"snippet_id:\s*(snp_[0-9A-HJKMNP-TV-Z]{26})")
+
+
+def _tool_results_after_user_query(msgs: list[Any]) -> int:
+    """Count tool/function role messages after the primary user_query."""
+    uq = -1
+    for i, m in enumerate(msgs):
+        if isinstance(m, dict) and "user_query" in str(m.get("content") or ""):
+            uq = i
+    return sum(
+        1
+        for m in msgs[uq + 1 :]
+        if isinstance(m, dict) and m.get("role") in ("tool", "function")
+    )
+
+
+def _tool_contents_after_user_query(msgs: list[Any]) -> list[str]:
+    uq = -1
+    for i, m in enumerate(msgs):
+        if isinstance(m, dict) and "user_query" in str(m.get("content") or ""):
+            uq = i
+    out: list[str] = []
+    for m in msgs[uq + 1 :]:
+        if isinstance(m, dict) and m.get("role") in ("tool", "function"):
+            out.append(str(m.get("content") or ""))
+    return out
+
+
+def _extract_snippet_id(content: str) -> str | None:
+    m = _SNIPPET_ID_RE.search(content or "")
+    return m.group(1) if m else None
+
+
+def _latest_snippet_id(msgs: list[Any]) -> str | None:
+    """Most recent minted snippet_id in tool results after user_query."""
+    for content in reversed(_tool_contents_after_user_query(msgs)):
+        sid = _extract_snippet_id(content)
+        if sid:
+            return sid
+    return None
+
+
+def _file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _now() -> int:
@@ -33,9 +81,29 @@ def _completion_id() -> str:
     return f"chatcmpl-scripted-{_now()}"
 
 
+def _usage_block(text: str, *, prompt_tokens: int = 100) -> dict[str, Any]:
+    """DeepSeek-style usage with cache hit/miss fields (ADR 0005 / V2-cache).
+
+    Hermetic fixture: most prompt tokens are reported as cache hits so Path A
+    can exercise mapping → status chip / stamp without a live provider.
+    """
+    completion = max(1, len(text.split()))
+    hit = max(0, prompt_tokens - 20)
+    miss = prompt_tokens - hit
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion,
+        "total_tokens": prompt_tokens + completion,
+        # DeepSeek top-level fields (not prompt_tokens_details.cached_tokens).
+        "prompt_cache_hit_tokens": hit,
+        "prompt_cache_miss_tokens": miss,
+    }
+
+
 def _sse_text(model: str, text: str) -> bytes:
     """OpenAI-style chat.completion.chunk SSE stream ending with [DONE]."""
     cid = _completion_id()
+    usage = _usage_block(text)
     chunks = [
         {
             "id": cid,
@@ -69,11 +137,7 @@ def _sse_text(model: str, text: str) -> bytes:
             "created": _now(),
             "model": model,
             "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-            "usage": {
-                "prompt_tokens": 8,
-                "completion_tokens": max(1, len(text.split())),
-                "total_tokens": 8 + max(1, len(text.split())),
-            },
+            "usage": usage,
         },
     ]
     out = b""
@@ -96,11 +160,7 @@ def _json_text(model: str, text: str) -> bytes:
                 "finish_reason": "stop",
             }
         ],
-        "usage": {
-            "prompt_tokens": 8,
-            "completion_tokens": max(1, len(text.split())),
-            "total_tokens": 8 + max(1, len(text.split())),
-        },
+        "usage": _usage_block(text),
     }
     return json.dumps(body, separators=(",", ":")).encode()
 
@@ -179,6 +239,147 @@ def _sse_tool_then_text(
     return _sse_text(model, text)
 
 
+def _sse_multi_tools(
+    model: str,
+    tools: list[tuple[str, dict[str, Any]]],
+) -> bytes:
+    """Stream one assistant message with multiple tool_calls (Spec 50 multi-tool).
+
+    Each entry is (tool_name, arguments_dict). Arguments are JSON-encoded in one
+    delta so clients do not see partial arg fragments.
+    """
+    if not tools:
+        raise ValueError("tools must be non-empty")
+    cid = _completion_id()
+    tool_calls = []
+    for i, (tname, targs) in enumerate(tools):
+        tool_calls.append(
+            {
+                "index": i,
+                "id": f"call_scripted_m{i + 1}",
+                "type": "function",
+                "function": {
+                    "name": tname,
+                    "arguments": json.dumps(targs, separators=(",", ":")),
+                },
+            }
+        )
+    chunks = [
+        {
+            "id": cid,
+            "object": "chat.completion.chunk",
+            "created": _now(),
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": tool_calls,
+                    },
+                    "finish_reason": None,
+                }
+            ],
+        },
+        {
+            "id": cid,
+            "object": "chat.completion.chunk",
+            "created": _now(),
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "tool_calls",
+                }
+            ],
+        },
+    ]
+    out = b""
+    for ch in chunks:
+        out += b"data: " + json.dumps(ch, separators=(",", ":")).encode() + b"\n\n"
+    out += b"data: [DONE]\n\n"
+    return out
+
+
+_TASK_ID_RE = re.compile(
+    r"<task-id>\s*([^<\s]+)\s*</task-id>|task_id[\"'=\s:]+([A-Za-z0-9_.:-]+)",
+    re.IGNORECASE,
+)
+
+
+def _latest_task_id(msgs: list[Any]) -> str | None:
+    """Extract the most recent background task id from tool results."""
+    for content in reversed(_tool_contents_after_user_query(msgs)):
+        m = _TASK_ID_RE.search(content or "")
+        if m:
+            return (m.group(1) or m.group(2) or "").strip() or None
+    return None
+
+
+_SUBAGENT_ID_RE = re.compile(
+    r"subagent_id[\"'=\s:]+([A-Za-z0-9_.:-]+)|"
+    r"<subagent_id>\s*([^<\s]+)\s*</subagent_id>|"
+    r"id=([A-Za-z0-9_.:-]+),\s*type=",
+    re.IGNORECASE,
+)
+
+
+def _latest_subagent_id(msgs: list[Any]) -> str | None:
+    """Extract the most recent spawn_subagent id from tool results."""
+    for content in reversed(_tool_contents_after_user_query(msgs)):
+        m = _SUBAGENT_ID_RE.search(content or "")
+        if m:
+            return (m.group(1) or m.group(2) or m.group(3) or "").strip() or None
+        # Fall back to generic task id patterns (product may reuse task_id form).
+        m2 = _TASK_ID_RE.search(content or "")
+        if m2:
+            return (m2.group(1) or m2.group(2) or "").strip() or None
+    return None
+
+
+def _msgs_blob(msgs: list[Any]) -> str:
+    parts: list[str] = []
+    for m in msgs:
+        if isinstance(m, dict):
+            parts.append(str(m.get("content") or ""))
+    return "\n".join(parts)
+
+
+def _is_child_session(msgs: list[Any], token: str) -> bool:
+    """True when this request is the spawned child's conversation (token present, no parent user_query)."""
+    blob = _msgs_blob(msgs)
+    if token not in blob:
+        return False
+    # Parent headless prompts wrap the human ask in <user_query>…</user_query>.
+    if "user_query" in blob and token not in blob.split("user_query", 1)[0]:
+        # Token only appears after user_query → could still be parent echoing; prefer
+        # child when there is no user_query wrapper at all.
+        pass
+    if "user_query" not in blob:
+        return True
+    # Child prompts usually lack the outer Path A user_query XML from headless -p.
+    # If the only user_query is unrelated and token is in a plain user message, treat as child.
+    for m in msgs:
+        if not isinstance(m, dict) or m.get("role") != "user":
+            continue
+        content = str(m.get("content") or "")
+        if token in content and "user_query" not in content:
+            return True
+    return False
+
+
+def _snippet_id_for_content_marker(msgs: list[Any], marker: str) -> str | None:
+    """Snippet id from the tool result whose content contains marker (path-safe)."""
+    for content in reversed(_tool_contents_after_user_query(msgs)):
+        if marker in (content or ""):
+            sid = _extract_snippet_id(content)
+            if sid:
+                return sid
+    return None
+
+
 class ScriptedState:
     def __init__(self, wire_path: Path, scenario: str, final_text: str) -> None:
         self.wire_path = wire_path
@@ -201,6 +402,7 @@ class ScriptedState:
             rec = {
                 "n": n,
                 "ts": time.time(),
+                "kind": "request",
                 "method": method,
                 "path": path,
                 "headers": {
@@ -212,6 +414,39 @@ class ScriptedState:
             with self.wire_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
             return n
+
+    def record_response_tool_calls(
+        self, n: int, path: str, model: str, tool_calls: list[dict[str, Any]]
+    ) -> None:
+        """Record multi/single tool_calls emitted by the fixture (response-side)."""
+        with self.lock:
+            rec = {
+                "n": n,
+                "ts": time.time(),
+                "kind": "response_tool_calls",
+                "path": path,
+                "model": model,
+                "tool_calls": tool_calls,
+                "count": len(tool_calls),
+            }
+            with self.wire_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+    def record_response_usage(
+        self, n: int, path: str, model: str, usage: dict[str, Any]
+    ) -> None:
+        """VC009: append response-side usage so Path A e2e can assert cache fields."""
+        with self.lock:
+            rec = {
+                "n": n,
+                "ts": time.time(),
+                "kind": "response_usage",
+                "path": path,
+                "model": model,
+                "usage": usage,
+            }
+            with self.wire_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
 def make_handler(state: ScriptedState):
@@ -435,23 +670,13 @@ def make_handler(state: ScriptedState):
                         else _json_text(model, "bash-stale-ok")
                     )
             elif state.scenario == "liveness-3edits" and state.liveness_dir is not None:
-                # Count tool results after the user_query (ignore session_title side-call).
-                uq = -1
-                for i, m in enumerate(msgs):
-                    if isinstance(m, dict) and "user_query" in str(m.get("content") or ""):
-                        uq = i
-                tool_results = sum(
-                    1
-                    for m in msgs[uq + 1 :]
-                    if isinstance(m, dict) and m.get("role") in ("tool", "function")
-                )
-                # Sequence: 3 search_replace edits across a.txt + b.txt
-                # 0: a hello->hello1, 1: b world->world1, 2: a hello1->hello2
-                import hashlib
+                # Historical G004 path: file_version-only (pre-VC004 require).
+                # Prefer VC006 scenarios snippet-multiedit / snippet-stale-id for Spec 45.
+                tool_results = _tool_results_after_user_query(msgs)
 
                 def file_ver(name: str) -> str:
                     p = state.liveness_dir / name
-                    return hashlib.sha256(p.read_bytes()).hexdigest()
+                    return _file_sha256(p)
 
                 steps = [
                     (
@@ -460,7 +685,9 @@ def make_handler(state: ScriptedState):
                             "file_path": "a.txt",
                             "old_string": "hello",
                             "new_string": "hello1",
-                            "file_version": file_ver("a.txt") if (state.liveness_dir / "a.txt").exists() else "",
+                            "file_version": file_ver("a.txt")
+                            if (state.liveness_dir / "a.txt").exists()
+                            else "",
                         },
                     ),
                     (
@@ -469,7 +696,9 @@ def make_handler(state: ScriptedState):
                             "file_path": "b.txt",
                             "old_string": "world",
                             "new_string": "world1",
-                            "file_version": file_ver("b.txt") if (state.liveness_dir / "b.txt").exists() else "",
+                            "file_version": file_ver("b.txt")
+                            if (state.liveness_dir / "b.txt").exists()
+                            else "",
                         },
                     ),
                     (
@@ -478,14 +707,17 @@ def make_handler(state: ScriptedState):
                             "file_path": "a.txt",
                             "old_string": "hello1",
                             "new_string": "hello2",
-                            "file_version": file_ver("a.txt") if (state.liveness_dir / "a.txt").exists() else "",
+                            "file_version": file_ver("a.txt")
+                            if (state.liveness_dir / "a.txt").exists()
+                            else "",
                         },
                     ),
                 ]
                 if tool_results < len(steps):
                     tname, targs = steps[tool_results]
-                    # Recompute version live (files change after each edit)
-                    if tname == "search_replace" and (state.liveness_dir / targs["file_path"]).exists():
+                    if tname == "search_replace" and (
+                        state.liveness_dir / targs["file_path"]
+                    ).exists():
                         targs = dict(targs)
                         targs["file_version"] = file_ver(targs["file_path"])
                     payload = (
@@ -505,6 +737,700 @@ def make_handler(state: ScriptedState):
                         if stream
                         else _json_text(model, "liveness-ok")
                     )
+            elif state.scenario == "snippet-multiedit" and state.liveness_dir is not None:
+                # VC006 Path A R0A: read_file mints snippet_id; search_replace uses it.
+                # Sequence (re-read after each edit because VC005 expire_path):
+                # 0 read a · 1 edit a hello->hello1 · 2 read b · 3 edit b world->world1
+                # 4 read a · 5 edit a hello1->hello2 · then final text
+                tool_results = _tool_results_after_user_query(msgs)
+                latest_sid = _latest_snippet_id(msgs)
+
+                def emit_tool(tname: str, targs: dict[str, Any]) -> bytes:
+                    return (
+                        _sse_tool_then_text(
+                            model,
+                            0,
+                            state.final_text,
+                            tool_name=tname,
+                            tool_args=json.dumps(targs),
+                        )
+                        if stream
+                        else _json_text(model, state.final_text)
+                    )
+
+                if tool_results == 0:
+                    payload = emit_tool(
+                        "read_file", {"target_file": "a.txt"}
+                    )
+                elif tool_results == 1:
+                    if not latest_sid:
+                        payload = (
+                            _sse_text(model, "snippet-multiedit-FAIL-no-snippet-id")
+                            if stream
+                            else _json_text(model, "snippet-multiedit-FAIL-no-snippet-id")
+                        )
+                    else:
+                        a = state.liveness_dir / "a.txt"
+                        targs: dict[str, Any] = {
+                            "file_path": "a.txt",
+                            "old_string": "hello",
+                            "new_string": "hello1",
+                            "snippet_id": latest_sid,
+                        }
+                        if a.exists():
+                            targs["file_version"] = _file_sha256(a)
+                        payload = emit_tool("search_replace", targs)
+                elif tool_results == 2:
+                    payload = emit_tool(
+                        "read_file", {"target_file": "b.txt"}
+                    )
+                elif tool_results == 3:
+                    if not latest_sid:
+                        payload = (
+                            _sse_text(model, "snippet-multiedit-FAIL-no-snippet-id")
+                            if stream
+                            else _json_text(model, "snippet-multiedit-FAIL-no-snippet-id")
+                        )
+                    else:
+                        b = state.liveness_dir / "b.txt"
+                        targs = {
+                            "file_path": "b.txt",
+                            "old_string": "world",
+                            "new_string": "world1",
+                            "snippet_id": latest_sid,
+                        }
+                        if b.exists():
+                            targs["file_version"] = _file_sha256(b)
+                        payload = emit_tool("search_replace", targs)
+                elif tool_results == 4:
+                    payload = emit_tool(
+                        "read_file", {"target_file": "a.txt"}
+                    )
+                elif tool_results == 5:
+                    if not latest_sid:
+                        payload = (
+                            _sse_text(model, "snippet-multiedit-FAIL-no-snippet-id")
+                            if stream
+                            else _json_text(model, "snippet-multiedit-FAIL-no-snippet-id")
+                        )
+                    else:
+                        a = state.liveness_dir / "a.txt"
+                        targs = {
+                            "file_path": "a.txt",
+                            "old_string": "hello1",
+                            "new_string": "hello2",
+                            "snippet_id": latest_sid,
+                        }
+                        if a.exists():
+                            targs["file_version"] = _file_sha256(a)
+                        payload = emit_tool("search_replace", targs)
+                else:
+                    payload = (
+                        _sse_text(model, "snippet-multiedit-ok")
+                        if stream
+                        else _json_text(model, "snippet-multiedit-ok")
+                    )
+            elif state.scenario == "snippet-stale-id" and state.liveness_dir is not None:
+                # VC006: read → valid edit (expires id) → reuse same id → fail closed.
+                tool_results = _tool_results_after_user_query(msgs)
+                tool_contents = _tool_contents_after_user_query(msgs)
+
+                def emit_tool(tname: str, targs: dict[str, Any]) -> bytes:
+                    return (
+                        _sse_tool_then_text(
+                            model,
+                            0,
+                            state.final_text,
+                            tool_name=tname,
+                            tool_args=json.dumps(targs),
+                        )
+                        if stream
+                        else _json_text(model, state.final_text)
+                    )
+
+                if tool_results == 0:
+                    payload = emit_tool(
+                        "read_file", {"target_file": "a.txt"}
+                    )
+                elif tool_results == 1:
+                    sid = _extract_snippet_id(tool_contents[0]) if tool_contents else None
+                    if not sid:
+                        payload = (
+                            _sse_text(model, "snippet-stale-id-FAIL-no-snippet-id")
+                            if stream
+                            else _json_text(model, "snippet-stale-id-FAIL-no-snippet-id")
+                        )
+                    else:
+                        # Stash mint id for the deliberate reuse step
+                        state._stale_snippet_id = sid  # type: ignore[attr-defined]
+                        a = state.liveness_dir / "a.txt"
+                        targs = {
+                            "file_path": "a.txt",
+                            "old_string": "original",
+                            "new_string": "edited-once",
+                            "snippet_id": sid,
+                        }
+                        if a.exists():
+                            targs["file_version"] = _file_sha256(a)
+                        payload = emit_tool("search_replace", targs)
+                elif tool_results == 2:
+                    stale = getattr(state, "_stale_snippet_id", None)
+                    if not stale:
+                        # Fall back: first tool content's snippet_id
+                        stale = (
+                            _extract_snippet_id(tool_contents[0])
+                            if tool_contents
+                            else None
+                        )
+                    if not stale:
+                        payload = (
+                            _sse_text(model, "snippet-stale-id-FAIL-no-stale-id")
+                            if stream
+                            else _json_text(model, "snippet-stale-id-FAIL-no-stale-id")
+                        )
+                    else:
+                        # Deliberately reuse expired id; attempt further mutation
+                        targs = {
+                            "file_path": "a.txt",
+                            "old_string": "edited-once",
+                            "new_string": "should-not-apply",
+                            "snippet_id": stale,
+                        }
+                        payload = emit_tool("search_replace", targs)
+                else:
+                    payload = (
+                        _sse_text(model, "snippet-stale-id-ok")
+                        if stream
+                        else _json_text(model, "snippet-stale-id-ok")
+                    )
+            elif state.scenario == "snippet-bash-stale" and state.liveness_dir is not None:
+                # VC006 optional: read → bash mutate → edit with old snippet_id fails.
+                tool_results = _tool_results_after_user_query(msgs)
+                tool_contents = _tool_contents_after_user_query(msgs)
+
+                def emit_tool(tname: str, targs: dict[str, Any]) -> bytes:
+                    return (
+                        _sse_tool_then_text(
+                            model,
+                            0,
+                            state.final_text,
+                            tool_name=tname,
+                            tool_args=json.dumps(targs),
+                        )
+                        if stream
+                        else _json_text(model, state.final_text)
+                    )
+
+                if tool_results == 0:
+                    payload = emit_tool(
+                        "read_file", {"target_file": "a.txt"}
+                    )
+                elif tool_results == 1:
+                    sid = _extract_snippet_id(tool_contents[0]) if tool_contents else None
+                    state._bash_stale_snippet_id = sid  # type: ignore[attr-defined]
+                    payload = emit_tool(
+                        "run_terminal_command",
+                        {
+                            "command": "printf 'mutated-by-bash\\n' > a.txt",
+                            "description": "VC006 bash mutation of a.txt",
+                        },
+                    )
+                elif tool_results == 2:
+                    stale = getattr(state, "_bash_stale_snippet_id", None)
+                    if not stale and tool_contents:
+                        stale = _extract_snippet_id(tool_contents[0])
+                    if not stale:
+                        payload = (
+                            _sse_text(model, "snippet-bash-stale-FAIL-no-id")
+                            if stream
+                            else _json_text(model, "snippet-bash-stale-FAIL-no-id")
+                        )
+                    else:
+                        targs = {
+                            "file_path": "a.txt",
+                            "old_string": "mutated-by-bash",
+                            "new_string": "should-fail",
+                            "snippet_id": stale,
+                        }
+                        payload = emit_tool("search_replace", targs)
+                else:
+                    payload = (
+                        _sse_text(model, "snippet-bash-stale-ok")
+                        if stream
+                        else _json_text(model, "snippet-bash-stale-ok")
+                    )
+            elif state.scenario == "multi-read-parallel" and state.liveness_dir is not None:
+                # VC010: one assistant message with two read_file tool_calls (RO batch).
+                tool_results = _tool_results_after_user_query(msgs)
+
+                def emit_multi(tools: list[tuple[str, dict[str, Any]]]) -> bytes:
+                    return (
+                        _sse_multi_tools(model, tools)
+                        if stream
+                        else _json_text(model, state.final_text)
+                    )
+
+                if tool_results == 0:
+                    payload = emit_multi(
+                        [
+                            ("read_file", {"target_file": "a.txt"}),
+                            ("read_file", {"target_file": "b.txt"}),
+                        ]
+                    )
+                else:
+                    payload = (
+                        _sse_text(model, "multi-read-parallel-ok")
+                        if stream
+                        else _json_text(model, "multi-read-parallel-ok")
+                    )
+            elif state.scenario == "mixed-mutate-serial" and state.liveness_dir is not None:
+                # VC010: multi-read RO batch, then serial search_replace with the
+                # snippet_id bound to a.txt (not the later b.txt sibling id).
+                tool_results = _tool_results_after_user_query(msgs)
+                a_sid = _snippet_id_for_content_marker(msgs, "alpha-marker")
+
+                def emit_tool_m(tname: str, targs: dict[str, Any]) -> bytes:
+                    return (
+                        _sse_tool_then_text(
+                            model,
+                            0,
+                            state.final_text,
+                            tool_name=tname,
+                            tool_args=json.dumps(targs),
+                        )
+                        if stream
+                        else _json_text(model, state.final_text)
+                    )
+
+                def emit_multi_m(tools: list[tuple[str, dict[str, Any]]]) -> bytes:
+                    return (
+                        _sse_multi_tools(model, tools)
+                        if stream
+                        else _json_text(model, state.final_text)
+                    )
+
+                if tool_results == 0:
+                    payload = emit_multi_m(
+                        [
+                            ("read_file", {"target_file": "a.txt"}),
+                            ("read_file", {"target_file": "b.txt"}),
+                        ]
+                    )
+                elif tool_results == 2:
+                    if not a_sid:
+                        payload = (
+                            _sse_text(model, "mixed-mutate-FAIL-no-snippet-id")
+                            if stream
+                            else _json_text(model, "mixed-mutate-FAIL-no-snippet-id")
+                        )
+                    else:
+                        a = state.liveness_dir / "a.txt"
+                        targs_m: dict[str, Any] = {
+                            "file_path": "a.txt",
+                            "old_string": "alpha-marker",
+                            "new_string": "alpha-mutated",
+                            "snippet_id": a_sid,
+                        }
+                        if a.exists():
+                            targs_m["file_version"] = _file_sha256(a)
+                        payload = emit_tool_m("search_replace", targs_m)
+                else:
+                    payload = (
+                        _sse_text(model, "mixed-mutate-serial-ok")
+                        if stream
+                        else _json_text(model, "mixed-mutate-serial-ok")
+                    )
+            elif state.scenario == "bg-collect-by-id":
+                # VC010: background shell then collect-by-id (Path A product tools).
+                # Sequence: 0 = run_terminal_command is_background; 1 = collect by task_id;
+                # ≥2 tool results → final text.
+                tool_results = _tool_results_after_user_query(msgs)
+                task_id = _latest_task_id(msgs)
+
+                def emit_tool_bg(tname: str, targs: dict[str, Any]) -> bytes:
+                    return (
+                        _sse_tool_then_text(
+                            model,
+                            0,
+                            state.final_text,
+                            tool_name=tname,
+                            tool_args=json.dumps(targs),
+                        )
+                        if stream
+                        else _json_text(model, state.final_text)
+                    )
+
+                if tool_results == 0:
+                    payload = emit_tool_bg(
+                        "run_terminal_command",
+                        {
+                            "command": "sleep 0.2; echo bg-ok-77",
+                            "description": "VC010 hermetic background shell",
+                            "is_background": True,
+                        },
+                    )
+                elif tool_results == 1:
+                    if not task_id:
+                        payload = (
+                            _sse_text(model, "bg-collect-FAIL-no-task-id")
+                            if stream
+                            else _json_text(model, "bg-collect-FAIL-no-task-id")
+                        )
+                    else:
+                        payload = emit_tool_bg(
+                            "get_command_or_subagent_output",
+                            {
+                                "task_ids": [task_id],
+                                "timeout_ms": 15000,
+                            },
+                        )
+                else:
+                    payload = (
+                        _sse_text(model, "bg-collect-ok")
+                        if stream
+                        else _json_text(model, "bg-collect-ok")
+                    )
+            elif state.scenario == "explore-subagent":
+                # VC011: Path A spawn_subagent explore (read-only child) + parent final.
+                # Child sessions are detected via VC011_EXPLORE_CHILD token in messages.
+                child_token = "VC011_EXPLORE_CHILD"
+                tool_results = _tool_results_after_user_query(msgs)
+
+                def emit_tool_ex(tname: str, targs: dict[str, Any]) -> bytes:
+                    return (
+                        _sse_tool_then_text(
+                            model,
+                            0,
+                            state.final_text,
+                            tool_name=tname,
+                            tool_args=json.dumps(targs),
+                        )
+                        if stream
+                        else _json_text(model, state.final_text)
+                    )
+
+                if _is_child_session(msgs, child_token):
+                    # Child: one read_file then final text with marker contents.
+                    child_tools = sum(
+                        1
+                        for m in msgs
+                        if isinstance(m, dict) and m.get("role") in ("tool", "function")
+                    )
+                    if child_tools == 0:
+                        payload = emit_tool_ex(
+                            "read_file",
+                            {"target_file": "explore-marker.txt"},
+                        )
+                    else:
+                        payload = (
+                            _sse_text(model, "explore-child-saw-FINDME-77")
+                            if stream
+                            else _json_text(model, "explore-child-saw-FINDME-77")
+                        )
+                else:
+                    # Parent: spawn explore (foreground), optionally collect, then final.
+                    if tool_results == 0:
+                        payload = emit_tool_ex(
+                            "spawn_subagent",
+                            {
+                                "subagent_type": "explore",
+                                "description": "VC011 explore dogfood",
+                                "prompt": (
+                                    f"{child_token}: Read explore-marker.txt with read_file only. "
+                                    "Reply with the file contents when done. Do not write or edit."
+                                ),
+                                "run_in_background": False,
+                            },
+                        )
+                    elif tool_results == 1:
+                        # If spawn returned only an id (background path forced), collect.
+                        sid = _latest_subagent_id(msgs) or _latest_task_id(msgs)
+                        contents = "\n".join(_tool_contents_after_user_query(msgs))
+                        if sid and "explore-child" not in contents and "FINDME-77" not in contents:
+                            payload = emit_tool_ex(
+                                "get_command_or_subagent_output",
+                                {
+                                    "task_ids": [sid],
+                                    "timeout_ms": 60000,
+                                },
+                            )
+                        else:
+                            payload = (
+                                _sse_text(model, "explore-subagent-ok")
+                                if stream
+                                else _json_text(model, "explore-subagent-ok")
+                            )
+                    else:
+                        payload = (
+                            _sse_text(model, "explore-subagent-ok")
+                            if stream
+                            else _json_text(model, "explore-subagent-ok")
+                        )
+            elif state.scenario == "implement-subagent-mutate":
+                # VC011: Path A spawn_subagent general-purpose (implement-class) mutates disk.
+                child_token = "VC011_IMPLEMENT_CHILD"
+                tool_results = _tool_results_after_user_query(msgs)
+
+                def emit_tool_im(tname: str, targs: dict[str, Any]) -> bytes:
+                    return (
+                        _sse_tool_then_text(
+                            model,
+                            0,
+                            state.final_text,
+                            tool_name=tname,
+                            tool_args=json.dumps(targs),
+                        )
+                        if stream
+                        else _json_text(model, state.final_text)
+                    )
+
+                if _is_child_session(msgs, child_token):
+                    child_tools = sum(
+                        1
+                        for m in msgs
+                        if isinstance(m, dict) and m.get("role") in ("tool", "function")
+                    )
+                    if child_tools == 0:
+                        # Prefer shell write so Path A yolo can apply without snippet_id.
+                        payload = emit_tool_im(
+                            "run_terminal_command",
+                            {
+                                "command": "printf 'worker-mutated-ok\\n' > worker_out.txt",
+                                "description": "VC011 implement child mutate",
+                            },
+                        )
+                    else:
+                        payload = (
+                            _sse_text(model, "implement-child-mutated")
+                            if stream
+                            else _json_text(model, "implement-child-mutated")
+                        )
+                else:
+                    if tool_results == 0:
+                        payload = emit_tool_im(
+                            "spawn_subagent",
+                            {
+                                "subagent_type": "general-purpose",
+                                "description": "VC011 implement dogfood",
+                                "prompt": (
+                                    f"{child_token}: Create worker_out.txt containing exactly "
+                                    "the line worker-mutated-ok using run_terminal_command. "
+                                    "Do not spawn further subagents. Reply when the file exists."
+                                ),
+                                "run_in_background": False,
+                            },
+                        )
+                    elif tool_results == 1:
+                        sid = _latest_subagent_id(msgs) or _latest_task_id(msgs)
+                        contents = "\n".join(_tool_contents_after_user_query(msgs))
+                        if sid and "implement-child" not in contents and "worker-mutated" not in contents:
+                            payload = emit_tool_im(
+                                "get_command_or_subagent_output",
+                                {
+                                    "task_ids": [sid],
+                                    "timeout_ms": 60000,
+                                },
+                            )
+                        else:
+                            payload = (
+                                _sse_text(model, "implement-subagent-ok")
+                                if stream
+                                else _json_text(model, "implement-subagent-ok")
+                            )
+                    else:
+                        payload = (
+                            _sse_text(model, "implement-subagent-ok")
+                            if stream
+                            else _json_text(model, "implement-subagent-ok")
+                        )
+            elif state.scenario == "parent-worker-snippet-stale":
+                # VC015 / V3-60-3: parent mints snippet_id for path P; implement-class
+                # worker mutates P; parent reuses pre-mutation snippet_id → fail closed
+                # (snippet_stale / snippet_not_found). Public Path A sole residual close.
+                child_token = "VC015_PARENT_WORKER_CHILD"
+                tool_results = _tool_results_after_user_query(msgs)
+                tool_contents = _tool_contents_after_user_query(msgs)
+
+                def emit_tool_pw(tname: str, targs: dict[str, Any]) -> bytes:
+                    return (
+                        _sse_tool_then_text(
+                            model,
+                            0,
+                            state.final_text,
+                            tool_name=tname,
+                            tool_args=json.dumps(targs),
+                        )
+                        if stream
+                        else _json_text(model, state.final_text)
+                    )
+
+                if _is_child_session(msgs, child_token):
+                    child_tools = sum(
+                        1
+                        for m in msgs
+                        if isinstance(m, dict) and m.get("role") in ("tool", "function")
+                    )
+                    if child_tools == 0:
+                        payload = emit_tool_pw(
+                            "run_terminal_command",
+                            {
+                                "command": (
+                                    "printf 'worker-mutated-parent\\n' > parent_seed.txt"
+                                ),
+                                "description": "VC015 implement child mutates parent path",
+                            },
+                        )
+                    else:
+                        payload = (
+                            _sse_text(model, "parent-worker-child-mutated")
+                            if stream
+                            else _json_text(model, "parent-worker-child-mutated")
+                        )
+                else:
+                    # Parent turns
+                    if tool_results == 0:
+                        payload = emit_tool_pw(
+                            "read_file", {"target_file": "parent_seed.txt"}
+                        )
+                    elif tool_results == 1:
+                        sid = (
+                            _extract_snippet_id(tool_contents[0])
+                            if tool_contents
+                            else None
+                        )
+                        if not sid:
+                            payload = (
+                                _sse_text(
+                                    model, "parent-worker-snippet-stale-FAIL-no-snippet-id"
+                                )
+                                if stream
+                                else _json_text(
+                                    model, "parent-worker-snippet-stale-FAIL-no-snippet-id"
+                                )
+                            )
+                        else:
+                            state._parent_worker_snippet_id = sid  # type: ignore[attr-defined]
+                            payload = emit_tool_pw(
+                                "spawn_subagent",
+                                {
+                                    "subagent_type": "general-purpose",
+                                    "description": "VC015 V3-60-3 implement dogfood",
+                                    "prompt": (
+                                        f"{child_token}: Overwrite parent_seed.txt so it "
+                                        "contains exactly the line worker-mutated-parent "
+                                        "using run_terminal_command. Do not spawn further "
+                                        "subagents. Reply when the file is updated."
+                                    ),
+                                    "run_in_background": False,
+                                },
+                            )
+                    elif tool_results == 2:
+                        sid = _latest_subagent_id(msgs) or _latest_task_id(msgs)
+                        contents = "\n".join(tool_contents)
+                        if (
+                            sid
+                            and "parent-worker-child" not in contents
+                            and "worker-mutated-parent" not in contents
+                        ):
+                            payload = emit_tool_pw(
+                                "get_command_or_subagent_output",
+                                {
+                                    "task_ids": [sid],
+                                    "timeout_ms": 60000,
+                                },
+                            )
+                        else:
+                            # Subagent already finished in spawn result — proceed to stale edit
+                            stale = getattr(state, "_parent_worker_snippet_id", None)
+                            if not stale and tool_contents:
+                                stale = _extract_snippet_id(tool_contents[0])
+                            if not stale:
+                                payload = (
+                                    _sse_text(
+                                        model,
+                                        "parent-worker-snippet-stale-FAIL-no-stale-id",
+                                    )
+                                    if stream
+                                    else _json_text(
+                                        model,
+                                        "parent-worker-snippet-stale-FAIL-no-stale-id",
+                                    )
+                                )
+                            else:
+                                targs = {
+                                    "file_path": "parent_seed.txt",
+                                    "old_string": "parent-seed-original",
+                                    "new_string": "should-not-apply-after-worker",
+                                    "snippet_id": stale,
+                                }
+                                payload = emit_tool_pw("search_replace", targs)
+                    elif tool_results == 3:
+                        # After await (or if previous step was await), attempt stale edit
+                        # if not already done; else final token.
+                        contents = "\n".join(tool_contents)
+                        last = tool_contents[-1] if tool_contents else ""
+                        already_stale_attempt = any(
+                            "should-not-apply-after-worker" in (c or "")
+                            for c in tool_contents
+                        )
+                        # Detect prior parent search_replace attempt via request wire is hard;
+                        # use tool_results path: if last tool looks like spawn/await success,
+                        # emit stale edit once.
+                        if (
+                            "snippet_stale" in last
+                            or "snippet_not_found" in last
+                            or "should-not-apply" in last
+                            or already_stale_attempt
+                        ):
+                            # If we already attempted and got fail-closed text, finish;
+                            # if last was successful write somehow, still finish.
+                            payload = (
+                                _sse_text(model, "parent-worker-snippet-stale-ok")
+                                if stream
+                                else _json_text(model, "parent-worker-snippet-stale-ok")
+                            )
+                        else:
+                            stale = getattr(state, "_parent_worker_snippet_id", None)
+                            if not stale:
+                                for c in tool_contents:
+                                    sid = _extract_snippet_id(c)
+                                    if sid:
+                                        stale = sid
+                                        break
+                            if not stale:
+                                payload = (
+                                    _sse_text(
+                                        model,
+                                        "parent-worker-snippet-stale-FAIL-no-stale-id",
+                                    )
+                                    if stream
+                                    else _json_text(
+                                        model,
+                                        "parent-worker-snippet-stale-FAIL-no-stale-id",
+                                    )
+                                )
+                            else:
+                                targs = {
+                                    "file_path": "parent_seed.txt",
+                                    "old_string": "parent-seed-original",
+                                    "new_string": "should-not-apply-after-worker",
+                                    "snippet_id": stale,
+                                }
+                                payload = emit_tool_pw("search_replace", targs)
+                    else:
+                        payload = (
+                            _sse_text(model, "parent-worker-snippet-stale-ok")
+                            if stream
+                            else _json_text(model, "parent-worker-snippet-stale-ok")
+                        )
+            elif state.scenario == "worker-cache-stamp":
+                # VC011: public-entry only needs a short Path A turn so agent_launch
+                # writes path_a_l3 worker_epochs_match (no spawn required).
+                payload = (
+                    _sse_text(model, "worker-cache-stamp-ok")
+                    if stream
+                    else _json_text(model, "worker-cache-stamp-ok")
+                )
             elif state.scenario == "tool-then-text":
                 if not has_tool_result:
                     payload = (
@@ -531,6 +1457,17 @@ def make_handler(state: ScriptedState):
                     else _json_text(model, state.final_text)
                 )
 
+            # VC009: surface DeepSeek cache usage on the wire transcript
+            # (response_usage line) whenever the payload carries usage.
+            usage_rec = _extract_usage_from_payload(payload, stream=stream)
+            if usage_rec is not None:
+                state.record_response_usage(n, path, model, usage_rec)
+
+            # VC010: record emitted tool_calls (incl. multi-tool batches) on wire.
+            tcs = _extract_tool_calls_from_payload(payload, stream=stream)
+            if tcs:
+                state.record_response_tool_calls(n, path, model, tcs)
+
             self.send_response(200)
             if stream:
                 self.send_header("Content-Type", "text/event-stream")
@@ -542,6 +1479,71 @@ def make_handler(state: ScriptedState):
             self.wfile.write(payload)
 
     return Handler
+
+
+def _extract_usage_from_payload(payload: bytes, *, stream: bool) -> dict[str, Any] | None:
+    """Best-effort parse of usage object from SSE or JSON completion body."""
+    try:
+        if not stream:
+            body = json.loads(payload.decode("utf-8"))
+            u = body.get("usage") if isinstance(body, dict) else None
+            return u if isinstance(u, dict) else None
+        # SSE: scan data lines for the last object that carries usage.
+        last: dict[str, Any] | None = None
+        for line in payload.decode("utf-8", errors="replace").splitlines():
+            if not line.startswith("data: "):
+                continue
+            data = line[len("data: ") :].strip()
+            if not data or data == "[DONE]":
+                continue
+            try:
+                obj = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict) and isinstance(obj.get("usage"), dict):
+                last = obj["usage"]
+        return last
+    except Exception:
+        return None
+
+
+def _extract_tool_calls_from_payload(
+    payload: bytes, *, stream: bool
+) -> list[dict[str, Any]]:
+    """Best-effort extract tool_calls from SSE/JSON completion body."""
+    try:
+        if not stream:
+            body = json.loads(payload.decode("utf-8"))
+            if not isinstance(body, dict):
+                return []
+            choices = body.get("choices") or []
+            if not choices or not isinstance(choices[0], dict):
+                return []
+            msg = choices[0].get("message") or {}
+            tcs = msg.get("tool_calls") if isinstance(msg, dict) else None
+            return tcs if isinstance(tcs, list) else []
+        found: list[dict[str, Any]] = []
+        for line in payload.decode("utf-8", errors="replace").splitlines():
+            if not line.startswith("data: "):
+                continue
+            data = line[len("data: ") :].strip()
+            if not data or data == "[DONE]":
+                continue
+            try:
+                obj = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            choices = obj.get("choices") or []
+            if not choices or not isinstance(choices[0], dict):
+                continue
+            delta = choices[0].get("delta") or {}
+            if isinstance(delta, dict) and isinstance(delta.get("tool_calls"), list):
+                found = delta["tool_calls"]
+        return found if isinstance(found, list) else []
+    except Exception:
+        return []
 
 
 def main() -> int:
@@ -559,13 +1561,30 @@ def main() -> int:
             "write-deny",
             "bash-stale",
             "repair-trailing-comma",
+            # VC006 Path A Spec 45 snippet_id R0A
+            "snippet-multiedit",
+            "snippet-stale-id",
+            "snippet-bash-stale",
+            # VC010 L3 multi-tool parallel + background collect Path A R0A
+            "multi-read-parallel",
+            "mixed-mutate-serial",
+            "bg-collect-by-id",
+            # VC011 L3 subagent + worker cache Path A R0A
+            "explore-subagent",
+            "implement-subagent-mutate",
+            "worker-cache-stamp",
+            # VC015 / V3-60-3 parent snippet after implement worker mutates same path
+            "parent-worker-snippet-stale",
         ),
         default="text-pong",
     )
     ap.add_argument(
         "--liveness-dir",
         default="",
-        help="Workspace dir with a.txt/b.txt for liveness-3edits (hashes computed live)",
+        help=(
+            "Workspace dir with a.txt/b.txt for liveness / VC006 / VC010 / VC011 scenarios "
+            "(hashes and files computed live)"
+        ),
     )
     ap.add_argument(
         "--final-text",

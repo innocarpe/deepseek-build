@@ -1,0 +1,44 @@
+git_sha=96a9b3cb03ee5c2570146c6b0d96f49532fd35bc
+cli=/Users/WooseongKim/Projects/deepseek-build/vc013-5-4-cut/target/release/deepseek-build
+dsb=/Users/WooseongKim/Projects/deepseek-build/vc013-5-4-cut/target/release/dsb
+agent_resolved=/Users/WooseongKim/Projects/deepseek-build/vc013-5-4-cut/third_party/grok-build/target/release/xai-grok-pager
+DEEPSEEK_BUILD_AGENT_BIN_unset=yes
+DEEPSEEK_BUILD_HOME=/var/folders/wg/n30brg4n2wlgdfpr3wbsvmdr0000gn/T//dsb-vc012-r0a.6t1RYA/product-home
+scenario=worktree-flag-forward
+agent_exit=0
+worktree_flag_name=vc012-bound-forward
+worktree_ref=HEAD
+worktree_flag_source=product_top_level
+claim_scope=product_flag_forward_stub_argv_after_exec
+process_boundary_residual=interactive_tty_worktree_create_not_asserted
+stub_agent=yes
+path_a_l3_stamp=present
+l3_max_parallel_readonly=8
+l3_ro_indices=[0, 4]
+l3_mu_indices=[1, 2, 3, 5]
+l3_bash_mutating=true
+l3_mcp_mutating=true
+l3_unknown_mutating=true
+l3_worker_kind_explore=explore
+l3_worker_kind_implement=implement
+l3_worker_epoch_a=c0767bd1a64eaa344316d063edeb1333dbe0680425611c26294736cbac4b6d41
+l3_worker_epoch_b=c0767bd1a64eaa344316d063edeb1333dbe0680425611c26294736cbac4b6d41
+l3_worker_epochs_match=true
+l3_subagents_enabled_in_config=true
+l3_worktree_product=opt_in
+l3_bare_dsb_session=single
+stub_argv<<EOF
+argc=8
+arg[1]=--worktree
+arg[2]=vc012-bound-forward
+arg[3]=--worktree-ref
+arg[4]=HEAD
+arg[5]=-p
+arg[6]=stub-only-no-model
+arg[7]=--max-turns
+arg[8]=1
+raw: --worktree vc012-bound-forward --worktree-ref HEAD -p stub-only-no-model --max-turns 1
+EOF
+agent_out_tail<<EOF
+STUB_AGENT_OK
+EOF

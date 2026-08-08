@@ -1665,7 +1665,10 @@ fn terminal_title_string(title: &str) -> String {
     if sanitized.is_empty() {
         "DeepSeek Build".into()
     } else {
-        let truncated: String = sanitized.chars().take(80 - " - DeepSeek Build".len()).collect();
+        let truncated: String = sanitized
+            .chars()
+            .take(80 - " - DeepSeek Build".len())
+            .collect();
         format!("{} - DeepSeek Build", truncated)
     }
 }

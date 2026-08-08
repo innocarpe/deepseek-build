@@ -217,7 +217,10 @@ async fn install_npm_calls_npm_with_version_arg() {
     assert_eq!(log.len(), 1, "exactly one npm invocation");
     let args = &log[0];
     assert!(args.contains("i -g"), "args: {args}");
-    assert!(args.contains("@innocarpe/deepseek-build@0.1.181"), "args: {args}");
+    assert!(
+        args.contains("@innocarpe/deepseek-build@0.1.181"),
+        "args: {args}"
+    );
 }
 
 #[tokio::test]

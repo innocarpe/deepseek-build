@@ -204,11 +204,7 @@ pub(crate) fn screen_mode_env_value(want_minimal: bool) -> &'static str {
 
 /// Pasteable shell command when auto re-exec fails (env + flag + `--resume`).
 pub(crate) fn screen_mode_relaunch_resume_hint(session_id: &str, want_minimal: bool) -> String {
-    screen_mode_relaunch_resume_hint_with(
-        &super::invocation_name(),
-        session_id,
-        want_minimal,
-    )
+    screen_mode_relaunch_resume_hint_with(&super::invocation_name(), session_id, want_minimal)
 }
 
 /// Pure variant of [`screen_mode_relaunch_resume_hint`] (env-free, testable).

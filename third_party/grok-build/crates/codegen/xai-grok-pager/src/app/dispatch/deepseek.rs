@@ -45,10 +45,7 @@ fn deepseek_poll_wanted(agent: &AgentView) -> bool {
 /// Fetch DeepSeek status after a turn (and on session init via the
 /// callers in lifecycle/load). No-op when the agent has confirmed it is
 /// not DeepSeek-backed or has no session id yet.
-pub(crate) fn maybe_refresh_deepseek_status(
-    app: &mut AppView,
-    agent_id: AgentId,
-) -> Vec<Effect> {
+pub(crate) fn maybe_refresh_deepseek_status(app: &mut AppView, agent_id: AgentId) -> Vec<Effect> {
     let Some(agent) = app.agents.get(&agent_id) else {
         return vec![];
     };
@@ -58,7 +55,10 @@ pub(crate) fn maybe_refresh_deepseek_status(
     let Some(session_id) = agent.session.session_id.clone() else {
         return vec![];
     };
-    vec![Effect::FetchDeepSeekStatus { agent_id, session_id }]
+    vec![Effect::FetchDeepSeekStatus {
+        agent_id,
+        session_id,
+    }]
 }
 
 /// Store a fresh DeepSeek status on the agent. Drops the result when the

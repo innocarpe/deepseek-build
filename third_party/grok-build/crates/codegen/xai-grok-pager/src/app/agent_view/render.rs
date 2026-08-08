@@ -1727,19 +1727,12 @@ impl AgentView {
             let mut x = layout.deepseek_status.x;
             for (i, chip) in chips.iter().enumerate() {
                 if i > 0 {
-                    let sep = Span::styled(
-                        "  ",
-                        Style::default().fg(theme.gray_dim).bg(theme.bg_base),
-                    );
+                    let sep =
+                        Span::styled("  ", Style::default().fg(theme.gray_dim).bg(theme.bg_base));
                     buf.set_span_safe(x, layout.deepseek_status.y, &sep, sep.width() as u16);
                     x += sep.width() as u16;
                 }
-                buf.set_span_safe(
-                    x,
-                    layout.deepseek_status.y,
-                    chip,
-                    chip.width() as u16,
-                );
+                buf.set_span_safe(x, layout.deepseek_status.y, chip, chip.width() as u16);
                 x += chip.width() as u16;
             }
         }

@@ -7811,7 +7811,10 @@ fn collapsed_edit_blocks_renders_under_appearance_category_shell_owned() {
 fn theme_picker_offers_the_product_default() {
     let reg = SettingsRegistry::defaults();
     let meta = reg.find("theme").expect("theme setting exists");
-    let SettingKind::Enum { default, choices, .. } = &meta.kind else {
+    let SettingKind::Enum {
+        default, choices, ..
+    } = &meta.kind
+    else {
         panic!("theme must be an enum setting");
     };
     assert_eq!(*default, "deepseeknight");
@@ -7830,7 +7833,10 @@ fn every_theme_default_is_present_in_its_own_choice_list() {
     let reg = SettingsRegistry::defaults();
     for key in ["theme", "auto_dark_theme", "auto_light_theme"] {
         let meta = reg.find(key).expect("setting exists");
-        let SettingKind::Enum { default, choices, .. } = &meta.kind else {
+        let SettingKind::Enum {
+            default, choices, ..
+        } = &meta.kind
+        else {
             panic!("{key} must be an enum setting");
         };
         assert!(

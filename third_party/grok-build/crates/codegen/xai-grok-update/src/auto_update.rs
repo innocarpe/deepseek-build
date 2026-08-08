@@ -97,7 +97,10 @@ pub fn print_update_status(status: &UpdateStatus, json: bool) -> anyhow::Result<
         return Ok(());
     }
 
-    println!("DeepSeek Build - v{}{}", status.current_version, channel_label);
+    println!(
+        "DeepSeek Build - v{}{}",
+        status.current_version, channel_label
+    );
     Ok(())
 }
 
@@ -3590,7 +3593,10 @@ mod tests {
             hint.contains("@innocarpe/deepseek-build"),
             "product reinstall should point at npm package: {hint}"
         );
-        assert!(hint.contains("npm i -g"), "should suggest npm install: {hint}");
+        assert!(
+            hint.contains("npm i -g"),
+            "should suggest npm install: {hint}"
+        );
     }
 
     #[test]

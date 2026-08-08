@@ -2,9 +2,7 @@
 //! and stale-session dropping.
 
 use super::*;
-use xai_grok_shell::extensions::deepseek::{
-    DeepSeekBalance, DeepSeekStatusResponse,
-};
+use xai_grok_shell::extensions::deepseek::{DeepSeekBalance, DeepSeekStatusResponse};
 use xai_grok_shell::extensions::notification::PromptUsage;
 
 /// Minimal DeepSeek status fixture.
@@ -96,15 +94,26 @@ fn complete_stores_status_on_agent() {
         .and_then(|a| a.deepseek_status.as_ref())
         .expect("status stored");
     assert!(stored.is_deepseek);
-    assert_eq!(stored.balance.as_ref().map(|b| b.currency.as_str()), Some("USD"));
+    assert_eq!(
+        stored.balance.as_ref().map(|b| b.currency.as_str()),
+        Some("USD")
+    );
 }
 
 #[test]
 fn complete_drops_stale_session_result() {
     let mut app = test_app_with_agent();
-    complete_deepseek(&mut app, "stale-session", ds_status(true, Some(usd_balance())));
+    complete_deepseek(
+        &mut app,
+        "stale-session",
+        ds_status(true, Some(usd_balance())),
+    );
     assert!(
-        app.agents.get(&AgentId(0)).unwrap().deepseek_status.is_none(),
+        app.agents
+            .get(&AgentId(0))
+            .unwrap()
+            .deepseek_status
+            .is_none(),
         "result for a different session must be dropped"
     );
 }
@@ -112,7 +121,11 @@ fn complete_drops_stale_session_result() {
 #[test]
 fn failed_is_silent_and_keeps_state() {
     let mut app = test_app_with_agent();
-    complete_deepseek(&mut app, "test-session", ds_status(true, Some(usd_balance())));
+    complete_deepseek(
+        &mut app,
+        "test-session",
+        ds_status(true, Some(usd_balance())),
+    );
     let effects = dispatch(
         Action::TaskComplete(TaskResult::DeepSeekStatusFailed {
             agent_id: AgentId(0),
@@ -122,7 +135,12 @@ fn failed_is_silent_and_keeps_state() {
         &mut app,
     );
     assert!(effects.is_empty(), "failure is silent: {effects:?}");
-    let stored = app.agents.get(&AgentId(0)).unwrap().deepseek_status.as_ref();
+    let stored = app
+        .agents
+        .get(&AgentId(0))
+        .unwrap()
+        .deepseek_status
+        .as_ref();
     assert!(
         stored.is_some_and(|s| s.is_deepseek),
         "previous status must survive a failed refresh"
@@ -156,7 +174,10 @@ fn unsupported_status_stops_only_matching_session() {
         }),
         &mut app,
     );
-    assert!(!app.deepseek_poll_wanted(), "unsupported capability is terminal");
+    assert!(
+        !app.deepseek_poll_wanted(),
+        "unsupported capability is terminal"
+    );
 
     let _ = dispatch(
         Action::TaskComplete(TaskResult::DeepSeekStatusFailed {
@@ -166,17 +187,16 @@ fn unsupported_status_stops_only_matching_session() {
         }),
         &mut app,
     );
-    assert!(!app.deepseek_poll_wanted(), "stale failure cannot reopen polling");
+    assert!(
+        !app.deepseek_poll_wanted(),
+        "stale failure cannot reopen polling"
+    );
 }
 
 #[test]
 fn stale_unsupported_failure_does_not_disable_new_session() {
     let mut app = test_app_with_agent();
-    app.agents
-        .get_mut(&AgentId(0))
-        .unwrap()
-        .session
-        .session_id = Some("new-session".into());
+    app.agents.get_mut(&AgentId(0)).unwrap().session.session_id = Some("new-session".into());
     let _ = dispatch(
         Action::TaskComplete(TaskResult::DeepSeekStatusFailed {
             agent_id: AgentId(0),
@@ -185,7 +205,10 @@ fn stale_unsupported_failure_does_not_disable_new_session() {
         }),
         &mut app,
     );
-    assert!(app.deepseek_poll_wanted(), "new session must retain first probe");
+    assert!(
+        app.deepseek_poll_wanted(),
+        "new session must retain first probe"
+    );
     assert_eq!(maybe_refresh_deepseek_status(&mut app, AgentId(0)).len(), 1);
 }
 

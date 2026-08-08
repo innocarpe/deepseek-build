@@ -17,9 +17,9 @@
 
 pub mod cache;
 pub mod color_support;
-pub mod env_appearance;
 mod deepseeknight;
 mod deepseeknight_v2;
+pub mod env_appearance;
 mod grokday;
 mod groknight;
 pub mod md_style;
@@ -732,8 +732,14 @@ mod tests {
             ThemeKind::from_name("deepseeknight-v2"),
             Some(ThemeKind::DeepSeekNightV2)
         );
-        assert_eq!(ThemeKind::from_name("dsb2"), Some(ThemeKind::DeepSeekNightV2));
-        assert_eq!(ThemeKind::DeepSeekNightV2.display_name(), "deepseeknight-v2");
+        assert_eq!(
+            ThemeKind::from_name("dsb2"),
+            Some(ThemeKind::DeepSeekNightV2)
+        );
+        assert_eq!(
+            ThemeKind::DeepSeekNightV2.display_name(),
+            "deepseeknight-v2"
+        );
         assert_eq!(
             ThemeKind::from_name(ThemeKind::DeepSeekNightV2.display_name()),
             Some(ThemeKind::DeepSeekNightV2)
@@ -818,7 +824,6 @@ mod tests {
             );
         }
     }
-
 
     #[test]
     fn from_name_auto() {
@@ -1354,10 +1359,7 @@ mod tests {
             ThemeKind::from_name("deepseeknight"),
             Some(ThemeKind::DeepSeekNight)
         );
-        assert_eq!(
-            ThemeKind::from_name("dsb"),
-            Some(ThemeKind::DeepSeekNight)
-        );
+        assert_eq!(ThemeKind::from_name("dsb"), Some(ThemeKind::DeepSeekNight));
         assert_eq!(
             ThemeKind::from_name("deepseeknight-neutral"),
             Some(ThemeKind::DeepSeekNightNeutral)

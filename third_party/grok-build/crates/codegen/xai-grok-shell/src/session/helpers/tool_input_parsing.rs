@@ -64,7 +64,8 @@ pub fn repair_tool_arguments_one_pass(raw: &str) -> Spec15RepairOutcome {
     let mut current = normalize_empty_arguments(raw).trim().to_string();
 
     // Unwrap JSON string containing object once.
-    if let Ok(serde_json::Value::String(inner)) = serde_json::from_str::<serde_json::Value>(&current)
+    if let Ok(serde_json::Value::String(inner)) =
+        serde_json::from_str::<serde_json::Value>(&current)
     {
         let inner_trim = inner.trim();
         if inner_trim.starts_with('{') || inner_trim.starts_with('[') {

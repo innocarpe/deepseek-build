@@ -117,9 +117,17 @@ impl Theme {
     const fn deepseeknight_inner(neutral: bool) -> Self {
         Self {
             bg_base: if neutral { BG_STORM_N } else { BG_STORM },
-            bg_light: if neutral { BG_HIGHLIGHT_N } else { BG_HIGHLIGHT },
+            bg_light: if neutral {
+                BG_HIGHLIGHT_N
+            } else {
+                BG_HIGHLIGHT
+            },
             bg_dark: if neutral { BG_SURFACE_N } else { BG_SURFACE },
-            bg_highlight: if neutral { BG_HIGHLIGHT_N } else { BG_HIGHLIGHT },
+            bg_highlight: if neutral {
+                BG_HIGHLIGHT_N
+            } else {
+                BG_HIGHLIGHT
+            },
             bg_hover: if neutral { BG_HOVER_N } else { BG_HOVER },
             bg_terminal: if neutral { BG_N } else { BG },
 
@@ -152,14 +160,30 @@ impl Theme {
             accent_remember: Color::Rgb(139, 195, 74),
 
             selection_border: DEEPSEEK_BLUE_DIM,
-            hover_border: if neutral { HOVER_BORDER_N } else { HOVER_BORDER },
-            prompt_border: if neutral { PROMPT_BORDER_N } else { PROMPT_BORDER },
+            hover_border: if neutral {
+                HOVER_BORDER_N
+            } else {
+                HOVER_BORDER
+            },
+            prompt_border: if neutral {
+                PROMPT_BORDER_N
+            } else {
+                PROMPT_BORDER
+            },
             prompt_border_active: DEEPSEEK_BLUE,
 
             accent_model: TEAL,
 
-            scrollbar_bg: if neutral { BG_STORM_DARK_N } else { BG_STORM_DARK },
-            scrollbar_fg: if neutral { BG_HIGHLIGHT_N } else { BG_HIGHLIGHT },
+            scrollbar_bg: if neutral {
+                BG_STORM_DARK_N
+            } else {
+                BG_STORM_DARK
+            },
+            scrollbar_fg: if neutral {
+                BG_HIGHLIGHT_N
+            } else {
+                BG_HIGHLIGHT
+            },
 
             diff_delete_bg: RED_DARK,
             diff_delete_fg: RED,
@@ -170,7 +194,11 @@ impl Theme {
 
             bg_visual: if neutral { BG_VISUAL_N } else { BG_VISUAL },
 
-            paste_bg: if neutral { BG_STORM_DARK_N } else { BG_STORM_DARK },
+            paste_bg: if neutral {
+                BG_STORM_DARK_N
+            } else {
+                BG_STORM_DARK
+            },
             paste_fg: if neutral { FG_DARK_N } else { FG_DARK },
             paste_dim: if neutral { FG_GUTTER_N } else { FG_GUTTER },
 

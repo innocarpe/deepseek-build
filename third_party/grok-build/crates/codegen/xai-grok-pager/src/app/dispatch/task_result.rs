@@ -14,9 +14,7 @@ use super::cta::{
     handle_plugin_cta_mcps_loaded,
 };
 use super::ctx::{find_agent_by_session_id, get_active_agent_mut};
-use super::deepseek::{
-    handle_deepseek_status_complete, handle_deepseek_status_failed,
-};
+use super::deepseek::{handle_deepseek_status_complete, handle_deepseek_status_failed};
 use super::notes::{handle_btw_response, handle_memory_note_saved};
 use super::prompt::{
     defer_to_open_reload_window, handle_compact_complete, handle_prompt_response,

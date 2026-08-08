@@ -3093,7 +3093,10 @@ mod tests {
             let MessageContent::Text(text) = &msg.content else {
                 panic!("expected text content, got {:?}", msg.content);
             };
-            assert!(!text.contains("image_url"), "wire must not carry image_url: {text}");
+            assert!(
+                !text.contains("image_url"),
+                "wire must not carry image_url: {text}"
+            );
         }
         assert!(messages[0].content.blocks().len() == 1);
         assert!(matches!(

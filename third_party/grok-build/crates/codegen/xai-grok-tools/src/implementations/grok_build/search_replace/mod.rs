@@ -1823,7 +1823,7 @@ mod tests {
         let body = "hello world\n";
         let path = tmp.path().join("f.txt");
         std::fs::write(&path, body).unwrap();
-        let abs = std::fs::canonicalize(&path).unwrap_or(path.clone());
+        let abs = dunce::canonicalize(&path).unwrap_or(path.clone());
         let tool = SearchReplaceTool;
         let mut resources = test_resources(tmp.path());
         resources.insert(Params(SearchReplaceParams {
@@ -1851,7 +1851,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("f.txt");
         std::fs::write(&path, "hello world\n").unwrap();
-        let abs = std::fs::canonicalize(&path).unwrap_or(path.clone());
+        let abs = dunce::canonicalize(&path).unwrap_or(path.clone());
         let tool = SearchReplaceTool;
         let mut resources = test_resources(tmp.path());
         resources.insert(Params(SearchReplaceParams {
@@ -1884,7 +1884,7 @@ mod tests {
         let body = "alpha\nbeta\nalpha\n";
         let path = tmp.path().join("a.txt");
         std::fs::write(&path, body).unwrap();
-        let abs = std::fs::canonicalize(&path).unwrap_or(path.clone());
+        let abs = dunce::canonicalize(&path).unwrap_or(path.clone());
         let tool = SearchReplaceTool;
         let mut resources = test_resources(tmp.path());
         resources.insert(Params(SearchReplaceParams {
@@ -1991,7 +1991,7 @@ mod tests {
         let b = tmp.path().join("b.txt");
         std::fs::write(&a, "hello\n").unwrap();
         std::fs::write(&b, "hello\n").unwrap();
-        let abs_a = std::fs::canonicalize(&a).unwrap_or(a.clone());
+        let abs_a = dunce::canonicalize(&a).unwrap_or(a.clone());
         let tool = SearchReplaceTool;
         let mut resources = test_resources(tmp.path());
         resources.insert(Params(SearchReplaceParams {
@@ -2020,7 +2020,7 @@ mod tests {
         let body = "hello world\n";
         let path = tmp.path().join("f.txt");
         std::fs::write(&path, body).unwrap();
-        let abs = std::fs::canonicalize(&path).unwrap_or(path.clone());
+        let abs = dunce::canonicalize(&path).unwrap_or(path.clone());
         let tool = SearchReplaceTool;
         let mut resources = test_resources(tmp.path());
         resources.insert(Params(SearchReplaceParams {
@@ -2049,7 +2049,7 @@ mod tests {
         let body = "hello\n";
         let path = tmp.path().join("f.txt");
         std::fs::write(&path, body).unwrap();
-        let abs = std::fs::canonicalize(&path).unwrap_or(path.clone());
+        let abs = dunce::canonicalize(&path).unwrap_or(path.clone());
         let tool = SearchReplaceTool;
         let mut resources_a = test_resources(tmp.path());
         resources_a.insert(Params(SearchReplaceParams {
@@ -2111,7 +2111,7 @@ mod tests {
         let body = "alpha\nbeta\nalpha\n";
         let path = tmp.path().join("a.txt");
         std::fs::write(&path, body).unwrap();
-        let abs = std::fs::canonicalize(&path).unwrap_or(path.clone());
+        let abs = dunce::canonicalize(&path).unwrap_or(path.clone());
         let tool = SearchReplaceTool;
         let mut resources = test_resources(tmp.path());
         resources.insert(Params(SearchReplaceParams {
@@ -2141,7 +2141,7 @@ mod tests {
         let body = "hello world\n";
         let path = tmp.path().join("a.txt");
         std::fs::write(&path, body).unwrap();
-        let abs = std::fs::canonicalize(&path).unwrap_or(path.clone());
+        let abs = dunce::canonicalize(&path).unwrap_or(path.clone());
         let tool = SearchReplaceTool;
         let mut resources = test_resources(tmp.path());
         resources.insert(Params(SearchReplaceParams {
@@ -2195,8 +2195,8 @@ mod tests {
         let path_b = tmp.path().join("b.txt");
         std::fs::write(&path_a, body_a).unwrap();
         std::fs::write(&path_b, body_b).unwrap();
-        let abs_a = std::fs::canonicalize(&path_a).unwrap_or(path_a.clone());
-        let abs_b = std::fs::canonicalize(&path_b).unwrap_or(path_b.clone());
+        let abs_a = dunce::canonicalize(&path_a).unwrap_or(path_a.clone());
+        let abs_b = dunce::canonicalize(&path_b).unwrap_or(path_b.clone());
         let tool = SearchReplaceTool;
         let mut resources = test_resources(tmp.path());
         resources.insert(Params(SearchReplaceParams {
@@ -2224,7 +2224,7 @@ mod tests {
         let original = "keep-me\n";
         let path = tmp.path().join("existing.txt");
         std::fs::write(&path, original).unwrap();
-        let abs = std::fs::canonicalize(&path).unwrap_or(path.clone());
+        let abs = dunce::canonicalize(&path).unwrap_or(path.clone());
         let tool = SearchReplaceTool;
         let mut resources = test_resources(tmp.path());
         resources.insert(Params(SearchReplaceParams {
@@ -2287,7 +2287,7 @@ mod tests {
         let original = "old\n";
         let path = tmp.path().join("forced.txt");
         std::fs::write(&path, original).unwrap();
-        let abs = std::fs::canonicalize(&path).unwrap_or(path.clone());
+        let abs = dunce::canonicalize(&path).unwrap_or(path.clone());
         let tool = SearchReplaceTool;
         let mut resources = test_resources(tmp.path());
         resources.insert(Params(SearchReplaceParams {
@@ -2347,7 +2347,7 @@ mod tests {
         let body = "x\n";
         let path = tmp.path().join("s.txt");
         std::fs::write(&path, body).unwrap();
-        let abs = std::fs::canonicalize(&path).unwrap_or(path.clone());
+        let abs = dunce::canonicalize(&path).unwrap_or(path.clone());
         let tool = SearchReplaceTool;
 
         let mut resources_a = test_resources(tmp.path());

@@ -33,7 +33,7 @@
 </div>
 
 <p align="center">
-  <img src="assets/deepseek-build-welcome.png" alt="DeepSeek Build welcome screen — the full-screen DeepSeek agent TUI opened by dsb" width="85%">
+  <img src="assets/dsb-welcome.jpg" alt="DeepSeek Build welcome screen — the full-screen DeepSeek agent TUI opened by dsb" width="85%">
 </p>
 
 ## Quick start

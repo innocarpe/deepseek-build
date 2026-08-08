@@ -33,7 +33,7 @@
 </div>
 
 <p align="center">
-  <img src="assets/deepseek-build-welcome.png" alt="DeepSeek Build 欢迎界面——由 dsb 打开的全屏 DeepSeek 代理 TUI" width="85%">
+  <img src="assets/dsb-welcome.jpg" alt="DeepSeek Build 欢迎界面——由 dsb 打开的全屏 DeepSeek 代理 TUI" width="85%">
 </p>
 
 ## 快速开始

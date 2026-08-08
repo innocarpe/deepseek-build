@@ -28,9 +28,10 @@ Primary answer to: *why does work finish so fast?*
 ## 0.2.121 sync record (non-binding)
 
 This note records the source-refresh evidence and adoption decisions; it is
-research, not a product policy. The integration preserves the already-shipped
-DSB product version at full SemVer `5.2.1` on `main`; this vendor PR does not
-change the product version.
+research, not a product policy. The integration was reviewed while DSB
+`main` carried full SemVer `5.2.1`, and it now targets the current `main`
+release line at full SemVer `5.2.2`; this vendor PR does not change the
+product SemVer.
 
 | Source identity | Open sync | `SOURCE_REV` | Source version |
 | --- | --- | --- | --- |

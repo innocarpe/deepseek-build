@@ -41,8 +41,8 @@
 > **`5.5.0`** is the vision-complete freeze — Deep Code (L1), Reasonix (L2),
 > and Grok throughput (L3) closed on Path A. The
 > [`5.0.0` cut](docs/product/evidence/CUT_5_0_0_2026-08-07.md) passed the Path A
-> ledger and independent reviews; `main` is at `5.5.0` and the release lane
-> publishes it as the current version. Earlier `3.x` and `4.x` tags are
+> ledger and independent reviews. **npm and GitHub Latest ship `5.5.0`.**
+> Earlier `3.x` and `4.x` tags are
 > documented as partial attempts in the [version history](docs/product/versions/README.md).
 
 ## Quick start

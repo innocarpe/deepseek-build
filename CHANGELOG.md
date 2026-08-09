@@ -8,6 +8,10 @@
   content and a version change always recompiles. The release workflow now
   also verifies the extracted tarball's agent `--version` before upload.
 
+## 5.5.3 — 2026-08-09
+
+- fix compiled version injection (sccache-proof) and gate shipped tarball
+
 ## 5.5.2 — 2026-08-09
 
 - Complete the Grok Build `1.0.0` port follow-up with strict workspace

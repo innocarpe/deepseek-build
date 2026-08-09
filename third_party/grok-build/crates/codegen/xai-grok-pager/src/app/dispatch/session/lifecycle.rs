@@ -1107,6 +1107,7 @@ pub(in crate::app::dispatch) fn handle_session_created(
         effects.push(Effect::FetchBilling {
             agent_id,
             silent: true,
+            nonce: 0,
         });
         effects.push(Effect::FetchDeepSeekStatus {
             agent_id,
@@ -1214,6 +1215,7 @@ pub(in crate::app::dispatch) fn handle_worktree_session_created(
         effects.push(Effect::FetchBilling {
             agent_id,
             silent: true,
+            nonce: 0,
         });
         effects.push(Effect::FetchDeepSeekStatus {
             agent_id,

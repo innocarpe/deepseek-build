@@ -134,7 +134,8 @@ pub(super) async fn bootstrap_with_lease(
     storage: &dyn StorageAdapter,
     progress: &Arc<BootstrapProgress>,
 ) -> io::Result<BootstrapOutcome> {
-    bootstrap_with_lease_inner(root_dir, storage, progress, &TIMING, BootstrapRole::Launch).await
+    bootstrap_with_lease_inner(root_dir, storage, progress, &TIMING, BootstrapRole::Launch, None)
+        .await
 }
 
 /// Single claim attempt: rebuilds when the lease is free and no completed
@@ -146,7 +147,8 @@ pub(super) async fn try_bootstrap_with_lease(
     storage: &dyn StorageAdapter,
     progress: &Arc<BootstrapProgress>,
 ) -> io::Result<BootstrapOutcome> {
-    bootstrap_with_lease_inner(root_dir, storage, progress, &TIMING, BootstrapRole::Recheck).await
+    bootstrap_with_lease_inner(root_dir, storage, progress, &TIMING, BootstrapRole::Recheck, None)
+        .await
 }
 
 /// What the caller owes after the gate returns.
@@ -172,6 +174,7 @@ async fn bootstrap_with_lease_inner(
     progress: &Arc<BootstrapProgress>,
     timing: &BootstrapTiming,
     role: BootstrapRole,
+    first_claim_attempt_barrier: Option<&tokio::sync::Barrier>,
 ) -> io::Result<BootstrapOutcome> {
     let db_path = search_db_path(root_dir);
     let token = ClaimToken::new();
@@ -182,6 +185,7 @@ async fn bootstrap_with_lease_inner(
     };
     let deadline = started + peer_wait;
     let mut peer_seen = false;
+    let mut passed_first_claim_attempt_barrier = false;
     loop {
         // Skipped on the first iteration so a launch always reindexes.
         if peer_seen && has_completed_bootstrap_marker(root_dir).await == Some(true) {
@@ -192,7 +196,18 @@ async fn bootstrap_with_lease_inner(
             return Ok(BootstrapOutcome::Done);
         }
 
-        if claim_bootstrap_lease(&db_path, &token, timing.lease).await? {
+        let claimed = claim_bootstrap_lease(&db_path, &token, timing.lease).await?;
+        // Tests can rendezvous immediately after the atomic attempt so one
+        // claimant deterministically holds the lease while its peer observes
+        // contention. Production callers always pass `None`.
+        if !passed_first_claim_attempt_barrier {
+            passed_first_claim_attempt_barrier = true;
+            if let Some(barrier) = first_claim_attempt_barrier {
+                barrier.wait().await;
+            }
+        }
+
+        if claimed {
             // Only a launch's first claim ignores an existing marker (the
             // launch owes pruning and skipped retries); everyone else
             // adopts any completed marker.

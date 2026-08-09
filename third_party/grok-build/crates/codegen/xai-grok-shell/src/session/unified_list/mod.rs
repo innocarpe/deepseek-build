@@ -941,11 +941,11 @@ mod tests {
             );
         }
     }
-    /// `parse_list_req` forces the conversations-only `kind` exactly when
-    /// process chat mode is on; otherwise the client request is untouched.
+    /// This product hard-disables process chat mode, so even an inherited
+    /// environment variable must leave the client's `kind` filter untouched.
     #[test]
     #[serial_test::serial]
-    fn parse_list_req_forces_kind_under_process_chat_mode_only() {
+    fn parse_list_req_preserves_kind_when_process_chat_mode_is_disabled() {
         use crate::agent::chat_modes::GROK_CHAT_MODE_ENV;
         let raw = serde_json::json!({
             "_meta": { "x.ai/facetFilters": { "kind": ["build"], "starred": [true] } },
@@ -969,7 +969,7 @@ mod tests {
             assert_eq!(
                 parsed.facet_filters.get(KIND_FACET_KEY),
                 Some(&expected_build),
-                "client kind=build under process chat mode"
+                "hard-disabled process chat mode preserves client kind=build"
             );
             assert_eq!(
                 parsed.facet_filters.get("starred"),
@@ -978,23 +978,31 @@ mod tests {
             );
             let req = parse_list_req("{}").expect("parse");
             let parsed = ParsedMeta::parse(req.meta.as_ref());
-            let expected = None;
             assert_eq!(
                 parsed.facet_filters.get(KIND_FACET_KEY),
-                expected,
-                "absent client kind still forces chat under process chat mode"
+                None,
+                "absent client kind remains absent when process chat mode is hard-disabled"
             );
-            for bad in [
-                serde_json::json!({ "_meta": { "x.ai/facetFilters": { "kind": [] } } }),
-                serde_json::json!({ "_meta": { "x.ai/facetFilters": { "kind": null } } }),
-                serde_json::json!({ "_meta": { "x.ai/facetFilters": { "kind": ["other"] } } }),
+            for (bad, expected) in [
+                (
+                    serde_json::json!({ "_meta": { "x.ai/facetFilters": { "kind": [] } } }),
+                    Vec::new(),
+                ),
+                (
+                    serde_json::json!({ "_meta": { "x.ai/facetFilters": { "kind": null } } }),
+                    vec![serde_json::json!(null)],
+                ),
+                (
+                    serde_json::json!({ "_meta": { "x.ai/facetFilters": { "kind": ["other"] } } }),
+                    vec![serde_json::json!("other")],
+                ),
             ] {
                 let req = parse_list_req(&bad.to_string()).expect("parse");
                 let parsed = ParsedMeta::parse(req.meta.as_ref());
                 assert_eq!(
                     parsed.facet_filters.get(KIND_FACET_KEY),
-                    expected,
-                    "empty/null/unknown kind must still force chat: {bad}"
+                    Some(&expected),
+                    "hard-disabled process chat mode must preserve client kind: {bad}"
                 );
             }
         }

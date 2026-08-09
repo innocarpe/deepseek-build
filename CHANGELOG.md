@@ -2,11 +2,14 @@
 
 ## Unreleased
 
-- Fix the TUI update banner advertising Grok Build's version (e.g. `v1.0.0`)
-  as an available update for DeepSeek Build (`5.5.0`). Update checks now
-  always consult the product npm feed (`@innocarpe/deepseek-build`), never the
-  upstream Grok x.ai channel pointers, npm installs are classified as npm, and
-  the product never auto-downgrades for any installer classification.
+## 5.5.2 — 2026-08-09
+
+- Complete the Grok Build `1.0.0` port follow-up with strict workspace
+  formatting and lint compatibility, platform-safe path handling, and stable
+  lifecycle, terminal-rendering, and update-check regression coverage.
+- Keep pull-request Rust caches branch-scoped while allowing successful PR
+  runs to save them, reducing repeated vendor validation time without sharing
+  mutable cache entries across pull requests.
 - Release hardening: stop the pager's version-transition cleanup from deleting
   the seeded `$GROK_HOME/CHANGELOG.md` (the welcome-screen CHANGELOG click
   silently no-oped after a version bump); make the compiled product version
@@ -21,7 +24,7 @@
   xAI." — the vendored prompt template drops the hardcoded vendor claim, its
   encrypted copy is regenerated, and the config overlay stamps
   `system_prompt_label = "DeepSeek Build"` on every DeepSeek model stanza;
-  leftover Grok fork references in existing configs are scrubbed on launch
+  leftover Grok fork references in existing configs are scrubbed on launch.
 
 ## 5.5.1 — 2026-08-09
 

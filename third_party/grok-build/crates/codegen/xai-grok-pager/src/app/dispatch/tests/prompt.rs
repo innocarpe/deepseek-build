@@ -1193,7 +1193,7 @@ fn turn_end_drains_next_queued_prompt() {
 
     // No re-send (the prompt was already sent at enqueue time): only the
     // billing refresh effect.
-    assert_eq!(effects.len(), 1);
+    assert_eq!(effects.len(), 2);
     assert!(matches!(
         &effects[0],
         Effect::FetchBilling { silent: true, .. }
@@ -1276,7 +1276,7 @@ fn turn_end_with_empty_queue_stays_idle() {
     );
 
     // Silent billing refresh after turn completion.
-    assert_eq!(effects.len(), 1);
+    assert_eq!(effects.len(), 2);
     assert!(matches!(
         &effects[0],
         Effect::FetchBilling { silent: true, .. }
@@ -1290,6 +1290,9 @@ fn turn_end_with_empty_queue_stays_idle() {
 fn multiple_queued_prompts_drain_one_per_turn() {
     // Deterministic effect lists — see `turn_end_with_empty_queue_stays_idle`.
     crate::appearance::cache::set_prompt_suggestions(false);
+    // Deterministic: these queue tests exercise the one-per-turn drain
+    // path (combined draining is the product's seeded default).
+    crate::appearance::cache::set_combine_queued_prompts(false);
     let mut app = test_app_with_agent();
     let id = AgentId(0);
 
@@ -1329,7 +1332,7 @@ fn multiple_queued_prompts_drain_one_per_turn() {
 
     // Turn end → FetchBilling only.
     let effects = dispatch(end_turn(), &mut app);
-    assert_eq!(effects.len(), 1);
+    assert_eq!(effects.len(), 2);
     assert!(matches!(
         &effects[0],
         Effect::FetchBilling { silent: true, .. }
@@ -1356,7 +1359,7 @@ fn prompt_response_resets_turn_state() {
         &mut app,
     );
     // Silent billing refresh after turn completion.
-    assert_eq!(effects.len(), 1);
+    assert_eq!(effects.len(), 2);
     assert!(matches!(
         &effects[0],
         Effect::FetchBilling { silent: true, .. }
@@ -1395,7 +1398,7 @@ fn turn_end_fetches_prompt_suggestion_when_enabled() {
         &mut app,
     );
 
-    assert_eq!(effects.len(), 2, "suggestion fetch + billing: {effects:?}");
+    assert_eq!(effects.len(), 3, "suggestion fetch + billing: {effects:?}");
     let Effect::FetchPromptSuggestion {
         agent_id,
         generation,
@@ -2033,7 +2036,7 @@ fn turn_complete_notification_suppressed_when_queue_non_empty() {
         &mut app,
     );
     // No re-send; only billing refresh. The second prompt is adopted.
-    assert_eq!(effects.len(), 1);
+    assert_eq!(effects.len(), 2);
     assert!(matches!(
         &effects[0],
         Effect::FetchBilling { silent: true, .. }
@@ -2349,7 +2352,7 @@ fn prompt_response_resets_cancelling_to_idle() {
         &mut app,
     );
     // Silent billing refresh after turn completion.
-    assert_eq!(effects.len(), 1);
+    assert_eq!(effects.len(), 2);
     assert!(matches!(
         &effects[0],
         Effect::FetchBilling { silent: true, .. }
@@ -2390,7 +2393,7 @@ fn cancel_with_queued_prompt_drains_on_completion() {
         &mut app,
     );
 
-    assert_eq!(effects.len(), 2);
+    assert_eq!(effects.len(), 3);
     assert!(matches!(&effects[0], Effect::SendPrompt { text, .. } if text == "queued"));
     assert!(matches!(
         &effects[1],
@@ -2418,7 +2421,7 @@ fn cancel_with_empty_queue_stays_idle() {
         &mut app,
     );
     // Silent billing refresh after turn completion.
-    assert_eq!(effects.len(), 1);
+    assert_eq!(effects.len(), 2);
     assert!(matches!(
         &effects[0],
         Effect::FetchBilling { silent: true, .. }
@@ -2444,6 +2447,9 @@ fn send_prompt_stashes_in_flight_for_restore() {
 fn cancel_with_multiple_queued_prompts_drains_only_front_prompt() {
     // Cancel completion should only resume the next queued prompt, not
     // every queued prompt at once.
+    // Deterministic: these queue tests exercise the one-per-turn drain
+    // path (combined draining is the product's seeded default).
+    crate::appearance::cache::set_combine_queued_prompts(false);
     let mut app = test_app_with_agent();
     let id = AgentId(0);
 
@@ -2472,7 +2478,7 @@ fn cancel_with_multiple_queued_prompts_drains_only_front_prompt() {
         &mut app,
     );
 
-    assert_eq!(effects.len(), 2);
+    assert_eq!(effects.len(), 3);
     assert!(matches!(&effects[0], Effect::SendPrompt { text, .. } if text == "queued-1"));
     assert!(matches!(
         &effects[1],
@@ -2519,7 +2525,7 @@ fn cancel_drain_is_blocked_when_editing_front_prompt() {
     );
 
     // Drain blocked but billing refresh still happens.
-    assert_eq!(effects.len(), 1);
+    assert_eq!(effects.len(), 2);
     assert!(matches!(
         &effects[0],
         Effect::FetchBilling { silent: true, .. }

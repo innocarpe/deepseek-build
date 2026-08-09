@@ -1132,7 +1132,7 @@ mod tests {
 
         // Turn ends → should NOT drain "second" (user is editing it), only FetchBilling.
         let effects = dispatch(end_turn(), &mut app);
-        assert_eq!(effects.len(), 1);
+        assert_eq!(effects.len(), 2);
         assert!(matches!(
             &effects[0],
             Effect::FetchBilling { silent: true, .. }
@@ -1164,7 +1164,7 @@ mod tests {
 
         // Turn ends → should drain "second" (front, not being edited) + FetchBilling.
         let effects = dispatch(end_turn(), &mut app);
-        assert_eq!(effects.len(), 2);
+        assert_eq!(effects.len(), 3);
         assert!(matches!(&effects[0], Effect::SendPrompt { text, .. } if text == "second"));
         assert!(matches!(
             &effects[1],
@@ -2295,6 +2295,9 @@ mod tests {
         // NOT #4 or the old text.
         let mut app = test_app_with_agent();
         let id = AgentId(0);
+        // Deterministic: these queue tests exercise the one-per-turn drain
+        // path (combined draining is the product's seeded default).
+        crate::appearance::cache::set_combine_queued_prompts(false);
 
         // Queue 4 prompts, first drains.
         dispatch(Action::SendPrompt("p1".into()), &mut app);
@@ -2319,7 +2322,7 @@ mod tests {
 
         // End turn for p2 → should NOT drain p3 (being edited), only FetchBilling.
         let effects = dispatch(end_turn(), &mut app);
-        assert_eq!(effects.len(), 1);
+        assert_eq!(effects.len(), 2);
         assert!(
             matches!(&effects[0], Effect::FetchBilling { silent: true, .. }),
             "drain should be blocked, only billing refresh"

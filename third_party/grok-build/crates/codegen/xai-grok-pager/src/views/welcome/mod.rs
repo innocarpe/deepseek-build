@@ -3767,7 +3767,8 @@ mod tests {
         // A real announcement can't disable the hero box: the slot is clamped to
         // whatever still fits (the renderer trails a `…`), so the box stays
         // active rather than falling back to the stacked layout.
-        let area = Rect::new(0, 0, 100, 17);
+        // Height 18 = min_content_height for the DeepSeek whale logo (8 rows).
+        let area = Rect::new(0, 0, 100, 18);
         let a = long_ann();
         let without = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,

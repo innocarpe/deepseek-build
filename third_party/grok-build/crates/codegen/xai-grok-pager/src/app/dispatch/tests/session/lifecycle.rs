@@ -136,7 +136,7 @@ fn session_created_sets_session_id() {
         }),
         &mut app,
     );
-    assert_eq!(effects.len(), 7);
+    assert_eq!(effects.len(), 8);
     assert!(matches!(
         &effects[0],
         Effect::FetchPromptHistory { session_id, .. } if session_id == "new-session-123"
@@ -155,7 +155,8 @@ fn session_created_sets_session_id() {
         &effects[5],
         Effect::FetchBilling { silent: true, .. }
     ));
-    assert!(matches!(&effects[6], Effect::RegisterActiveSession { .. }));
+    assert!(matches!(effects[6], Effect::FetchDeepSeekStatus { .. }));
+    assert!(matches!(&effects[7], Effect::RegisterActiveSession { .. }));
     assert_eq!(
         app.agents[&id]
             .session

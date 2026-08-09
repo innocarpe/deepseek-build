@@ -1,6 +1,6 @@
-From dd5a8d1365765e4ae32b850a1a33154a235e4d35 Mon Sep 17 00:00:00 2001
+From de63e71f0eb4f29bd2a63044919ae62b40bfb43a Mon Sep 17 00:00:00 2001
 From: Wooseong Kim <innocarpe@gmail.com>
-Date: Fri, 7 Aug 2026 23:12:00 +0900
+Date: Sun, 9 Aug 2026 21:12:54 +0900
 Subject: [PATCH 6/6] test(shell): cover large MCP image persistence and resume
 
 Exercise a large MCP screenshot through ToolOutput serialization, the
@@ -8,19 +8,18 @@ text-only DeepSeek wire split, multimodal retention, and JSONL resume
 validation.  Valid assets survive persistence while a genuinely truncated
 data URI is removed, so the regression does not rely on the upstream
 changelog's unisolated screenshot claim.
-
 ---
- .../xai-grok-shell/src/session/acp_session_impl/tool_layer_images.rs | 77 ++++++++++++++++++++
- 1 file changed, 77 insertions(+)
+ .../acp_session_impl/tool_layer_images.rs     | 84 +++++++++++++++++++
+ 1 file changed, 84 insertions(+)
 
 diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_layer_images.rs b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_layer_images.rs
-index 7b5d1edb..dd5a8d13 100644
+index 96ffba1c..c90c8323 100644
 --- a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_layer_images.rs
 +++ b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_layer_images.rs
-@@ -291,4 +291,81 @@ mod tests {
-         assert_eq!(vision[0].mime_type, "image/png");
+@@ -302,5 +302,89 @@ mod tests {
          assert_eq!(vision[0].data, "existing");
      }
+-
 +
 +    /// Regression for the large-MCP-image path: preserve the extracted payload
 +    /// through hub serialization, keep it off a text-only DeepSeek wire, and
@@ -43,10 +42,17 @@ index 7b5d1edb..dd5a8d13 100644
 +        });
 +        let mut bytes = Vec::new();
 +        source
-+            .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
++            .write_to(
++                &mut std::io::Cursor::new(&mut bytes),
++                image::ImageFormat::Png,
++            )
 +            .expect("encode screenshot fixture");
 +        let payload = base64::engine::general_purpose::STANDARD.encode(bytes);
-+        assert!(payload.len() > 100_000, "fixture must exercise a large result");
++        assert!(
++            payload.len() > 100_000,
++            "fixture must exercise a large result"
++        );
+-
 +
 +        let mut mcp = MCPOutput::okay_output(
 +            "browser_screenshot".into(),
@@ -84,7 +90,10 @@ index 7b5d1edb..dd5a8d13 100644
 +        ])];
 +        let encoded_history = serde_json::to_string(&persisted).unwrap();
 +        let mut resumed: Vec<ConversationItem> = serde_json::from_str(&encoded_history).unwrap();
-+        assert_eq!(crate::session::storage::jsonl::strip_invalid_images(&mut resumed), 0);
++        assert_eq!(
++            crate::session::storage::jsonl::strip_invalid_images(&mut resumed),
++            0
++        );
 +
 +        let truncated_url = format!("data:image/png;base64,{}", &payload[..payload.len() / 2]);
 +        let mut poisoned = vec![ConversationItem::user_with_parts(vec![
@@ -99,5 +108,3 @@ index 7b5d1edb..dd5a8d13 100644
 +        );
 +    }
  }
---
-2.50.1 (Apple Git-155)

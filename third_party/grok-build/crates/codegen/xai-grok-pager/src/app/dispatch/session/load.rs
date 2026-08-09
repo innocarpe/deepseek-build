@@ -171,7 +171,10 @@ fn dispatch_load_session_ungated(
             state: AgentState::Idle,
             tracker: AcpUpdateTracker::new(),
             cwd: session_cwd.clone().unwrap_or_else(|| app.cwd.clone()),
-            is_worktree: false,
+            is_worktree: crate::app::session_startup::parent_session_is_worktree(
+                &session_id,
+                session_cwd.as_deref().unwrap_or(app.cwd.as_path()),
+            ),
             forked_from: None,
             pending_prompts: std::collections::VecDeque::new(),
             next_queue_id: 0,
@@ -937,7 +940,10 @@ pub(in crate::app::dispatch) fn dispatch_load_session_with_restore(
             state: AgentState::Idle,
             tracker: AcpUpdateTracker::new(),
             cwd: app.cwd.clone(),
-            is_worktree: false,
+            is_worktree: crate::app::session_startup::parent_session_is_worktree(
+                &session_id,
+                &app.cwd,
+            ),
             forked_from: None,
             pending_prompts: std::collections::VecDeque::new(),
             next_queue_id: 0,
@@ -1051,6 +1057,7 @@ pub(in crate::app::dispatch) fn handle_session_loaded(
         agent.scheduler_background_loops = scheduler_background_loops;
         agent.scrollback.end_batch();
         agent.session.loading_replay = false;
+        agent.arm_late_replay_grace();
         agent.session.restore_degree = restore_degree;
         agent.session.finish_turn(&mut agent.scrollback);
         agent.mark_turn_finished();

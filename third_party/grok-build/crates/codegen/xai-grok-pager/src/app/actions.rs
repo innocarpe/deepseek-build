@@ -2193,6 +2193,20 @@ pub enum DoctorPlanningOutcome {
 /// Result from a completed async [`Effect`].
 ///
 /// Wrapped in `Action::TaskComplete` and dispatched synchronously.
+impl TaskResult {
+    /// True for results that deliver the first usable session. A quit
+    /// before dispatch abandons instead of recording; accepted so the
+    /// token stays single-owner.
+    pub fn ends_startup(&self) -> bool {
+        matches!(
+            self,
+            TaskResult::SessionCreated { .. }
+                | TaskResult::SessionLoaded { .. }
+                | TaskResult::WorktreeSessionCreated { .. }
+                | TaskResult::WorktreeForked { .. }
+        )
+    }
+}
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum TaskResult {

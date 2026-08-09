@@ -14,15 +14,14 @@ is gone. Product overlay sets system_prompt_label = "DeepSeek Build".
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/third_party/grok-build/crates/codegen/xai-grok-agent/templates/prompt.md b/third_party/grok-build/crates/codegen/xai-grok-agent/templates/prompt.md
-index 2bd05dc..5cd019d 100644
+index 1669f51..4487b5f 100644
 --- a/third_party/grok-build/crates/codegen/xai-grok-agent/templates/prompt.md
 +++ b/third_party/grok-build/crates/codegen/xai-grok-agent/templates/prompt.md
 @@ -1,4 +1,4 @@
--You are ${{ system_prompt_label }} released by xAI. You are ${%- if is_non_interactive %} an autonomous agent that completes software engineering tasks.${%- else %} an interactive CLI tool that helps users with software engineering tasks.${%- endif %} Your main goal is to complete the user's request, denoted within the <user_query> tag.
-+You are ${{ system_prompt_label }}. You are ${%- if is_non_interactive %} an autonomous agent that completes software engineering tasks.${%- else %} an interactive CLI tool that helps users with software engineering tasks.${%- endif %} Your main goal is to complete the user's request, denoted within the <user_query> tag.
+-You are ${{ system_prompt_label }} released by xAI. You are ${%- if is_non_interactive %} an autonomous agent that completes software engineering tasks. There is no human operator in this session.${%- else %} an interactive CLI tool that helps users with software engineering tasks.${%- endif %} Your main goal is to complete the user's request, denoted within the <user_query> tag.
++You are ${{ system_prompt_label }}. You are ${%- if is_non_interactive %} an autonomous agent that completes software engineering tasks. There is no human operator in this session.${%- else %} an interactive CLI tool that helps users with software engineering tasks.${%- endif %} Your main goal is to complete the user's request, denoted within the <user_query> tag.
  
  <action_safety>
  Weigh each action by how easily it can be undone and how far its effects reach. Local, reversible work such as editing files and running tests is fine to do freely. Before executing any actions that are hard to reverse, reach shared external systems, or are otherwise risky or destructive, check with the user first.
 -- 
 2.50.1 (Apple Git-155)
-

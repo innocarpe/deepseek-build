@@ -1,23 +1,23 @@
-From eb22d8e276308e8c609dc495d5080dad7f3b1449 Mon Sep 17 00:00:00 2001
+From d9e981e4a5940c5a2e3a9883955d282e7aff2220 Mon Sep 17 00:00:00 2001
 From: Wooseong Kim <innocarpe@gmail.com>
-Date: Fri, 7 Aug 2026 22:00:51 +0900
-Subject: [PATCH 3/6] fix(shell): preserve one-pass repair and repair pre-existing lib-test build breakage
+Date: Sun, 9 Aug 2026 21:12:54 +0900
+Subject: [PATCH 3/6] fix(shell): preserve one-pass repair and repair
+ pre-existing lib-test build breakage
 
 Keep the owner-bar one-pass JSON repair on dispatch and carry the
 `file_version` constructor update required by the refreshed tool schema. The
 bridge image fixture imports the base64 `Engine` trait so its encoding remains
 explicit and reviewable.
-
 ---
  .../src/session/acp_session_impl/tool_calls.rs       | 12 +++++++++++-
- .../tool_layer_images_bridge_tests.rs                |  2 ++
- 2 files changed, 13 insertions(+), 1 deletion(-)
+ .../tool_layer_images_bridge_tests.rs                |  1 +
+ 2 files changed, 12 insertions(+), 1 deletion(-)
 
 diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
-index 96d2e72..f7d0df7 100644
+index 8aef251e..acba20b7 100644
 --- a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
 +++ b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_impl/tool_calls.rs
-@@ -971,9 +971,18 @@ impl SessionActor {
+@@ -929,9 +929,18 @@ impl SessionActor {
                  }
              }
          }
@@ -37,26 +37,23 @@ index 96d2e72..f7d0df7 100644
          let parse_result = serde_json::from_str::<serde_json::Value>(args_str);
          let mut concatenated_json_count: usize = 0;
          let raw_input = match &parse_result {
-@@ -3110,6 +3119,7 @@ mod plan_mode_edit_gate_tests {
+@@ -3068,6 +3077,7 @@ mod plan_mode_edit_gate_tests {
              old_string: "a".into(),
              new_string: "b".into(),
              replace_all: false,
 +            file_version: None,
+             snippet_id: None,
          })
      }
-     fn write(path: &str) -> ToolInput {
 diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs
-index b84ecab..b30de7e 100644
+index 51533a86..8692f3b3 100644
 --- a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs
 +++ b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_tests/tool_layer_images_bridge_tests.rs
-@@ -1,6 +1,8 @@
- //! Wiring tests for MCP tool-layer images through `handle_bridge_tool_success`.
-+use base64::Engine as _;
+@@ -2,6 +2,7 @@
  use super::support::*;
  use super::*;
+ use base64::Engine as _;
 +use base64::Engine;
  use xai_grok_sampling_types::{ContentPart, ConversationItem};
  use xai_grok_tools::types::output::{MCPOutput, ToolOutput, ToolRunResult};
  use xai_grok_tools::util::base64_images::{ExtractedImage, IMAGE_CONTENT_PLACEHOLDER};
--- 
-2.50.1 (Apple Git-155)

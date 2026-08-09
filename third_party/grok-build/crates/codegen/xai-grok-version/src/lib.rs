@@ -10,13 +10,13 @@ pub const TEST_VERSION_ENV: &str = "GROK_TEST_VERSION";
 /// Product SemVer override (DeepSeek Build). Preferred over Grok-internal env.
 pub const PRODUCT_VERSION_ENV: &str = "DEEPSEEK_BUILD_VERSION";
 
-pub const VERSION: &str = match option_env!("DEEPSEEK_BUILD_VERSION") {
-    Some(v) => v,
-    None => match option_env!("GROK_VERSION") {
-        Some(v) => v,
-        None => env!("CARGO_PKG_VERSION"),
-    },
-};
+/// Build-time product SemVer, baked from a generated file: `build.rs` writes
+/// `$OUT_DIR/product_version.txt`. Reading it via `include_str!` makes sccache
+/// key on the FILE CONTENT, so a version change always forces a recompile.
+/// `env!`/`option_env!` values are not sccache-keyed, which shipped stale
+/// versions (5.5.1 labeled 5.5.0, 5.5.2 labeled 5.5.1) across warm-cache
+/// release builds.
+pub const VERSION: &str = include_str!(concat!(env!("OUT_DIR"), "/product_version.txt"));
 
 /// Runtime product version, then test override, then compiled [`VERSION`].
 ///

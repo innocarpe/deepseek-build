@@ -31,4 +31,13 @@ fn main() {
         "cargo:rustc-env=VERSION_WITH_COMMIT={} ({})",
         version, commit
     );
+
+    // ALSO write a generated file read via include_str! in lib.rs, so sccache
+    // keys on the file CONTENT (guaranteed cache miss on version change).
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR set by cargo");
+    std::fs::write(
+        std::path::Path::new(&out_dir).join("version_with_commit.txt"),
+        format!("{version} ({commit})"),
+    )
+    .expect("write version_with_commit.txt");
 }

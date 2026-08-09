@@ -47,6 +47,13 @@ use xai_grok_shell::leader::{
     ControlPayload, LeaderClient, LeaderEnvUrls, connect_or_spawn, socket_path_for_ws_url,
 };
 use xai_grok_update::{UpdateConfig, auto_update, enforce_version_policy_or_exit};
+
+/// Build-time "VERSION (COMMIT)" read from a generated file (see build.rs):
+/// include_str! makes sccache key on the file CONTENT, so a version change
+/// always recompiles. env!-based injection shipped stale versions across
+/// warm-cache release builds.
+const VERSION_WITH_COMMIT: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/version_with_commit.txt"));
 /// Apply headless args to an existing config, only overriding values that are
 /// explicitly set. This allows environment defaults to be preserved when
 /// specific args are not provided.
@@ -133,7 +140,7 @@ fn init_tracing_simple(app_entrypoint: &'static str) {
             xai_grok_telemetry::otel_layer::OtelClientInfo {
                 client_name: "grok-pager",
                 client_version: xai_grok_version::VERSION,
-                service_version: env!("VERSION_WITH_COMMIT"),
+                service_version: VERSION_WITH_COMMIT,
                 app_entrypoint,
             },
             xai_grok_shell::auth::credential_provider::build_default_otel_layer_config(),
@@ -142,7 +149,7 @@ fn init_tracing_simple(app_entrypoint: &'static str) {
     xai_grok_telemetry::external::init(
         xai_grok_shell::agent::config::resolve_external_otel_config(
             xai_grok_telemetry::external::config::ExternalClientInfo {
-                service_version: env!("VERSION_WITH_COMMIT").to_owned(),
+                service_version: VERSION_WITH_COMMIT.to_owned(),
                 client_version: xai_grok_version::VERSION.to_owned(),
                 app_entrypoint: app_entrypoint.to_owned(),
             },
@@ -1109,7 +1116,7 @@ async fn run_agent_command(
         eprintln!(
             "DeepSeek Build (agent) - v{}",
             xai_grok_version::display_version_with_commit(
-                env!("VERSION_WITH_COMMIT"),
+                VERSION_WITH_COMMIT,
                 xai_grok_update::channel_label(),
             )
         );
@@ -1790,7 +1797,7 @@ fn install_heap_profile_hooks() {
 fn version_text(channel_label: &str) -> String {
     // Prefer runtime product SemVer (DEEPSEEK_BUILD_VERSION) when set by dsb/npm.
     let product = xai_grok_version::installed();
-    let with_commit = env!("VERSION_WITH_COMMIT");
+    let with_commit = VERSION_WITH_COMMIT;
     // If product env overrides, show product version; keep short commit from build when possible.
     let body = if product != xai_grok_version::VERSION {
         if let Some((_, commit)) = with_commit.rsplit_once(' ') {
@@ -1870,7 +1877,7 @@ fn main() {
     let _sentry_guard = xai_grok_telemetry::sentry::init(xai_grok_telemetry::sentry::Config {
         client: "grok-pager",
         client_version: PAGER_CLIENT_VERSION,
-        release: env!("VERSION_WITH_COMMIT"),
+        release: VERSION_WITH_COMMIT,
         disabled: xai_grok_shell::agent::config::is_error_reporting_disabled_sync(),
     });
     xai_grok_pager::docs::extract_user_guide_docs(&xai_grok_shell::util::grok_home::grok_home());
@@ -1885,7 +1892,7 @@ fn main() {
             eprintln!();
         }
         if !xai_crash_handler::install(xai_crash_handler::CrashHandlerConfig {
-            app_version: env!("VERSION_WITH_COMMIT").to_string(),
+            app_version: VERSION_WITH_COMMIT.to_string(),
             crash_dir: crash_dir.clone(),
         }) {
             eprintln!(
@@ -1992,7 +1999,7 @@ async fn async_main(args: PagerArgs) -> Result<()> {
             Command::Version { json } => {
                 if json {
                     let payload = serde_json::json!({
-                        "currentVersion": env!("VERSION_WITH_COMMIT"),
+                        "currentVersion": VERSION_WITH_COMMIT,
                         "channel": xai_grok_update::channel_name().unwrap_or("unknown"),
                     });
                     println!("{}", serde_json::to_string(&payload)?);
@@ -2605,7 +2612,7 @@ mod tests {
             write_version(&mut output, label).unwrap();
             let output = String::from_utf8(output).unwrap();
             assert!(output.starts_with("deepseek-build "));
-            assert!(output.contains(env!("VERSION_WITH_COMMIT")));
+            assert!(output.contains(VERSION_WITH_COMMIT));
             assert!(output.ends_with(expected_suffix), "{output:?}");
         }
     }

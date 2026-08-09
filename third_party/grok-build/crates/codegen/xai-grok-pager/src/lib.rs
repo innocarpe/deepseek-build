@@ -2,6 +2,13 @@
 //!
 //! A clean-room implementation built on the v3 pager rendering engine.
 
+/// Build-time "VERSION (COMMIT)" read from a generated file (see build.rs):
+/// include_str! makes sccache key on the file CONTENT, so a version change
+/// always recompiles. env!-based injection shipped stale versions across
+/// warm-cache release builds.
+pub const VERSION_WITH_COMMIT: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/version_with_commit.txt"));
+
 pub mod acp;
 pub mod actions;
 pub mod app;

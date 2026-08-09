@@ -102,84 +102,51 @@ jobs:
           set -euo pipefail
 
           CURRENT_TAG="${GITHUB_REF_NAME:-}"
-          # Prefer previous SemVer tag by version sort, excluding the tag we
-          # are building (so v5.1.0 does not pick itself as "previous").
-          PREV_TAG="$(
-            git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname \
-              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-              | grep -vxF "${CURRENT_TAG}" \
-              | head -n 1 || true
-          )"
 
-          # Fallbacks when tag listing is sparse (workflow_dispatch on a commit).
-          if [[ -z "$PREV_TAG" ]]; then
-            PREV_TAG="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' HEAD^ 2>/dev/null || true)"
-          fi
-          if [[ -z "$PREV_TAG" ]]; then
-            PREV_TAG="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' HEAD 2>/dev/null || true)"
-            if [[ "$PREV_TAG" == "$CURRENT_TAG" ]]; then
-              PREV_TAG=""
-            fi
-          fi
-
+          # Every release ships an agent labeled with THIS version (the npm
+          # postinstall self-check requires `agent --version` to contain the
+          # package version). The agent is therefore always rebuilt; reusing
+          # the previous release's binary (the old "wrapper" fast path)
+          # shipped version-mismatched agents and silently broke installs.
           SCOPE="full"
-          if [[ -n "$PREV_TAG" ]] && git rev-parse -q --verify "${PREV_TAG}^{commit}" >/dev/null; then
-            if git diff --quiet "$PREV_TAG" HEAD -- third_party/; then
-              SCOPE="wrapper"
-            else
-              echo "third_party/ changed since ${PREV_TAG}; full agent build"
-            fi
-          else
-            echo "no usable previous tag; full agent build"
-          fi
+          echo "always full: agent must be rebuilt for the release version"
 
           {
-            echo "prev_tag=${PREV_TAG:-}"
             echo "scope=${SCOPE}"
           } >> "$GITHUB_OUTPUT"
-          echo "scope=${SCOPE} prev_tag=${PREV_TAG:-none} current=${CURRENT_TAG:-none}"
-
-      - name: Fetch previous release binaries (reuse agent when vendored tree unchanged)
-        id: prev
-        if: steps.scope.outputs.scope == 'wrapper'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/prev "$HOME/.deepseek-build/bin"
-          # Default: stay on wrapper path unless download/extract fails.
-          echo "scope=wrapper" >> "$GITHUB_OUTPUT"
-          if ! gh release download "${{ steps.scope.outputs.prev_tag }}" \
-                --pattern "deepseek-build-*-${{ matrix.platform }}.tar.gz" \
-                --dir /tmp/prev --clobber; then
-            echo "prev tarball missing for ${{ steps.scope.outputs.prev_tag }}/${{ matrix.platform }}; falling back to full build"
-            echo "scope=full" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          tar -xzf /tmp/prev/*.tar.gz -C "$HOME/.deepseek-build/bin"
-          test -x "$HOME/.deepseek-build/bin/deepseek-build-agent"
-          echo "reused agent from ${{ steps.scope.outputs.prev_tag }} (${{ matrix.platform }})"
-          ls -lh "$HOME/.deepseek-build/bin/deepseek-build-agent"
+          echo "scope=${SCOPE} current=${CURRENT_TAG:-none}"
 
       - name: Build wrappers
         run: |
           cargo install --path crates/dsb-cli --locked --force --root "$HOME/.deepseek-build"
 
       - name: Install dotslash (vendored protoc launcher)
-        if: steps.scope.outputs.scope == 'full' || steps.prev.outputs.scope == 'full'
         run: |
           if ! command -v dotslash >/dev/null 2>&1; then
             cargo install dotslash
           fi
 
       - name: Build agent
-        if: steps.scope.outputs.scope == 'full' || steps.prev.outputs.scope == 'full'
         run: |
           ./scripts/build-grok-pager.sh release
           AGENT="$(ls third_party/grok-build/target/release/xai-grok-pager-bin third_party/grok-build/target/release/xai-grok-pager 2>/dev/null | head -1)"
           test -n "$AGENT"
           cp -f "$AGENT" "$HOME/.deepseek-build/bin/deepseek-build-agent"
           chmod 755 "$HOME/.deepseek-build/bin/deepseek-build-agent"
+
+      - name: Verify agent binary version
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.release.outputs.version }}"
+          AGENT="$HOME/.deepseek-build/bin/deepseek-build-agent"
+          OUT="$("$AGENT" --version 2>&1)"
+          echo "agent --version: $OUT"
+          BIN_VER="$(printf '%s\n' "$OUT" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true)"
+          if [[ -z "$BIN_VER" || "$BIN_VER" != "$VERSION" ]]; then
+            echo "::error::agent --version '${OUT}' does not report release version ${VERSION} (got ${BIN_VER:-none})" >&2
+            exit 1
+          fi
+          echo "agent version matches release ${VERSION}"
 
       - name: Package tarball
         run: |

@@ -402,7 +402,7 @@ pub struct LeaderArgs {
 #[derive(Debug, Clone, Parser)]
 #[command(
     name = "dsb",
-    version = env!("VERSION_WITH_COMMIT"),
+    version = crate::VERSION_WITH_COMMIT,
     about = "DeepSeek Build TUI",
     disable_version_flag = true,
     next_display_order = None,

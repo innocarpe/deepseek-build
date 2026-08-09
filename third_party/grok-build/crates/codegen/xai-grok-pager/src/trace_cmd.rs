@@ -110,7 +110,7 @@ pub fn build_session_tar(
 
         let metadata = ExportMetadata {
             session_id: session_id.to_owned(),
-            grok_version: env!("VERSION_WITH_COMMIT").to_owned(),
+            grok_version: crate::VERSION_WITH_COMMIT.to_owned(),
             os: std::env::consts::OS.to_owned(),
             arch: std::env::consts::ARCH.to_owned(),
             exported_at: chrono::Utc::now().to_rfc3339(),
@@ -577,7 +577,7 @@ impl UploadAttempt<'_> {
         let _ = writeln!(log, "Trace upload debug log");
         let _ = writeln!(log, "======================");
         let _ = writeln!(log, "Timestamp:    {}", chrono::Utc::now().to_rfc3339());
-        let _ = writeln!(log, "Grok version: {}", env!("VERSION_WITH_COMMIT"));
+        let _ = writeln!(log, "Grok version: {}", crate::VERSION_WITH_COMMIT);
         let _ = writeln!(
             log,
             "OS:           {} {}",

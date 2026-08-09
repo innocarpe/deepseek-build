@@ -1128,7 +1128,8 @@ mod tests {
                 [
                     Effect::FetchBilling {
                         agent_id,
-                        silent: true
+                        silent: true,
+                        ..
                     },
                     Effect::FetchDeepSeekStatus {
                         agent_id: deepseek_agent_id,
@@ -1219,7 +1220,8 @@ mod tests {
                     Effect::SendPrompt { text, .. },
                     Effect::FetchBilling {
                         agent_id,
-                        silent: true
+                        silent: true,
+                        ..
                     },
                     Effect::FetchDeepSeekStatus {
                         agent_id: deepseek_agent_id,

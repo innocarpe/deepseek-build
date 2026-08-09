@@ -151,10 +151,7 @@ fn classify(field: FieldDescriptor) -> Option<MarkedDebugRedact> {
             .filter(|extension| extension.name() == "debug_redact")
             .any(|extension| {
                 options.has_extension(&extension)
-                    && options
-                        .get_extension(&extension)
-                        .as_bool()
-                        .unwrap_or(false)
+                    && options.get_extension(&extension).as_bool().unwrap_or(false)
             });
     if !marked {
         return None;

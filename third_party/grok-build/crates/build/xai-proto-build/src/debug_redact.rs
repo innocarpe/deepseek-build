@@ -141,11 +141,21 @@ enum MarkedDebugRedact {
 }
 
 fn classify(field: FieldDescriptor) -> Option<MarkedDebugRedact> {
-    let marked = field
-        .options()
+    let options = field.options();
+    let marked = options
         .get_field_by_name("debug_redact")
         .map(|v| v.as_bool().unwrap_or(false))
-        .unwrap_or(false);
+        .unwrap_or(false)
+        || prost_reflect::ReflectMessage::descriptor(&options)
+            .extensions()
+            .filter(|extension| extension.name() == "debug_redact")
+            .any(|extension| {
+                options.has_extension(&extension)
+                    && options
+                        .get_extension(&extension)
+                        .as_bool()
+                        .unwrap_or(false)
+            });
     if !marked {
         return None;
     }
@@ -165,9 +175,10 @@ mod tests {
     fn field(name: &str) -> FieldDescriptor {
         let test_data = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test_data");
         let protoc = crate::find_protoc::find_protoc().unwrap();
+        let protoc_include_dir = crate::find_protoc_include_dir(protoc.as_deref());
         let pool = compile_descriptor_pool(
             protoc.as_deref(),
-            None,
+            protoc_include_dir.as_deref(),
             &[test_data.as_path()],
             &[Path::new("debug_redact_test.proto")],
         )
@@ -201,8 +212,15 @@ mod tests {
     fn first_marked_field_finds_annotations_and_ignores_comments() {
         let test_data = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test_data");
         let protoc = crate::find_protoc::find_protoc().unwrap();
+        let protoc_include_dir = crate::find_protoc_include_dir(protoc.as_deref());
         let find = |protos: &[&Path]| {
-            first_marked_field(protoc.as_deref(), None, &[test_data.as_path()], protos).unwrap()
+            first_marked_field(
+                protoc.as_deref(),
+                protoc_include_dir.as_deref(),
+                &[test_data.as_path()],
+                protos,
+            )
+            .unwrap()
         };
 
         // Marked fields in directly compiled protos are found.

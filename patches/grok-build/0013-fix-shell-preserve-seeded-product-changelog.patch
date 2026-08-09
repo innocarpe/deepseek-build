@@ -1,0 +1,64 @@
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/builtin.rs b/third_party/grok-build/crates/codegen/xai-grok-shell/src/builtin.rs
+index da8a2e8..e705b39 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-shell/src/builtin.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-shell/src/builtin.rs
+@@ -21,7 +21,11 @@ pub fn extract_builtin_files(grok_home: &std::path::Path) {
+-    // Clean up cached changelog files from previous version so
+-    // /release-notes fetches fresh content for the new version.
+-    for stale in &["CHANGELOG.json", "CHANGELOG.md"] {
+-        let _ = std::fs::remove_file(grok_home.join(stale));
+-    }
+-
++    // Clean up the cached JSON changelog from a previous version so
++    // /release-notes fetches fresh structured entries for the new version.
++    // The markdown cache ($GROK_HOME/CHANGELOG.md) is deliberately NOT
++    // deleted: DeepSeek Build seeds it with the product changelog at every
++    // launch (dsb-cli `seed_product_changelog`), and removing it here made
++    // the welcome-screen CHANGELOG click silently no-op after a version bump
++    // (the seed is written before the agent starts, then deleted by this
++    // cleanup on the version-transition first run).
++    let _ = std::fs::remove_file(grok_home.join("CHANGELOG.json"));
++
+     for &(filename, content) in BUILTIN_FILES {
+@@ -90,7 +96,40 @@ mod tests {
+             );
+         }
+     }
+-
++
++    #[test]
++    fn version_bump_keeps_seeded_changelog_markdown() {
++        // DeepSeek Build seeds $GROK_HOME/CHANGELOG.md with the product
++        // changelog at launch; the version-transition cleanup must NOT delete
++        // it, or the welcome-screen CHANGELOG click silently no-ops.
++        let tmp = tempfile::tempdir().unwrap();
++        let home = tmp.path();
++        std::fs::create_dir_all(home).unwrap();
++
++        // A stale marker from the previous version (as after a product
++        // upgrade) plus a seeded changelog markdown cache.
++        std::fs::write(home.join(".metadata_version"), "0.0.0-stale").unwrap();
++        std::fs::write(home.join("CHANGELOG.md"), "# Changelog\n\n## Unreleased\n").unwrap();
++
++        extract_builtin_files(home);
++
++        assert_eq!(
++            std::fs::read_to_string(home.join("CHANGELOG.md")).unwrap(),
++            "# Changelog\n\n## Unreleased\n",
++            "seeded CHANGELOG.md must survive the version-transition cleanup"
++        );
++        // The JSON cache is CDN-derived and still refreshed on version bumps.
++        assert!(
++            !home.join("CHANGELOG.json").exists(),
++            "CHANGELOG.json (CDN-derived) may be cleaned for a fresh fetch"
++        );
++        // Marker advanced so the next launch skips the cleanup entirely.
++        assert_eq!(
++            std::fs::read_to_string(home.join(".metadata_version")).unwrap(),
++            xai_grok_version::VERSION
++        );
++    }
++
+     #[test]
+     fn same_version_does_not_restore_missing_or_delete_legacy_skills() {
+         let tmp = tempfile::tempdir().unwrap();

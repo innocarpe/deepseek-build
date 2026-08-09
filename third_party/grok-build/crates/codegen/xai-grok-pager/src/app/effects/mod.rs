@@ -64,7 +64,15 @@ pub(crate) fn execute(
             unregister_active_session_best_effort(&session_id);
         }
         Effect::Quit => {
-            ulog::info("pager quit", None, None);
+            let ctx = match crate::app::signal_handler::take_graceful_signal_code() {
+                Some(exit_code) => serde_json::json!({
+                    "reason": "signal",
+                    "signal": crate::app::signal_handler::signal_name(exit_code),
+                    "exit_code": exit_code,
+                }),
+                None => serde_json::json!({ "reason": "action" }),
+            };
+            ulog::info("pager quit", None, Some(ctx));
             return (true, meta);
         }
         Effect::SetWorkingDir { path } => {

@@ -20,7 +20,7 @@
 //! the disposition inherited by fork+exec children (MCP servers, hooks) from
 //! `SIG_IGN` to `SIG_DFL`, re-introducing a prior SIGPIPE regression.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use agent_client_protocol as acp;
 
@@ -44,8 +44,32 @@ pub(crate) fn set_current_session_id(id: Option<acp::SessionId>) {
 static QUIT_NOTIFY: parking_lot::Mutex<Option<std::sync::Arc<tokio::sync::Notify>>> =
     parking_lot::Mutex::new(None);
 
+/// Exit code for the first signal routed through the graceful quit path.
+///
+/// The event loop previously collapsed SIGINT, SIGTERM, and SIGHUP into the
+/// same unannotated `pager quit` entry, which made unexpected exits impossible
+/// to diagnose after the fact. Zero means that the quit came from an action
+/// rather than an OS signal.
+static GRACEFUL_SIGNAL_CODE: AtomicI32 = AtomicI32::new(0);
+
 pub(crate) fn set_quit_notify(notify: std::sync::Arc<tokio::sync::Notify>) {
     *QUIT_NOTIFY.lock() = Some(notify);
+}
+
+pub(crate) fn take_graceful_signal_code() -> Option<i32> {
+    match GRACEFUL_SIGNAL_CODE.swap(0, Ordering::AcqRel) {
+        0 => None,
+        code => Some(code),
+    }
+}
+
+pub(crate) fn signal_name(exit_code: i32) -> &'static str {
+    match exit_code {
+        129 => "SIGHUP",
+        130 => "SIGINT",
+        143 => "SIGTERM",
+        _ => "UNKNOWN",
+    }
 }
 
 /// Whether the TUI currently owns the terminal. Set by [`install`], cleared
@@ -197,6 +221,7 @@ fn request_graceful_or_exit(code: i32) {
     if TERMINAL_OWNED.load(Ordering::Acquire)
         && let Some(n) = notify
     {
+        let _ = GRACEFUL_SIGNAL_CODE.compare_exchange(0, code, Ordering::AcqRel, Ordering::Acquire);
         n.notify_one();
     } else {
         shutdown_with_terminal_restore(code);
@@ -244,6 +269,9 @@ fn flush_telemetry_and_exit(exit_code: i32) -> ! {
     xai_tty_utils::global_process_scope().kill_all();
     // Restore fd 2 so Sentry/OTEL flushes reach the terminal.
     xai_tty_utils::restore_native_stderr();
+    // A child/agent shutdown can race the earlier teardown write. Make the
+    // mouse/paste reset the last terminal-mode mutation before process exit.
+    super::disable_mouse_paste_raw();
     xai_grok_telemetry::sentry::flush_on_shutdown();
     xai_grok_telemetry::otel_layer::shutdown_otel();
     // Flush the --debug firehose on TUI signal exit (this path bypasses main's flush).
@@ -272,6 +300,7 @@ mod tests {
 
     #[tokio::test]
     async fn request_graceful_or_exit_notifies_registered_quit() {
+        let _ = take_graceful_signal_code();
         let notify = std::sync::Arc::new(tokio::sync::Notify::new());
         set_quit_notify(notify.clone());
         let stored = QUIT_NOTIFY.lock().clone().expect("quit notify registered");
@@ -285,5 +314,15 @@ mod tests {
         tokio::time::timeout(std::time::Duration::from_secs(1), notify.notified())
             .await
             .expect("graceful branch notified the registered quit handle");
+        assert_eq!(take_graceful_signal_code(), Some(130));
+        assert_eq!(take_graceful_signal_code(), None);
+    }
+
+    #[test]
+    fn graceful_signal_exit_codes_have_stable_names() {
+        assert_eq!(signal_name(129), "SIGHUP");
+        assert_eq!(signal_name(130), "SIGINT");
+        assert_eq!(signal_name(143), "SIGTERM");
+        assert_eq!(signal_name(1), "UNKNOWN");
     }
 }

@@ -18,8 +18,8 @@ use crate::types::resources::{
     Cwd, DisplayCwd, FileSystem, GitignoreFilter, PathNotFoundHints, RespectGitignore,
     SharedResources, TruncationCfg, display_cwd_or_cwd, resolve_model_path,
 };
-use crate::types::snippet_store::{SessionSnippet, SessionSnippetStore, snippet_line_range};
 use crate::types::skill_discovery_tracker::SkillManager;
+use crate::types::snippet_store::{SessionSnippet, SessionSnippetStore, snippet_line_range};
 use crate::types::template_renderer::TemplateRenderer;
 use crate::types::tool::{ToolKind, ToolNamespace};
 use std::sync::LazyLock;

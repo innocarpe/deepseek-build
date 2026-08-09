@@ -26,14 +26,6 @@ pub enum UpdateRunMode {
 const PROMPT_UPDATE_NOW: &str = "Update now? [Y/n/d]";
 const MSG_AUTO_UPDATE_BACKGROUND: &str = "Auto-update running in background.";
 const MSG_RUN_UPDATE_MANUAL: &str = "Run `grok update` to get the latest version.";
-/// Manual-install one-liner for this platform's bootstrap installer.
-fn manual_install_cmd() -> &'static str {
-    if cfg!(windows) {
-        "irm https://x.ai/cli/install.ps1 | iex"
-    } else {
-        "curl -fsSL https://x.ai/cli/install.sh | bash"
-    }
-}
 
 /// Build a reinstall hint for a known installer type.
 fn reinstall_hint(installer: &str) -> String {

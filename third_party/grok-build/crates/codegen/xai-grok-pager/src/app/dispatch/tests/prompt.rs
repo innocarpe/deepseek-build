@@ -9,7 +9,8 @@ fn assert_billing_then_deepseek_status(effects: &[Effect], id: AgentId) {
             [
                 Effect::FetchBilling {
                     agent_id,
-                    silent: true
+                    silent: true,
+                    ..
                 },
                 Effect::FetchDeepSeekStatus {
                     agent_id: deepseek_agent_id,
@@ -35,7 +36,8 @@ fn assert_send_prompt_then_billing_then_deepseek_status(
                 Effect::SendPrompt { text, .. },
                 Effect::FetchBilling {
                     agent_id,
-                    silent: true
+                    silent: true,
+                    ..
                 },
                 Effect::FetchDeepSeekStatus {
                     agent_id: deepseek_agent_id,
@@ -1444,7 +1446,8 @@ fn turn_end_fetches_prompt_suggestion_when_enabled() {
             &effects[1],
             Effect::FetchBilling {
                 agent_id,
-                silent: true
+                silent: true,
+                ..
             } if *agent_id == id
         ),
         "expected billing refresh second, got {effects:?}"

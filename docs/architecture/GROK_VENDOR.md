@@ -98,13 +98,22 @@ refresh cannot wipe them.
 | `0004-*.patch` | `test(pager): cover DeepSeekNight kinds in settings preview test` |
 | `0005-*.patch` | `feat(pager): render DeepSeek status with session-safe polling` |
 | `0006-*.patch` | `test(shell): cover large MCP image persistence and resume` |
+| `0007-*.patch` | `fix(vendor): drop hardcoded released-by-xAI identity text` |
+| `0008-*.patch` | `fix(vendor): sync encrypted agent prompt with the identity edit` |
+| `0009-*.patch` | `test(grok): expect DeepSeek status effects` |
+| `0010-*.patch` | `test(pager): align product baseline expectations` |
+| `0011-*.patch` | `test(pager): stabilize prompt history tick delivery` |
+| `0012-*.patch` | `fix(vendor): satisfy the strict clippy baseline` |
+| `0013-*.patch` | `fix(shell): preserve the seeded product changelog` |
 
-These patches are the **DeepSeek status line** feature, its shell-side repair
-dependency, and the focused large-MCP-image persistence/resume regression. The
-status patch records session-bound unsupported capability handling, transient
-retry, and stale-result safety; patch 0006 keeps the DSB image regression
-durable instead of relying on the upstream changelog claim. A refresh must
-never silently drop them.
+These patches carry the **DeepSeek status line**, its shell-side repair
+dependency, the focused large-MCP-image persistence/resume regression, prompt
+identity, product-specific pager expectations, strict vendor lint repairs, and
+seeded product changelog preservation. The status patch records session-bound
+unsupported capability handling, transient retry, and stale-result safety;
+patch 0006 keeps the DSB image regression durable instead of relying on the
+upstream changelog claim. A refresh must never silently drop any of the complete
+13-patch series.
 
 - **Re-apply after refresh:** `./scripts/apply-grok-build-patches.sh`
   (add `--check` for a dry run; already-applied patches are skipped).

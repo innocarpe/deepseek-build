@@ -32,9 +32,11 @@ diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/action
 index 6972c50..434f634 100644
 --- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/actions.rs
 +++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/actions.rs
-@@ -2083,6 +2083,13 @@ pub enum Effect {
+@@ -2093,8 +2093,15 @@ pub enum Effect {
          agent_id: AgentId,
          session_id: acp::SessionId,
+         /// Usage-modal fetch generation; echoed back on the task result.
+         nonce: u64,
      },
 +    /// Fetch DeepSeek account status (balance + session usage) via
 +    /// `x.ai/deepseek/status`. Only renders when the shell reports the
@@ -46,9 +48,10 @@ index 6972c50..434f634 100644
      /// Re-fetch remote settings to check subscription gate.
      RefreshGate,
      /// Spawn a debounce sleep task for shell suggestions. `agent_id` rides
-@@ -2640,6 +2647,18 @@ pub enum TaskResult {
+@@ -2660,7 +2667,19 @@ pub enum TaskResult {
          session_id: acp::SessionId,
          error: String,
+         nonce: u64,
      },
 +    /// DeepSeek status fetched. Drop if `session_id` no longer matches.
 +    DeepSeekStatusComplete {
@@ -358,9 +361,10 @@ diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispat
 index eae428e..e8b71e4 100644
 --- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs
 +++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs
-@@ -1568,6 +1568,9 @@ pub(super) fn handle_prompt_response(
+@@ -1569,7 +1569,10 @@ pub(super) fn handle_prompt_response(
              agent_id,
              silent: true,
+             nonce: 0,
          });
 +        // Refresh DeepSeek status (balance + cache hit rate) after a turn;
 +        // no-op unless the session is DeepSeek-backed.
@@ -372,9 +376,10 @@ diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispat
 index 574aa40..c65f6e9 100644
 --- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs
 +++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs
-@@ -1108,6 +1108,10 @@ pub(in crate::app::dispatch) fn handle_session_created(
+@@ -1108,7 +1108,11 @@ pub(in crate::app::dispatch) fn handle_session_created(
              agent_id,
              silent: true,
+             nonce: 0,
          });
 +        effects.push(Effect::FetchDeepSeekStatus {
 +            agent_id,
@@ -383,9 +388,10 @@ index 574aa40..c65f6e9 100644
          if let Some(switch) = deferred {
              effects.push(Effect::SwitchModel {
                  agent_id,
-@@ -1211,6 +1215,10 @@ pub(in crate::app::dispatch) fn handle_worktree_session_created(
+@@ -1212,7 +1216,11 @@ pub(in crate::app::dispatch) fn handle_worktree_session_created(
              agent_id,
              silent: true,
+             nonce: 0,
          });
 +        effects.push(Effect::FetchDeepSeekStatus {
 +            agent_id,
@@ -398,9 +404,10 @@ diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispat
 index 30bed50..390b4b5 100644
 --- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/session/load.rs
 +++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/session/load.rs
-@@ -1140,6 +1140,10 @@ pub(in crate::app::dispatch) fn handle_session_loaded(
+@@ -1140,7 +1140,11 @@ pub(in crate::app::dispatch) fn handle_session_loaded(
              agent_id,
              silent: true,
+             nonce: 0,
          });
 +        effects.push(Effect::FetchDeepSeekStatus {
 +            agent_id,
@@ -423,9 +430,10 @@ index 7e71dd1..72e3fb1 100644
  use super::notes::{handle_btw_response, handle_memory_note_saved};
  use super::prompt::{
      defer_to_open_reload_window, handle_compact_complete, handle_prompt_response,
-@@ -1040,6 +1043,16 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
+@@ -1116,7 +1119,17 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
              &session_id,
              format!("Couldn't load session usage: {error}"),
+             nonce,
          ),
 +        TaskResult::DeepSeekStatusComplete {
 +            agent_id,

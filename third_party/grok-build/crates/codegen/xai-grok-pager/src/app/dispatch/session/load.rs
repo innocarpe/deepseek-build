@@ -1139,6 +1139,7 @@ pub(in crate::app::dispatch) fn handle_session_loaded(
         effects.push(Effect::FetchBilling {
             agent_id,
             silent: true,
+            nonce: 0,
         });
         effects.push(Effect::FetchDeepSeekStatus {
             agent_id,

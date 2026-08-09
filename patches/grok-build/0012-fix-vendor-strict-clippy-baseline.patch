@@ -13,10 +13,11 @@ so provider selection cannot race into the aws-lc-rs default-provider
 placeholder in vendored auth tests. Allow memory-trace sample rotation tests to
 tolerate unrelated valid process-global trace events while retaining sample
 coverage. Make the remaining full-workspace tests deterministic under parallel
-CI: use paused time for the auth lock budget, separate raw restore caps from a
-non-vacuous symlink check, preserve client kinds while process chat mode is
-hard-disabled, synchronize the single-flight test at its first atomic claim,
-and capture the terminal grandchild PID through a bounded file handshake.
+CI: use a wider real-time auth lock budget with bounded slack, separate raw
+restore caps from a non-vacuous symlink check, preserve client kinds while
+process chat mode is hard-disabled, synchronize the single-flight test at its
+first atomic claim, and capture the terminal grandchild PID through a bounded
+file handshake.
 
 ---
  third_party/grok-build/Cargo.lock                         |  1 -
@@ -28,14 +29,14 @@ and capture the terminal grandchild PID through a bounded file handshake.
  .../codegen/xai-grok-pager/src/memory_trace.rs            | 13 ++++--
  .../crates/codegen/xai-grok-pager/src/test_util.rs        |  4 +-
  .../xai-grok-pager/tests/doctor_early_dispatch.rs         |  7 ++-
- .../xai-grok-shell/src/auth/manager/lock.rs               |  8 ++--
+ .../xai-grok-shell/src/auth/manager/lock.rs               | 10 +++---
  .../turn/auth_retry_budget_tests.rs                       | 64 +++++++++++++----
  .../xai-grok-shell/src/session/storage/jsonl/tests.rs     | 55 +++++++++++++---
  .../xai-grok-shell/src/session/storage/search_bootstrap.rs | 41 ++++++++++--
  .../src/session/storage/search_bootstrap_tests.rs         |  8 +++
  .../xai-grok-shell/src/session/unified_list/mod.rs        | 51 ++++++++++------
  .../xai-grok-shell/src/terminal/local_terminal.rs         | 64 +++++++++++++----
- 16 files changed, 262 insertions(+), 108 deletions(-)
+ 16 files changed, 263 insertions(+), 109 deletions(-)
 
 diff --git a/third_party/grok-build/Cargo.lock b/third_party/grok-build/Cargo.lock
 index b8cf9e4..70d6ba4 100644
@@ -385,32 +386,25 @@ index e8ff488..9412577 100644
 +    });
  }
 diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/auth/manager/lock.rs b/third_party/grok-build/crates/codegen/xai-grok-shell/src/auth/manager/lock.rs
-index 8ffad48..9fd7bb1 100644
+index 8ffad48..2f149b6 100644
 --- a/third_party/grok-build/crates/codegen/xai-grok-shell/src/auth/manager/lock.rs
 +++ b/third_party/grok-build/crates/codegen/xai-grok-shell/src/auth/manager/lock.rs
-@@ -1137,7 +1137,7 @@ mod tests {
-     /// must still land within the budget (pre-fix: `timeout + confirm`,
-     /// ~57 s on a 45 s request).
-     #[cfg(unix)]
--    #[tokio::test]
-+    #[tokio::test(start_paused = true)]
-     async fn total_wait_stays_within_timeout_budget() {
-         let dir = TempDir::new().unwrap();
-         let path = auth_json_path(&dir);
-@@ -1169,10 +1169,10 @@ mod tests {
-         let lock = try_lock_auth_file_async_with(&path, timeout, confirm).await;
-         let elapsed = start.elapsed();
-         assert!(lock.is_some(), "wedged holder must be broken");
+@@ -1164,3 +1164,3 @@ mod tests {
+-        let timeout = StdDuration::from_millis(900);
+-        let confirm = StdDuration::from_millis(400);
++        let timeout = StdDuration::from_secs(6);
++        let confirm = StdDuration::from_secs(2);
+         let start = tokio::time::Instant::now();
+@@ -1172,6 +1172,6 @@ mod tests {
 -        // Generous slack for CI scheduling, but well under the pre-fix
 -        // floor of timeout + confirm (1300 ms).
-+        // Paused Tokio time verifies the timer budget without CI scheduling
-+        // latency weakening or intermittently violating the assertion.
++        // One second absorbs loaded-runner scheduling latency while remaining
++        // below the pre-fix floor of timeout + confirm (8 seconds).
          assert!(
 -            elapsed < timeout + StdDuration::from_millis(250),
-+            elapsed <= timeout,
++            elapsed < timeout + StdDuration::from_secs(1),
              "total wait must stay within the caller's budget, took {elapsed:?}"
          );
-     }
 diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/storage/jsonl/tests.rs b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/storage/jsonl/tests.rs
 index a1c00c0..d2894d0 100644
 --- a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/storage/jsonl/tests.rs

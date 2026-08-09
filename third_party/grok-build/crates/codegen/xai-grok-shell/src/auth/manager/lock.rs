@@ -1137,7 +1137,7 @@ mod tests {
     /// must still land within the budget (pre-fix: `timeout + confirm`,
     /// ~57 s on a 45 s request).
     #[cfg(unix)]
-    #[tokio::test(start_paused = true)]
+    #[tokio::test]
     async fn total_wait_stays_within_timeout_budget() {
         let dir = TempDir::new().unwrap();
         let path = auth_json_path(&dir);
@@ -1161,18 +1161,18 @@ mod tests {
         write!(holder, "{}:{old_ts}", std::process::id()).unwrap();
         holder.sync_all().unwrap();
 
-        let timeout = StdDuration::from_millis(900);
-        let confirm = StdDuration::from_millis(400);
+        let timeout = StdDuration::from_secs(6);
+        let confirm = StdDuration::from_secs(2);
         let start = tokio::time::Instant::now();
         // The holder is our own live PID, so the Break re-observation
         // unlinks and acquires (same shape as the wedged-holder test).
         let lock = try_lock_auth_file_async_with(&path, timeout, confirm).await;
         let elapsed = start.elapsed();
         assert!(lock.is_some(), "wedged holder must be broken");
-        // Paused Tokio time verifies the timer budget without CI scheduling
-        // latency weakening or intermittently violating the assertion.
+        // One second absorbs loaded-runner scheduling latency while remaining
+        // below the pre-fix floor of timeout + confirm (8 seconds).
         assert!(
-            elapsed <= timeout,
+            elapsed < timeout + StdDuration::from_secs(1),
             "total wait must stay within the caller's budget, took {elapsed:?}"
         );
     }

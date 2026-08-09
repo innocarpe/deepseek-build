@@ -1,27 +1,27 @@
-From 4312c7abed9c5fea45e25ce1124d4187502c059e Mon Sep 17 00:00:00 2001
+From c9aae4246bf0bcd0c5607da13e347e3dcee428fa Mon Sep 17 00:00:00 2001
 From: Wooseong Kim <innocarpe@gmail.com>
-Date: Fri, 7 Aug 2026 22:00:51 +0900
-Subject: [PATCH 4/6] test(pager): cover DeepSeekNight kinds in settings preview test
+Date: Sun, 9 Aug 2026 21:12:54 +0900
+Subject: [PATCH 4/6] test(pager): cover DeepSeekNight kinds in settings
+ preview test
 
 Exercise both DeepSeekNight theme variants in the settings-preview match so
 the product overlay remains exhaustive as the upstream theme enum evolves.
-
 ---
- .../codegen/xai-grok-pager/src/views/settings_modal/tests.rs    | 2 ++
- 1 file changed, 2 insertions(+)
+ .../codegen/xai-grok-pager/src/views/settings_modal/tests.rs  | 4 ++++
+ 1 file changed, 4 insertions(+)
 
 diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/views/settings_modal/tests.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/views/settings_modal/tests.rs
-index 747eab5..a34c7e9 100644
+index e159f71d..03c6e20e 100644
 --- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/views/settings_modal/tests.rs
 +++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/views/settings_modal/tests.rs
-@@ -7162,6 +7162,8 @@ fn max_thoughts_width_preview_title_styling_distinguishes_from_content() {
+@@ -7164,6 +7164,10 @@ fn max_thoughts_width_preview_title_styling_distinguishes_from_content() {
          // Resolved via `Theme::current()` rather than a constructor
          // because `theme::oscura` is a private module.
          crate::theme::ThemeKind::OscuraMidnight => crate::theme::Theme::current(),
 +        crate::theme::ThemeKind::DeepSeekNight => crate::theme::Theme::deepseeknight(),
-+        crate::theme::ThemeKind::DeepSeekNightNeutral => crate::theme::Theme::deepseeknight_neutral(),
++        crate::theme::ThemeKind::DeepSeekNightNeutral => {
++            crate::theme::Theme::deepseeknight_neutral()
++        }
          crate::theme::ThemeKind::Auto => crate::theme::Theme::groknight(),
      };
      assert_ne!(
--- 
-2.50.1 (Apple Git-155)

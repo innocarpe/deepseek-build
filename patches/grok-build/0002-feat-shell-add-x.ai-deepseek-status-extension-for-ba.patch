@@ -1,24 +1,24 @@
-From 0d0642c0c53e11f4c5cd800131399666566bce4b Mon Sep 17 00:00:00 2001
+From 4b25138a3372679734e84ac416e27f5c650ef875 Mon Sep 17 00:00:00 2001
 From: Wooseong Kim <innocarpe@gmail.com>
-Date: Fri, 7 Aug 2026 22:00:51 +0900
-Subject: [PATCH 2/6] feat(shell): add x.ai/deepseek/status extension for balance and session usage
+Date: Sun, 9 Aug 2026 21:12:54 +0900
+Subject: [PATCH 2/6] feat(shell): add x.ai/deepseek/status extension for
+ balance and session usage
 
 Expose a fail-soft `x.ai/deepseek/status` extension for the DeepSeek status
 row. Balance requests are gated to DeepSeek endpoints, while session usage is
 projected from the in-memory ledger without changing xAI session behavior.
-
 ---
  .../src/agent/mvp_agent/acp_agent.rs          |   3 +
- .../xai-grok-shell/src/extensions/deepseek.rs | 329 ++++++++++++++++++
+ .../xai-grok-shell/src/extensions/deepseek.rs | 342 ++++++++++++++++++
  .../xai-grok-shell/src/extensions/mod.rs      |   1 +
- 3 files changed, 333 insertions(+)
+ 3 files changed, 346 insertions(+)
  create mode 100644 third_party/grok-build/crates/codegen/xai-grok-shell/src/extensions/deepseek.rs
 
 diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs b/third_party/grok-build/crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs
-index ce14fca..3ce785f 100644
+index 9bfb77c1..44cb3710 100644
 --- a/third_party/grok-build/crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs
 +++ b/third_party/grok-build/crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs
-@@ -2454,6 +2454,9 @@ impl acp::Agent for MvpAgent {
+@@ -2456,6 +2456,9 @@ impl acp::Agent for MvpAgent {
              "x.ai/auto-topup-rule" => {
                  crate::extensions::billing::handle(self, &args).await
              }
@@ -30,10 +30,10 @@ index ce14fca..3ce785f 100644
                  crate::extensions::privacy::handle(self, &args).await
 diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/extensions/deepseek.rs b/third_party/grok-build/crates/codegen/xai-grok-shell/src/extensions/deepseek.rs
 new file mode 100644
-index 0000000..b00a618
+index 00000000..c461186e
 --- /dev/null
 +++ b/third_party/grok-build/crates/codegen/xai-grok-shell/src/extensions/deepseek.rs
-@@ -0,0 +1,329 @@
+@@ -0,0 +1,342 @@
 +//! `x.ai/deepseek/status` — DeepSeek account balance + session usage for the
 +//! pager's bottom status line.
 +//!
@@ -160,7 +160,11 @@ index 0000000..b00a618
 +/// session's base URL is not DeepSeek, no API key is configured, or the
 +/// upstream call/parse fails.
 +async fn fetch_balance(handle: &SessionHandle) -> Option<DeepSeekBalance> {
-+    let base_url = handle.chat_state_handle.get_sampling_config().await?.base_url;
++    let base_url = handle
++        .chat_state_handle
++        .get_sampling_config()
++        .await?
++        .base_url;
 +    if !is_deepseek_base_url(&base_url) {
 +        return None;
 +    }
@@ -253,8 +257,14 @@ index 0000000..b00a618
 +                total_balance: "9.82".into(),
 +            },
 +        ];
-+        assert_eq!(prefer_currency(&infos, &["USD", "CNY"]).unwrap().currency, "USD");
-+        assert_eq!(prefer_currency(&infos, &["CNY", "USD"]).unwrap().currency, "CNY");
++        assert_eq!(
++            prefer_currency(&infos, &["USD", "CNY"]).unwrap().currency,
++            "USD"
++        );
++        assert_eq!(
++            prefer_currency(&infos, &["CNY", "USD"]).unwrap().currency,
++            "CNY"
++        );
 +        // Unknown preference falls back to the first entry.
 +        assert_eq!(
 +            prefer_currency(&infos, &["EUR", "JPY"]).unwrap().currency,
@@ -347,7 +357,10 @@ index 0000000..b00a618
 +    fn balance_url_normalization_strips_v1_suffix() {
 +        // Mirrors the normalization applied in `fetch_balance`.
 +        let normalized = |base: &str| {
-+            format!("{}/user/balance", base.trim_end_matches('/').trim_end_matches("/v1"))
++            format!(
++                "{}/user/balance",
++                base.trim_end_matches('/').trim_end_matches("/v1")
++            )
 +        };
 +        assert_eq!(
 +            normalized("https://api.deepseek.com"),
@@ -364,7 +377,7 @@ index 0000000..b00a618
 +    }
 +}
 diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/extensions/mod.rs b/third_party/grok-build/crates/codegen/xai-grok-shell/src/extensions/mod.rs
-index d381e95..ccbbcc0 100644
+index d381e950..ccbbcc04 100644
 --- a/third_party/grok-build/crates/codegen/xai-grok-shell/src/extensions/mod.rs
 +++ b/third_party/grok-build/crates/codegen/xai-grok-shell/src/extensions/mod.rs
 @@ -5,6 +5,7 @@ pub mod bundle;
@@ -375,5 +388,3 @@ index d381e95..ccbbcc0 100644
  pub mod feedback;
  pub mod fs;
  pub mod git;
--- 
-2.50.1 (Apple Git-155)

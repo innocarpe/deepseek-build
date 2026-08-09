@@ -8,6 +8,12 @@
   upstream Grok x.ai channel pointers, npm installs are classified as npm, and
   the product never auto-downgrades for any installer classification.
 
+- Agent identity fix: sessions no longer open with "You are Grok released by
+  xAI." — the vendored prompt template drops the hardcoded vendor claim, its
+  encrypted copy is regenerated, and the config overlay stamps
+  `system_prompt_label = "DeepSeek Build"` on every DeepSeek model stanza;
+  leftover Grok fork references in existing configs are scrubbed on launch
+
 ## 5.5.1 — 2026-08-09
 
 - fix update banner advertising Grok Build version as available update

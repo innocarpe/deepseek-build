@@ -117,6 +117,16 @@ fn emit_product_title() {
 /// those models through the Grok CLI proxy (`cli-chat-proxy.grok.com`).
 pub const DEEPSEEK_API_BASE_URL: &str = "https://api.deepseek.com";
 
+/// Identity label rendered by the vendored system prompt template
+/// (`You are ${{ system_prompt_label }}.`).
+///
+/// The product must never render the upstream "Grok" fallback
+/// (`DEFAULT_SYSTEM_PROMPT_LABEL` in the vendored tree) — vendor patch 0007
+/// removed the hardcoded "released by xAI" suffix, and the seed/repair below
+/// stamp this label on every DeepSeek model stanza so sessions open with
+/// "You are DeepSeek Build." instead of "You are Grok released by xAI.".
+pub const PRODUCT_SYSTEM_PROMPT_LABEL: &str = "DeepSeek Build";
+
 /// Prepare product agent config under product home (DeepSeek defaults + theme).
 ///
 /// - Creates `config.toml` when missing (full DeepSeek product seed).
@@ -159,6 +169,7 @@ default = "deepseek-v4-flash"
 [model.deepseek-v4-flash]
 model = "deepseek-v4-flash"
 name = "DeepSeek V4 Flash"
+system_prompt_label = "{PRODUCT_SYSTEM_PROMPT_LABEL}"
 context_window = 128000
 api_backend = "chat_completions"
 base_url = "{DEEPSEEK_API_BASE_URL}"
@@ -170,6 +181,7 @@ reasoning_effort = "high"
 [model.deepseek-v4-pro]
 model = "deepseek-v4-pro"
 name = "DeepSeek V4 Pro"
+system_prompt_label = "{PRODUCT_SYSTEM_PROMPT_LABEL}"
 context_window = 128000
 api_backend = "chat_completions"
 base_url = "{DEEPSEEK_API_BASE_URL}"
@@ -242,10 +254,17 @@ fn repair_product_agent_config_with_theme(body: &str, theme: &str) -> String {
         next.push_str("yolo = false\n");
     }
 
+    // Product identity: a `[ui] fork_secondary_model` pointing at a Grok model
+    // is always stale (DeepSeek Build routes every model to api.deepseek.com).
+    // Drop the leftover so the vendored agent uses its own default fork target.
+    next = scrub_grok_fork_secondary_model(next);
+
     next = ensure_deepseek_model_base_url(next, "deepseek-v4-flash", "DeepSeek V4 Flash");
     next = ensure_deepseek_model_base_url(next, "deepseek-v4-pro", "DeepSeek V4 Pro");
     next = ensure_deepseek_model_reasoning_effort(next, "deepseek-v4-flash");
     next = ensure_deepseek_model_reasoning_effort(next, "deepseek-v4-pro");
+    next = ensure_deepseek_model_system_prompt_label(next, "deepseek-v4-flash");
+    next = ensure_deepseek_model_system_prompt_label(next, "deepseek-v4-pro");
 
     if !next.contains("xai_api_base_url") {
         if !next.contains("[endpoints]") {
@@ -272,6 +291,7 @@ fn ensure_deepseek_model_base_url(body: String, model_id: &str, display_name: &s
 {header}
 model = "{model_id}"
 name = "{display_name}"
+system_prompt_label = "{PRODUCT_SYSTEM_PROMPT_LABEL}"
 context_window = 128000
 api_backend = "chat_completions"
 base_url = "{DEEPSEEK_API_BASE_URL}"
@@ -313,6 +333,138 @@ fn ensure_deepseek_model_reasoning_effort(body: String, model_id: &str) -> Strin
             ("reasoning_effort", "reasoning_effort = \"high\""),
         ],
     )
+}
+
+/// Product identity: DeepSeek model stanzas must carry the DeepSeek
+/// system-prompt label, never the vendored "Grok" fallback.
+///
+/// Adds the label when the section lacks it, and replaces a stale
+/// `grok`/`xai`-valued label (e.g. a model stanza copied from a real Grok CLI
+/// config). A user-set non-Grok label is preserved. Idempotent.
+fn ensure_deepseek_model_system_prompt_label(body: String, model_id: &str) -> String {
+    let header = format!("[model.{model_id}]");
+    if !body.contains(&header) {
+        return body;
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut in_section = false;
+    let mut found = false;
+    let mut patched = false;
+    for line in body.lines() {
+        let t = line.trim();
+        if t == header {
+            in_section = true;
+            found = false;
+            out.push(line.to_string());
+            continue;
+        }
+        if in_section && t.starts_with('[') {
+            if !found {
+                out.push(format!(
+                    "system_prompt_label = \"{PRODUCT_SYSTEM_PROMPT_LABEL}\""
+                ));
+                patched = true;
+            }
+            in_section = false;
+        }
+        let key = t.split_once('=').map(|(key, _)| key.trim());
+        if in_section && key == Some("system_prompt_label") {
+            found = true;
+            if toml_rhs_contains_any(t, &["grok", "xai"]) {
+                out.push(format!(
+                    "system_prompt_label = \"{PRODUCT_SYSTEM_PROMPT_LABEL}\""
+                ));
+                patched = true;
+                continue;
+            }
+        }
+        out.push(line.to_string());
+    }
+    // Section ran to end of file with no label and no closing header.
+    if in_section && !found {
+        out.push(format!(
+            "system_prompt_label = \"{PRODUCT_SYSTEM_PROMPT_LABEL}\""
+        ));
+        patched = true;
+    }
+    if patched {
+        let mut s = out.join("\n");
+        if !s.ends_with('\n') {
+            s.push('\n');
+        }
+        s
+    } else {
+        body
+    }
+}
+
+/// Remove a Grok-model leftover from `[ui] fork_secondary_model`.
+///
+/// DeepSeek Build routes every model to `api.deepseek.com`; a `grok-*` fork
+/// target is always stale (typically copied from a real Grok CLI
+/// `config.toml`). Dropping the key lets the vendored agent use its own
+/// default fork behavior. Idempotent.
+fn scrub_grok_fork_secondary_model(body: String) -> String {
+    let mut out: Vec<&str> = Vec::with_capacity(body.lines().count());
+    let mut changed = false;
+    let mut in_ui_section = false;
+    for line in body.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_ui_section = t == "[ui]";
+        }
+        let key = t.split_once('=').map(|(key, _)| key.trim());
+        if in_ui_section
+            && key == Some("fork_secondary_model")
+            && toml_rhs_contains_any(t, &["grok"])
+        {
+            changed = true;
+            continue;
+        }
+        out.push(line);
+    }
+    if changed {
+        let mut s = out.join("\n");
+        if !s.ends_with('\n') {
+            s.push('\n');
+        }
+        s
+    } else {
+        body
+    }
+}
+
+fn toml_rhs_contains_any(line: &str, needles: &[&str]) -> bool {
+    let Some((_, rhs)) = line.split_once('=') else {
+        return false;
+    };
+    let value = toml_rhs_without_comment(rhs).trim();
+    let value = value
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .or_else(|| value.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+        .unwrap_or(value);
+    let lower = value.to_ascii_lowercase();
+    needles.iter().any(|needle| lower.contains(needle))
+}
+
+fn toml_rhs_without_comment(rhs: &str) -> &str {
+    let mut string_quote: Option<char> = None;
+    let mut escaped = false;
+    for (idx, ch) in rhs.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' if string_quote == Some('"') => escaped = true,
+            '"' | '\'' if string_quote == Some(ch) => string_quote = None,
+            '"' | '\'' if string_quote.is_none() => string_quote = Some(ch),
+            '#' if string_quote.is_none() => return &rhs[..idx],
+            _ => {}
+        }
+    }
+    rhs
 }
 
 /// Inject TOML keys into a `[model.*]` section when absent (section-scoped).
@@ -1127,4 +1279,211 @@ fn seed_and_repair_honor_explicit_theme() {
     let fixed = repair_product_agent_config_with_theme("keep=1\n", PRODUCT_THEME_V2);
     assert!(fixed.contains(&format!("theme = \"{PRODUCT_THEME_V2}\"")));
     assert!(fixed.contains("keep=1"));
+}
+
+#[test]
+fn seed_injects_deepseek_system_prompt_label_and_no_grok_branding() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dsb_config::BuildHome::from_path(dir.path());
+    ensure_product_agent_config(&home).unwrap();
+    let body = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
+    // Both DeepSeek model stanzas carry the product identity label.
+    assert_eq!(
+        body.matches(&format!(
+            "system_prompt_label = \"{PRODUCT_SYSTEM_PROMPT_LABEL}\""
+        ))
+        .count(),
+        2,
+        "seed must label both models: {body}"
+    );
+    // The product seed must never render Grok/xAI identity text. (The
+    // `xai_api_base_url` key itself is a vendored schema name — the ADR 0008
+    // config-home bridge — not branding.)
+    let lower = body.to_ascii_lowercase();
+    assert!(!lower.contains("grok"), "seed leaked grok branding: {body}");
+    assert!(
+        !lower.contains("released by xai"),
+        "seed leaked released-by-xAI branding: {body}"
+    );
+    assert!(
+        !body.contains("system_prompt_label = \"Grok"),
+        "seed leaked grok-valued label: {body}"
+    );
+}
+
+#[test]
+fn repair_injects_system_prompt_label_into_existing_models() {
+    let raw = r#"
+[models]
+default = "deepseek-v4-flash"
+
+[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+api_backend = "chat_completions"
+base_url = "https://api.deepseek.com"
+env_key = "DEEPSEEK_API_KEY"
+
+[model.deepseek-v4-pro]
+model = "deepseek-v4-pro"
+api_backend = "chat_completions"
+base_url = "https://api.deepseek.com"
+env_key = "DEEPSEEK_API_KEY"
+"#;
+    let fixed = repair_product_agent_config(raw);
+    assert_eq!(
+        fixed
+            .matches(&format!(
+                "system_prompt_label = \"{PRODUCT_SYSTEM_PROMPT_LABEL}\""
+            ))
+            .count(),
+        2,
+        "repair must label both models: {fixed}"
+    );
+    // Idempotent.
+    assert_eq!(repair_product_agent_config(&fixed), fixed);
+}
+
+#[test]
+fn repair_replaces_grok_valued_system_prompt_label() {
+    let raw = r#"
+[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+system_prompt_label = "Grok"
+"#;
+    let fixed = repair_product_agent_config(raw);
+    assert!(
+        fixed.contains(&format!(
+            "system_prompt_label = \"{PRODUCT_SYSTEM_PROMPT_LABEL}\""
+        )),
+        "stale Grok label must be replaced: {fixed}"
+    );
+    assert!(!fixed.contains("system_prompt_label = \"Grok\""));
+}
+
+#[test]
+fn repair_ignores_grok_valued_system_prompt_label_backup() {
+    let raw = r#"
+[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+system_prompt_label_backup = "Grok"
+
+[other]
+keep = true
+"#;
+    let fixed = ensure_deepseek_model_system_prompt_label(raw.to_string(), "deepseek-v4-flash");
+    assert!(
+        fixed.contains("system_prompt_label_backup = \"Grok\""),
+        "backup label key must be preserved: {fixed}"
+    );
+    assert!(
+        fixed.contains(&format!(
+            "system_prompt_label = \"{PRODUCT_SYSTEM_PROMPT_LABEL}\"\n[other]"
+        )),
+        "missing true label must be injected before the next section: {fixed}"
+    );
+}
+
+#[test]
+fn repair_keeps_custom_non_grok_system_prompt_label() {
+    let raw = r#"
+[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+system_prompt_label = "My Custom Agent"
+"#;
+    let fixed = repair_product_agent_config(raw);
+    assert!(
+        fixed.contains("system_prompt_label = \"My Custom Agent\""),
+        "custom label must be preserved: {fixed}"
+    );
+}
+
+#[test]
+fn repair_keeps_custom_system_prompt_label_when_comment_mentions_grok() {
+    let raw = r#"
+[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+system_prompt_label = "My Custom Agent" # not Grok
+"#;
+    let fixed = repair_product_agent_config(raw);
+    assert!(
+        fixed.contains("system_prompt_label = \"My Custom Agent\" # not Grok"),
+        "comment text must not make a custom label stale: {fixed}"
+    );
+}
+
+#[test]
+fn repair_scrubs_grok_fork_secondary_model() {
+    let raw = r#"
+[ui]
+theme = "deepseeknight"
+fork_secondary_model = "grok-4.5"
+yolo = false
+"#;
+    let fixed = repair_product_agent_config(raw);
+    assert!(
+        !fixed.contains("grok-4.5"),
+        "grok fork leftover must be scrubbed: {fixed}"
+    );
+    assert!(fixed.contains("theme = \"deepseeknight\""), "{fixed}");
+    assert!(fixed.contains("yolo = false"), "{fixed}");
+    // Idempotent: an already-scrubbed config is untouched.
+    assert_eq!(repair_product_agent_config(&fixed), fixed);
+}
+
+#[test]
+fn scrub_keeps_non_grok_fork_target() {
+    let raw = "[ui]\nfork_secondary_model = \"deepseek-v4-pro\"\n";
+    let fixed = repair_product_agent_config(raw);
+    assert!(
+        fixed.contains("fork_secondary_model = \"deepseek-v4-pro\""),
+        "non-grok fork target must be preserved: {fixed}"
+    );
+}
+
+#[test]
+fn scrub_keeps_non_grok_fork_target_when_comment_mentions_grok() {
+    let raw = "[ui]\nfork_secondary_model = \"deepseek-v4-pro\" # replaces Grok\n";
+    let fixed = repair_product_agent_config(raw);
+    assert!(
+        fixed.contains("fork_secondary_model = \"deepseek-v4-pro\" # replaces Grok"),
+        "comment text must not make a non-grok fork target stale: {fixed}"
+    );
+}
+
+#[test]
+fn scrub_keeps_grok_fork_secondary_model_outside_ui() {
+    let raw = r#"
+[custom]
+fork_secondary_model = "grok-4.5"
+"#;
+    let fixed = repair_product_agent_config(raw);
+    assert!(
+        fixed.contains("[custom]\nfork_secondary_model = \"grok-4.5\""),
+        "custom section fork target must be preserved: {fixed}"
+    );
+}
+
+#[test]
+fn scrub_only_removes_grok_fork_secondary_model_from_ui() {
+    let raw = r#"
+[ui]
+fork_secondary_model = "grok-4.5"
+fork_secondary_model_backup = "grok-4.5"
+
+[custom]
+fork_secondary_model = "grok-4.5"
+"#;
+    let fixed = repair_product_agent_config(raw);
+    assert!(
+        !fixed.contains("[ui]\nfork_secondary_model = \"grok-4.5\""),
+        "ui grok fork target must be scrubbed: {fixed}"
+    );
+    assert!(
+        fixed.contains("fork_secondary_model_backup = \"grok-4.5\""),
+        "ui backup key must be preserved: {fixed}"
+    );
+    assert!(
+        fixed.contains("[custom]\nfork_secondary_model = \"grok-4.5\""),
+        "custom grok fork target must be preserved: {fixed}"
+    );
 }

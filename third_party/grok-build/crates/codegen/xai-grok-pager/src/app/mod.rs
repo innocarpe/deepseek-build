@@ -2289,9 +2289,9 @@ mod tests {
         assert!(!args.no_alt_screen);
     }
     #[test]
-    fn cli_command_name_is_grok() {
+    fn cli_command_name_is_dsb() {
         use clap::CommandFactory;
-        assert_eq!(PagerArgs::command().get_name(), "grok");
+        assert_eq!(PagerArgs::command().get_name(), "dsb");
     }
     #[test]
     fn cli_help_output_header() {
@@ -2303,7 +2303,7 @@ mod tests {
             vec![
                 "DeepSeek Build TUI",
                 "",
-                "Usage: grok [OPTIONS] [PROMPT] [COMMAND]",
+                "Usage: dsb [OPTIONS] [PROMPT] [COMMAND]",
                 "",
                 "Arguments:",
             ]

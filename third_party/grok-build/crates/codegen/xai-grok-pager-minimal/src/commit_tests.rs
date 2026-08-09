@@ -810,6 +810,7 @@ fn committed_edit_keeps_diff_line_backgrounds() {
             tag: ChangeTag::Equal,
         },
     ];
+    let _theme = xai_grok_pager::theme::cache::pin_theme();
     let block = RenderBlock::edit_with_hunks("src/main.rs", vec![hunk]);
     let mut entry = ScrollbackEntry::new(block);
     let theme = Theme::current();
@@ -824,26 +825,41 @@ fn committed_edit_keeps_diff_line_backgrounds() {
     renderer.render(area, &mut buf);
 
     // The committed edit uses a flat background (terminal transparency), but
-    // must still paint the per-line diff backgrounds — otherwise an added /
-    // removed line is indistinguishable from context.
-    let mut saw_insert = false;
-    let mut saw_delete = false;
+    // must still paint per-line diff styling — banded themes use backgrounds,
+    // while terminal-default/bandless themes use whole-line foregrounds.
+    let mut saw_insert_bg = false;
+    let mut saw_delete_bg = false;
+    let mut saw_insert_fg = false;
+    let mut saw_delete_fg = false;
     for y in 0..h {
         for x in 0..width {
             if let Some(cell) = buf.cell((x, y)) {
-                saw_insert |= cell.bg == theme.diff_insert_bg;
-                saw_delete |= cell.bg == theme.diff_delete_bg;
+                saw_insert_bg |= cell.bg == theme.diff_insert_bg;
+                saw_delete_bg |= cell.bg == theme.diff_delete_bg;
+                saw_insert_fg |= cell.fg == theme.diff_insert_fg;
+                saw_delete_fg |= cell.fg == theme.diff_delete_fg;
             }
         }
     }
-    assert!(
-        saw_insert,
-        "committed edit lost the insert (green) diff background"
-    );
-    assert!(
-        saw_delete,
-        "committed edit lost the delete (red) diff background"
-    );
+    if theme.diff_uses_line_fg() {
+        assert!(
+            saw_insert_fg,
+            "committed edit lost the insert diff foreground"
+        );
+        assert!(
+            saw_delete_fg,
+            "committed edit lost the delete diff foreground"
+        );
+    } else {
+        assert!(
+            saw_insert_bg,
+            "committed edit lost the insert (green) diff background"
+        );
+        assert!(
+            saw_delete_bg,
+            "committed edit lost the delete (red) diff background"
+        );
+    }
 }
 
 /// Asserted through `chrome_width` because that is what both `desired_height`

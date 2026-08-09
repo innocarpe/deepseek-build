@@ -238,6 +238,24 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    async fn wait_for_pid_file(path: &std::path::Path) -> u32 {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if let Ok(contents) = std::fs::read_to_string(path)
+                && let Ok(pid) = contents.trim().parse::<u32>()
+            {
+                return pid;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "background pid file was not written at {}",
+                path.display()
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
     /// Verify that `detach_from_tty` prevents child processes from opening
     /// `/dev/tty`. After setsid(), the child has no controlling terminal.
     #[tokio::test]
@@ -288,18 +306,38 @@ mod tests {
     #[tokio::test]
     #[cfg(unix)]
     async fn test_timeout_kills_grandchildren_and_returns_promptly() {
-        let mut request = make_request("sleep 5 & echo bgpid=$!; sleep 5");
-        request.timeout = std::time::Duration::from_millis(300);
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let pid_file = temp_dir.path().join("bg.pid");
+        let quoted_pid_file = shlex::try_quote(
+            pid_file
+                .to_str()
+                .expect("temporary pid path should be valid UTF-8"),
+        )
+        .expect("temporary pid path should be shell-quotable");
+        let mut request = make_request(&format!(
+            "sleep 30 & printf '%s\\n' \"$!\" > {quoted_pid_file}; sleep 30"
+        ));
+        request.timeout = std::time::Duration::from_secs(10);
+
+        let mut run_task =
+            tokio::spawn(async move { LocalTerminalRunner.run(request).await.unwrap() });
+        let bg_pid = tokio::select! {
+            pid = wait_for_pid_file(&pid_file) => pid,
+            _ = &mut run_task => {
+                panic!("run completed before the background pid file was observed")
+            }
+        };
 
         let started = std::time::Instant::now();
-        let result = LocalTerminalRunner.run(request).await.unwrap();
+        let result = run_task.await.unwrap();
 
         assert!(result.timed_out, "run should report the timeout");
-        // Prompt return: request timeout (0.3s) + pipe EOF from the group
-        // kill (normally instant; KILL_REAP_TIMEOUT-bounded worst case) —
-        // anything near the 5s sleeps means we waited for the grandchild.
+        // Prompt return after the PID handshake: request timeout (10s) + pipe
+        // EOF from the group kill (normally instant; KILL_REAP_TIMEOUT-bounded
+        // worst case) — anything near the 30s sleeps means we waited for the
+        // grandchild.
         assert!(
-            started.elapsed() < std::time::Duration::from_secs(4),
+            started.elapsed() < std::time::Duration::from_secs(20),
             "timeout path must not wait for the killed tree (took {:?})",
             started.elapsed()
         );
@@ -307,12 +345,6 @@ mod tests {
         // Outcome: the background grandchild must actually be dead, proving
         // the group kill reached it. Poll briefly — the SIGKILL is delivered
         // synchronously but init may reap the orphan a beat later.
-        let bg_pid = result
-            .combined_output
-            .lines()
-            .find_map(|l| l.trim().strip_prefix("bgpid="))
-            .and_then(|p| p.trim().parse::<u32>().ok())
-            .expect("background pid should have been echoed before the kill");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
             let alive = std::process::Command::new("kill")

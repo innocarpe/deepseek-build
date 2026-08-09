@@ -1,0 +1,191 @@
+From 0000000000000000000000000000000000000010 Mon Sep 17 00:00:00 2001
+From: Wooseong Kim <innocarpe@gmail.com>
+Date: Sun, 9 Aug 2026 12:00:00 +0900
+Subject: [PATCH 10/10] test(pager): align product baseline expectations
+
+Refresh stale vendor pager test expectations after DeepSeek Build product
+branding and theme/default diagnostics changed. The CLI parser now brands the
+binary as `dsb`, the auto-dark rollback follows the classic
+`deepseeknight` product default, version output uses the shipped
+`deepseek-build` command name, standalone doctor expectations avoid
+environment-dependent totals, and the welcome tight-height assertion matches
+the current 8-row logo boundary. Minimal commit diff fixtures pin the process
+theme and accept the terminal-default/bandless path that carries diff
+semantics through foreground color instead of background bands.
+
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
+index 93e0d1c..dd80905 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/dispatch/tests/settings.rs
+@@ -3151,3 +3151,3 @@ fn set_auto_dark_theme_emits_persist_setting_with_correct_payload() {
+                 assert_eq!(*value, SettingValue::Enum("grokday"));
+-                assert_eq!(*rollback_value, SettingValue::Enum("deepseeknight-v2"));
++                assert_eq!(*rollback_value, SettingValue::Enum("deepseeknight"));
+             }
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/mod.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/mod.rs
+index f34a68e..0bbd19c 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/mod.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/mod.rs
+@@ -2291,5 +2291,5 @@ mod tests {
+     #[test]
+-    fn cli_command_name_is_grok() {
++    fn cli_command_name_is_dsb() {
+         use clap::CommandFactory;
+-        assert_eq!(PagerArgs::command().get_name(), "grok");
++        assert_eq!(PagerArgs::command().get_name(), "dsb");
+     }
+@@ -2305,3 +2305,3 @@ mod tests {
+                 "",
+-                "Usage: grok [OPTIONS] [PROMPT] [COMMAND]",
++                "Usage: dsb [OPTIONS] [PROMPT] [COMMAND]",
+                 "",
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager-bin/src/main.rs b/third_party/grok-build/crates/codegen/xai-grok-pager-bin/src/main.rs
+index b535f79..f44c7c7 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager-bin/src/main.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager-bin/src/main.rs
+@@ -2604,7 +2604,7 @@ mod tests {
+             let mut output = Vec::new();
+             write_version(&mut output, label).unwrap();
+             let output = String::from_utf8(output).unwrap();
+-            assert!(output.starts_with("grok "));
++            assert!(output.starts_with("deepseek-build "));
+             assert!(output.contains(env!("VERSION_WITH_COMMIT")));
+             assert!(output.ends_with(expected_suffix), "{output:?}");
+         }
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager-minimal/src/commit_tests.rs b/third_party/grok-build/crates/codegen/xai-grok-pager-minimal/src/commit_tests.rs
+index 3678022..f128a73 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager-minimal/src/commit_tests.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager-minimal/src/commit_tests.rs
+@@ -810,6 +810,7 @@ fn committed_edit_keeps_diff_line_backgrounds() {
+             tag: ChangeTag::Equal,
+         },
+     ];
++    let _theme = xai_grok_pager::theme::cache::pin_theme();
+     let block = RenderBlock::edit_with_hunks("src/main.rs", vec![hunk]);
+     let mut entry = ScrollbackEntry::new(block);
+     let theme = Theme::current();
+@@ -826,22 +827,37 @@ fn committed_edit_keeps_diff_line_backgrounds() {
+     // The committed edit uses a flat background (terminal transparency), but
+-    // must still paint the per-line diff backgrounds — otherwise an added /
+-    // removed line is indistinguishable from context.
+-    let mut saw_insert = false;
+-    let mut saw_delete = false;
++    // must still paint per-line diff styling — banded themes use backgrounds,
++    // while terminal-default/bandless themes use whole-line foregrounds.
++    let mut saw_insert_bg = false;
++    let mut saw_delete_bg = false;
++    let mut saw_insert_fg = false;
++    let mut saw_delete_fg = false;
+     for y in 0..h {
+         for x in 0..width {
+             if let Some(cell) = buf.cell((x, y)) {
+-                saw_insert |= cell.bg == theme.diff_insert_bg;
+-                saw_delete |= cell.bg == theme.diff_delete_bg;
++                saw_insert_bg |= cell.bg == theme.diff_insert_bg;
++                saw_delete_bg |= cell.bg == theme.diff_delete_bg;
++                saw_insert_fg |= cell.fg == theme.diff_insert_fg;
++                saw_delete_fg |= cell.fg == theme.diff_delete_fg;
+             }
+         }
+     }
+-    assert!(
+-        saw_insert,
+-        "committed edit lost the insert (green) diff background"
+-    );
+-    assert!(
+-        saw_delete,
+-        "committed edit lost the delete (red) diff background"
+-    );
++    if theme.diff_uses_line_fg() {
++        assert!(
++            saw_insert_fg,
++            "committed edit lost the insert diff foreground"
++        );
++        assert!(
++            saw_delete_fg,
++            "committed edit lost the delete diff foreground"
++        );
++    } else {
++        assert!(
++            saw_insert_bg,
++            "committed edit lost the insert (green) diff background"
++        );
++        assert!(
++            saw_delete_bg,
++            "committed edit lost the delete (red) diff background"
++        );
++    }
+ }
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/doctor_cmd/tests.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/doctor_cmd/tests.rs
+index faf8d38..59dee7c 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/doctor_cmd/tests.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/doctor_cmd/tests.rs
+@@ -251,11 +251,13 @@ fn fake_standalone_facts_compose_through_shared_view() {
+     assert!(
+         report
+             .findings
+             .iter()
+             .all(|finding| { finding.id != DiagnosticId::new("terminal", "control-mode") })
+     );
+-    assert_eq!(
+-        report.findings[0].id,
+-        DiagnosticId::new("terminal", "tmux-clipboard")
+-    );
++    assert!(
++        report
++            .findings
++            .iter()
++            .any(|finding| finding.id == DiagnosticId::new("terminal", "tmux-clipboard"))
++    );
+ }
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/views/welcome/mod.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/views/welcome/mod.rs
+index 2010b98..a8141f5 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/views/welcome/mod.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/views/welcome/mod.rs
+@@ -3766,27 +3766,40 @@ mod tests {
+     fn hero_box_announcement_clamped_when_tight() {
+-        // A real announcement can't disable the hero box: the slot is clamped to
+-        // whatever still fits (the renderer trails a `…`), so the box stays
+-        // active rather than falling back to the stacked layout.
+-        let area = Rect::new(0, 0, 100, 17);
++        let boundary_height = hero_box::min_content_height(0, 3, 0, 0);
++        let boundary = Rect::new(0, 0, 100, boundary_height);
+         let a = long_ann();
+         let without = WelcomeLayout::compute(WelcomeLayoutInput {
+-            content_area: area,
++            content_area: boundary,
+             menu_height: 3,
+             ..Default::default()
+         });
+         assert!(without.has_hero_box());
++        assert_eq!(hero_box::min_content_height(0, 3, 0, 0), boundary.height);
++        assert_eq!(hero_box::min_content_height(0, 3, 0, 2), boundary.height);
++        assert_eq!(
++            hero_box::min_content_height(0, 3, 0, 3),
++            boundary.height + 1
++        );
++        let too_tight_with_ann = WelcomeLayout::compute(WelcomeLayoutInput {
++            content_area: boundary,
++            menu_height: 3,
++            announcement: Some(&a),
++            ..Default::default()
++        });
++        assert!(too_tight_with_ann.has_hero_box());
++        assert_eq!(too_tight_with_ann.hero_info.height, 2);
++        let area = Rect::new(0, 0, 100, boundary_height + 1);
+         let with_ann = WelcomeLayout::compute(WelcomeLayoutInput {
+             content_area: area,
+             menu_height: 3,
+             announcement: Some(&a),
+             ..Default::default()
+         });
+         assert!(
+             with_ann.has_hero_box(),
+             "announcement clamps to fit instead of disabling the box"
+         );
+-        assert!(with_ann.hero_info.height > 0);
++        assert_eq!(with_ann.hero_info.height, 3);
+         assert!(
+             hero_box::min_content_height(0, 3, 0, with_ann.hero_info.height) <= area.height,
+             "clamped slot must keep the box within the area"
+         );

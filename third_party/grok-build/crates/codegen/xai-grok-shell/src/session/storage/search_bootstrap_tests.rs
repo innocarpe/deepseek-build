@@ -47,6 +47,7 @@ async fn test_claimant_reindexes_even_when_marker_exists() {
         &Arc::new(BootstrapProgress::default()),
         &TEST_TIMING,
         BootstrapRole::Launch,
+        None,
     )
     .await
     .unwrap();
@@ -103,6 +104,7 @@ async fn test_waiter_adopts_peer_marker_without_reindexing() {
         &Arc::new(BootstrapProgress::default()),
         &TEST_TIMING,
         BootstrapRole::Launch,
+        None,
     )
     .await
     .unwrap();
@@ -181,6 +183,7 @@ async fn test_waiter_gives_up_after_peer_wait() {
         &Arc::new(BootstrapProgress::default()),
         &TEST_TIMING,
         BootstrapRole::Launch,
+        None,
     )
     .await
     .unwrap();
@@ -265,6 +268,9 @@ async fn test_concurrent_gates_single_flight() {
     let start = Arc::new(tokio::sync::Barrier::new(2));
     let start_a = Arc::clone(&start);
     let start_b = Arc::clone(&start);
+    let first_claim_attempt = Arc::new(tokio::sync::Barrier::new(2));
+    let first_claim_attempt_a = Arc::clone(&first_claim_attempt);
+    let first_claim_attempt_b = Arc::clone(&first_claim_attempt);
     let (a, b) = tokio::join!(
         tokio::spawn(async move {
             start_a.wait().await;
@@ -274,6 +280,7 @@ async fn test_concurrent_gates_single_flight() {
                 &pa,
                 &TEST_TIMING,
                 BootstrapRole::Launch,
+                Some(first_claim_attempt_a.as_ref()),
             )
             .await
         }),
@@ -285,6 +292,7 @@ async fn test_concurrent_gates_single_flight() {
                 &pb,
                 &TEST_TIMING,
                 BootstrapRole::Launch,
+                Some(first_claim_attempt_b.as_ref()),
             )
             .await
         }),

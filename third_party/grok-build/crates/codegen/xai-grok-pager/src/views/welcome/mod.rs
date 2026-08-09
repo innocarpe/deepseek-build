@@ -3764,17 +3764,30 @@ mod tests {
 
     #[test]
     fn hero_box_announcement_clamped_when_tight() {
-        // A real announcement can't disable the hero box: the slot is clamped to
-        // whatever still fits (the renderer trails a `…`), so the box stays
-        // active rather than falling back to the stacked layout.
-        let area = Rect::new(0, 0, 100, 17);
+        let boundary_height = hero_box::min_content_height(0, 3, 0, 0);
+        let boundary = Rect::new(0, 0, 100, boundary_height);
         let a = long_ann();
         let without = WelcomeLayout::compute(WelcomeLayoutInput {
-            content_area: area,
+            content_area: boundary,
             menu_height: 3,
             ..Default::default()
         });
         assert!(without.has_hero_box());
+        assert_eq!(hero_box::min_content_height(0, 3, 0, 0), boundary.height);
+        assert_eq!(hero_box::min_content_height(0, 3, 0, 2), boundary.height);
+        assert_eq!(
+            hero_box::min_content_height(0, 3, 0, 3),
+            boundary.height + 1
+        );
+        let too_tight_with_ann = WelcomeLayout::compute(WelcomeLayoutInput {
+            content_area: boundary,
+            menu_height: 3,
+            announcement: Some(&a),
+            ..Default::default()
+        });
+        assert!(too_tight_with_ann.has_hero_box());
+        assert_eq!(too_tight_with_ann.hero_info.height, 2);
+        let area = Rect::new(0, 0, 100, boundary_height + 1);
         let with_ann = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             menu_height: 3,
@@ -3785,7 +3798,7 @@ mod tests {
             with_ann.has_hero_box(),
             "announcement clamps to fit instead of disabling the box"
         );
-        assert!(with_ann.hero_info.height > 0);
+        assert_eq!(with_ann.hero_info.height, 3);
         assert!(
             hero_box::min_content_height(0, 3, 0, with_ann.hero_info.height) <= area.height,
             "clamped slot must keep the box within the area"

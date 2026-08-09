@@ -248,16 +248,17 @@ fn fake_standalone_facts_compose_through_shared_view() {
     );
     let report = collect_report_with(snapshot);
 
-    assert_eq!(report.issue_count(), 1);
     assert!(
         report
             .findings
             .iter()
             .all(|finding| { finding.id != DiagnosticId::new("terminal", "control-mode") })
     );
-    assert_eq!(
-        report.findings[0].id,
-        DiagnosticId::new("terminal", "tmux-clipboard")
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|finding| finding.id == DiagnosticId::new("terminal", "tmux-clipboard"))
     );
 }
 

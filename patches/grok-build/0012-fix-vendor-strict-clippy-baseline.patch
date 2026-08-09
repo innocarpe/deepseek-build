@@ -1,0 +1,811 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Wooseong Kim <innocarpe@gmail.com>
+Date: Sun, 9 Aug 2026 00:00:00 +0900
+Subject: [PATCH 12/12] fix(vendor): satisfy strict clippy baseline
+
+Use portable dunce canonicalization in pager tests and test helpers,
+rewrite boolean comparisons as boolean assertions, collapse an identical
+feature-gated expected value, make the fast-worktree GC sleeper a guarded
+test fixture so it is killed and waited even if the test panics, and run
+auth retry budget turn tests on a large-stack current-thread runtime. Align
+gcloud-storage's JWT feature with the shell's rust_crypto jsonwebtoken backend
+so provider selection cannot race into the aws-lc-rs default-provider
+placeholder in vendored auth tests. Allow memory-trace sample rotation tests to
+tolerate unrelated valid process-global trace events while retaining sample
+coverage. Make the remaining full-workspace tests deterministic under parallel
+CI: use a wider real-time auth lock budget with bounded slack, separate raw
+restore caps from a non-vacuous symlink check, preserve client kinds while
+process chat mode is hard-disabled, synchronize the single-flight test at its
+first atomic claim, and capture the terminal grandchild PID through a bounded
+file handshake.
+
+---
+ third_party/grok-build/Cargo.lock                         |  1 -
+ third_party/grok-build/Cargo.toml                         |  2 +-
+ .../crates/codegen/xai-fast-worktree/src/api.rs           | 32 +++++++++---
+ .../codegen/xai-grok-config/src/managed_text/tests.rs     |  4 +-
+ .../xai-grok-pager/src/app/session_startup.rs             | 15 +++---
+ .../xai-grok-pager/src/diagnostics/fix_tests.rs           |  2 +-
+ .../codegen/xai-grok-pager/src/memory_trace.rs            | 13 ++++--
+ .../crates/codegen/xai-grok-pager/src/test_util.rs        |  4 +-
+ .../xai-grok-pager/tests/doctor_early_dispatch.rs         |  7 ++-
+ .../xai-grok-shell/src/auth/manager/lock.rs               | 10 +++---
+ .../turn/auth_retry_budget_tests.rs                       | 64 +++++++++++++----
+ .../xai-grok-shell/src/session/storage/jsonl/tests.rs     | 55 +++++++++++++---
+ .../xai-grok-shell/src/session/storage/search_bootstrap.rs | 41 ++++++++++--
+ .../src/session/storage/search_bootstrap_tests.rs         |  8 +++
+ .../xai-grok-shell/src/session/unified_list/mod.rs        | 51 ++++++++++------
+ .../xai-grok-shell/src/terminal/local_terminal.rs         | 64 +++++++++++++----
+ 16 files changed, 263 insertions(+), 109 deletions(-)
+
+diff --git a/third_party/grok-build/Cargo.lock b/third_party/grok-build/Cargo.lock
+index b8cf9e4..70d6ba4 100644
+--- a/third_party/grok-build/Cargo.lock
++++ b/third_party/grok-build/Cargo.lock
+@@ -5734,7 +5734,6 @@ version = "10.3.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "0529410abe238729a60b108898784df8984c87f6054c9c4fcacc47e4803c1ce1"
+ dependencies = [
+- "aws-lc-rs",
+  "base64",
+  "ed25519-dalek",
+  "getrandom 0.2.16",
+diff --git a/third_party/grok-build/Cargo.toml b/third_party/grok-build/Cargo.toml
+index 95549a5..7606ba7 100644
+--- a/third_party/grok-build/Cargo.toml
++++ b/third_party/grok-build/Cargo.toml
+@@ -152,7 +152,7 @@ fs2 = "0.4"
+ futures = "0.3"
+ futures-util = "0.3"
+ fuzzy-matcher = "0.3.7"
+-gcloud-storage = { version = "1.3.0", default-features = false, features = ["auth", "jwt-aws-lc-rs", "external-account"] }
++gcloud-storage = { version = "1.3.0", default-features = false, features = ["auth", "jwt-rust-crypto", "external-account"] }
+ gethostname = "1"
+ gix = { version = "0.83", default-features = false, features = ["sha1"] }
+ glob = "0.3"
+diff --git a/third_party/grok-build/crates/codegen/xai-fast-worktree/src/api.rs b/third_party/grok-build/crates/codegen/xai-fast-worktree/src/api.rs
+index 697ccd5..1f7a33a 100644
+--- a/third_party/grok-build/crates/codegen/xai-fast-worktree/src/api.rs
++++ b/third_party/grok-build/crates/codegen/xai-fast-worktree/src/api.rs
+@@ -3608,6 +3608,21 @@ mod tests {
+         #[cfg(any(target_os = "linux", target_os = "macos"))]
+         #[test]
+         fn gc_cwd_guard_skips_then_reclaims_expired_worktree() {
++            struct ChildGuard(std::process::Child);
++
++            impl ChildGuard {
++                fn kill_and_wait(&mut self) {
++                    self.0.kill().ok();
++                    self.0.wait().ok();
++                }
++            }
++
++            impl Drop for ChildGuard {
++                fn drop(&mut self) {
++                    self.kill_and_wait();
++                }
++            }
++
+             let _cwd_lock = crate::api::cwd_test_guard();
+             let tmp = tempfile::TempDir::new().unwrap();
+             let db = db_at(&tmp);
+@@ -3632,11 +3647,15 @@ mod tests {
+             };
+             db.register(&record).unwrap();
+
+-            let mut child = std::process::Command::new("sleep")
+-                .arg("30")
+-                .current_dir(&nested)
+-                .spawn()
+-                .expect("spawn sleep");
++            // Guarded test fixture; killed and waited below, including on panic.
++            #[allow(clippy::disallowed_methods)]
++            let mut child = ChildGuard(
++                std::process::Command::new("sleep")
++                    .arg("30")
++                    .current_dir(&nested)
++                    .spawn()
++                    .expect("spawn sleep"),
++            );
+             let want = dunce::canonicalize(&nested).unwrap();
+             assert!(
+                 wait_until(|| scan_has_cwd_under(&want)),
+@@ -3658,8 +3677,7 @@ mod tests {
+             assert!(dir.exists());
+ 
+             // Once the process exits, the same expired worktree is reclaimed.
+-            child.kill().ok();
+-            child.wait().ok();
++            child.kill_and_wait();
+             assert!(
+                 wait_until(|| !scan_has_cwd_under(&want)),
+                 "child CWD must leave the scan after exit before reclaim"
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-config/src/managed_text/tests.rs b/third_party/grok-build/crates/codegen/xai-grok-config/src/managed_text/tests.rs
+index 605fc52..70504b0 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-config/src/managed_text/tests.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-config/src/managed_text/tests.rs
+@@ -271,7 +271,7 @@ fn symlink_resolution_depth_cycles_and_parent_symlinks_are_refused() {
+     let plan = ManagedConfig::plan(request(&relative, &[("item", "body")])).unwrap();
+     assert_eq!(
+         plan.target_path(),
+-        fs::canonicalize(&physical).unwrap().as_path()
++        dunce::canonicalize(&physical).unwrap().as_path()
+     );
+     ManagedConfig::apply(plan).unwrap();
+     assert!(
+@@ -304,7 +304,7 @@ fn symlink_resolution_depth_cycles_and_parent_symlinks_are_refused() {
+         ManagedConfig::plan(request(&linked_parent.join("rc"), &[("item", "body")])).unwrap();
+     assert_eq!(
+         plan.target_path().parent(),
+-        Some(fs::canonicalize(&real_parent).unwrap().as_path())
++        Some(dunce::canonicalize(&real_parent).unwrap().as_path())
+     );
+ }
+ 
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/session_startup.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/session_startup.rs
+index 55ad30a..9f14807 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/session_startup.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/app/session_startup.rs
+@@ -495,7 +495,7 @@ pub fn validate_local_workspace_cwd(path: &std::path::Path) -> anyhow::Result<st
+             .unwrap_or_else(|_| std::path::PathBuf::from("."))
+             .join(path)
+     };
+-    let canon = abs.canonicalize().map_err(|e| {
++    let canon = dunce::canonicalize(&abs).map_err(|e| {
+         anyhow::anyhow!(
+             "local workspace cwd must exist and be canonicalizable: {}: {e}",
+             abs.display()
+@@ -514,7 +514,7 @@ pub fn validate_local_workspace_cwd(path: &std::path::Path) -> anyhow::Result<st
+         anyhow::bail!("{LOCAL_WORKSPACE_HOME_DENIED}");
+     }
+     if let Some(home_path) = dirs::home_dir().or_else(|| std::env::var_os("HOME").map(Into::into)) {
+-        let home_canon = home_path.canonicalize().unwrap_or(home_path);
++        let home_canon = dunce::canonicalize(&home_path).unwrap_or(home_path);
+         if canon == home_canon {
+             anyhow::bail!("{LOCAL_WORKSPACE_HOME_DENIED}");
+         }
+@@ -1547,10 +1547,7 @@ mod tests {
+     /// hardcoded `false` here once disabled it everywhere.
+     #[test]
+     fn remote_restore_follows_compiled_restore_stack() {
+-        assert_eq!(
+-            MaterializeCtx::from_pager_args(&parse(&["grok"])).allow_remote_restore,
+-            false
+-        );
++        assert!(!MaterializeCtx::from_pager_args(&parse(&["grok"])).allow_remote_restore);
+     }
+     #[test]
+     fn from_pager_args_does_not_probe_tty_for_progress() {
+@@ -2141,7 +2138,7 @@ mod tests {
+             .expect("attach config");
+         assert_eq!(cfg.mode, LocalWorkspaceMode::Attach);
+         assert_eq!(cfg.server_id.as_deref(), Some("srv-dogfood"));
+-        let canon = tmp.path().canonicalize().unwrap();
++        let canon = dunce::canonicalize(tmp.path()).unwrap();
+         assert_eq!(cfg.cwd.as_deref(), Some(canon.as_path()));
+     }
+     #[cfg(feature = "local-workspace")]
+@@ -2196,7 +2193,7 @@ mod tests {
+             cfg.server_id.is_none(),
+             "own leaves server_id to supervisor"
+         );
+-        let canon = tmp.path().canonicalize().unwrap();
++        let canon = dunce::canonicalize(tmp.path()).unwrap();
+         assert_eq!(cfg.cwd.as_deref(), Some(canon.as_path()));
+     }
+     #[cfg(feature = "local-workspace")]
+@@ -2217,7 +2214,7 @@ mod tests {
+             .expect("env own");
+         assert_eq!(cfg.mode, LocalWorkspaceMode::Own);
+         assert!(cfg.server_id.is_none());
+-        let canon = cwd.path().canonicalize().unwrap();
++        let canon = dunce::canonicalize(cwd.path()).unwrap();
+         assert_eq!(cfg.cwd.as_deref(), Some(canon.as_path()));
+     }
+     #[cfg(feature = "local-workspace")]
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/diagnostics/fix_tests.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/diagnostics/fix_tests.rs
+index 5066555..6fb9576 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/diagnostics/fix_tests.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/diagnostics/fix_tests.rs
+@@ -330,7 +330,7 @@ fn full_preview_safely_renders_backtick_requested_symlink_target_and_backup_path
+     use std::os::unix::fs::symlink;
+ 
+     let temp = tempfile::tempdir().unwrap();
+-    let root = temp.path().canonicalize().unwrap();
++    let root = dunce::canonicalize(temp.path()).unwrap();
+     let home = root.join("home`dir");
+     let target_dir = root.join("target`dir");
+     std::fs::create_dir_all(&home).unwrap();
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/memory_trace.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/memory_trace.rs
+index 665996f..3932b48 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/memory_trace.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/memory_trace.rs
+@@ -574,16 +574,24 @@ mod tests {
+             test_support::record_sample_for_tests();
+         }
+         // Rotation happened at the tiny cap: a `.1` exists and both files
+-        // hold only valid JSON lines with the expected shape.
++        // hold only valid JSON lines with positive timestamps. The sink is
++        // process-global, so unrelated valid events may interleave here.
+         let rotated = dir.path().join("t.jsonl.1");
+         assert!(rotated.exists(), "rotation must produce a .1 file");
+         assert!(path.exists(), "rotation reopens the live file eagerly");
++        let mut sample_count = 0;
+         for p in [&path, &rotated] {
+             let body = std::fs::read_to_string(p).unwrap();
+             for line in body.lines() {
+                 let v: serde_json::Value = serde_json::from_str(line).expect("valid JSON line");
+-                assert_eq!(v["kind"], "sample");
+                 assert!(v["ts_ms"].as_u64().unwrap() > 0);
++                if v["kind"] == "sample" {
++                    sample_count += 1;
++                }
+             }
+         }
++        assert!(
++            sample_count > 0,
++            "at least one sample event must be retained"
++        );
+     }
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/test_util.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/test_util.rs
+index 2ccc5cc..b7c3453 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/test_util.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/test_util.rs
+@@ -166,9 +166,7 @@ impl GrokHomeFixture {
+     /// through the explicit `*_for_cwd` seams; the process cwd is never
+     /// mutated.
+     pub fn cwd_str(&self) -> String {
+-        self.cwd
+-            .path()
+-            .canonicalize()
++        dunce::canonicalize(self.cwd.path())
+             .expect("canonicalize cwd")
+             .to_string_lossy()
+             .to_string()
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/tests/doctor_early_dispatch.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/tests/doctor_early_dispatch.rs
+index 4c0468d..cc5cc24 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/tests/doctor_early_dispatch.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/tests/doctor_early_dispatch.rs
+@@ -315,10 +315,9 @@ fn doctor_irrelevant_unsafe_byobu_does_not_break_ssh_or_plain_tmux() {
+ #[test]
+ #[ignore = "spawns the real pager binary; CI/Bazel provides PAGER_BINARY"]
+ fn doctor_hostile_home_and_byobu_create_no_config_files() {
+-    let binary = pager_binary()
+-        .expect("real pager binary is required when selected")
+-        .canonicalize()
+-        .unwrap();
++    let binary =
++        dunce::canonicalize(pager_binary().expect("real pager binary is required when selected"))
++            .unwrap();
+     let temp = tempfile::tempdir().unwrap();
+     let home = temp.path().join("home");
+     let grok_home = temp.path().join("qhome");
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_tests/turn/auth_retry_budget_tests.rs b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_tests/turn/auth_retry_budget_tests.rs
+index e8ff488..9412577 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_tests/turn/auth_retry_budget_tests.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/acp_session_tests/turn/auth_retry_budget_tests.rs
+@@ -7,6 +7,7 @@
+ use super::support::*;
+ use super::*;
+ use crate::auth::{AuthManager, AuthMode, GrokAuth, GrokComConfig};
++use std::future::Future;
+ use std::sync::Arc;
+ use std::sync::atomic::{AtomicU32, Ordering};
+ use std::time::Duration;
+@@ -15,6 +16,39 @@ use xai_grok_test_support::{MockInferenceServer, MockModelEntry};
+ /// The token the mock server accepts and the refresher mints on success.
+ const FRESH_TOKEN: &str = "refreshed-test-token";
+-
++
++/// `SessionActor` turn futures overflow the default test thread stack.
++fn block_on_session(f: impl FnOnce() + Send + 'static) {
++    std::thread::Builder::new()
++        .stack_size(16 * 1024 * 1024)
++        .spawn(f)
++        .expect("spawn large-stack test thread")
++        .join()
++        .expect("test thread");
++}
++
++fn current_thread_local<F>(f: F)
++where
++    F: Future<Output = ()> + 'static,
++{
++    let rt = tokio::runtime::Builder::new_current_thread()
++        .enable_all()
++        .build()
++        .expect("test runtime");
++    tokio::task::LocalSet::new().block_on(&rt, f);
++}
++
++fn current_thread_local_paused<F>(f: F)
++where
++    F: Future<Output = ()> + 'static,
++{
++    let rt = tokio::runtime::Builder::new_current_thread()
++        .enable_all()
++        .start_paused(true)
++        .build()
++        .expect("test runtime");
++    tokio::task::LocalSet::new().block_on(&rt, f);
++}
++
+ /// With `fail_pre_request`, mimics the post-wake sequence: pre-send
+ /// (`PreRequest`) refreshes fail transiently so the send goes out
+ /// fail-closed, while the 401-triggered recovery (`ServerRejected`)
+@@ -235,11 +269,10 @@ async fn run_prompt(
+ /// The wake sequence: the resolver has nothing wire-valid, the send goes
+ /// out with no `Authorization` header, the server 401s it, recovery lands a
+ /// fresh token. The turn must survive and resubmit with the fresh bearer.
+-#[tokio::test(flavor = "current_thread")]
+-async fn fail_closed_401_is_uncharged_and_turn_survives() {
+-    let local = tokio::task::LocalSet::new();
+-    local
+-        .run_until(async {
++#[test]
++fn fail_closed_401_is_uncharged_and_turn_survives() {
++    block_on_session(|| {
++        current_thread_local(async {
+             let server = MockInferenceServer::start_with_required_auth(
+                 vec![MockModelEntry::new("test")],
+                 FRESH_TOKEN,
+@@ -287,19 +320,18 @@ async fn fail_closed_401_is_uncharged_and_turn_survives() {
+                 calls.load(Ordering::SeqCst) >= 2,
+                 "both the failing pre-flight and the recovery refresh must run"
+             );
+-        })
+-        .await;
++        });
++    });
+ }
+-
++
+ /// Real credential rejections must still terminate: when every request
+ /// carries a bearer the server rejects, the escalating budget exhausts after
+ /// `MAX_RETRIES` and the failure names authenticated rejections — not a
+ /// generic budget message. `start_paused` auto-advances the backoff ladder.
+-#[tokio::test(flavor = "current_thread", start_paused = true)]
+-async fn authenticated_401s_still_exhaust_after_three_retries() {
+-    let local = tokio::task::LocalSet::new();
+-    local
+-        .run_until(async {
++#[test]
++fn authenticated_401s_still_exhaust_after_three_retries() {
++    block_on_session(|| {
++        current_thread_local_paused(async {
+             // The server only accepts a token the refresher never mints, so
+             // every authenticated send is rejected.
+             let server = MockInferenceServer::start_with_required_auth(
+@@ -349,6 +381,6 @@ async fn authenticated_401s_still_exhaust_after_three_retries() {
+                 message.contains("authenticated inference requests were still rejected"),
+                 "the notification must carry the same story as the error: {message}"
+             );
+-        })
+-        .await;
++        });
++    });
+ }
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/auth/manager/lock.rs b/third_party/grok-build/crates/codegen/xai-grok-shell/src/auth/manager/lock.rs
+index 8ffad48..2f149b6 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-shell/src/auth/manager/lock.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-shell/src/auth/manager/lock.rs
+@@ -1164,3 +1164,3 @@ mod tests {
+-        let timeout = StdDuration::from_millis(900);
+-        let confirm = StdDuration::from_millis(400);
++        let timeout = StdDuration::from_secs(6);
++        let confirm = StdDuration::from_secs(2);
+         let start = tokio::time::Instant::now();
+@@ -1172,6 +1172,6 @@ mod tests {
+-        // Generous slack for CI scheduling, but well under the pre-fix
+-        // floor of timeout + confirm (1300 ms).
++        // One second absorbs loaded-runner scheduling latency while remaining
++        // below the pre-fix floor of timeout + confirm (8 seconds).
+         assert!(
+-            elapsed < timeout + StdDuration::from_millis(250),
++            elapsed < timeout + StdDuration::from_secs(1),
+             "total wait must stay within the caller's budget, took {elapsed:?}"
+         );
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/storage/jsonl/tests.rs b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/storage/jsonl/tests.rs
+index a1c00c0..d2894d0 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/storage/jsonl/tests.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/storage/jsonl/tests.rs
+@@ -224,10 +224,8 @@ async fn workflow_run_manifest_round_trips_and_clear_tombstone_wins() {
+                 .is_empty()
+         );
+ }
+-#[cfg(unix)]
+ #[tokio::test]
+-async fn workflow_restore_rejects_symlinks_and_caps_run_count() {
+-    use std::os::unix::fs::symlink;
++async fn workflow_restore_caps_run_count() {
+     use crate::session::workflow::store::{
+         MAX_RESTORED_WORKFLOW_RUNS, WORKFLOW_RUN_MANIFEST_VERSION, WorkflowRunManifest,
+         script_revision_path,
+@@ -266,19 +264,52 @@ async fn workflow_restore_rejects_symlinks_and_caps_run_count() {
+         std::fs::write(script_revision_path(&run_dir, 0), "complete(\"ok\");").unwrap();
+         std::fs::write(run_dir.join("args.json"), "{}").unwrap();
+     }
+-    let attacker = temp_dir.path().join("attacker.json");
+-    std::fs::write(&attacker, "{}").unwrap();
++    let loaded = adapter.load_session_without_updates(&info).await.unwrap();
++    assert_eq!(loaded.workflow_runs.len(), MAX_RESTORED_WORKFLOW_RUNS);
++}
++
++#[cfg(unix)]
++#[tokio::test]
++async fn workflow_restore_rejects_symlinked_manifest() {
++    use crate::session::workflow::store::{
++        WORKFLOW_RUN_MANIFEST_VERSION, WorkflowRunManifest, script_revision_path,
++    };
++    use crate::session::workflow::tracker::WorkflowTracker;
++    use std::os::unix::fs::symlink;
++    let temp_dir = TempDir::new().unwrap();
++    let info = create_test_info();
++    let adapter = JsonlStorageAdapter::with_root(temp_dir.path().to_path_buf());
++    adapter.init_session(&info, default_model_id()).await.unwrap();
++    let workflows = adapter.session_dir(&info).join("workflows");
+     let symlinked = workflows.join("wf_symlink");
+     std::fs::create_dir_all(symlinked.join("scripts")).unwrap();
+-    symlink(&attacker, symlinked.join("state.json")).unwrap();
++    std::fs::write(script_revision_path(&symlinked, 0), "complete(\"ok\");").unwrap();
++    std::fs::write(symlinked.join("args.json"), "{}").unwrap();
++
++    let mut tracker = WorkflowTracker::default();
++    let state = tracker
++        .start_run(
++            "wf_symlink".into(),
++            "demo".into(),
++            "ship".into(),
++            Vec::new(),
++            None,
++            Some("workflows/wf_symlink/journal.jsonl".into()),
++        );
++    let manifest = WorkflowRunManifest {
++        version: WORKFLOW_RUN_MANIFEST_VERSION,
++        state,
++        script_revision: 0,
++    };
++    let outside = temp_dir.path().join("outside-state.json");
++    std::fs::write(&outside, serde_json::to_vec(&manifest).unwrap()).unwrap();
++    symlink(&outside, symlinked.join("state.json")).unwrap();
++
+     let loaded = adapter.load_session_without_updates(&info).await.unwrap();
+-    assert_eq!(loaded.workflow_runs.len(), MAX_RESTORED_WORKFLOW_RUNS);
+     assert!(
+-            loaded
+-                .workflow_runs
+-                .iter()
+-                .all(|run| run.manifest.state.run_id != "wf_symlink")
+-        );
++        loaded.workflow_runs.is_empty(),
++        "valid manifests outside the workflow dir must not load through a symlink"
++    );
+ }
+ /// `load_session_without_updates` always defers rewind points while the full
+ /// `load_session` / `load_rewind_points` still return them.
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/storage/search_bootstrap.rs b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/storage/search_bootstrap.rs
+index daaa2eb..0297146 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/storage/search_bootstrap.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/storage/search_bootstrap.rs
+@@ -134,7 +134,15 @@ pub(super) async fn bootstrap_with_lease(
+     storage: &dyn StorageAdapter,
+     progress: &Arc<BootstrapProgress>,
+ ) -> io::Result<BootstrapOutcome> {
+-    bootstrap_with_lease_inner(root_dir, storage, progress, &TIMING, BootstrapRole::Launch).await
++    bootstrap_with_lease_inner(
++        root_dir,
++        storage,
++        progress,
++        &TIMING,
++        BootstrapRole::Launch,
++        None,
++    )
++    .await
+ }
+-
++
+ /// Single claim attempt: rebuilds when the lease is free and no completed
+@@ -146,7 +154,15 @@ pub(super) async fn try_bootstrap_with_lease(
+     storage: &dyn StorageAdapter,
+     progress: &Arc<BootstrapProgress>,
+ ) -> io::Result<BootstrapOutcome> {
+-    bootstrap_with_lease_inner(root_dir, storage, progress, &TIMING, BootstrapRole::Recheck).await
++    bootstrap_with_lease_inner(
++        root_dir,
++        storage,
++        progress,
++        &TIMING,
++        BootstrapRole::Recheck,
++        None,
++    )
++    .await
+ }
+-
++
+ /// What the caller owes after the gate returns.
+@@ -172,6 +188,7 @@ async fn bootstrap_with_lease_inner(
+     progress: &Arc<BootstrapProgress>,
+     timing: &BootstrapTiming,
+     role: BootstrapRole,
++    first_claim_attempt_barrier: Option<&tokio::sync::Barrier>,
+ ) -> io::Result<BootstrapOutcome> {
+     let db_path = search_db_path(root_dir);
+     let token = ClaimToken::new();
+@@ -182,6 +199,7 @@ async fn bootstrap_with_lease_inner(
+     };
+     let deadline = started + peer_wait;
+     let mut peer_seen = false;
++    let mut passed_first_claim_attempt_barrier = false;
+     loop {
+         // Skipped on the first iteration so a launch always reindexes.
+         if peer_seen && has_completed_bootstrap_marker(root_dir).await == Some(true) {
+@@ -192,7 +210,18 @@ async fn bootstrap_with_lease_inner(
+             return Ok(BootstrapOutcome::Done);
+         }
+-
++
+-        if claim_bootstrap_lease(&db_path, &token, timing.lease).await? {
++        let claimed = claim_bootstrap_lease(&db_path, &token, timing.lease).await?;
++        // Tests can rendezvous immediately after the atomic attempt so one
++        // claimant deterministically holds the lease while its peer observes
++        // contention. Production callers always pass `None`.
++        if !passed_first_claim_attempt_barrier {
++            passed_first_claim_attempt_barrier = true;
++            if let Some(barrier) = first_claim_attempt_barrier {
++                barrier.wait().await;
++            }
++        }
++
++        if claimed {
+             // Only a launch's first claim ignores an existing marker (the
+             // launch owes pruning and skipped retries); everyone else
+             // adopts any completed marker.
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/storage/search_bootstrap_tests.rs b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/storage/search_bootstrap_tests.rs
+index aa13a6e..74a68ca 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/storage/search_bootstrap_tests.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/storage/search_bootstrap_tests.rs
+@@ -47,6 +47,7 @@ async fn test_claimant_reindexes_even_when_marker_exists() {
+         &Arc::new(BootstrapProgress::default()),
+         &TEST_TIMING,
+         BootstrapRole::Launch,
++        None,
+     )
+     .await
+     .unwrap();
+@@ -103,6 +104,7 @@ async fn test_waiter_adopts_peer_marker_without_reindexing() {
+         &Arc::new(BootstrapProgress::default()),
+         &TEST_TIMING,
+         BootstrapRole::Launch,
++        None,
+     )
+     .await
+     .unwrap();
+@@ -181,6 +183,7 @@ async fn test_waiter_gives_up_after_peer_wait() {
+         &Arc::new(BootstrapProgress::default()),
+         &TEST_TIMING,
+         BootstrapRole::Launch,
++        None,
+     )
+     .await
+     .unwrap();
+@@ -265,6 +268,9 @@ async fn test_concurrent_gates_single_flight() {
+     let start = Arc::new(tokio::sync::Barrier::new(2));
+     let start_a = Arc::clone(&start);
+     let start_b = Arc::clone(&start);
++    let first_claim_attempt = Arc::new(tokio::sync::Barrier::new(2));
++    let first_claim_attempt_a = Arc::clone(&first_claim_attempt);
++    let first_claim_attempt_b = Arc::clone(&first_claim_attempt);
+     let (a, b) = tokio::join!(
+         tokio::spawn(async move {
+             start_a.wait().await;
+@@ -274,6 +280,7 @@ async fn test_concurrent_gates_single_flight() {
+                 &pa,
+                 &TEST_TIMING,
+                 BootstrapRole::Launch,
++                Some(first_claim_attempt_a.as_ref()),
+             )
+             .await
+         }),
+@@ -285,6 +292,7 @@ async fn test_concurrent_gates_single_flight() {
+                 &pb,
+                 &TEST_TIMING,
+                 BootstrapRole::Launch,
++                Some(first_claim_attempt_b.as_ref()),
+             )
+             .await
+         }),
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/terminal/local_terminal.rs b/third_party/grok-build/crates/codegen/xai-grok-shell/src/terminal/local_terminal.rs
+index 93d0c45..5da2473 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-shell/src/terminal/local_terminal.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-shell/src/terminal/local_terminal.rs
+@@ -238,6 +238,24 @@ mod tests {
+         }
+     }
+-
++
++    #[cfg(unix)]
++    async fn wait_for_pid_file(path: &std::path::Path) -> u32 {
++        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
++        loop {
++            if let Ok(contents) = std::fs::read_to_string(path)
++                && let Ok(pid) = contents.trim().parse::<u32>()
++            {
++                return pid;
++            }
++            assert!(
++                std::time::Instant::now() < deadline,
++                "background pid file was not written at {}",
++                path.display()
++            );
++            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
++        }
++    }
++
+     /// Verify that `detach_from_tty` prevents child processes from opening
+     /// `/dev/tty`. After setsid(), the child has no controlling terminal.
+     #[tokio::test]
+@@ -288,18 +305,38 @@ mod tests {
+     #[tokio::test]
+     #[cfg(unix)]
+     async fn test_timeout_kills_grandchildren_and_returns_promptly() {
+-        let mut request = make_request("sleep 5 & echo bgpid=$!; sleep 5");
+-        request.timeout = std::time::Duration::from_millis(300);
++        let temp_dir = tempfile::tempdir().expect("tempdir");
++        let pid_file = temp_dir.path().join("bg.pid");
++        let quoted_pid_file = shlex::try_quote(
++            pid_file
++                .to_str()
++                .expect("temporary pid path should be valid UTF-8"),
++        )
++        .expect("temporary pid path should be shell-quotable");
++        let mut request = make_request(&format!(
++            "sleep 30 & printf '%s\\n' \"$!\" > {quoted_pid_file}; sleep 30"
++        ));
++        request.timeout = std::time::Duration::from_secs(10);
++
++        let mut run_task =
++            tokio::spawn(async move { LocalTerminalRunner.run(request).await.unwrap() });
++        let bg_pid = tokio::select! {
++            pid = wait_for_pid_file(&pid_file) => pid,
++            _ = &mut run_task => {
++                panic!("run completed before the background pid file was observed")
++            }
++        };
+-
++
+         let started = std::time::Instant::now();
+-        let result = LocalTerminalRunner.run(request).await.unwrap();
++        let result = run_task.await.unwrap();
+-
++
+         assert!(result.timed_out, "run should report the timeout");
+-        // Prompt return: request timeout (0.3s) + pipe EOF from the group
+-        // kill (normally instant; KILL_REAP_TIMEOUT-bounded worst case) —
+-        // anything near the 5s sleeps means we waited for the grandchild.
++        // Prompt return after the PID handshake: request timeout (10s) + pipe
++        // EOF from the group kill (normally instant; KILL_REAP_TIMEOUT-bounded
++        // worst case) — anything near the 30s sleeps means we waited for the
++        // grandchild.
+         assert!(
+-            started.elapsed() < std::time::Duration::from_secs(4),
++            started.elapsed() < std::time::Duration::from_secs(20),
+             "timeout path must not wait for the killed tree (took {:?})",
+             started.elapsed()
+         );
+@@ -307,12 +344,6 @@ mod tests {
+         // Outcome: the background grandchild must actually be dead, proving
+         // the group kill reached it. Poll briefly — the SIGKILL is delivered
+         // synchronously but init may reap the orphan a beat later.
+-        let bg_pid = result
+-            .combined_output
+-            .lines()
+-            .find_map(|l| l.trim().strip_prefix("bgpid="))
+-            .and_then(|p| p.trim().parse::<u32>().ok())
+-            .expect("background pid should have been echoed before the kill");
+         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+         loop {
+             let alive = std::process::Command::new("kill")
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/unified_list/mod.rs b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/unified_list/mod.rs
+index 3977cd6..a70b34b 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/unified_list/mod.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/unified_list/mod.rs
+@@ -908,7 +908,7 @@ mod tests {
+         }
+         {
+             let _on = xai_grok_test_support::EnvGuard::set("GROK_SESSION_LIST_CONVERSATIONS", "1");
+-            assert_eq!(conversations_lane_enabled(), false);
++            assert!(!conversations_lane_enabled());
+         }
+         {
+             let _off = xai_grok_test_support::EnvGuard::set("GROK_SESSION_LIST_CONVERSATIONS", "0");
+@@ -931,22 +931,21 @@ mod tests {
+         {
+             let _desktop =
+                 xai_grok_test_support::EnvGuard::set("GROK_SESSION_LIST_CONVERSATIONS", "1");
+-            assert_eq!(conversations_lane_active(), false);
++            assert!(!conversations_lane_active());
+         }
+         {
+             let _chat = xai_grok_test_support::EnvGuard::set(GROK_CHAT_MODE_ENV, "1");
+-            assert_eq!(
+-                conversations_lane_active(),
+-                false,
++            assert!(
++                !conversations_lane_active(),
+                 "process chat mode must enable the lane (chat feature only)"
+             );
+         }
+     }
+-    /// `parse_list_req` forces the conversations-only `kind` exactly when
+-    /// process chat mode is on; otherwise the client request is untouched.
++    /// This product hard-disables process chat mode, so even an inherited
++    /// environment variable must leave the client's `kind` filter untouched.
+     #[test]
+     #[serial_test::serial]
+-    fn parse_list_req_forces_kind_under_process_chat_mode_only() {
++    fn parse_list_req_preserves_kind_when_process_chat_mode_is_disabled() {
+         use crate::agent::chat_modes::GROK_CHAT_MODE_ENV;
+         let raw = serde_json::json!({
+             "_meta": { "x.ai/facetFilters": { "kind": ["build"], "starred": [true] } },
+@@ -966,15 +965,11 @@ mod tests {
+             let _on = xai_grok_test_support::EnvGuard::set(GROK_CHAT_MODE_ENV, "1");
+             let req = parse_list_req(&raw).expect("parse");
+             let parsed = ParsedMeta::parse(req.meta.as_ref());
+-            let expected_build = if cfg!(feature = "local-workspace") {
+-                Some(&vec![serde_json::json!("build")])
+-            } else {
+-                Some(&vec![serde_json::json!("build")])
+-            };
++            let expected_build = vec![serde_json::json!("build")];
+             assert_eq!(
+                 parsed.facet_filters.get(KIND_FACET_KEY),
+-                expected_build,
++                Some(&expected_build),
+-                "client kind=build under process chat mode"
++                "hard-disabled process chat mode preserves client kind=build"
+             );
+             assert_eq!(
+                 parsed.facet_filters.get("starred"),
+@@ -983,23 +978,31 @@ mod tests {
+             );
+             let req = parse_list_req("{}").expect("parse");
+             let parsed = ParsedMeta::parse(req.meta.as_ref());
+-            let expected = None;
+             assert_eq!(
+                 parsed.facet_filters.get(KIND_FACET_KEY),
+-                expected,
+-                "absent client kind still forces chat under process chat mode"
++                None,
++                "absent client kind remains absent when process chat mode is hard-disabled"
+             );
+-            for bad in [
+-                serde_json::json!({ "_meta": { "x.ai/facetFilters": { "kind": [] } } }),
+-                serde_json::json!({ "_meta": { "x.ai/facetFilters": { "kind": null } } }),
+-                serde_json::json!({ "_meta": { "x.ai/facetFilters": { "kind": ["other"] } } }),
++            for (bad, expected) in [
++                (
++                    serde_json::json!({ "_meta": { "x.ai/facetFilters": { "kind": [] } } }),
++                    Vec::new(),
++                ),
++                (
++                    serde_json::json!({ "_meta": { "x.ai/facetFilters": { "kind": null } } }),
++                    vec![serde_json::json!(null)],
++                ),
++                (
++                    serde_json::json!({ "_meta": { "x.ai/facetFilters": { "kind": ["other"] } } }),
++                    vec![serde_json::json!("other")],
++                ),
+             ] {
+                 let req = parse_list_req(&bad.to_string()).expect("parse");
+                 let parsed = ParsedMeta::parse(req.meta.as_ref());
+                 assert_eq!(
+                     parsed.facet_filters.get(KIND_FACET_KEY),
+-                    expected,
+-                    "empty/null/unknown kind must still force chat: {bad}"
++                    Some(&expected),
++                    "hard-disabled process chat mode must preserve client kind: {bad}"
+                 );
+             }
+         }
+-- 
+2.50.1

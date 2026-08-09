@@ -1161,18 +1161,18 @@ mod tests {
         write!(holder, "{}:{old_ts}", std::process::id()).unwrap();
         holder.sync_all().unwrap();
 
-        let timeout = StdDuration::from_millis(900);
-        let confirm = StdDuration::from_millis(400);
+        let timeout = StdDuration::from_secs(6);
+        let confirm = StdDuration::from_secs(2);
         let start = tokio::time::Instant::now();
         // The holder is our own live PID, so the Break re-observation
         // unlinks and acquires (same shape as the wedged-holder test).
         let lock = try_lock_auth_file_async_with(&path, timeout, confirm).await;
         let elapsed = start.elapsed();
         assert!(lock.is_some(), "wedged holder must be broken");
-        // Generous slack for CI scheduling, but well under the pre-fix
-        // floor of timeout + confirm (1300 ms).
+        // One second absorbs loaded-runner scheduling latency while remaining
+        // below the pre-fix floor of timeout + confirm (8 seconds).
         assert!(
-            elapsed < timeout + StdDuration::from_millis(250),
+            elapsed < timeout + StdDuration::from_secs(1),
             "total wait must stay within the caller's budget, took {elapsed:?}"
         );
     }

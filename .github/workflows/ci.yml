@@ -144,8 +144,9 @@ jobs:
       - run: ./scripts/check-semver.sh
       - run: node npm/scripts/check-version-match.js
 
-  # Vendored Grok workspace validation. Path-gated so docs-only/root-only PRs
-  # stay green, but vendor/workflow changes must validate the vendored workspace.
+  # Vendored Grok validation. PRs keep the fast format and strict Clippy gates.
+  # The full upstream workspace test runs once after merge instead of once per
+  # stacked PR; the required aggregator accepts that job as skipped on PRs.
   grok_fmt:
     name: grok fmt
     needs: changes
@@ -201,9 +202,12 @@ jobs:
   grok_test:
     name: grok test
     needs: changes
-    if: needs.changes.outputs.grok == 'true'
+    if: github.event_name == 'push' && needs.changes.outputs.grok == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    env:
+      # SessionActor turn futures can exceed Rust's 2 MiB default test-thread stack.
+      RUST_MIN_STACK: "16777216"
     defaults:
       run:
         working-directory: third_party/grok-build

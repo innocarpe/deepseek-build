@@ -235,11 +235,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.94.0"
-      - name: Install protobuf compiler
+      - name: Install protoc (pinned 29.3 — the repo's dotslash-pinned version)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq protobuf-compiler
-          echo "PROTOC=$(command -v protoc)" >> "$GITHUB_ENV"
+          sudo apt-get install -y -qq unzip
+          curl -fsSL -o /tmp/protoc.zip \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-linux-x86_64.zip"
+          sudo unzip -o /tmp/protoc.zip -d /usr/local bin/protoc
+          sudo chmod 755 /usr/local/bin/protoc
+          echo "PROTOC=/usr/local/bin/protoc" >> "$GITHUB_ENV"
+          /usr/local/bin/protoc --version
       - name: Install ripgrep (grep tool tests shell out to `rg`)
         run: |
           sudo apt-get install -y -qq ripgrep

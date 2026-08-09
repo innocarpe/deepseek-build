@@ -985,8 +985,11 @@ pub async fn run(
     .await;
     crate::unified_log::flush_blocking().await;
     let restore_result = restore_terminal(terminal, writer_thread, screen_mode);
-    drop(agent_guard);
-    xai_tty_utils::global_process_scope().kill_all();
+    finish_session_teardown(
+        move || drop(agent_guard),
+        || xai_tty_utils::global_process_scope().kill_all(),
+        disable_mouse_paste_raw,
+    );
     if let Err(cleanup_error) = restore_result {
         match &result {
             Ok(_) => {
@@ -1102,13 +1105,29 @@ fn print_relaunch_failure_hint(
 }
 /// Write raw CSI sequences to disable mouse tracking and bracketed paste.
 ///
-/// Best-effort: failures are silently ignored since this runs on teardown
-/// and panic paths where stderr may already be broken.
+/// Best-effort: teardown must continue if stderr is already broken, but the
+/// failure is logged so terminal-mode leaks remain diagnosable.
 fn disable_mouse_paste_raw() {
-    xai_grok_shell::util::with_locked_stderr(|stderr| {
-        let _ = stderr.write_all(xai_crash_handler::terminal::MOUSE_PASTE_RESET);
-        let _ = stderr.flush();
+    let result = xai_grok_shell::util::with_locked_stderr(|stderr| {
+        stderr.write_all(xai_crash_handler::terminal::MOUSE_PASTE_RESET)?;
+        stderr.flush()
     });
+    if let Err(error) = result {
+        tracing::warn!(%error, "terminal mouse/paste reset failed");
+    }
+}
+
+/// Finish work that can still write after the primary terminal restoration.
+/// The reset must remain last so a slow agent shutdown cannot leave mouse
+/// reporting or bracketed paste enabled in the user's shell.
+fn finish_session_teardown(
+    shutdown_agent: impl FnOnce(),
+    reap_children: impl FnOnce(),
+    reset_terminal_modes: impl FnOnce(),
+) {
+    shutdown_agent();
+    reap_children();
+    reset_terminal_modes();
 }
 /// Drain any pending terminal input events.
 ///
@@ -1681,6 +1700,7 @@ fn set_panic_hook(mode: ScreenMode) {
         xai_crash_handler::disable_terminal_escape_restore();
         xai_tty_utils::restore_native_stderr();
         xai_tty_utils::global_process_scope().kill_all();
+        disable_mouse_paste_raw();
         hook(info);
     }));
 }
@@ -1719,6 +1739,16 @@ mod tests {
         );
         assert!(result.is_err());
         assert!(teardown_called.get());
+    }
+    #[test]
+    fn post_restore_cleanup_resets_terminal_modes_last() {
+        let calls = std::cell::RefCell::new(Vec::new());
+        finish_session_teardown(
+            || calls.borrow_mut().push("agent"),
+            || calls.borrow_mut().push("children"),
+            || calls.borrow_mut().push("terminal"),
+        );
+        assert_eq!(*calls.borrow(), ["agent", "children", "terminal"]);
     }
     /// `[ui].cursor_blink` tri-state → startup cursor policy; the `None`
     /// default must be Inherit (emit nothing).

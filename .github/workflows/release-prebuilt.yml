@@ -139,7 +139,7 @@ jobs:
           set -euo pipefail
           VERSION="${{ steps.release.outputs.version }}"
           AGENT="$HOME/.deepseek-build/bin/deepseek-build-agent"
-          OUT="$("$AGENT" --version 2>&1)"
+          OUT="$(env -u DEEPSEEK_BUILD_VERSION -u GROK_TEST_VERSION "$AGENT" --version 2>&1)"
           echo "agent --version: $OUT"
           BIN_VER="$(printf '%s\n' "$OUT" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true)"
           if [[ -z "$BIN_VER" || "$BIN_VER" != "$VERSION" ]]; then
@@ -151,6 +151,22 @@ jobs:
       - name: Package tarball
         run: |
           ./scripts/package-release-binaries.sh --platform "${{ matrix.platform }}"
+
+      - name: Verify packaged tarball version
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.release.outputs.version }}"
+          ASSET="dist/deepseek-build-${VERSION}-${{ matrix.platform }}.tar.gz"
+          TMP="$(mktemp -d)"
+          tar -xzf "$ASSET" -C "$TMP"
+          OUT="$(env -u DEEPSEEK_BUILD_VERSION -u GROK_TEST_VERSION "$TMP/deepseek-build-agent" --version 2>&1)"
+          echo "packaged agent --version: $OUT"
+          BIN_VER="$(printf '%s\n' "$OUT" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true)"
+          if [[ -z "$BIN_VER" || "$BIN_VER" != "$VERSION" ]]; then
+            echo "::error::packaged agent --version '${OUT}' does not report release version ${VERSION} (got ${BIN_VER:-none})" >&2
+            exit 1
+          fi
+          echo "packaged agent version matches release ${VERSION}"
 
       - name: Upload release asset
         env:

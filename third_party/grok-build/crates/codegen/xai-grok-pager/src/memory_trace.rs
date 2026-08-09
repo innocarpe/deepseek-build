@@ -590,7 +590,10 @@ mod tests {
                 }
             }
         }
-        assert!(sample_count > 0, "at least one sample event must be retained");
+        assert!(
+            sample_count > 0,
+            "at least one sample event must be retained"
+        );
     }
 
     #[test]

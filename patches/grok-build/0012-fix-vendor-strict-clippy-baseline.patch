@@ -25,17 +25,17 @@ and capture the terminal grandchild PID through a bounded file handshake.
  .../codegen/xai-grok-config/src/managed_text/tests.rs     |  4 +-
  .../xai-grok-pager/src/app/session_startup.rs             | 15 +++---
  .../xai-grok-pager/src/diagnostics/fix_tests.rs           |  2 +-
- .../codegen/xai-grok-pager/src/memory_trace.rs            |  9 +++-
+ .../codegen/xai-grok-pager/src/memory_trace.rs            | 13 ++++--
  .../crates/codegen/xai-grok-pager/src/test_util.rs        |  4 +-
  .../xai-grok-pager/tests/doctor_early_dispatch.rs         |  7 ++-
  .../xai-grok-shell/src/auth/manager/lock.rs               |  8 ++--
  .../turn/auth_retry_budget_tests.rs                       | 64 +++++++++++++----
  .../xai-grok-shell/src/session/storage/jsonl/tests.rs     | 55 +++++++++++++---
- .../xai-grok-shell/src/session/storage/search_bootstrap.rs | 27 ++++++--
+ .../xai-grok-shell/src/session/storage/search_bootstrap.rs | 41 ++++++++++--
  .../src/session/storage/search_bootstrap_tests.rs         |  8 +++
  .../xai-grok-shell/src/session/unified_list/mod.rs        | 51 ++++++++++------
  .../xai-grok-shell/src/terminal/local_terminal.rs         | 64 +++++++++++++----
- 16 files changed, 245 insertions(+), 108 deletions(-)
+ 16 files changed, 262 insertions(+), 108 deletions(-)
 
 diff --git a/third_party/grok-build/Cargo.lock b/third_party/grok-build/Cargo.lock
 index b8cf9e4..70d6ba4 100644
@@ -219,7 +219,7 @@ diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/memory_tra
 index 665996f..3932b48 100644
 --- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/memory_trace.rs
 +++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/memory_trace.rs
-@@ -574,16 +574,21 @@ mod tests {
+@@ -574,16 +574,24 @@ mod tests {
              test_support::record_sample_for_tests();
          }
          // Rotation happened at the tiny cap: a `.1` exists and both files
@@ -241,7 +241,10 @@ index 665996f..3932b48 100644
 +                }
              }
          }
-+        assert!(sample_count > 0, "at least one sample event must be retained");
++        assert!(
++            sample_count > 0,
++            "at least one sample event must be retained"
++        );
      }
 diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/test_util.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/test_util.rs
 index 2ccc5cc..b7c3453 100644
@@ -490,29 +493,43 @@ diff --git a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/st
 index daaa2eb..0297146 100644
 --- a/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/storage/search_bootstrap.rs
 +++ b/third_party/grok-build/crates/codegen/xai-grok-shell/src/session/storage/search_bootstrap.rs
-@@ -134,7 +134,8 @@ pub(super) async fn bootstrap_with_lease(
+@@ -134,7 +134,15 @@ pub(super) async fn bootstrap_with_lease(
      storage: &dyn StorageAdapter,
      progress: &Arc<BootstrapProgress>,
  ) -> io::Result<BootstrapOutcome> {
 -    bootstrap_with_lease_inner(root_dir, storage, progress, &TIMING, BootstrapRole::Launch).await
-+    bootstrap_with_lease_inner(root_dir, storage, progress, &TIMING, BootstrapRole::Launch, None)
-+        .await
++    bootstrap_with_lease_inner(
++        root_dir,
++        storage,
++        progress,
++        &TIMING,
++        BootstrapRole::Launch,
++        None,
++    )
++    .await
  }
 -
 +
  /// Single claim attempt: rebuilds when the lease is free and no completed
-@@ -146,7 +147,8 @@ pub(super) async fn try_bootstrap_with_lease(
+@@ -146,7 +154,15 @@ pub(super) async fn try_bootstrap_with_lease(
      storage: &dyn StorageAdapter,
      progress: &Arc<BootstrapProgress>,
  ) -> io::Result<BootstrapOutcome> {
 -    bootstrap_with_lease_inner(root_dir, storage, progress, &TIMING, BootstrapRole::Recheck).await
-+    bootstrap_with_lease_inner(root_dir, storage, progress, &TIMING, BootstrapRole::Recheck, None)
-+        .await
++    bootstrap_with_lease_inner(
++        root_dir,
++        storage,
++        progress,
++        &TIMING,
++        BootstrapRole::Recheck,
++        None,
++    )
++    .await
  }
 -
 +
  /// What the caller owes after the gate returns.
-@@ -172,6 +174,7 @@ async fn bootstrap_with_lease_inner(
+@@ -172,6 +188,7 @@ async fn bootstrap_with_lease_inner(
      progress: &Arc<BootstrapProgress>,
      timing: &BootstrapTiming,
      role: BootstrapRole,
@@ -520,7 +537,7 @@ index daaa2eb..0297146 100644
  ) -> io::Result<BootstrapOutcome> {
      let db_path = search_db_path(root_dir);
      let token = ClaimToken::new();
-@@ -182,6 +185,7 @@ async fn bootstrap_with_lease_inner(
+@@ -182,6 +199,7 @@ async fn bootstrap_with_lease_inner(
      };
      let deadline = started + peer_wait;
      let mut peer_seen = false;
@@ -528,7 +545,7 @@ index daaa2eb..0297146 100644
      loop {
          // Skipped on the first iteration so a launch always reindexes.
          if peer_seen && has_completed_bootstrap_marker(root_dir).await == Some(true) {
-@@ -192,7 +196,18 @@ async fn bootstrap_with_lease_inner(
+@@ -192,7 +210,18 @@ async fn bootstrap_with_lease_inner(
              return Ok(BootstrapOutcome::Done);
          }
 -

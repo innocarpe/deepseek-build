@@ -134,8 +134,15 @@ pub(super) async fn bootstrap_with_lease(
     storage: &dyn StorageAdapter,
     progress: &Arc<BootstrapProgress>,
 ) -> io::Result<BootstrapOutcome> {
-    bootstrap_with_lease_inner(root_dir, storage, progress, &TIMING, BootstrapRole::Launch, None)
-        .await
+    bootstrap_with_lease_inner(
+        root_dir,
+        storage,
+        progress,
+        &TIMING,
+        BootstrapRole::Launch,
+        None,
+    )
+    .await
 }
 
 /// Single claim attempt: rebuilds when the lease is free and no completed
@@ -147,8 +154,15 @@ pub(super) async fn try_bootstrap_with_lease(
     storage: &dyn StorageAdapter,
     progress: &Arc<BootstrapProgress>,
 ) -> io::Result<BootstrapOutcome> {
-    bootstrap_with_lease_inner(root_dir, storage, progress, &TIMING, BootstrapRole::Recheck, None)
-        .await
+    bootstrap_with_lease_inner(
+        root_dir,
+        storage,
+        progress,
+        &TIMING,
+        BootstrapRole::Recheck,
+        None,
+    )
+    .await
 }
 
 /// What the caller owes after the gate returns.

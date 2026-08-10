@@ -8,6 +8,14 @@
   content and a version change always recompiles. The release workflow now
   also verifies the extracted tarball's agent `--version` before upload.
 
+## 5.5.4 — 2026-08-10
+
+- Sync the vendored Grok Build workspace through upstream commit `8a14c91`,
+  including its billing nonce, skill discovery, and protobuf reflection work.
+- Restore full vendor CI compatibility: repair synchronized test patterns and
+  formatting, remove a dead xAI updater fallback, make `debug_redact` fixtures
+  portable, and install the pinned protoc include bundle used by those tests.
+
 ## 5.5.3 — 2026-08-09
 
 - fix compiled version injection (sccache-proof) and gate shipped tarball

@@ -59,6 +59,7 @@ Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** p
 | 2026-08-09 | **`5.5.1`** fix update banner advertising Grok Build version as available update | PR #167 |
 | 2026-08-09 | **`5.5.2`** Grok Build `1.0.0` port completion, DeepSeek identity correction, and release reliability hardening | PR #173 |
 | 2026-08-09 | **`5.5.3`** fix compiled version injection (sccache-proof) and gate shipped tarball | PR #_(fill in)_ |
+| 2026-08-10 | **`5.5.4`** sync Grok Build through `8a14c91` and restore full vendor CI | PR #_(fill in)_ |
 | 2026-08-07 | **`5.0.1`** widen the DeepSeek whale logo to official terminal proportions | PR #113 |
 | 2026-08-07 | **`4.0.4`** Image attachments on text-only DeepSeek endpoints (persist to session assets + OCR hint); DeepSeek status line with account balance & cache hit rate; G003 mint file_version on Path A read_file | PR #_(fill in)_ |
 | 2026-08-07 | **release-cycle harness** — `bump-version.sh` + `release.sh` + CI sccache/fast-path + runbook | PR #94 |
@@ -77,4 +78,3 @@ Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** p
 | [REPLAN_2.0.md](../REPLAN_2.0.md) | Historical replan that defined 2.0.0 intent |
 | [KNOWN_LIMITS.md](../KNOWN_LIMITS.md) | Runtime honesty for current SemVer on disk |
 | [CHANGELOG.md](../../../CHANGELOG.md) | Per-release notes |
-

@@ -19,8 +19,9 @@ dsb auth login          # same as setup
 
 The wizard has two steps:
 
-1. **API provider** — `1` DeepSeek API (`https://api.deepseek.com`, default on
-   Enter) or `2` OpenRouter (`https://openrouter.ai/api/v1`).
+1. **API provider** — `1` DeepSeek API (`https://api.deepseek.com`) or `2`
+   OpenRouter (`https://openrouter.ai/api/v1`). Enter keeps the provider
+   already saved in this home (DeepSeek API on a first run).
 2. **API key** for that provider — create one at
    `https://platform.deepseek.com/api_keys` or `https://openrouter.ai/keys`
    and paste it (not echoed into git).
@@ -58,9 +59,13 @@ deepseek-build setup --api-key "$DEEPSEEK_API_KEY"
 deepseek-build setup --provider openrouter --api-key "$OPENROUTER_KEY"
 ```
 
+Without `--provider`, setup keeps the provider already saved in this home, so
+rotating an OpenRouter key is just `deepseek-build setup --api-key "$NEW_KEY"`.
+
 For DeepSeek, `DEEPSEEK_API_KEY` **always wins** over the file when both are
-set. It never overrides a saved OpenRouter choice (it is a DeepSeek key), and
-`--provider openrouter` never reads it.
+set. It is a DeepSeek key, so it never overrides a saved OpenRouter choice and
+setup never saves it for OpenRouter (with OpenRouter saved, `setup` asks
+instead of reading it).
 
 ## Line mode
 

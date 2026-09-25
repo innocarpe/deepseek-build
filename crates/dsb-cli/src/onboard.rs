@@ -19,7 +19,7 @@ pub fn run_setup_wizard(home: &BuildHome, preset: Option<Provider>) -> Result<Cr
     let inv = crate::invocation_name();
     if !io::stdin().is_terminal() {
         bail!(
-            "no API key configured and stdin is not a TTY.\n\
+            "setup needs an interactive terminal (stdin is not a TTY).\n\
              Run `{inv} setup` in a terminal, or `{inv} setup --provider <deepseek|openrouter> --api-key …`,\n\
              or set {ENV_API_KEY}, or create {}.",
             home.credentials_path().display()
@@ -55,7 +55,7 @@ fn run_wizard(
     )?;
     let provider = match preset {
         Some(p) => p,
-        None => prompt_provider(input, out, err)?,
+        None => prompt_provider(input, out, err, saved_provider(home).unwrap_or_default())?,
     };
 
     writeln!(out)?;
@@ -118,25 +118,35 @@ fn run_wizard(
     Ok(creds)
 }
 
-/// Step 1: pick the provider. Enter keeps the DeepSeek API default.
+/// Step 1: pick the provider. Enter keeps `default` — the provider already
+/// saved in this home, or DeepSeek API on a first run — so re-running setup
+/// never flips a saved OpenRouter choice by accident.
 fn prompt_provider(
     input: &mut impl BufRead,
     out: &mut impl Write,
     err: &mut impl Write,
+    default: Provider,
 ) -> Result<Provider> {
     writeln!(out)?;
     writeln!(out, "Step 1/2 — API provider")?;
+    let mark = |p: Provider| if p == default { " (default)" } else { "" };
     writeln!(
         out,
-        "  1) DeepSeek API — straight to api.deepseek.com (default)"
+        "  1) DeepSeek API — straight to api.deepseek.com{}",
+        mark(Provider::DeepSeek)
     )?;
     writeln!(
         out,
-        "  2) OpenRouter   — the same DeepSeek models via openrouter.ai"
+        "  2) OpenRouter   — the same DeepSeek models via openrouter.ai{}",
+        mark(Provider::OpenRouter)
     )?;
     out.flush()?;
+    let default_number = match default {
+        Provider::DeepSeek => 1,
+        Provider::OpenRouter => 2,
+    };
     for _ in 0..3 {
-        write!(err, "Select [1]: ")?;
+        write!(err, "Select [{default_number}]: ")?;
         err.flush()?;
         let mut line = String::new();
         if input
@@ -146,7 +156,7 @@ fn prompt_provider(
         {
             bail!("no provider chosen — setup cancelled");
         }
-        if let Some(provider) = picker_answer_to_provider(&line) {
+        if let Some(provider) = picker_answer_to_provider(&line, default) {
             return Ok(provider);
         }
         writeln!(err, "Answer 1 (DeepSeek API) or 2 (OpenRouter).")?;
@@ -154,10 +164,11 @@ fn prompt_provider(
     bail!("no valid provider chosen — setup cancelled")
 }
 
-/// Pure mapping from picker input to a provider ("" => DeepSeek API default).
-fn picker_answer_to_provider(answer: &str) -> Option<Provider> {
+/// Pure mapping from picker input to a provider ("" => `default`).
+fn picker_answer_to_provider(answer: &str, default: Provider) -> Option<Provider> {
     match answer.trim() {
-        "" | "1" => Some(Provider::DeepSeek),
+        "" => Some(default),
+        "1" => Some(Provider::DeepSeek),
         "2" => Some(Provider::OpenRouter),
         other => Provider::parse(other),
     }
@@ -180,10 +191,23 @@ pub fn save_provider_key(home: &BuildHome, provider: Provider, key: &str) -> Res
     Ok(creds)
 }
 
+/// Provider recorded in `credentials.json` (env ignored): the user's last
+/// explicit choice, which every provider-less setup path keeps.
+pub fn saved_provider(home: &BuildHome) -> Option<Provider> {
+    Credentials::load_with(home, None)
+        .ok()
+        .map(|c| c.provider())
+}
+
 /// First-run gate for the TUI paths: no saved or env key, and the default
 /// model stanza cannot authenticate from its own `env_key` either.
 pub fn needs_setup(home: &BuildHome) -> bool {
-    !home.has_credentials() && !crate::agent_launch::configured_model_env_key_available(home)
+    needs_setup_with(home, |name| std::env::var(name).ok())
+}
+
+fn needs_setup_with(home: &BuildHome, env_lookup: impl Fn(&str) -> Option<String>) -> bool {
+    let has_key = Credentials::load_with(home, env_lookup(ENV_API_KEY).as_deref()).is_ok();
+    !has_key && !crate::agent_launch::configured_model_env_key_available_in(home, env_lookup)
 }
 
 /// Load credentials; on missing key + interactive TTY, run setup automatically.
@@ -380,17 +404,54 @@ mod tests {
 
     #[test]
     fn picker_maps_numbers_names_and_default() {
-        assert_eq!(picker_answer_to_provider(""), Some(Provider::DeepSeek));
-        assert_eq!(picker_answer_to_provider(" 1 "), Some(Provider::DeepSeek));
-        assert_eq!(picker_answer_to_provider("2"), Some(Provider::OpenRouter));
-        assert_eq!(
-            picker_answer_to_provider("OpenRouter"),
-            Some(Provider::OpenRouter)
-        );
-        assert_eq!(
-            picker_answer_to_provider("deepseek"),
-            Some(Provider::DeepSeek)
-        );
-        assert_eq!(picker_answer_to_provider("3"), None);
+        let ds = Provider::DeepSeek;
+        let or = Provider::OpenRouter;
+        assert_eq!(picker_answer_to_provider("", ds), Some(ds));
+        assert_eq!(picker_answer_to_provider("", or), Some(or));
+        assert_eq!(picker_answer_to_provider(" 1 ", or), Some(ds));
+        assert_eq!(picker_answer_to_provider("2", ds), Some(or));
+        assert_eq!(picker_answer_to_provider("OpenRouter", ds), Some(or));
+        assert_eq!(picker_answer_to_provider("deepseek", or), Some(ds));
+        assert_eq!(picker_answer_to_provider("3", ds), None);
+    }
+
+    #[test]
+    fn rerun_with_saved_openrouter_still_asks_but_defaults_to_openrouter() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = BuildHome::from_path(dir.path());
+        Credentials::save(&home, Provider::OpenRouter, "sk-or-v1-old").unwrap();
+        let run = wizard(&home, None, "\nsk-or-v1-new\n");
+        assert_eq!(run.result.unwrap().provider(), Provider::OpenRouter);
+        assert!(run.out.contains("Step 1/2 — API provider"), "{}", run.out);
+        assert!(run.out.contains("openrouter.ai (default)"), "{}", run.out);
+        assert!(run.err.contains("Select [2]: "), "{}", run.err);
+        // Switching away is still one keystroke.
+        let run = wizard(&home, None, "1\nsk-deepseek-new\n");
+        assert_eq!(run.result.unwrap().provider(), Provider::DeepSeek);
+    }
+
+    #[test]
+    fn needs_setup_only_when_no_usable_key() {
+        let none = |_: &str| None;
+        let dir = tempfile::tempdir().unwrap();
+        let home = BuildHome::from_path(dir.path());
+        assert!(needs_setup_with(&home, none));
+        // DEEPSEEK_API_KEY in the environment.
+        assert!(!needs_setup_with(&home, |n: &str| {
+            (n == ENV_API_KEY).then(|| "sk-env".to_string())
+        }));
+        // Hand-written stanza with its own variable: set vs unset.
+        std::fs::write(
+            dir.path().join("config.toml"),
+            "[model.deepseek-v4-flash]\nenv_key = \"MY_OR_KEY\"\n",
+        )
+        .unwrap();
+        assert!(!needs_setup_with(&home, |n: &str| {
+            (n == "MY_OR_KEY").then(|| "set".to_string())
+        }));
+        assert!(needs_setup_with(&home, none));
+        // Saved credentials.
+        Credentials::save(&home, Provider::OpenRouter, "sk-or-v1-k").unwrap();
+        assert!(!needs_setup_with(&home, none));
     }
 }

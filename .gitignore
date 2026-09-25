@@ -45,6 +45,10 @@ third_party/grok-build/**/target/
 third_party/grok-build/.gjc/
 third_party/grok-build/.omc/
 third_party/grok-build/**/.DS_Store
+# macOS drops a zero-byte Spotlight marker into build directories; it is never
+# tracked and would otherwise show up as dirt in every worktree here
+# (`git status` in the worktree-dispatch cleanup gate).
+**/.metadata_never_index
 
 # Pre-3.x baseline runtime results (local only)
 docs/product/evidence/_last_pre3x_*.tsv

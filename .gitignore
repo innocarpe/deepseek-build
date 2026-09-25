@@ -12,6 +12,14 @@
 /build/
 .bun/
 
+# npm packaging: the published package is 9 tracked files (bin/, lib/,
+# scripts/, test/). `postinstall` and the release scripts write the native
+# binaries beside them, and a `npm install` at the root drops a lockfile. None
+# of it is source, and an un-ignored 167 MB agent binary is rejected by
+# GitHub's push hook — `git add -A` in a worktree will pick it up otherwise.
+/npm/native-bin/
+/package-lock.json
+
 # Local secrets & machine state
 .env
 .env.*
@@ -32,6 +40,11 @@
 .deepseek-build/cache/
 .deepseek-build/logs/
 *.log
+
+# An empty `.grok/` appears in a checkout when the product's own tooling runs
+# against this repo. It is machine state, not source, and an untracked
+# directory blocks `scripts/release.sh`, which requires a clean tree.
+/.grok/
 
 # Coverage / tooling
 coverage/

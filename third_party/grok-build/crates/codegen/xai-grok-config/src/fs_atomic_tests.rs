@@ -118,7 +118,9 @@ fn resolved(path: &std::path::Path) -> std::path::PathBuf {
     let mut tail: Vec<std::ffi::OsString> = Vec::new();
     let mut cur = path;
     loop {
-        if let Ok(mut base) = std::fs::canonicalize(cur) {
+        // The crate bans raw `canonicalize` (verbatim `\\?\` paths on Windows);
+        // `dunce` is the sanctioned form.
+        if let Ok(mut base) = dunce::canonicalize(cur) {
             for part in tail.iter().rev() {
                 base.push(part);
             }

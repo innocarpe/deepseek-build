@@ -13,7 +13,7 @@ use tokio::io::AsyncWriteExt;
 use crate::cleanup_downloads::cleanup_old_downloads;
 use crate::version::{
     UpdateConfig, fetch_latest_version, get_installed_grok_version, get_latest_version,
-    is_stable_channel, is_version_cache_fresh, try_fetch_stable_pointer, write_version_cache,
+    is_version_cache_fresh, try_fetch_stable_pointer, write_version_cache,
 };
 use crate::winget::{UPGRADE_COMMAND, WINGET};
 use xai_grok_shell::util::config;

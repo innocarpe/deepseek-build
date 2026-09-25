@@ -102,6 +102,10 @@ mod tests {
             .mount(&server)
             .await;
 
+        // Localhost-only: the request below goes to `MockServer` on 127.0.0.1,
+        // so the TLS policy this lint protects (backend pin, OS roots,
+        // GROK_EXTRA_CA_BUNDLE) has nothing to apply to.
+        #[allow(clippy::disallowed_methods)]
         let client = traced_client(reqwest::Client::new());
         let parent = tracing::info_span!("parent_handler");
         let parent_span_id = otel_span_id_hex(&parent);

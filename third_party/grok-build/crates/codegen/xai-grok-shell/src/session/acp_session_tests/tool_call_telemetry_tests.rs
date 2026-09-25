@@ -178,6 +178,11 @@ fn init_product(server: &xai_grok_test_support::MockInferenceServer, mode: Telem
     };
     // `shared_client` keeps idle sockets process-wide. `TcpListener::bind` can
     // recycle a loopback port onto a dead connection, and `track` drops that error.
+    // Test-only client, built directly rather than through the grok TLS policy
+    // helper: it talks to a loopback mock and must disable pooling so a
+    // recycled port cannot reuse a dead connection. The policy's concern
+    // (backend pin, OS roots, GROK_EXTRA_CA_BUNDLE) has nothing to apply to.
+    #[allow(clippy::disallowed_methods)]
     let client = reqwest::Client::builder()
         .http1_only()
         .pool_max_idle_per_host(0)

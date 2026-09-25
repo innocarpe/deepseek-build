@@ -4,6 +4,7 @@ Agent-loadable skills (`SKILL.md` directories) live here.
 
 | Skill | When |
 |-------|------|
+| [`grok-sync/`](./grok-sync/SKILL.md) | Syncing the vendored Grok Build tree forward: pin vs upstream, adoption matrix, three-way merge, gates, ledger + changelist |
 | [`pr-authoring/`](./pr-authoring/SKILL.md) | Opening or writing PRs; enforcing Orca-level narrative bar |
 | [`release/`](./release/SKILL.md) | Cutting a release: bump, CHANGELOG, tag, prebuilt assets, npm publish |
 | [`worktree-dispatch/`](./worktree-dispatch/SKILL.md) | From the control-tower checkout: create a worktree per unit of work, hand it to an agent session, clean up after merge |

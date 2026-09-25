@@ -317,7 +317,84 @@ AFTER_HASH="$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[
   || bad "--dry-run rewrote CHANGELOG.md"
 
 # ---------------------------------------------------------------------------
-head_ "8. wiring: bump-version.sh runs the shared mover"
+head_ "8. the junction after Unreleased keeps its blank line"
+# A glued junction (`## Unreleased` immediately followed by `## <version>`) is
+# how two shipped items got mis-filed: a branch that appends an item under
+# Unreleased merges into a glued tree *without a conflict*, and the item lands
+# under the version heading. Measured: #209 (cache attribution) landed under
+# 5.7.0, #206 (SSH paste) under 6.0.0 — each byte-identical to `git merge-tree`.
+cat > "$TMP/glued.md" <<EOF
+# Changelog
+
+## Unreleased
+## 5.7.0 ${DASH} 2026-09-25
+
+- An older released thing.
+EOF
+python3 "$MOVER" apply "$TMP/glued.md" 6.0.0 2026-09-26 'note' > /dev/null
+if [[ "$(sed -n '3,5p' "$TMP/glued.md" | tr '\n' '|')" == "## Unreleased||## 6.0.0 "* ]]; then
+  ok "a glued junction is repaired on the next bump"
+else
+  bad "the glued junction survived the bump: $(sed -n '1,6p' "$TMP/glued.md" | tr '\n' '|')"
+fi
+
+# The guard is not only a fix-up: a real two-branch merge must CONFLICT (so a
+# human files the item) instead of silently filing it under a version.
+MERGE_TMP="$(mktemp -d)"
+(
+  cd "$MERGE_TMP" || exit 1
+  git init -q; git config user.email t@t; git config user.name t
+  cat > CHANGELOG.md <<EOF
+# Changelog
+
+## Unreleased
+
+- The TUI fits a phone-width pane.
+
+## 5.6.0 ${DASH} 2026-09-25
+
+- An older thing.
+EOF
+  git add -A; git commit -qm base
+  BASE_BRANCH="$(git symbolic-ref --short HEAD)"
+  git checkout -qb mainside
+  python3 "$MOVER" apply CHANGELOG.md 6.0.0 2026-09-26 'release note' > /dev/null
+  git add -A; git commit -qm 'release opens 6.0.0'
+  git checkout -q "$BASE_BRANCH"; git checkout -qb feature
+  python3 - <<'PY'
+import pathlib
+p = pathlib.Path('CHANGELOG.md'); s = p.read_text()
+p.write_text(s.replace('- The TUI fits a phone-width pane.',
+                       '- A cache epoch change now says what moved.\n- The TUI fits a phone-width pane.'))
+PY
+  git add -A; git commit -qm 'feature adds an item under Unreleased'
+  git checkout -q mainside
+) > /dev/null 2>&1
+if (cd "$MERGE_TMP" && git merge --no-edit feature > /dev/null 2>&1); then
+  bad "the merge did not conflict — the item would be silently mis-filed"
+else
+  ok "merging a new Unreleased item into a released tree conflicts (not silent)"
+fi
+# With the glue present the same merge is silent — the failure this pins.
+(
+  cd "$MERGE_TMP" || exit 1
+  git merge --abort 2>/dev/null || true
+  python3 - <<'PY'
+import pathlib, re
+p = pathlib.Path('CHANGELOG.md'); s = p.read_text()
+p.write_text(re.sub(r'(?m)^(## Unreleased)\n\n', r'\1\n', s))
+PY
+  git add -A; git commit -qm 'glue the junction (the defect)'
+) > /dev/null 2>&1
+if (cd "$MERGE_TMP" && git merge --no-edit feature > /dev/null 2>&1); then
+  ok "with a glued junction the same merge is silent (reproduces the mis-filing)"
+else
+  bad "expected the glued merge to be silent; the reproduction does not hold"
+fi
+rm -rf "$MERGE_TMP"
+
+# ---------------------------------------------------------------------------
+head_ "9. wiring: bump-version.sh runs the shared mover"
 grep -q 'changelog_release.py apply CHANGELOG.md' "$BUMP" \
   && ok "bump-version.sh calls the mover on the real path" \
   || bad "bump-version.sh does not call the mover"

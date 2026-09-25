@@ -109,9 +109,22 @@ def build(text, new, date, desc):
         section = f'## {new} — {date}\n\n- {note}\n\n'
         desc_used = bool(desc)
 
-    unrel = '## Unreleased\n' + residue
+    # The junction after "## Unreleased" must be a blank line, always. A glued
+    # heading (`## Unreleased` immediately followed by `## <version>`) is not
+    # cosmetic: a branch that appends an item under Unreleased and merges into a
+    # tree whose junction is glued gets that item filed under the version
+    # heading by a *conflict-free* auto-merge, so nothing flags it (measured:
+    # #209 landed under 5.7.0 and #206 under 6.0.0, each byte-identical to
+    # `git merge-tree`). With the blank line those merges conflict instead.
+    unrel = '## Unreleased\n\n' + residue.lstrip('\n')
     out = '# Changelog\n\n' + unrel + section + rest
     out = re.sub(r'\n{3,}', '\n\n', out).rstrip('\n') + '\n'
+
+    if re.search(r'(?m)^## Unreleased[ \t]*\n## ', out):
+        raise ValueError('CHANGELOG.md has a glued section junction: "## Unreleased" '
+                         'is immediately followed by a version heading. Insert the '
+                         'blank line — without it a later merge files new items '
+                         'under a version with no conflict')
 
     vers = re.findall(r'(?m)^## ([0-9]+\.[0-9]+\.[0-9]+)(?:-[0-9A-Za-z.\-]+)?[ \t]', out)
     if [vkey(v) for v in vers] != sorted((vkey(v) for v in vers), reverse=True):

@@ -100,17 +100,19 @@ fn strip_trailing_commas(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut i = 0;
     while i < chars.len() {
-        if chars[i] == ',' {
+        if chars.get(i) == Some(&',') {
             let mut j = i + 1;
-            while j < chars.len() && chars[j].is_whitespace() {
+            while chars.get(j).is_some_and(|c| c.is_whitespace()) {
                 j += 1;
             }
-            if j < chars.len() && (chars[j] == '}' || chars[j] == ']') {
+            if matches!(chars.get(j), Some('}') | Some(']')) {
                 i += 1;
                 continue;
             }
         }
-        out.push(chars[i]);
+        if let Some(&c) = chars.get(i) {
+            out.push(c);
+        }
         i += 1;
     }
     out
@@ -122,11 +124,13 @@ fn convert_single_quotes(s: &str) -> String {
     let mut i = 0;
     let mut in_double = false;
     while i < chars.len() {
-        let c = chars[i];
+        let Some(&c) = chars.get(i) else { break };
         if in_double {
             out.push(c);
             if c == '\\' && i + 1 < chars.len() {
-                out.push(chars[i + 1]);
+                if let Some(&next) = chars.get(i + 1) {
+                    out.push(next);
+                }
                 i += 2;
                 continue;
             }
@@ -146,10 +150,12 @@ fn convert_single_quotes(s: &str) -> String {
             out.push('"');
             i += 1;
             while i < chars.len() {
-                let ch = chars[i];
+                let Some(&ch) = chars.get(i) else { break };
                 if ch == '\\' && i + 1 < chars.len() {
                     out.push(ch);
-                    out.push(chars[i + 1]);
+                    if let Some(&next) = chars.get(i + 1) {
+                        out.push(next);
+                    }
                     i += 2;
                     continue;
                 }

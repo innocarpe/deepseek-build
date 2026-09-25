@@ -191,17 +191,24 @@ orca worktree rm --worktree "id:$WT_ID" --json
 it is merged. GitHub deletes the remote branch on merge (repo setting).
 `--force` removes a dirty tree; use it only after reading what is dirty.
 
-Then refresh the tower — only when it is on `main` and clean:
+Then refresh the tower — only when it is on `main` with no changes to tracked
+files:
 
 ```sh
 if [ "$(git -C "$TOWER" branch --show-current)" != main ]; then
   echo "tower is not on main; not pulling"
-elif [ -n "$(git -C "$TOWER" status --porcelain)" ]; then
-  echo "tower has local changes; not pulling:"; git -C "$TOWER" status --short
+elif [ -n "$(git -C "$TOWER" status --porcelain --untracked-files=no)" ]; then
+  echo "tower has uncommitted changes; not pulling:"
+  git -C "$TOWER" status --short --untracked-files=no
 else
   git -C "$TOWER" pull --ff-only origin main
 fi
 ```
+
+Untracked files do not block the pull, and they should not: OS or tool
+markers (for example a Spotlight `.metadata_never_index`) would otherwise
+stop every refresh. `pull --ff-only` already refuses by itself if an incoming
+file would overwrite an untracked one.
 
 Never remove a worktree another session created or is still using, even when
 it looks finished — ask its session first.

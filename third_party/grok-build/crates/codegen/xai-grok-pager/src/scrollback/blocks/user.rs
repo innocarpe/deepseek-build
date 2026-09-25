@@ -11,8 +11,40 @@ use crate::scrollback::types::{
 };
 
 const USER_PROMPT_BODY_RANGE: u16 = 0;
-/// Max visible lines when a user prompt is collapsed.
+/// Max visible lines when a user prompt is collapsed on a roomy terminal.
 const COLLAPSED_MAX_LINES: usize = 3;
+
+/// Width (in columns) at or below which a collapsed prompt drops to
+/// [`COLLAPSED_NARROW_MAX_LINES`]. The measured iPhone Orca pane is 55 columns
+/// (the narrowest desktop pane on the same machine is 80), and there the
+/// three-line echo eats a third of the viewport while a single line plus the
+/// ellipsis still names the turn. Anything wider keeps [`COLLAPSED_MAX_LINES`],
+/// so the desktop layout is untouched.
+const COLLAPSED_NARROW_TERMINAL_COLS: u16 = 60;
+
+/// Max visible lines when a user prompt is collapsed on a narrow terminal.
+const COLLAPSED_NARROW_MAX_LINES: usize = 1;
+
+/// The collapse budget for a prompt rendered at `width` into `mode`.
+///
+/// `Expanded` never folds; otherwise the budget is [`COLLAPSED_MAX_LINES`],
+/// tightened to [`COLLAPSED_NARROW_MAX_LINES`] when `width` is at or below
+/// [`COLLAPSED_NARROW_TERMINAL_COLS`]. Deriving this from the render width
+/// (rather than reading a single constant) is what lets the same block fold
+/// harder in a phone-width pane than in a desktop one.
+fn collapsed_max_lines(width: u16, mode: DisplayMode) -> Option<usize> {
+    match mode {
+        DisplayMode::Expanded => None,
+        DisplayMode::Collapsed | DisplayMode::Truncated => {
+            if width <= COLLAPSED_NARROW_TERMINAL_COLS {
+                Some(COLLAPSED_NARROW_MAX_LINES)
+            } else {
+                Some(COLLAPSED_MAX_LINES)
+            }
+        }
+    }
+}
+
 use crate::appearance::AppearanceConfig;
 use crate::theme::Theme;
 
@@ -448,10 +480,7 @@ impl UserPromptBlock {
 
 impl BlockContent for UserPromptBlock {
     fn output(&self, ctx: &BlockContext) -> BlockOutput {
-        let max_lines = match ctx.mode {
-            DisplayMode::Expanded => None,
-            DisplayMode::Collapsed | DisplayMode::Truncated => Some(COLLAPSED_MAX_LINES),
-        };
+        let max_lines = collapsed_max_lines(ctx.width, ctx.mode);
 
         let prompt_cfg = &ctx.appearance.scrollback.blocks.prompt;
         let compact = ctx.appearance.prompt.compact;
@@ -1220,5 +1249,127 @@ mod tests {
                 crate::theme::cache::terminal_native_locked(),
             )
         );
+    }
+
+    // ── Narrow-terminal collapse budget ─────────────────────────────
+
+    /// Build a collapsed `BlockContext` at `width`.
+    fn collapsed_ctx(width: u16) -> BlockContext {
+        BlockContext {
+            mode: DisplayMode::Collapsed,
+            is_running: false,
+            width,
+            raw: false,
+            max_lines: None,
+            appearance: AppearanceConfig::default(),
+            is_selected: false,
+            cwd: None,
+        }
+    }
+
+    /// Text of each rendered line, styles dropped.
+    fn rendered_lines(block: &UserPromptBlock, ctx: &BlockContext) -> Vec<String> {
+        block
+            .output(ctx)
+            .lines
+            .iter()
+            .map(|l| {
+                l.content
+                    .spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    /// A prompt long enough to exceed both collapse budgets.
+    const LONG_PROMPT: &str = "This is a long prompt that should be collapsed and truncated at \
+                                narrow widths because it has plenty of words to wrap over many \
+                                lines indeed.";
+
+    /// The measured iPhone pane is 55 columns (`stty -f /dev/<tty> size` on the
+    /// Orca-managed dsb panes; see the layout session's measurement record).
+    /// There, a collapsed prompt must fold to a single line plus the ellipsis,
+    /// which is what keeps the echo from eating the viewport.
+    #[test]
+    fn collapsed_prompt_folds_to_one_line_at_phone_width() {
+        for width in [40u16, 50, 53, 55, 60] {
+            let block = UserPromptBlock::new(LONG_PROMPT);
+            let lines = rendered_lines(&block, &collapsed_ctx(width));
+            assert_eq!(
+                lines.len(),
+                1,
+                "at {width} cols a collapsed prompt must be one line, got {lines:?}"
+            );
+            assert!(
+                lines[0].ends_with(" \u{2026}"),
+                "the single line must carry the ellipsis at {width} cols: {lines:?}"
+            );
+        }
+    }
+
+    /// The other half of the contract: widths above the threshold keep the
+    /// three-line budget, so the desktop layout is unchanged.
+    #[test]
+    fn collapsed_prompt_keeps_three_line_budget_above_threshold() {
+        let block = UserPromptBlock::new(LONG_PROMPT);
+        let lines = rendered_lines(&block, &collapsed_ctx(COLLAPSED_NARROW_TERMINAL_COLS + 1));
+        assert_eq!(
+            lines.len(),
+            COLLAPSED_MAX_LINES,
+            "one column past the threshold must keep the roomy budget: {lines:?}"
+        );
+    }
+
+    /// The threshold itself is the boundary: `<=` is narrow, `>` is roomy.
+    #[test]
+    fn collapsed_budget_switches_at_the_threshold() {
+        assert_eq!(
+            collapsed_max_lines(COLLAPSED_NARROW_TERMINAL_COLS, DisplayMode::Collapsed),
+            Some(COLLAPSED_NARROW_MAX_LINES),
+        );
+        assert_eq!(
+            collapsed_max_lines(COLLAPSED_NARROW_TERMINAL_COLS + 1, DisplayMode::Collapsed),
+            Some(COLLAPSED_MAX_LINES),
+        );
+    }
+
+    /// Expanding is not affected by width: a user who asks for the full prompt
+    /// gets it at any pane size.
+    #[test]
+    fn expanded_prompt_is_unbounded_at_phone_width() {
+        assert_eq!(
+            collapsed_max_lines(40, DisplayMode::Expanded),
+            None,
+            "Expanded must never fold, however narrow the pane"
+        );
+        let block = UserPromptBlock::new(LONG_PROMPT);
+        let mut ctx = collapsed_ctx(40);
+        ctx.mode = DisplayMode::Expanded;
+        assert!(
+            rendered_lines(&block, &ctx).len() > COLLAPSED_NARROW_MAX_LINES,
+            "the expanded prompt must render past the narrow budget"
+        );
+    }
+
+    /// The measured width is inside the threshold with margin, and the widest
+    /// desktop pane observed on the same machine (80) is outside it. Pins the
+    /// relationship the two constants were chosen for.
+    #[test]
+    fn measured_phone_width_is_inside_the_threshold_and_desktop_outside() {
+        // The measured iPhone pane is 55 columns; the narrowest desktop pane
+        // observed on the same machine is 80.
+        const MEASURED_PHONE_COLS: u16 = 55;
+        const NARROWEST_DESKTOP_COLS: u16 = 80;
+        // `const` blocks keep this a compile-time check, which is what makes
+        // the two constants' relationship part of the build rather than a
+        // runtime assertion clippy reads as constant.
+        const {
+            assert!(MEASURED_PHONE_COLS <= COLLAPSED_NARROW_TERMINAL_COLS);
+        }
+        const {
+            assert!(NARROWEST_DESKTOP_COLS > COLLAPSED_NARROW_TERMINAL_COLS);
+        }
     }
 }

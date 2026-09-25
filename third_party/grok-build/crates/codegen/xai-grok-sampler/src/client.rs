@@ -51,12 +51,17 @@ const DEFAULT_CLIENT_IDENTIFIER: &str = "grok-shell";
 const AGENT_PRODUCT: &str = "grok-shell";
 const ANTHROPIC_DEFAULT_MAX_TOKENS: u32 = 128_000;
 
-/// Text-only endpoints (DeepSeek's official API) reject `image_url` content
-/// blocks with a 400 `unknown variant 'image_url'`. When the request is bound
-/// for one of those endpoints we strip image blocks at the wire boundary —
-/// the images themselves stay available to the model via on-disk paths that
-/// the shell prepends to the user message (`<image_files>` block), so the
-/// agent can still OCR/read them with its own tools.
+/// Text-only DeepSeek models reject `image_url` content blocks with a 400
+/// `unknown variant 'image_url'`. When a request bound for DeepSeek's
+/// official API targets one of those models we strip image blocks at the
+/// wire boundary — the images themselves stay available to the model via
+/// on-disk paths that the shell prepends to the user message
+/// (`<image_files>` block), so the agent can still OCR/read them with its
+/// own tools.
+///
+/// The endpoint alone does not make the wire text-only: DeepSeek's official
+/// `deepseek-flash` (DeepSeek-V4.1-Flash) accepts `image_url` on
+/// `https://api.deepseek.com`. See [`is_text_only_deepseek_model`].
 ///
 /// Non-image blocks in the same message are collapsed into a single text
 /// message so no other content is lost, and messages without image blocks are
@@ -87,16 +92,51 @@ fn strip_image_content_blocks(messages: &mut [ChatRequestMessage]) {
     }
 }
 
-/// True when `base_url` points at DeepSeek's official API, whose
-/// /chat/completions endpoint accepts text content only. Matches any
+/// True when `base_url` points at DeepSeek's official API. Matches any
 /// `*.deepseek.com` host (including `/v1` path prefixes) so endpoint
-/// prefixes and model names cannot bypass the text-only wire.
+/// prefixes cannot bypass DeepSeek-specific handling.
 fn is_official_deepseek_endpoint(base_url: &str) -> bool {
     let host = reqwest::Url::parse(base_url)
         .ok()
         .and_then(|u| u.host_str().map(str::to_owned))
         .unwrap_or_else(|| base_url.to_owned());
     host == "api.deepseek.com" || host.ends_with(".deepseek.com")
+}
+
+/// True when the given DeepSeek model accepts text content only.
+///
+/// DeepSeek's model table splits on vision: `deepseek-flash`
+/// (DeepSeek-V4.1-Flash) accepts `image_url` — its `/models` entry reports
+/// `input_modalities: ["text", "image"]` — while `deepseek-v4-pro` reports
+/// `["text"]` and the pricing table marks its Vision row "Not supported".
+/// An image on the Pro wire is a 400, so images are stripped there only.
+///
+/// Anything naming `flash` or `vision` keeps its images, whatever else the id
+/// contains (`deepseek-v4-flash-vision-exp` names both). Unknown ids also keep
+/// images: the sampler's reactive image-strip retry covers a surprise
+/// rejection, while stripping a vision model would silently discard what the
+/// user attached.
+fn is_text_only_deepseek_model(model: &str) -> bool {
+    let model = model.trim().to_ascii_lowercase();
+    if model.is_empty() || model.contains("vision") || model.contains("flash") {
+        return false;
+    }
+    // V4 Pro documents `input_modalities: ["text"]`; the V3 chat/reasoner
+    // families predate vision entirely.
+    model.contains("v4-pro")
+        || model.contains("chat")
+        || model.contains("reasoner")
+        || model.contains("v3")
+}
+
+/// True when the wire for this request must be flattened to text.
+///
+/// Both halves are required: a DeepSeek-hosted endpoint *and* a model whose
+/// declared input modalities exclude images. The official endpoint alone once
+/// implied "text-only", which stopped holding when V4.1 Flash shipped native
+/// vision.
+fn is_text_only_wire(base_url: &str, model: Option<&str>) -> bool {
+    is_official_deepseek_endpoint(base_url) && model.is_some_and(is_text_only_deepseek_model)
 }
 
 /// Per-request `x-grok-*` headers. Optional fields are skipped when empty/`None`.
@@ -2023,7 +2063,7 @@ impl SamplingClient {
 
         let trace = request.trace.take();
         let mut chat_request: ChatCompletionRequest = request.into();
-        if is_official_deepseek_endpoint(&self.base_url) {
+        if is_text_only_wire(&self.base_url, chat_request.model.as_deref()) {
             strip_image_content_blocks(&mut chat_request.messages);
         }
         if let Some(trace) = trace {
@@ -2042,7 +2082,7 @@ impl SamplingClient {
 
         let trace = request.trace.take();
         let mut chat_request: ChatCompletionRequest = request.into();
-        if is_official_deepseek_endpoint(&self.base_url) {
+        if is_text_only_wire(&self.base_url, chat_request.model.as_deref()) {
             strip_image_content_blocks(&mut chat_request.messages);
         }
         if let Some(trace) = trace {
@@ -3519,6 +3559,184 @@ mod tests {
         assert!(matches!(
             event,
             rs::ResponseStreamEvent::ResponseOutputTextDelta(_)
+        ));
+    }
+
+    #[test]
+    fn strip_image_content_blocks_removes_image_url_from_deepseek_wire() {
+        use xai_grok_sampling_types::types::{
+            ChatContentBlock, ChatRequestMessage, ImageUrl, MessageContent, Role,
+        };
+
+        let user_msg = ChatRequestMessage {
+            role: Role::User,
+            content: MessageContent::Blocks(vec![
+                ChatContentBlock::Text {
+                    text: "<image_files>\n1. /tmp/shot.png\n</image_files>".into(),
+                },
+                ChatContentBlock::ImageUrl {
+                    image_url: ImageUrl {
+                        url: "data:image/png;base64,AAAA".into(),
+                    },
+                },
+            ]),
+            name: None,
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            model_id: None,
+            reasoning_content: None,
+        };
+        let tool_msg = ChatRequestMessage {
+            role: Role::Tool,
+            content: MessageContent::Blocks(vec![ChatContentBlock::ImageUrl {
+                image_url: ImageUrl {
+                    url: "data:image/png;base64,BBBB".into(),
+                },
+            }]),
+            name: None,
+            tool_calls: Vec::new(),
+            tool_call_id: Some("call_1".into()),
+            model_id: None,
+            reasoning_content: None,
+        };
+        let mut messages = vec![user_msg, tool_msg];
+        strip_image_content_blocks(&mut messages);
+
+        for msg in &messages {
+            let MessageContent::Text(text) = &msg.content else {
+                panic!("expected text content, got {:?}", msg.content);
+            };
+            assert!(
+                !text.contains("image_url"),
+                "wire must not carry image_url: {text}"
+            );
+        }
+        assert!(messages[0].content.blocks().len() == 1);
+        assert!(matches!(
+            messages[0].content.blocks()[0],
+            ChatContentBlock::Text { .. }
+        ));
+        // Tool-result image is dropped entirely (no text to keep) — the empty
+        // text keeps the tool message present so tool-call pairing survives.
+        assert!(messages[1].content.is_empty());
+        // Idempotent: a second pass is a no-op and the serialized body never
+        // contains "image_url".
+        strip_image_content_blocks(&mut messages);
+        let body = serde_json::to_string(&messages).unwrap();
+        assert!(!body.contains("image_url"));
+        assert!(!body.contains("base64"));
+    }
+
+    #[test]
+    fn strip_image_content_blocks_leaves_text_only_messages_untouched() {
+        use xai_grok_sampling_types::types::{ChatRequestMessage, MessageContent, Role};
+
+        let msg = ChatRequestMessage {
+            role: Role::User,
+            content: MessageContent::Text("plain text, no images".into()),
+            name: None,
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            model_id: None,
+            reasoning_content: None,
+        };
+        let mut messages = vec![msg];
+        strip_image_content_blocks(&mut messages);
+        assert!(matches!(
+            &messages[0].content,
+            MessageContent::Text(t) if t == "plain text, no images"
+        ));
+    }
+
+    #[test]
+    fn is_official_deepseek_endpoint_matches_only_deepseek_hosts() {
+        for url in [
+            "https://api.deepseek.com",
+            "https://api.deepseek.com/v1",
+            "https://api.deepseek.com/chat/completions",
+            "https://api.deepseek.com/v1/chat/completions",
+            "http://api.deepseek.com",
+            "https://anything.deepseek.com",
+        ] {
+            assert!(
+                is_official_deepseek_endpoint(url),
+                "expected {url} to be treated as the official DeepSeek API"
+            );
+        }
+        for url in [
+            "https://api.x.ai",
+            "https://api.grok.com",
+            "https://openrouter.ai/api/v1",
+            "http://localhost:8787/v1",
+            "https://proxy.example.com",
+            "",
+        ] {
+            assert!(
+                !is_official_deepseek_endpoint(url),
+                "expected {url} to stay off the DeepSeek-specific path"
+            );
+        }
+    }
+
+    #[test]
+    fn is_text_only_wire_requires_a_text_only_model() {
+        // DeepSeek's official V4.1 Flash accepts `image_url`
+        // (`input_modalities: ["text", "image"]`), so the endpoint alone must
+        // not flatten the wire.
+        for model in [
+            "deepseek-flash",
+            "deepseek-v4-flash",
+            "deepseek-v4-flash-vision-exp",
+        ] {
+            assert!(
+                !is_text_only_wire("https://api.deepseek.com", Some(model)),
+                "{model} on the official endpoint must keep its images"
+            );
+        }
+
+        // V4 Pro reports `input_modalities: ["text"]` and its Vision row is
+        // "Not supported", so images must still be stripped there.
+        for model in ["deepseek-v4-pro", "deepseek-v4-pro-0813"] {
+            assert!(
+                is_text_only_wire("https://api.deepseek.com", Some(model)),
+                "{model} on the official endpoint must stay text-only"
+            );
+        }
+
+        // Legacy text-only chat and reasoner families keep the strip; any id
+        // naming vision keeps its images even alongside a retired Flash name.
+        for model in [
+            "deepseek-chat",
+            "deepseek-reasoner",
+            "deepseek-chat-v3-0324",
+        ] {
+            assert!(
+                is_text_only_wire("https://api.deepseek.com", Some(model)),
+                "{model} is a text-only family"
+            );
+        }
+        assert!(!is_text_only_wire(
+            "https://api.deepseek.com",
+            Some("deepseek-v5-vision")
+        ));
+
+        // Unknown ids fail open to images: upstream's reactive image-strip
+        // retry recovers a rejection, while stripping a vision model would
+        // silently discard what the user attached.
+        assert!(!is_text_only_wire(
+            "https://api.deepseek.com",
+            Some("deepseek-v5")
+        ));
+        assert!(!is_text_only_wire("https://api.deepseek.com", None));
+
+        // A non-DeepSeek endpoint never strips, whatever the model name says.
+        assert!(!is_text_only_wire(
+            "https://openrouter.ai/api/v1",
+            Some("deepseek-v4-pro")
+        ));
+        assert!(!is_text_only_wire(
+            "http://localhost:8787/v1",
+            Some("deepseek-v4-pro")
         ));
     }
 }

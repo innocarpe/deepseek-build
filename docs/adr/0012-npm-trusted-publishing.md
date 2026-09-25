@@ -56,6 +56,28 @@ honest statement of the one-time enrollment step that does need one. The
 enrollment was completed on 2026-09-25 (after 2FA was enabled on the account);
 the publish path itself has not yet run (see Consequences).
 
+### How `5.6.0` actually shipped
+
+`5.6.0` was released the same evening, before this ADR's workflow existed on a
+tag, and it did **not** use the OIDC path. It went out through **staged
+publishing**, with the approval supplied by hand:
+
+```
+npm stage publish                  # no 2FA: staging defers proof of presence
+npm stage approve <stage-id>       # 2FA required: this is the interactive step
+```
+
+The account had just been switched to 2FA and the approval needed a person with
+the registered security key, so the release paused between the two commands. The
+registry record for `5.6.0` shows this route: `_npmUser.approver` is present
+(absent on `5.5.4` and earlier), and `_npmVersion` is `12.1.0`, the CLI version
+that first had `npm stage`.
+
+That is a workable release route, but it is not the one this ADR chooses: the
+`approve` step is interactive by design, so it cannot run unattended. It is
+recorded here because it is what the first post-2FA release actually did, and
+because it is the fallback if a tag predates `publish-npm.yml`.
+
 ## Decision
 
 ### Publish path: tag → asset → CI publishes over OIDC
@@ -136,15 +158,22 @@ this machine **without asking a person for a number**:
 
 1. It refuses to run unless the release tarball is attached to the GitHub
    release (ADR 0009 ordering is not bypassed by the emergency path).
-2. It starts `npm login --auth-type=web` in the background and reads the login
-   URL from npm's output.
-3. It passes that URL to `aside exec`, which signs in as the npm account and
-   completes the CLI session; an emailed code is read from Gmail by the browser
-   agent.
+2. It ensures an npm session, driving `npm login --auth-type=web` through
+   `aside exec` if there is none.
+3. It runs the publish **under a pty with `--browser=false`**, captures the 2FA
+   approval URL npm prints, and passes that URL to `aside exec`, which approves
+   it with the account's registered security key.
 4. It publishes and verifies the registry.
 
-The login URL carries a single-use UUID, so it is never echoed to a log, commit
-or PR. `--local-publish` on `release.sh` is the same path wired into the
+Both flags are load-bearing and were measured, not guessed: piped, npm answers
+`EOTP` and exits without offering an approval URL; with a browser configured it
+prints `Press ENTER to open in the browser...` and blocks on that read instead
+of polling. Because the account's second factor is a security key, there is no
+emailed code in this flow at all — an earlier version of this script looked for
+one and would have stalled.
+
+The login and approval URLs carry single-use tokens, so they are never echoed to
+a log, commit or PR. `--local-publish` on `release.sh` is the same path wired into the
 orchestrator. Provenance is **not** attached on this path (there is no local
 OIDC provider); the script says so rather than implying the release is signed.
 
@@ -172,6 +201,11 @@ OIDC provider); the script says so rather than implying the release is signed.
   `npm publish` and `npm stage publish`. No release has been cut since, so the
   next one is the first real exercise of this path — treat a first-run failure
   as an untested path, not as a regression.
+- **The account is at `auth-and-writes`.** That is what makes a *local* publish
+  need proof of presence; it does not touch the OIDC exchange, which is why
+  the trusted publisher is the default path and a local publish is only the
+  fallback. The registered second factor is a **security key**, so the proof is
+  a browser approval rather than a typed code — see the emergency-path notes.
 - **A failed OIDC publish must not be "fixed" by weakening the configuration.**
   The troubleshooting order is: workflow filename and case, `id-token: write`,
   GitHub-hosted runner, then `repository.url`.

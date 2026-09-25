@@ -954,7 +954,12 @@ mod tests {
         let theme = Theme::current();
         // First logical line is long enough to wrap into several rows at a narrow width; the second logical line then starts well past row 1
         let text = format!("{}\nsecond", "word ".repeat(40));
-        let entry = ScrollbackEntry::new(RenderBlock::user_prompt(text));
+        let mut entry = ScrollbackEntry::new(RenderBlock::user_prompt(text));
+        // Pin Expanded: this test is about the logical-line -> rendered-row
+        // mapping following the word wrap. A collapsed prompt folds to a fixed
+        // budget (1 row at this width) instead of wrapping, which would make
+        // the mapping trivially flat and stop exercising the wrap.
+        entry.set_display_mode(DisplayMode::Expanded);
         let renderer = EntryRenderer::new(&entry, &theme);
 
         // Narrow entry-area width (chrome is subtracted internally) forces wrap.

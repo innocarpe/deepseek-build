@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Fix the emergency local publish path asking for a 2FA code that this account
+  cannot produce. The account's second factor is a security key, so npm offers a
+  browser approval instead of an emailed code; the script now runs the publish
+  under a pty with `--browser=false` (both required — otherwise npm either
+  refuses or blocks on "Press ENTER"), captures the approval URL npm prints, and
+  approves it through the browser agent. The local publish is a fallback only:
+  the default release path publishes from CI over OIDC, which needs no proof of
+  presence at all.
+- `npm i -g` no longer fails and deletes a working installation when the
+  shell happens to carry a version stamp. `DEEPSEEK_BUILD_VERSION` (set by
+  anyone who ran `scripts/build-grok-pager.sh`, and inherited by every child
+  process) leaks into the agent's `--version`, so the postinstall self-check
+  read a correct install as corrupt — and then deleted the binaries to "not
+  leave a broken one around", taking the user's previous `deepseek-build-agent`
+  with them. The check now runs without the runtime version stamps (the same
+  pair the release workflows already strip), and the installer verifies every
+  binary in a staging dir under the bin dir before renaming any of them into
+  place, so a self-check failure leaves the previous installation untouched.
 - Publish releases from CI over npm OIDC trusted publishing instead of a local
   interactive publish: the tag push now waits for the prebuilt asset, verifies
   the packaged agent reports the release version, and publishes with a
@@ -17,7 +35,14 @@
   uniformized on its next edit. Spec 45 §1.8 promised this; §1.9 now states it
   and both edit entry points — the `edit` tool and Path A `search_replace` —
   share one rule.
-
+- Image attachments now reach the model on the official DeepSeek API again.
+  DeepSeek's V4.1 Flash (`deepseek-flash`) accepts `image_url` directly, but
+  the vendored sampler flattened every request bound for `api.deepseek.com`
+  to text — a guard written when the flash line had no vision — so the model
+  never received what the user attached. The guard is now gated on the model
+  as well as the endpoint: `deepseek-v4-pro` and the V3 chat/reasoner
+  families keep the text-only wire with its on-disk `<image_files>` fallback,
+  while vision-capable models send the image inline.
 
 ## 5.6.0 — 2026-09-25
 

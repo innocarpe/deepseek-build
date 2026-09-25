@@ -411,7 +411,7 @@ mod tests {
         assert!(msg.contains("<image_files>"));
         assert!(msg.contains("/assets/image-"));
         assert!(msg.ends_with("hello") || msg.contains("\n\nhello"));
-        // Text-only backends need to know they can read/OCR the saved files.
+        // Text-only models need to know they can read/OCR the saved files.
         assert!(msg.contains("read or OCR these files with your tools"));
         let assets = std::fs::read_dir(dir.path().join("assets")).unwrap();
         assert_eq!(assets.count(), 1);

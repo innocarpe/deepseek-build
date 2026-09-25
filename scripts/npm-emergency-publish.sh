@@ -4,20 +4,27 @@
 # Use only when CI publishing (`.github/workflows/publish-npm.yml`, OIDC trusted
 # publishing) cannot run — Actions unavailable, trusted publisher misconfigured,
 # or a tag whose publish must land immediately. The default release path needs
-# no human and no one-time code; this one needs a browser session, so it drives
-# the interactive npm login and any one-time code through the Aside browser
-# agent instead of asking a person to be present.
+# no human and no proof of presence; this one does, so it drives that proof
+# through the Aside browser agent instead of asking a person to be present.
+#
+# How the 2FA step actually works here (measured, not assumed):
+#   The account has 2FA at `auth-and-writes` and a registered **security key**.
+#   Under a terminal, npm answers an EOTP by printing a browser URL and polling
+#   until that page is approved — there is no emailed code to read. Without a
+#   terminal npm refuses outright, so the publish runs under a pty; with a
+#   browser configured it blocks on "Press ENTER", so every call passes
+#   `--browser=false` to make npm poll instead.
 #
 # What it does:
 #   1. Refuses to run unless the release tarball for the version is attached to
 #      the GitHub release (ADR 0009 / release skill hard rule 5).
-#   2. Starts `npm login --auth-type=web` in the background and extracts the
-#      login URL from its output (the UUID is never printed).
-#   3. Hands that URL to `aside exec`, which completes the login as the npm
-#      account and reads any emailed one-time code from Gmail itself.
-#   4. Verifies the login landed, then runs `npm publish` with provenance.
+#   2. Ensures an npm session, completing `npm login --auth-type=web` through
+#      the browser agent if there is none.
+#   3. Runs `npm publish` under a pty, captures the 2FA approval URL npm prints,
+#      and hands it to `aside exec` to approve with the security key.
+#   4. Verifies the registry.
 #
-# No code, token or login UUID is written to a log, a commit or a PR.
+# No code, token or single-use URL is written to a log, a commit or a PR.
 #
 # Usage:
 #   ./scripts/npm-emergency-publish.sh <MAJOR.MINOR.PATCH> [--dry-run] [--yes]
@@ -34,7 +41,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
     --yes|-y) ASSUME_YES=1; shift ;;
-    -h|--help) sed -n '1,24p' "$0"; exit 0 ;;
+    -h|--help) sed -n '1,29p' "$0"; exit 0 ;;
     -*) echo "unknown option: $1" >&2; exit 1 ;;
     *) VERSION="$1"; shift ;;
   esac
@@ -75,18 +82,42 @@ if [[ "$LIVE" == "$VERSION" ]]; then
   exit 0
 fi
 
-echo "== 2/4 starting interactive npm login =="
+# Account and mailbox are configuration, not repo content: this repo is public,
+# so no personal address is committed. The npm profile supplies both.
+NPM_ACCOUNT="${NPM_ACCOUNT:-$(npm whoami 2>/dev/null || echo 'the npm account')}"
+NPM_MAILBOX="${NPM_MAILBOX:-$(npm profile get email 2>/dev/null | sed -E 's/^email: *//; s/ \(.*\)$//' || true)}"
+NPM_MAILBOX="${NPM_MAILBOX:-the mailbox that receives npm mail}"
+
+aside_ok() { command -v aside >/dev/null 2>&1; }
+
+# Wait for `npm` to print a browser-approval URL, echo it, or fail on timeout.
+# $1 = log file, $2 = seconds to wait
+wait_for_auth_url() {
+  local log="$1" limit="$2" url=""
+  for _ in $(seq 1 "$limit"); do
+    url="$(rg -o 'https://www\.npmjs\.com/auth/cli/[A-Za-z0-9_-]+' "$log" 2>/dev/null | head -1 || true)"
+    [[ -n "$url" ]] && { printf '%s' "$url"; return 0; }
+    sleep 1
+  done
+  return 1
+}
+
+# $1 = URL, $2 = what is being approved (for the prompt text)
+approve_in_browser() {
+  local url="$1" what="$2"
+  aside exec --permission full-access "Open this exact npm URL in the browser and complete the authentication it asks for: ${url}
+This is an npm CLI approval page for the npm account ${NPM_ACCOUNT}. ${what}
+If it asks for two-factor authentication, approve it with the account's registered security key. If it asks for an emailed code instead, read the newest code from the mailbox ${NPM_MAILBOX} and enter it.
+Do NOT change any npm account or package setting (no tokens, no 2FA changes, no publishing access, no other packages). Only approve this pending CLI session. Report plainly whether the approval succeeded, and never print codes, URLs or tokens."
+}
+
+echo "== 2/4 npm session =="
 if npm whoami >/dev/null 2>&1; then
   echo "an npm session already exists (npm whoami = $(npm whoami))"
-  if [[ "$ASSUME_YES" -eq 0 ]]; then
-    read -r -p "reuse this session? [y/N] " reply
-    [[ "$reply" =~ ^[Yy]$ ]] || { echo "aborted"; exit 1; }
-  fi
 else
-  if ! command -v aside >/dev/null 2>&1; then
-    echo "error: 'aside' CLI not found — it is required to complete the login without a human" >&2
-    echo "  Fallback: run 'npm login --auth-type=web' yourself, then:" >&2
-    echo "    npm publish --access public --provenance" >&2
+  if ! aside_ok; then
+    echo "error: no npm session and the 'aside' CLI is not installed" >&2
+    echo "  Complete 'npm login --auth-type=web' yourself, then re-run this script." >&2
     exit 1
   fi
 
@@ -94,8 +125,9 @@ else
   cleanup() { rm -f "$LOGIN_LOG"; }
   trap cleanup EXIT
 
-  # Background login; npm prints "Login at: <url>" and waits on the session.
-  npm login --auth-type=web > "$LOGIN_LOG" 2>&1 &
+  # npm prints "Login at: <url>" and polls until the browser finishes.
+  # --browser=false keeps it from blocking on "Press ENTER to open…".
+  npm login --auth-type=web --browser=false > "$LOGIN_LOG" 2>&1 &
   LOGIN_PID=$!
 
   LOGIN_URL=""
@@ -113,18 +145,8 @@ else
   # Deliberately not echoed: the URL carries a single-use login UUID.
   echo "login URL acquired (not printed — it carries a single-use token)"
 
-  echo "== 3/4 completing login via Aside (npm account + emailed code) =="
-  # Account and mailbox are configuration, not repo content: this repo is
-  # public, so no personal address is committed. The npm account's own email
-  # (from the registry profile) is where npm sends its codes.
-  NPM_ACCOUNT="${NPM_ACCOUNT:-$(npm whoami 2>/dev/null || echo 'the npm account')}"
-  NPM_MAILBOX="${NPM_MAILBOX:-$(npm profile get email 2>/dev/null | sed -E 's/^email: *//; s/ \(.*\)$//' || true)}"
-  NPM_MAILBOX="${NPM_MAILBOX:-the Gmail account that receives npm mail}"
-  aside exec --permission full-access "Complete an npm login that is already waiting in a browser tab. Open this exact URL and follow it through: ${LOGIN_URL}
-Then, as the npm account ${NPM_ACCOUNT}: approve the login/authorize the CLI session on npmjs.com. If npm shows a one-time code prompt or sends one by email, read the newest code from the mailbox ${NPM_MAILBOX} and enter it. If the page asks for a two-factor authenticator code that is not delivered by email, stop and report that instead of guessing.
-Do NOT change any npm account or package setting (no tokens, no 2FA changes, no publishing access, no other packages). Only complete this login. Report plainly: whether the CLI session shows as approved, and any step that blocked you. Never print codes or tokens in your report."
+  approve_in_browser "$LOGIN_URL" "Approve the login so the CLI session becomes authenticated."
 
-  # npm exits on its own once the browser approves the CLI session.
   WAITED=0
   while kill -0 "$LOGIN_PID" 2>/dev/null; do
     if [[ "$WAITED" -ge 300 ]]; then
@@ -145,7 +167,7 @@ if ! npm whoami >/dev/null 2>&1; then
 fi
 echo "logged in as: $(npm whoami)"
 
-echo "== 4/4 npm publish @innocarpe/deepseek-build@${VERSION} =="
+echo "== 3/4 npm publish @innocarpe/deepseek-build@${VERSION} =="
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "(dry-run: stopping before publish)"
   npm pack --dry-run >/dev/null
@@ -153,42 +175,94 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   exit 0
 fi
 
-if [[ "$ASSUME_YES" -eq 0 && "$DRY_RUN" -eq 0 ]]; then
+if [[ "$ASSUME_YES" -eq 0 ]]; then
   read -r -p "publish @innocarpe/deepseek-build@${VERSION} to the public registry? [y/N] " reply
   [[ "$reply" =~ ^[Yy]$ ]] || { echo "aborted"; exit 1; }
 fi
 
 # --provenance needs a CI OIDC provider; a local publish cannot produce an
-# attestation, so the emergency path publishes without one. Say so plainly
-# rather than implying the release is provenance-signed.
+# attestation, so this path publishes without one. Say so plainly rather than
+# implying the release is provenance-signed.
 echo "note: publishing without --provenance (no OIDC provider locally)"
-if npm publish --access public; then
-  echo "== published (no provenance attestation) =="
+
+if [[ "$ASSUME_YES" -eq 1 && -z "${NPM_OTP:-}" ]]; then
+  echo "note: --yes given, so this will not prompt; 2FA is approved in the browser"
+fi
+
+# A pty is required: npm only takes its browser-approval path when stdin and
+# stdout are terminals. Piped, it answers EOTP and exits without offering the
+# approval URL. `script` allocates the pty and still propagates the exit code.
+# `--browser=false` is also required: with a browser configured, npm prints
+# "Press ENTER to open in the browser..." and blocks on that read instead of
+# polling the approval URL, which would hang this script forever.
+PUB_LOG="$(mktemp)"
+cleanup_pub() { rm -f "$PUB_LOG"; }
+trap cleanup_pub EXIT
+
+PUB_CMD=(npm publish --access public --browser=false)
+if [[ -n "${NPM_OTP:-}" ]]; then
+  PUB_CMD=(npm publish --access public --browser=false --otp "$NPM_OTP")
+fi
+
+if command -v script >/dev/null 2>&1; then
+  script -q /dev/null "${PUB_CMD[@]}" > "$PUB_LOG" 2>&1 &
 else
-  cat >&2 <<'EOF'
-error: publish failed.
+  echo "warn: 'script' not found — running npm without a pty (2FA approval may not be offered)" >&2
+  "${PUB_CMD[@]}" > "$PUB_LOG" 2>&1 &
+fi
+PUB_PID=$!
 
-If the error mentions EOTP / a one-time pass / two-factor, npm is asking for
-2FA. An emailed code can be fetched the same way the login was (set
-NPM_MAILBOX to the mailbox that receives npm mail if it is not the default):
+# If npm asks for 2FA, approve it in the browser; otherwise this times out
+# harmlessly while the publish proceeds.
+AUTH_URL="$(wait_for_auth_url "$PUB_LOG" 60 || true)"
+if [[ -n "$AUTH_URL" ]]; then
+  echo "2FA required — approving in the browser (URL not printed)"
+  approve_in_browser "$AUTH_URL" "Approve the pending npm publish for @innocarpe/deepseek-build@${VERSION}."
+else
+  echo "no browser approval requested (session already sufficient, or an OTP prompt is waiting)"
+fi
 
-  aside exec --permission full-access "Read the newest npm one-time code from \
-${NPM_MAILBOX:-the user's Gmail} and report just the code"
+WAITED=0
+while kill -0 "$PUB_PID" 2>/dev/null; do
+  if [[ "$WAITED" -ge 600 ]]; then
+    echo "error: npm publish still running after 600s" >&2
+    kill "$PUB_PID" 2>/dev/null || true
+    exit 1
+  fi
+  sleep 5
+  WAITED=$((WAITED + 5))
+done
+wait "$PUB_PID" && PUB_RC=0 || PUB_RC=$?
 
-then re-run:
+# Show the outcome with the single-use URL redacted.
+sed -E 's#(auth/cli/)[A-Za-z0-9_-]+#\1<redacted>#g; s#(authId=)[A-Za-z0-9_-]+#\1<redacted>#g' "$PUB_LOG" | tail -20
+rm -f "$PUB_LOG"
+trap - EXIT
 
-  NPM_OTP=<code> npm publish --access public
+if [[ "$PUB_RC" -ne 0 ]]; then
+  cat >&2 <<EOF
+error: publish failed (exit ${PUB_RC}).
 
-If the error is ENEEDAUTH/403, the session expired — re-run this script.
+If the output mentions EOTP or a one-time password, npm wanted proof of presence
+and the browser approval above did not land. Two ways forward:
+
+  # a) approve in the browser on the next attempt (this script's normal path), or
+  # b) with an authenticator app, pass the current code:
+  NPM_OTP=<code> $0 ${VERSION} --yes
+
+If the output is ENEEDAUTH/403, the session expired — re-run this script.
 
 CI (publish-npm.yml, OIDC) remains the default path; prefer fixing that.
 EOF
   exit 1
 fi
 
-LIVE="$(npm view "@innocarpe/deepseek-build@${VERSION}" version)"
-[[ "$LIVE" == "$VERSION" ]] || { echo "error: registry reported '${LIVE}'" >&2; exit 1; }
-echo "== registry confirms @innocarpe/deepseek-build@${LIVE} =="
+echo "== published (no provenance attestation) =="
+
+echo "== 4/4 verifying the registry =="
+LIVE="$(npm view "@innocarpe/deepseek-build@${VERSION}" version 2>/dev/null || true)"
+[[ "$LIVE" == "$VERSION" ]] || { echo "error: registry reported '${LIVE:-none}'" >&2; exit 1; }
+echo "registry confirms @innocarpe/deepseek-build@${LIVE}"
 echo
 echo "Verify like a user:"
 echo "  npm i -g @innocarpe/deepseek-build@${VERSION}"

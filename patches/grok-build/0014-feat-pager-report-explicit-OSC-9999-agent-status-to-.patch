@@ -1,0 +1,605 @@
+From fecc64178e824b8b25a2c795ed4b8ab568d49d8f Mon Sep 17 00:00:00 2001
+From: Wooseong Kim <innocarpe@gmail.com>
+Date: Fri, 25 Sep 2026 20:12:36 +0900
+Subject: [PATCH] feat(pager): report explicit OSC 9999 agent status to Orca
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Orca reads an explicit status stream out of the pane's PTY instead of
+guessing a turn boundary from the tab title. dsb never sent one, so an
+Orca pane showed no status at all: the sidebar row, the mobile session
+row, and the turn-complete notification all stayed empty.
+
+The tab title cannot close that gap. Orca's agent vocabulary is a closed
+set with no dsb member, so a dsb title is either ignored or misread —
+`DeepSeek Build` resolves to no agent, and the braille spinner makes a
+working pane read as a working Claude. Measured against Orca 1.4.210:
+`tui-idle` times out on a real dsb pane, and a hand-sent OSC 9999 frame
+with `agentType: "deepseek-build"` lands in `orca worktree ps` as
+`state: working` → `done`.
+
+Emit the frame from the same ticks that repaint the title so the two can
+never disagree about the turn state, and close it out on shutdown and on
+both idle edges — tick demand falls to None once a pane rests, so the
+closing frame cannot rely on a later tick.
+
+Gated on the host: the sequence means nothing outside a host that parses
+it, so it stays silent everywhere else rather than appending bytes to
+every terminal dsb runs in. Deduped per frame so a resting pane does not
+rewrite an identical sequence several times a second.
+
+This is the status layer only. Detection and launch still need an Orca
+change: identity comes from a host-side vocabulary this patch cannot
+extend, and a frame naming an unknown agent establishes no identity.
+---
+ .../src/notifications/agent_status.rs         | 420 ++++++++++++++++++
+ .../xai-grok-pager/src/notifications/mod.rs   |  72 +++
+ 2 files changed, 492 insertions(+)
+ create mode 100644 third_party/grok-build/crates/codegen/xai-grok-pager/src/notifications/agent_status.rs
+
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/notifications/agent_status.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/notifications/agent_status.rs
+new file mode 100644
+index 0000000..ba9a80f
+--- /dev/null
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/notifications/agent_status.rs
+@@ -0,0 +1,420 @@
++//! OSC 9999 agent-status reporting for hosts that speak it (Orca).
++//!
++//! Orca reads an explicit status stream out of the pane's PTY instead of
++//! guessing a turn boundary from the tab title. Its wire format is a JSON
++//! object in an OSC 9999 string — `ESC ] 9999 ; {json} BEL` — carrying one of
++//! `working` / `blocked` / `waiting` / `done` plus an optional agent type,
++//! model, and prompt preview.
++//!
++//! Why dsb sends it: without an explicit stream Orca has only the title to go
++//! on, and `DeepSeek Build` names no agent it knows. A pane then reports no
++//! status at all — the sidebar dot, the mobile row, and the turn-complete
++//! notification all stay empty. The title cannot fix this on its own: Orca's
++//! agent vocabulary is a closed set with no dsb member, so a dsb title is
++//! either ignored or misread (the braille spinner reads as a working Claude).
++//!
++//! Why gated on the host: the sequence is meaningless outside a host that
++//! parses it, so this module stays silent unless Orca is the host rather than
++//! appending bytes to every terminal dsb runs in.
++//!
++//! Fail-soft: a payload that cannot be serialized, or a host that does not
++//! speak the protocol, produces `None`. Status reporting is never a hard
++//! dependency of the pager.
++
++use std::sync::OnceLock;
++
++use serde::Serialize;
++
++use crate::notifications::tmux;
++use crate::terminal::TerminalContext;
++
++/// OSC code for explicit agent status. See Orca `src/shared/agent-status-osc.ts`.
++pub const OSC_AGENT_STATUS_PREFIX: &str = "\x1b]9999;";
++
++/// The agent id dsb reports itself as.
++///
++/// Why the canonical product name and not the `dsb` alias: a host keys launch
++/// commands, icons, and telemetry on this id, so it has to name the binary the
++/// host would spawn. `deepseek-build` is the primary command; `dsb` is its
++/// alias.
++pub const AGENT_TYPE_ID: &str = "deepseek-build";
++
++/// Maximum characters kept from the session title used as the prompt preview.
++/// Mirrors the host's own field cap so a long title is trimmed here rather
++/// than silently truncated at the far end of the wire.
++const MAX_PROMPT_CHARS: usize = 200;
++
++/// Maximum characters kept from the model name.
++const MAX_MODEL_CHARS: usize = 60;
++
++/// The turn state dsb reports. Mirrors the host's `AgentStatusState`.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum AgentStatusState {
++    /// A turn or command is running.
++    Working,
++    /// Blocked on the user — a pending permission or approval prompt.
++    Waiting,
++    /// Resting at the prompt; no turn in flight.
++    Done,
++}
++
++impl AgentStatusState {
++    pub fn as_str(self) -> &'static str {
++        match self {
++            Self::Working => "working",
++            Self::Waiting => "waiting",
++            Self::Done => "done",
++        }
++    }
++}
++
++/// Whether the current host parses OSC 9999 agent status.
++///
++/// A parameter rather than an ambient read so every decision below is a pure
++/// function of its inputs — the env lookup happens once, in [`host`], and the
++/// tests never mutate process-global state.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum AgentStatusHost {
++    Supported,
++    Unsupported,
++}
++
++impl AgentStatusHost {
++    pub fn is_supported(self) -> bool {
++        matches!(self, Self::Supported)
++    }
++}
++
++/// The wire payload. Field names are camelCase to match the host's parser.
++#[derive(Debug, Serialize)]
++#[serde(rename_all = "camelCase")]
++struct AgentStatusPayload<'a> {
++    state: &'a str,
++    agent_type: &'a str,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    model: Option<&'a str>,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    prompt: Option<&'a str>,
++}
++
++/// Detect whether dsb is running inside a host that reads OSC 9999.
++///
++/// Orca stamps both variables into every pane it spawns, and either is
++/// sufficient: `ORCA_AGENT_HOOK_ENDPOINT` survives a `TERM_PROGRAM` override,
++/// and `TERM_PROGRAM` survives a stripped environment.
++///
++/// Cached: the answer cannot change while the process runs, and this is read
++/// from a tick that fires at frame rate.
++pub fn host() -> AgentStatusHost {
++    static HOST: OnceLock<AgentStatusHost> = OnceLock::new();
++    *HOST.get_or_init(|| {
++        if std::env::var_os("ORCA_AGENT_HOOK_ENDPOINT").is_some_and(|v| !v.is_empty())
++            || std::env::var("TERM_PROGRAM").is_ok_and(|v| v == "Orca")
++        {
++            AgentStatusHost::Supported
++        } else {
++            AgentStatusHost::Unsupported
++        }
++    })
++}
++
++/// Strip control characters so a model- or remote-sourced string cannot
++/// terminate the OSC early and inject escapes into the terminal.
++///
++/// Same filter the tab title and notification bodies use; kept local so a
++/// future change to one cannot silently weaken the other.
++fn sanitize(value: &str, max_chars: usize) -> Option<String> {
++    let cleaned: String = value.chars().filter(|c| !c.is_control()).collect();
++    let trimmed = cleaned.trim();
++    if trimmed.is_empty() {
++        return None;
++    }
++    Some(trimmed.chars().take(max_chars).collect())
++}
++
++/// Build the OSC 9999 escape for one status frame.
++///
++/// Returns `None` when the host does not speak the protocol or the payload
++/// cannot be serialized.
++pub fn build_agent_status_escape(
++    host: AgentStatusHost,
++    state: AgentStatusState,
++    model: Option<&str>,
++    prompt: Option<&str>,
++    ctx: &TerminalContext,
++) -> Option<String> {
++    if !host.is_supported() {
++        return None;
++    }
++    // Bound to locals so the payload can borrow them for the whole call.
++    let model = model.and_then(|m| sanitize(m, MAX_MODEL_CHARS));
++    let prompt = prompt.and_then(|p| sanitize(p, MAX_PROMPT_CHARS));
++    let payload = AgentStatusPayload {
++        state: state.as_str(),
++        agent_type: AGENT_TYPE_ID,
++        model: model.as_deref(),
++        prompt: prompt.as_deref(),
++    };
++    let json = serde_json::to_string(&payload).ok()?;
++    let sequence = format!("{OSC_AGENT_STATUS_PREFIX}{json}\x07");
++    if tmux::passthrough_available(ctx) {
++        Some(tmux::tmux_passthrough(&sequence))
++    } else {
++        Some(sequence)
++    }
++}
++
++/// Emits status frames, suppressing repeats of the last one.
++///
++/// Why dedup here rather than at the call site: the reporter is driven from
++/// the same ticks that repaint the title, so without a cache a resting pane
++/// would rewrite an identical frame several times a second.
++#[derive(Debug, Default)]
++pub struct AgentStatusReporter {
++    last_frame: Option<String>,
++}
++
++impl AgentStatusReporter {
++    pub fn new() -> Self {
++        Self { last_frame: None }
++    }
++
++    /// The escape to emit for `state`, or `None` when it repeats the last one
++    /// (or the host does not speak the protocol).
++    pub fn frame_for(
++        &mut self,
++        host: AgentStatusHost,
++        state: AgentStatusState,
++        model: Option<&str>,
++        prompt: Option<&str>,
++        ctx: &TerminalContext,
++    ) -> Option<String> {
++        let escape = build_agent_status_escape(host, state, model, prompt, ctx)?;
++        if self.last_frame.as_deref() == Some(escape.as_str()) {
++            return None;
++        }
++        self.last_frame = Some(escape.clone());
++        Some(escape)
++    }
++
++    /// Forget the last frame so the next call re-emits even when unchanged.
++    ///
++    /// Why: a host that restarted, or a pane whose stream was reset, has no
++    /// memory of the frame dsb already sent — the dedup cache would starve it.
++    pub fn reset(&mut self) {
++        self.last_frame = None;
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::terminal::{MultiplexerKind, TerminalContext};
++
++    const ON: AgentStatusHost = AgentStatusHost::Supported;
++    const OFF: AgentStatusHost = AgentStatusHost::Unsupported;
++
++    fn plain_ctx() -> TerminalContext {
++        TerminalContext::default()
++    }
++
++    #[test]
++    fn silent_outside_the_host() {
++        assert_eq!(
++            build_agent_status_escape(OFF, AgentStatusState::Done, None, None, &plain_ctx()),
++            None
++        );
++    }
++
++    #[test]
++    fn frame_carries_state_agent_type_and_terminator() {
++        let esc = build_agent_status_escape(
++            ON,
++            AgentStatusState::Working,
++            Some("deepseek-v4-pro"),
++            Some("my session"),
++            &plain_ctx(),
++        )
++        .expect("host speaks the protocol");
++        assert!(esc.starts_with(OSC_AGENT_STATUS_PREFIX));
++        assert!(esc.ends_with('\x07'));
++        assert!(esc.contains("\"state\":\"working\""));
++        assert!(esc.contains("\"agentType\":\"deepseek-build\""));
++        assert!(esc.contains("\"model\":\"deepseek-v4-pro\""));
++        assert!(esc.contains("\"prompt\":\"my session\""));
++    }
++
++    #[test]
++    fn every_state_has_a_wire_name() {
++        for (state, name) in [
++            (AgentStatusState::Working, "working"),
++            (AgentStatusState::Waiting, "waiting"),
++            (AgentStatusState::Done, "done"),
++        ] {
++            let esc =
++                build_agent_status_escape(ON, state, None, None, &plain_ctx()).expect("emitted");
++            assert!(esc.contains(&format!("\"state\":\"{name}\"")), "{esc}");
++        }
++    }
++
++    #[test]
++    fn optional_fields_are_omitted_not_nulled() {
++        let esc = build_agent_status_escape(ON, AgentStatusState::Done, None, None, &plain_ctx())
++            .expect("emitted");
++        assert!(!esc.contains("model"), "{esc}");
++        assert!(!esc.contains("prompt"), "{esc}");
++    }
++
++    #[test]
++    fn control_characters_cannot_escape_the_osc() {
++        let esc = build_agent_status_escape(
++            ON,
++            AgentStatusState::Working,
++            Some("evil\x07\x1b]52;c;payload"),
++            Some("session\x1b]0;spoofed\x07"),
++            &plain_ctx(),
++        )
++        .expect("emitted");
++        // Exactly one BEL — the frame's own terminator.
++        assert_eq!(esc.matches('\x07').count(), 1, "{esc:?}");
++        // The injected OSC introducers left with their ESC.
++        assert!(!esc.contains("\x1b]52"), "{esc:?}");
++        assert!(!esc.contains("\x1b]0;spoofed"), "{esc:?}");
++    }
++
++    #[test]
++    fn overlong_fields_are_truncated() {
++        let long_prompt = "p".repeat(MAX_PROMPT_CHARS * 3);
++        let esc = build_agent_status_escape(
++            ON,
++            AgentStatusState::Done,
++            None,
++            Some(&long_prompt),
++            &plain_ctx(),
++        )
++        .expect("emitted");
++        assert!(esc.contains(&"p".repeat(MAX_PROMPT_CHARS)));
++        assert!(!esc.contains(&"p".repeat(MAX_PROMPT_CHARS + 1)));
++    }
++
++    #[test]
++    fn blank_fields_are_treated_as_absent() {
++        let esc = build_agent_status_escape(
++            ON,
++            AgentStatusState::Done,
++            Some("   "),
++            Some(""),
++            &plain_ctx(),
++        )
++        .expect("emitted");
++        assert!(!esc.contains("model"), "{esc}");
++        assert!(!esc.contains("prompt"), "{esc}");
++    }
++
++    #[test]
++    fn tmux_wraps_the_frame_in_passthrough() {
++        let ctx = TerminalContext {
++            multiplexer: MultiplexerKind::Tmux,
++            tmux_version: Some("tmux 3.3".into()),
++            ..Default::default()
++        };
++        let esc = build_agent_status_escape(ON, AgentStatusState::Done, None, None, &ctx)
++            .expect("emitted");
++        assert!(esc.starts_with("\x1bPtmux;\x1b"), "{esc:?}");
++        assert!(esc.ends_with("\x1b\\"), "{esc:?}");
++    }
++
++    #[test]
++    fn reporter_suppresses_a_repeated_frame() {
++        let mut reporter = AgentStatusReporter::new();
++        let ctx = plain_ctx();
++        assert!(
++            reporter
++                .frame_for(ON, AgentStatusState::Done, None, None, &ctx)
++                .is_some()
++        );
++        assert!(
++            reporter
++                .frame_for(ON, AgentStatusState::Done, None, None, &ctx)
++                .is_none()
++        );
++    }
++
++    #[test]
++    fn reporter_emits_on_every_transition() {
++        let mut reporter = AgentStatusReporter::new();
++        let ctx = plain_ctx();
++        assert!(
++            reporter
++                .frame_for(ON, AgentStatusState::Working, None, None, &ctx)
++                .is_some()
++        );
++        assert!(
++            reporter
++                .frame_for(ON, AgentStatusState::Done, None, None, &ctx)
++                .is_some()
++        );
++        assert!(
++            reporter
++                .frame_for(ON, AgentStatusState::Working, None, None, &ctx)
++                .is_some()
++        );
++    }
++
++    #[test]
++    fn reporter_reemits_after_reset() {
++        let mut reporter = AgentStatusReporter::new();
++        let ctx = plain_ctx();
++        assert!(
++            reporter
++                .frame_for(ON, AgentStatusState::Done, None, None, &ctx)
++                .is_some()
++        );
++        reporter.reset();
++        assert!(
++            reporter
++                .frame_for(ON, AgentStatusState::Done, None, None, &ctx)
++                .is_some()
++        );
++    }
++
++    #[test]
++    fn reporter_stays_silent_and_uncached_off_host() {
++        let mut reporter = AgentStatusReporter::new();
++        let ctx = plain_ctx();
++        assert!(
++            reporter
++                .frame_for(OFF, AgentStatusState::Working, None, None, &ctx)
++                .is_none()
++        );
++        // Nothing was cached, so the first on-host frame still emits.
++        assert!(
++            reporter
++                .frame_for(ON, AgentStatusState::Working, None, None, &ctx)
++                .is_some()
++        );
++    }
++
++    #[test]
++    fn reporter_retries_a_frame_that_never_emitted() {
++        // A pane that goes quiet before the host is reachable must still be
++        // able to report: the cache only holds frames actually produced.
++        let mut reporter = AgentStatusReporter::new();
++        let ctx = plain_ctx();
++        assert!(
++            reporter
++                .frame_for(OFF, AgentStatusState::Done, None, None, &ctx)
++                .is_none()
++        );
++        assert!(
++            reporter
++                .frame_for(OFF, AgentStatusState::Done, None, None, &ctx)
++                .is_none()
++        );
++        assert!(
++            reporter
++                .frame_for(ON, AgentStatusState::Done, None, None, &ctx)
++                .is_some()
++        );
++    }
++}
+diff --git a/third_party/grok-build/crates/codegen/xai-grok-pager/src/notifications/mod.rs b/third_party/grok-build/crates/codegen/xai-grok-pager/src/notifications/mod.rs
+index 73c8ccc..55da2a7 100644
+--- a/third_party/grok-build/crates/codegen/xai-grok-pager/src/notifications/mod.rs
++++ b/third_party/grok-build/crates/codegen/xai-grok-pager/src/notifications/mod.rs
+@@ -1,3 +1,4 @@
++pub mod agent_status;
+ pub mod config;
+ pub mod focus;
+ pub mod hooks;
+@@ -26,6 +27,21 @@ pub struct NotificationEvent {
+     pub session_id: Option<String>,
+ }
+ 
++/// Map the pager's title state onto the status vocabulary a host reads.
++///
++/// Precedence mirrors the title: a pending permission is the most actionable
++/// fact about the pane, so it outranks a running turn — an agent blocked on
++/// approval is not making progress even while `is_busy` is still set.
++fn agent_status_state_for(state: &title::TitleState<'_>) -> agent_status::AgentStatusState {
++    if state.has_pending_permissions {
++        return agent_status::AgentStatusState::Waiting;
++    }
++    if state.is_busy || state.activity.is_some() {
++        return agent_status::AgentStatusState::Working;
++    }
++    agent_status::AgentStatusState::Done
++}
++
+ pub struct NotificationService {
+     config: NotificationConfig,
+     pub focus_tracker: focus::FocusTracker,
+@@ -42,6 +58,10 @@ pub struct NotificationService {
+     /// `true` after the first notification; cleared via
+     /// [`clear_permission_notification`] when the queue drains to empty.
+     permission_notified: bool,
++    /// OSC 9999 explicit status frames for hosts that read them (Orca). Silent
++    /// on every other host, and deduped so a resting pane does not rewrite an
++    /// identical frame on every tick.
++    agent_status_reporter: agent_status::AgentStatusReporter,
+ }
+ 
+ impl NotificationService {
+@@ -64,6 +84,7 @@ impl NotificationService {
+             progress_active: false,
+             progress_last_sent: None,
+             permission_notified: false,
++            agent_status_reporter: agent_status::AgentStatusReporter::new(),
+         }
+     }
+ 
+@@ -139,6 +160,19 @@ impl NotificationService {
+             self.clear_progress_into(&mut buf);
+         }
+ 
++        // Why here as well as `on_tick`: tick demand falls to `None` once a pane
++        // is idle, so the tick that would carry the closing frame may never
++        // run. This is the turn-end hook that still fires.
++        if let Some(status_esc) = self.agent_status_reporter.frame_for(
++            agent_status::host(),
++            agent_status_state_for(state),
++            state.model,
++            state.session_name,
++            self.terminal_ctx,
++        ) {
++            buf.push_str(&status_esc);
++        }
++
+         if !buf.is_empty() {
+             xai_grok_shell::util::with_locked_stderr(|stderr| {
+                 use std::io::Write;
+@@ -166,6 +200,19 @@ impl NotificationService {
+             self.clear_progress_into(&mut buf);
+         }
+ 
++        // Same reason as `flush_idle_state`: this is the idle edge the caller
++        // routes through the frame pipeline, and it must carry the closing
++        // status frame or a host would hold `working` past the turn.
++        if let Some(status_esc) = self.agent_status_reporter.frame_for(
++            agent_status::host(),
++            agent_status_state_for(state),
++            state.model,
++            state.session_name,
++            self.terminal_ctx,
++        ) {
++            buf.push_str(&status_esc);
++        }
++
+         if buf.is_empty() { None } else { Some(buf) }
+     }
+ 
+@@ -207,6 +254,19 @@ impl NotificationService {
+             }
+         }
+ 
++        // Report explicit status to hosts that read OSC 9999 (Orca). Rides the
++        // same tick as the title so the two can never disagree about the turn
++        // state, and stays silent everywhere else.
++        if let Some(status_esc) = self.agent_status_reporter.frame_for(
++            agent_status::host(),
++            agent_status_state_for(state),
++            state.model,
++            state.session_name,
++            self.terminal_ctx,
++        ) {
++            buf.push_str(&status_esc);
++        }
++
+         if buf.is_empty() { None } else { Some(buf) }
+     }
+ 
+@@ -222,6 +282,17 @@ impl NotificationService {
+ 
+         let mut buf = String::new();
+         self.clear_progress_into(&mut buf);
++        // Close the turn out explicitly: a host holding `working` when the pane
++        // exits keeps a spinner alive for a session that is gone.
++        if let Some(status_esc) = self.agent_status_reporter.frame_for(
++            agent_status::host(),
++            agent_status::AgentStatusState::Done,
++            None,
++            None,
++            self.terminal_ctx,
++        ) {
++            buf.push_str(&status_esc);
++        }
+         if !buf.is_empty() {
+             xai_grok_shell::util::with_locked_stderr(|stderr| {
+                 use std::io::Write as _;
+@@ -288,6 +359,7 @@ impl NotificationService {
+             progress_active: false,
+             progress_last_sent: None,
+             permission_notified: false,
++            agent_status_reporter: agent_status::AgentStatusReporter::new(),
+         }
+     }
+ }
+-- 
+2.50.1 (Apple Git-155)
+

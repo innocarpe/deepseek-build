@@ -11,6 +11,13 @@
 # directly below Unreleased; if Unreleased drifted down it is moved back to
 # the top.
 #
+# The Unreleased items are the release's record, so the bump **moves them into
+# the new section, verbatim**. `--desc` fills that section only when Unreleased
+# is empty (or seeds the fill-in placeholder); with items present they are the
+# section, because a one-line summary above real items describes neither. The
+# move lives in scripts/lib/changelog_release.py so --dry-run and the real bump
+# report the same outcome.
+#
 # Usage:
 #   ./scripts/bump-version.sh 4.0.4 [--desc "one-line release note"] [--dry-run]
 set -euo pipefail
@@ -61,6 +68,9 @@ if [[ "$DRY" -eq 1 ]]; then
   echo "bump-version (dry-run): $OLD -> $NEW"
   echo "  would edit: Cargo.toml, package.json, Cargo.lock (via cargo check), CHANGELOG.md, README.md (version literals), docs/product/versions/README.md"
   [[ -n "$DESC" ]] && echo "  desc: $DESC"
+  # Report the CHANGELOG move from the same code the real bump runs, so the
+  # preview cannot promise an outcome the bump does not produce.
+  python3 scripts/lib/changelog_release.py plan CHANGELOG.md "$NEW" "$(date +%Y-%m-%d)" "$DESC"
   exit 0
 fi
 
@@ -95,45 +105,12 @@ PY
 # Regenerate Cargo.lock (syncs the dsb-* workspace entries to the new version).
 cargo check -p dsb-cli >/dev/null
 
-# CHANGELOG section + versions README decision-log row + README literals.
+# CHANGELOG section (via the shared mover) + versions README row + README literals.
+python3 scripts/lib/changelog_release.py apply CHANGELOG.md "$NEW" "$(date +%Y-%m-%d)" "$DESC"
+
 python3 - "$NEW" "$(date +%Y-%m-%d)" "$OLD" "$DESC" <<'PY'
 import re, sys
 new, date, old, desc = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
-note = desc if desc else '_release notes: fill in before merge_'
-section = f'## {new} — {date}\n\n- {note}\n\n'
-
-# --- CHANGELOG.md ---------------------------------------------------------
-# Invariant: "# Changelog" -> "## Unreleased" (top) -> versions newest-first.
-# Pull any drifted "## Unreleased" back to the top, then insert the new
-# section directly below it (above the previous newest version).
-s = open('CHANGELOG.md').read()
-unrel = ''
-rest = s
-m = re.search(r'(?m)^## Unreleased[ \t]*\n', s)
-if m:
-    nxt = re.search(r'(?m)^## ', s[m.end():])
-    stop = m.end() + (nxt.start() if nxt else len(s) - m.end())
-    unrel = s[m.start():stop]
-    rest = s[:m.start()] + s[stop:]
-if rest.startswith('# Changelog'):
-    rest = rest[len('# Changelog\n'):].lstrip('\n')
-out = '# Changelog\n\n' + unrel + section + rest
-out = re.sub(r'\n{3,}', '\n\n', out).rstrip('\n') + '\n'
-open('CHANGELOG.md', 'w').write(out)
-
-# Invariant check: version sections must remain newest-first after the insert.
-def vkey(v):
-    core, _, pre = v.partition('-')
-    maj, min_, pat = (int(x) for x in core.split('.'))
-    if not pre:
-        return (maj, min_, pat, 1, '')
-    base, _, num = pre.partition('.')
-    return (maj, min_, pat, 0, base, int(num) if num.isdigit() else 0)
-
-vers = re.findall(r'(?m)^## ([0-9]+\.[0-9]+\.[0-9]+)(?:-[0-9A-Za-z.\-]+)?[ \t]', out)
-if [vkey(v) for v in vers] != sorted((vkey(v) for v in vers), reverse=True):
-    sys.exit('error: CHANGELOG.md version sections are not newest-first — '
-             'run ./scripts/reorder-changelog.sh and commit before bumping')
 
 # --- README.md (pure version literals only; never the product-status banner) -
 s = open('README.md').read()

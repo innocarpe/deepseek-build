@@ -48,8 +48,9 @@ turn repeated builds into incremental ones.
 
 | Script | Role |
 |--------|------|
-| [`bump-version.sh`](../../scripts/bump-version.sh) | Single-command bump: `Cargo.toml`, `package.json`, `Cargo.lock`, `CHANGELOG.md`, README.md version literals, `docs/product/versions/README.md`. Requires a clean tree; `--dry-run` previews. |
-| [`reorder-changelog.sh`](../../scripts/reorder-changelog.sh) | Reorder CHANGELOG.md to the invariant (Unreleased top, versions newest-first) without touching non-version sections; `--check` exits non-zero if out of order. |
+| [`bump-version.sh`](../../scripts/bump-version.sh) | Single-command bump: `Cargo.toml`, `package.json`, `Cargo.lock`, `CHANGELOG.md` (moves the `Unreleased` items into the new version section), README.md version literals, `docs/product/versions/README.md`. Requires a clean tree; `--dry-run` previews the move. |
+| [`reorder-changelog.sh`](../../scripts/reorder-changelog.sh) | Reorder CHANGELOG.md to the invariant (Unreleased top, versions newest-first) without touching non-version sections; `--check` exits non-zero if out of order. Reorders only — it does not move items between sections. |
+| [`test-changelog-release.sh`](../../scripts/test-changelog-release.sh) | Hermetic regression test for the `Unreleased` move (`lib/changelog_release.py`); fixture CHANGELOGs in a temp dir, no network, no repo state |
 | [`release.sh`](../../scripts/release.sh) | Orchestrator: bump → MAJOR/README gate → verify → PR (`chore(release)`) → merge → tag `v{ver}` → wait for prebuilt assets → wait for CI publish → verify the registry. |
 | [`npm-emergency-publish.sh`](../../scripts/npm-emergency-publish.sh) | **Emergency path only.** Local interactive publish that drives `npm login --auth-type=web` and any emailed code through the `aside` browser agent, so no person has to supply a number. |
 
@@ -57,7 +58,7 @@ turn repeated builds into incremental ones.
 
 | Flag | Meaning |
 |------|---------|
-| `--desc "…"` | One-line note seeded into CHANGELOG + versions README |
+| `--desc "…"` | One-line note for the new CHANGELOG section **when `Unreleased` is empty** (the versions-README row uses it either way); the move reports when items outrank it |
 | `--no-publish` | Stop after assets are ready |
 | `--skip-bump` / `--skip-pr` / `--skip-tag` | Resume from a later stage |
 | `--publish-only` | Skip everything, wait for assets + publish |
@@ -79,12 +80,48 @@ turn repeated builds into incremental ones.
 ## <older sections, non-version sections, notes — untouched>
 ```
 
+- **A bump moves the `Unreleased` items into the new section — verbatim.**
+  They are the release's own record of what it shipped, so the bump does not
+  summarize, rewrite or duplicate them; `--desc` is only a fallback for an
+  empty `Unreleased`. Check the move in the preview before committing:
+  `./scripts/bump-version.sh <ver> --dry-run` prints how many items would
+  move into which section. Skipping the move is how `v5.7.0` shipped seven
+  items still reading as unreleased while its own section held a single
+  `--desc` line — the release record then said nothing about the release
+  ([measured on the tag](#what-the-unreleased-move-prevents)).
 - `bump-version.sh` inserts the new section directly below `Unreleased` and
   moves a drifted `Unreleased` back to the top; it **exits non-zero** if the
   file is not newest-first afterward.
 - `reorder-changelog.sh` fixes a drifted file in place (one-time cleanup) and
-  `--check` fails CI/humans that let the invariant rot.
+  `--check` fails CI/humans that let the invariant rot. It reorders only — it
+  does **not** move items between sections.
 - Prereleases sort below their release (`4.0.4` > `4.0.4-beta.1` > `4.0.4-alpha.1`).
+
+### What the Unreleased move prevents
+
+`bump-version.sh` used to insert the new section without touching `Unreleased`.
+Measured on the tags (`git show <tag>:CHANGELOG.md`, items counted below
+`## Unreleased`):
+
+| Tag | Unreleased items at release time | Its own section |
+|-----|----------------------------------|-----------------|
+| `v5.5.4` | 1 | — |
+| `v5.6.0` | 0 | — |
+| **`v5.7.0`** | **7** | one `--desc` line (`phone-width layout and Orca pane status`) |
+| **`v6.0.0`** | **9** | one `--desc` line (`Grok Build base ported 1.0.0 to 1.0.41 … sync infrastructure`) |
+
+Both tags shipped their items still filed as unreleased while the version
+section held only the `--desc` line, so the release record did not name what the
+release did. `v6.0.0` is the compounding case: its nine included the seven items
+`v5.7.0` had already shipped (the TUI pane fit, the Orca status frame, the 2FA
+publish path, the npm self-check, CRLF edits, the image path, CI publishing),
+plus the `1.0.41` port and the sync-harness item.
+
+`v5.6.0` (0 items) shows the healthy path needs no attention.
+
+The move is covered by `scripts/test-changelog-release.sh` (hermetic: fixture
+CHANGELOGs in a temp dir, no repo state touched) and runs in CI's `changelog`
+job, so undoing it fails a required check rather than the next release.
 
 ## README policy
 

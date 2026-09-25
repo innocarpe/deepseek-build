@@ -175,13 +175,24 @@ work adds no surface and no identity — it makes an existing claim true. **This
 §6 wire question is the one condition that would move the work to its own
 major**, because changing the transport is identity-relevant.
 
+**Closed (2026-09-26).** [PRD-v6 §7.2](../product/PRD-v6.md) re-affirms
+[ADR 0005](../adr/0005-deepseek-provider-contract.md). The measurement is
+[chat-completions-wire-inventory-2026-09-25.md](./chat-completions-wire-inventory-2026-09-25.md)
+§6: on `api.deepseek.com`, model `deepseek-chat`, a stable prefix hit, an
+appended system message kept the prefix, and a cache key did not change the
+hit. The condition above did not fire. Effort levels, signed thinking blocks,
+and image handling were not what that measurement answered, and they are not
+recorded as a reason to switch. The paragraphs above stay the record of the
+open question as it stood before that close.
+
 ---
 
 ## 7. What this sweep does not establish
 
-- **No live-wire verification.** Every dsh claim is read from its source and
-  docs. The Messages-vs-Chat-Completions comparison in §6 is a reading of
-  dsh's code, not a measurement of what the endpoint returns.
+- **No live-wire verification in this sweep.** Every dsh claim is read from
+  its source and docs. The Messages-vs-Chat-Completions comparison in §6 was,
+  when this note was written, a reading of dsh's code. The 2026-09-26 close
+  at the end of §6 is the later measurement, not part of this sweep.
 - **Shallow clone.** `477b4f4` is a single commit; "recent" is not dated
   evidence, and `0.1.7-rc.2` is a release candidate that states it will break
   compatibility. Any adopted idea must be re-checked against a later release

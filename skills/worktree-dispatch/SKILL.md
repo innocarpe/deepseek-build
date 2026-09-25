@@ -90,27 +90,27 @@ and stay there — target it per command:
 | `gh` | `--repo innocarpe/deepseek-build`, token per command (AGENTS.md); `gh pr create` also needs `--head <type>/<slug>`, since it reads the head branch from cwd |
 | file edits | absolute paths under `$WT` |
 
-## 3b. Or open an agent session in it
+## 3b. Or open a session in it
 
 ```sh
-orca terminal create --worktree "id:$WT_ID" --title "<slug>" --command "<agent launcher>" --json
+orca terminal create --worktree "id:$WT_ID" --title "<slug>" --command "deepseek-build" --json
 # H = result.terminal.handle
 orca terminal wait --terminal "$H" --for tui-idle --timeout-ms 60000 --json   # need result.wait.satisfied: true
 orca terminal read --terminal "$H" --screen --json                           # look before you type
 ```
 
-`<agent launcher>` is whatever starts the agent with your flags — `claude …`,
-`codex …`, or `deepseek-build` (alias `dsb`) to dogfood. A timed-out wait still
-prints a result; read `satisfied`. If it is `false`, **read the screen before
-anything else** — a first-run dialog can hold the agent there (Codex's trust
-prompt did not count as idle in 60 s). Otherwise wait once more with a longer
-timeout, and if it is still unsatisfied, report the handoff as not started.
+The launcher is `deepseek-build` (alias `dsb`): work on this repo runs under the
+product the repo ships ([AGENTS.md](../../AGENTS.md) §Control-tower checkout).
+A timed-out wait still prints a result; read `satisfied`. If it is `false` or
+absent, **read the screen before anything else** — a first-run dialog can hold
+the agent there. Otherwise wait once more with a longer timeout, and if it is
+still unsatisfied, report the handoff as not started.
 
-### The trust-prompt trap
+### A first-run dialog can swallow the brief
 
-An agent opening a folder it has no trust record for first shows a trust
-dialog, and the dialogs differ. With Claude Code, `tui-idle` is satisfied
-while the dialog is up, so "idle" does not mean "at the input box":
+An agent opening a folder it has no trust record for may show a trust dialog
+before its input box exists, and `tui-idle` does not have to mean "ready for
+input":
 
 ```text
  Quick safety check: Is this a project you created or one you trust? …
@@ -119,34 +119,16 @@ while the dialog is up, so "idle" does not mean "at the input box":
  Enter to confirm · Esc to cancel
 ```
 
-There `No, exit` is listed first and selected, and digit keys do not pick an
-option. A brief sent with `--enter` is typed into the dialog and its Enter
-confirms **No, exit**: Claude Code quits and the brief is lost. This has
-happened on a real handoff.
+A brief sent with `--enter` while such a dialog is up is typed into the dialog,
+and the Enter confirms whatever its default is — the agent exits and the brief
+is lost. This has happened on a real handoff.
 
-| Agent (version seen) | Dialog | Preselected | Pass it with |
-|----------------------|--------|-------------|--------------|
-| Claude Code `2.1.282` | "Quick safety check … trust this folder" | `No, exit` | Down (`$'\e[B'`), check, Enter |
-| Codex `0.155.1` | "Do you trust the contents of this directory?" | `1. Yes, continue` | check, Enter (no Down — it would select *No, quit*) |
-
-Check means: read the screen and confirm that the **text** of the selected line
-says yes. Do not rely on the marker glyph (`❯`, `›`) or on the table above,
-because defaults can change between versions.
-
-Whether a dialog appears depends on the machine's trust records (worktrees of
-an already-trusted checkout may skip it; a folder never seen before shows it).
-Do not predict it — read the screen every time. For Claude Code:
-
-```sh
-orca terminal send --terminal "$H" --text $'\e[B' --json   # Down arrow → "Yes, I trust this folder"
-orca terminal read --terminal "$H" --screen --json         # the selected line must read "Yes, I trust this folder"
-orca terminal send --terminal "$H" --enter --json
-orca terminal wait --terminal "$H" --for tui-idle --timeout-ms 60000 --json
-orca terminal read --terminal "$H" --screen --json         # the agent's input box must show now
-```
-
-Only trust a worktree of this repo that you just created. If the screen shows
-a dialog you do not recognise, stop and report; do not press keys blind.
+Read the screen after the wait. If a dialog is up, pass it *deliberately*: move
+the selection to the "yes" line, read the screen again to confirm the **text**
+of the selected line says yes (not the marker glyph, and not a table from a
+previous version), then press Enter — and read again before sending the brief.
+If the screen shows a dialog you do not recognise, stop and report; do not
+press keys blind.
 
 ### Send the brief
 

@@ -254,6 +254,42 @@ What a brief carries:
 Then mark the card so other sessions can see the state:
 `orca worktree set --worktree "id:$WT_ID" --comment "<one-line state>" --json`
 
+### Watching a dispatched unit — the spinner glyphs are not a contract
+
+If you wait for the agent to finish, **do not decide it from a spinner
+character**. Every glyph used here (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`) is a frame index, not a state, and a
+pattern that lists a few of them silently reports "idle" on the frames it did
+not list.
+
+**Measured 2026-09-25.** A monitor watched a `grok` tab and declared it done
+because its glyph list missed the frame on screen — while the tab showed
+`⠦ Thinking… 5.2s ⇣141k`, mid-task, and the agent went on to write its report.
+The false positive arrived 10 minutes into the run.
+
+What works instead:
+
+```sh
+orca terminal read --terminal "$H" --json | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+tail = '\n'.join(d['result']['terminal']['tail'][-6:])
+busy = ('Thinking' in tail) or ('Waiting for response' in tail) or ('stop]' in tail)
+print('busy' if busy else 'idle')
+"
+```
+
+Match the **words** the agent prints (`Thinking…`, `Waiting for response…`) and
+the presence of the `[stop]` affordance — not the glyph. Then require the idle
+reading twice in a row before declaring the unit finished, because a single
+sample lands between frames.
+
+**Better still: watch the artifact, not the screen.** A unit that writes files
+is finished when the files change and stop changing; `git -C "$WT" status` is
+harder to misread than a TUI. Use the screen to confirm, not to decide.
+
+
+
+
 ## 4. Merge and clean up
 
 **This step is part of the unit** (AGENTS.md §One session, one unit). Once the

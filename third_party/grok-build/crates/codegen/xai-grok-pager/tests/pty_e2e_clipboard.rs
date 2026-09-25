@@ -30,6 +30,8 @@ mod paste_ctrl_v_image_keeps_ui_responsive_windows;
 mod paste_ctrl_v_text_echoes_fast_macos;
 #[path = "pty_e2e/paste_ctrl_v_text_echoes_fast_windows.rs"]
 mod paste_ctrl_v_text_echoes_fast_windows;
+#[path = "pty_e2e/ssh_image_path_attaches.rs"]
+mod ssh_image_path_attaches;
 
 use common::*;
 

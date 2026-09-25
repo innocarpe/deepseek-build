@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Pasting an image into a pane on a remote host now attaches it. A pasted image
+  path is resolved by the host the pager runs on, and a terminal that works
+  this way uploads the bytes to that host first — an Orca SSH pane writes the
+  temp file to the remote `$TMPDIR` and pastes the remote path. An earlier
+  `is_ssh` early-return skipped the classifier there, so the paste landed as
+  literal path text and the attachment was impossible over SSH.
 - The TUI fits a phone-width pane. A collapsed prompt echo now folds to one
   line plus an ellipsis at or below 60 columns (the measured iPhone pane is 55
   columns by 41 rows) instead of the fixed three rows it used to spend — about

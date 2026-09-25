@@ -3000,12 +3000,35 @@ impl SessionActor {
                     .cloned()
                     .unwrap_or_else(|| self.hook_resolved_workspace_root.clone());
                 let workspace = std::path::Path::new(self.hook_resolved_workspace_root.as_str());
-                let _spec10 = crate::session::helpers::spec10_path_a_assembly::apply_spec10_to_conversation_request(
+                let spec10 = crate::session::helpers::spec10_path_a_assembly::apply_spec10_to_conversation_request(
                     &mut request,
                     &cwd,
                     Some(workspace),
                     None,
                 );
+                // Spec 10 Path A attribution. The first assembly in this
+                // process has no baseline. An unchanged epoch logs
+                // `prefix_epoch=` only. A moved epoch names the component
+                // documents that actually changed.
+                if let Some(change) =
+                    crate::session::helpers::spec10_path_a_assembly::observe_path_a_prefix_change(
+                        &self.session_info.id.to_string(),
+                        &spec10.shape,
+                    )
+                {
+                    let line = change.log_block();
+                    tracing::debug!("{line}");
+                    xai_grok_telemetry::unified_log::debug(
+                        "shell.turn.spec10_prefix_change",
+                        Some(self.session_info.id.0.as_ref()),
+                        Some(serde_json::json!({
+                            "line": line,
+                            "prefix_change": change.label(),
+                            "prev": change.prev_epoch_short,
+                            "cur": change.cur_epoch_short,
+                        })),
+                    );
+                }
             }
             request.x_grok_session_id = Some(self.session_info.id.to_string());
             request.x_grok_turn_idx =

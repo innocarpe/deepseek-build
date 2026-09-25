@@ -161,7 +161,7 @@ evidence lives in the research note.
 | Gated unit | After the official remeasure (2026-09-26) |
 |---|---|
 | U2.1 cache-key reachability | Closed. No further wire change. A key is unnecessary on the official host too. |
-| U2.2 cache-miss attribution | Survives, in `spec10_path_a_assembly.rs` / `turn.rs`. PR #209 attributed inside `crates/` only. A new leading system on the official host is a reproducible full miss. Categories must be components the assembly can actually distinguish. |
+| U2.2 cache-miss attribution | Landed on Path A. `observe_path_a_prefix_change` hashes the five documents `assemble_spec10_path_a_turn` already concatenates, and `turn.rs` logs `prefix_change=` only when the epoch differs from this session's previous assembly in this process. `unattributed` is the coverage bug, not a sixth component. PR #209 remains the overlay (`crates/`) path. |
 | U2.3 cumulative cache surface | Survives, and the substance is the client. The official server sends `prompt_cache_miss_tokens`. Path A's `Usage` has no such field, so serde drops it. The server sends the miss. The client discards it. Spec 10 §1.5.2's `hit`/`miss`/`unreported` line is still absent on Path A. |
 | Scored cache bench (board §1) | The live OpenRouter spread (641/712/768) was the wide-threshold reason. That reason does not hold on `api.deepseek.com` same-byte replays (A, B, G exact; D moved once). Re-review any live threshold per route. Do not retune spec 10 §1.9's mock 90% from this table. |
 | U3.1 in-history prompt/tool update | Premise confirmed on the official host for `deepseek-chat`. Two cold heads: 0/1512 each. Same-byte append: 1280/244 twice (84%, 6.2× uncached input versus the rewrite). Tool updates remain a `tools` array, and that array did not zero the cache. |
@@ -179,7 +179,7 @@ evidence lives in the research note.
 | Unit | Deliverable | Dep |
 |---|---|---|
 | **U2.1** | **Cache-key reachability.** Whatever U0.2 finds: make the product's cache key actually land on its backend, or record why it cannot | U0.2 |
-| **U2.2** | **Cache-miss attribution.** On an epoch change, record which component moved — and make the categories ones that are actually distinguishable, not invented | U0.2 · U2.1 |
+| **U2.2** | **Done.** Cache-miss attribution on Path A. On an epoch change, `turn.rs` logs which of the five assembled documents moved. Categories the assembly cannot see are not invented. Spec 10 Path A attribution | U0.2 · U2.1 |
 | **U2.3** | **Cumulative session cache surface.** Path A already sums `cached_read_tokens` on the session ledger and shows that ratio on the status chip. Spec 10 §1.5.2's `hit`/`miss`/`unreported` line is still absent; its named surface is Path B | U0.2 |
 
 > **Coordination note.** A separate session on `feat/cache-attribution` is

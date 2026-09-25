@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
-use dsb_agent::{Agent, AgentConfig, Preset, SessionStore, TurnEvent};
+use dsb_agent::{Agent, AgentConfig, Preset, SessionRecord, SessionStore, TurnEvent};
 use dsb_config::{BuildHome, Provider};
 use dsb_context::discover_skills_index;
 use dsb_provider_deepseek::{Client, ClientConfig, ReasoningEffort};
@@ -579,13 +579,17 @@ fn bind_session(agent: &mut Agent, cli: &Cli) -> Result<Option<String>> {
     let path = store.path_for(&id)?;
     // load only if file has messages beyond meta
     match store.load(&id) {
-        Ok((msgs, holes, _)) if !msgs.is_empty() => {
+        Ok((msgs, holes, meta)) if !msgs.is_empty() => {
             agent.load_transcript(msgs);
             eprintln!(
                 "[session={id} resume messages; repaired_holes={} path={}]",
                 holes.len(),
                 path.display()
             );
+            // Spec 10 §1.5.1: this process just built its own prefix. If the
+            // stored session carries the baseline its transcript was sent with,
+            // say what moved. Without a baseline, make no claim at all.
+            report_prefix_change(agent, meta.as_ref());
         }
         Ok(_) => {
             eprintln!("[session={id} new path={}]", path.display());
@@ -593,6 +597,22 @@ fn bind_session(agent: &mut Agent, cli: &Cli) -> Result<Option<String>> {
         Err(e) => return Err(e.into()),
     }
     Ok(Some(id))
+}
+
+/// Log the §1.5.1 attribution block for a resumed session, when a baseline exists.
+fn report_prefix_change(agent: &Agent, meta: Option<&SessionRecord>) {
+    let Some(SessionRecord::Meta {
+        prefix_snapshot: Some(snapshot),
+        ..
+    }) = meta
+    else {
+        return;
+    };
+    let change = agent.attribute_against_snapshot(snapshot);
+    eprintln!(
+        "[{}]",
+        change.log_block(&snapshot.epoch_short, agent.prefix_epoch_short())
+    );
 }
 
 fn agent_workspace(cli: &Cli) -> String {
@@ -608,8 +628,10 @@ fn persist_if_needed(agent: &Agent, session_id: Option<&str>) -> Result<()> {
         return Ok(());
     };
     let store = session_store();
+    // Record the prefix baseline with the transcript (spec 10 §1.5.1 rule 5):
+    // without it a later resume cannot say what moved.
     agent
-        .persist_session(&store, id)
+        .persist_session_with_snapshot(&store, id)
         .with_context(|| format!("persist session {id}"))?;
     Ok(())
 }

@@ -33,6 +33,17 @@
 
 ## 5.7.0 — 2026-09-25
 
+- A cache epoch change now says *what* moved, not just *that* something did.
+  The stable prefix is built once per process and reused, so the only moment a
+  conversation's prefix actually moves is when a later process rebuilds it —
+  a resumed session. dsb stores each session's prefix shape beside its
+  transcript and, on resume, prints `prefix_change=<axes>` with a detail line
+  naming the entries (`tools.added=mcp__demo__pong`,
+  `skills.removed=old-skill`, `environment.cwd`). A session that carries no
+  stored shape — any file written before this change — logs nothing rather
+  than guess, and an unchanged prefix logs `none`. The shape is observational:
+  `stable_prefix_bytes` and every existing epoch are byte-identical, pinned by
+  a golden test that fails loudly when a change would invalidate live caches.
 - The TUI fits a phone-width pane. A collapsed prompt echo now folds to one
   line plus an ellipsis at or below 60 columns (the measured iPhone pane is 55
   columns by 41 rows) instead of the fixed three rows it used to spend — about

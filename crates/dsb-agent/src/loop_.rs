@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use dsb_context::{
-    DEFAULT_SYSTEM_PROMPT, EnvironmentSummary, PrefixBuildInputs, PrefixBuilder, SkillIndexEntry,
-    StablePrefix, VolatileTail, assemble_messages, discover_project_instructions,
+    DEFAULT_SYSTEM_PROMPT, EnvironmentSummary, PrefixBuildInputs, PrefixBuilder, PrefixChange,
+    SkillIndexEntry, StablePrefix, VolatileTail, assemble_messages, discover_project_instructions,
     discover_skills_index,
 };
 use dsb_provider_deepseek::ReasoningEffort;
@@ -23,7 +23,7 @@ use thiserror::Error;
 use crate::pairing::{InterruptedTool, pair_tool_results, tools_in_play};
 use crate::repair::{RepairError, repair_tool_arguments};
 use crate::routing::{ModelRouter, Preset, RouteDecision, apply_routing_command};
-use crate::session::{SessionError, SessionStore};
+use crate::session::{PrefixSnapshot, SessionError, SessionStore};
 
 #[derive(Debug, Error)]
 pub enum AgentError {
@@ -230,6 +230,15 @@ impl Agent {
         self.stable.epoch.short()
     }
 
+    /// Baseline to store with a session so a later process can attribute a
+    /// prefix change for this conversation (spec 10 §1.5.1 rule 5).
+    pub fn prefix_snapshot(&self) -> PrefixSnapshot {
+        PrefixSnapshot {
+            epoch_short: self.stable.epoch.short().to_string(),
+            shape: self.stable.shape.clone(),
+        }
+    }
+
     pub fn transcript_tail(&self) -> &[ChatMessage] {
         &self.tail.messages
     }
@@ -249,10 +258,35 @@ impl Agent {
         Ok(holes.len())
     }
 
+    /// Compare this process's freshly built prefix against the baseline stored
+    /// with a session (spec 10 §1.5.1 rule 5).
+    ///
+    /// The baseline is what makes this answerable: within a process the prefix
+    /// is built once and reused, so there is nothing to compare turn over turn.
+    /// A session written before this contract carries no baseline — the caller
+    /// logs nothing then rather than guessing.
+    pub fn attribute_against_snapshot(&self, snapshot: &PrefixSnapshot) -> PrefixChange {
+        let epoch_moved = snapshot.epoch_short != self.stable.epoch.short();
+        PrefixChange::between(&snapshot.shape, &self.stable.shape, epoch_moved)
+    }
+
     /// Persist current volatile transcript to the session store.
     pub fn persist_session(&self, store: &SessionStore, id: &str) -> Result<(), AgentError> {
         let ws = self.config.workspace_root.to_string_lossy();
         store.save(id, &self.tail.messages, Some(ws.as_ref()))?;
+        Ok(())
+    }
+
+    /// Persist the transcript together with the prefix baseline, so a later
+    /// process can attribute a change for this conversation.
+    pub fn persist_session_with_snapshot(
+        &self,
+        store: &SessionStore,
+        id: &str,
+    ) -> Result<(), AgentError> {
+        let ws = self.config.workspace_root.to_string_lossy();
+        let snapshot = self.prefix_snapshot();
+        store.save_with_snapshot(id, &self.tail.messages, Some(ws.as_ref()), Some(&snapshot))?;
         Ok(())
     }
 
@@ -755,9 +789,117 @@ impl Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::SessionRecord;
     use dsb_provider_deepseek::ClientConfig;
+    use tempfile::tempdir;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn agent_for(workspace: &std::path::Path) -> Agent {
+        // No network needed for these: they never send a turn.
+        let client = Arc::new(
+            Client::new(ClientConfig::new("k").with_base_url("http://127.0.0.1:1")).unwrap(),
+        );
+        Agent::new(
+            client,
+            AgentConfig {
+                workspace_root: workspace.to_path_buf(),
+                ..AgentConfig::default()
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn resume_reports_prefix_change_by_axis() {
+        let dir = tempdir().unwrap();
+        let store = SessionStore::new(dir.path().join("sessions"));
+        let id = "s1";
+
+        // Session written while AGENTS.md said one thing.
+        std::fs::write(dir.path().join("AGENTS.md"), "be careful").unwrap();
+        let before = agent_for(dir.path());
+        store
+            .save_with_snapshot(
+                id,
+                &[ChatMessage::user("hi")],
+                None,
+                Some(&before.prefix_snapshot()),
+            )
+            .unwrap();
+        let stored_epoch = before.prefix_epoch_short().to_string();
+
+        // Next process: the instruction file changed underneath the conversation.
+        std::fs::write(dir.path().join("AGENTS.md"), "be very careful").unwrap();
+        let after = agent_for(dir.path());
+        let (_, _, meta) = store.load(id).unwrap();
+        let Some(SessionRecord::Meta {
+            prefix_snapshot: Some(snapshot),
+            ..
+        }) = meta
+        else {
+            panic!("expected stored baseline");
+        };
+
+        let change = after.attribute_against_snapshot(&snapshot);
+        assert_eq!(change.label(), "project_instructions");
+        assert!(!change.unattributed, "a named axis is not unattributed");
+        assert_ne!(after.prefix_epoch_short(), stored_epoch);
+        // The instruction text itself never reaches the log line.
+        assert!(
+            !change
+                .log_block(&snapshot.epoch_short, after.prefix_epoch_short())
+                .contains("be very careful")
+        );
+    }
+
+    #[test]
+    fn resume_with_unchanged_inputs_reports_none() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("AGENTS.md"), "steady").unwrap();
+        let first = agent_for(dir.path());
+        let second = agent_for(dir.path());
+        let change = second.attribute_against_snapshot(&first.prefix_snapshot());
+        assert_eq!(change.label(), "none");
+        assert!(!change.unattributed);
+    }
+
+    #[test]
+    fn a_changed_tool_schema_is_named_tools_on_resume() {
+        let dir = tempdir().unwrap();
+        // First process: explicit tool list.
+        let client = Arc::new(
+            Client::new(ClientConfig::new("k").with_base_url("http://127.0.0.1:1")).unwrap(),
+        );
+        let mut tools = dsb_tools::tool_definitions();
+        tools[0].function.description = Some("original description".into());
+        let first = Agent::new(
+            client.clone(),
+            AgentConfig {
+                workspace_root: dir.path().to_path_buf(),
+                tools: tools.clone(),
+                ..AgentConfig::default()
+            },
+        )
+        .unwrap();
+        let stored = first.prefix_snapshot();
+
+        // Next process: the same tool grew a different description.
+        tools[0].function.description = Some("changed description".into());
+        let second = Agent::new(
+            client,
+            AgentConfig {
+                workspace_root: dir.path().to_path_buf(),
+                tools,
+                ..AgentConfig::default()
+            },
+        )
+        .unwrap();
+
+        let change = second.attribute_against_snapshot(&stored);
+        assert_eq!(change.label(), "tools");
+        assert_ne!(second.prefix_epoch_short(), stored.epoch_short);
+    }
 
     #[tokio::test]
     async fn multi_turn_keeps_stable_prefix_epoch() {

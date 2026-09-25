@@ -8,6 +8,15 @@
   a third of the viewport. The bottom info line (`╰─ model · flags ─╯`) is
   drawn inside its own corners, so a long model label no longer starts on the
   divider rule and clips a character early. Desktop widths are unchanged.
+- A submitted prompt finally becomes the one-row band on a phone pane. The
+  fold decision used to be estimated against a fixed 60-column content width,
+  so a ~100-column prompt looked like two rows to the fold and the one-row
+  narrow budget never applied: the echo stayed at its full body height, five
+  rows in the measured 53-column Orca pane. The fold is now derived from the
+  width the text actually wraps at, and on a pane at or below 60 columns the
+  prompt also drops its two blank pad rows, so the echo is exactly one row.
+  Widths above 60 keep the three-line budget and the padding, and a prompt
+  folded by a resize unfolds back when the pane widens again.
 - dsb reports its turn state to Orca over OSC 9999, so the sidebar dot, the
   mobile session row, and the turn-complete notification have something to
   read. Previously every dsb pane reported no agent identity and the braille

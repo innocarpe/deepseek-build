@@ -36,7 +36,7 @@ PR #1 established scaffolding + CI gates. **This document (and its companions) i
 | Decision | Choice | Rejected alternatives | Why |
 |----------|--------|----------------------|-----|
 | Change vehicle | **PR into `main`** for all meaningful work | Direct push; long-lived `develop` | Solo + early stage: one trunk, reviewable units |
-| History on `main` | **Squash merge**; PR title = commit subject | Merge commits always; rebase-merge only | `main` stays one-intent-per-commit; greppable |
+| History on `main` | **Merge commit**; squash and rebase are disabled, so branch commits survive | Squash (rejected by the repo setting); rebase-merge only | Every commit stays reachable (`git bisect`, `revert`), and the PR body carries the intent |
 | Title grammar | **Conventional Commits** | Free-form; Angular-only without `spec` | Need a first-class `spec` type for docs-first work |
 | Kind encoding | **Exactly one kind label** on ready PRs | Labels optional; many kind labels | CI + human skim; forbids unlabeled “done” |
 | Size | Soft S/M/L guidance | Hard line caps as merge blockers | Docs/spec PRs legitimately larger in prose |

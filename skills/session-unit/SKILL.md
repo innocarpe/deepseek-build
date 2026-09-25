@@ -27,7 +27,11 @@ order. Do not copy commands out of `worktree-dispatch` or `pr-authoring`.
    - Open the PR with `pr-authoring`, which includes the push. From the
      control tower, use that skill's control-tower mode (`--repo`, `--head`,
      per-command token).
-   - Merge only when the opening granted it.
+   - Merge it: the merge is part of the unit, not a separate permission
+     ([AGENTS.md](../../AGENTS.md) §One session, one unit). Stop short only
+     when the opening said so — a review-only unit, a stacked child whose
+     parent is unmerged, or a PR the user asked to look at first.
+   - Clean up the worktree with `worktree-dispatch` §4.
 5. **Hand off** each next unit with `worktree-dispatch` §1–§3b. One worktree,
    one `deepseek-build` tab. The brief file lives outside the repo, and its
    first line is that unit's done-condition. Do not ask first. After the

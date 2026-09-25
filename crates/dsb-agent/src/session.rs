@@ -44,10 +44,29 @@ pub enum SessionRecord {
         created_at_unix: u64,
         #[serde(default)]
         workspace: Option<String>,
+        /// Prefix shape of the build that produced this transcript
+        /// (spec 10 §1.5.1 rule 5). Absent in files written before that
+        /// contract, which is why it is optional: a resume makes no
+        /// attribution claim without a baseline. `meta` never enters the
+        /// API request.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prefix_snapshot: Option<PrefixSnapshot>,
     },
     Message {
         message: ChatMessage,
     },
+}
+
+/// Stored baseline for cache-change attribution (spec 10 §1.5.1).
+///
+/// `epoch_short` is the *short* form the log prints; the full epoch is
+/// recomputed by the resuming process. Carrying the short form keeps the
+/// stored record small and keeps the comparison honest — it compares what the
+/// log will show, not a second hash.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrefixSnapshot {
+    pub epoch_short: String,
+    pub shape: dsb_context::PrefixShape,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +111,16 @@ impl SessionStore {
         id: Option<&str>,
         workspace: Option<&str>,
     ) -> Result<String, SessionError> {
+        self.create_with_snapshot(id, workspace, None)
+    }
+
+    /// [`Self::create`] recording the prefix baseline (spec 10 §1.5.1 rule 5).
+    pub fn create_with_snapshot(
+        &self,
+        id: Option<&str>,
+        workspace: Option<&str>,
+        snapshot: Option<&PrefixSnapshot>,
+    ) -> Result<String, SessionError> {
         self.ensure_root()?;
         let id = match id {
             Some(s) => {
@@ -109,6 +138,7 @@ impl SessionStore {
             id: id.clone(),
             created_at_unix: now,
             workspace: workspace.map(|s| s.to_string()),
+            prefix_snapshot: snapshot.cloned(),
         };
         let mut f = File::create(&path).map_err(|source| SessionError::Io {
             path: path.clone(),
@@ -177,21 +207,40 @@ impl SessionStore {
         messages: &[ChatMessage],
         workspace: Option<&str>,
     ) -> Result<(), SessionError> {
+        self.save_with_snapshot(id, messages, workspace, None)
+    }
+
+    /// [`Self::save`] with an explicit prefix baseline.
+    ///
+    /// `snapshot: None` **preserves** whatever the file already holds — a save
+    /// that drops the baseline would silently disable attribution for the rest
+    /// of that session's life, which is the failure this field exists to catch.
+    /// Pass `Some(..)` only when the prefix was rebuilt for this transcript.
+    pub fn save_with_snapshot(
+        &self,
+        id: &str,
+        messages: &[ChatMessage],
+        workspace: Option<&str>,
+        snapshot: Option<&PrefixSnapshot>,
+    ) -> Result<(), SessionError> {
         self.ensure_root()?;
         let path = self.path_for(id)?;
-        let created = if path.exists() {
-            self.load(id)
-                .ok()
-                .and_then(|(_, _, m)| match m {
-                    Some(SessionRecord::Meta {
-                        created_at_unix, ..
-                    }) => Some(created_at_unix),
-                    _ => None,
-                })
-                .unwrap_or_else(now_unix)
-        } else {
-            now_unix()
+        let existing = self.load(id).ok().and_then(|(_, _, m)| match m {
+            Some(SessionRecord::Meta {
+                created_at_unix,
+                workspace: existing_workspace,
+                prefix_snapshot,
+                ..
+            }) => Some((created_at_unix, existing_workspace, prefix_snapshot)),
+            _ => None,
+        });
+        let (created, existing_workspace, existing_snapshot) = match existing {
+            Some((created, ws, snap)) => (created, ws, snap),
+            None => (now_unix(), None, None),
         };
+        // An explicit snapshot wins; otherwise keep what the file had.
+        let snapshot = snapshot.cloned().or(existing_snapshot);
+        let workspace = workspace.map(|s| s.to_string()).or(existing_workspace);
         let tmp = path.with_extension("jsonl.tmp");
         {
             let mut f = File::create(&tmp).map_err(|source| SessionError::Io {
@@ -201,7 +250,8 @@ impl SessionStore {
             let meta = SessionRecord::Meta {
                 id: id.to_string(),
                 created_at_unix: created,
-                workspace: workspace.map(|s| s.to_string()),
+                workspace,
+                prefix_snapshot: snapshot,
             };
             writeln!(f, "{}", serde_json::to_string(&meta).unwrap()).map_err(|source| {
                 SessionError::Io {
@@ -376,6 +426,107 @@ mod tests {
         let (loaded, holes, meta) = store.load(&id).unwrap();
         assert!(holes.is_empty());
         assert_eq!(loaded.len(), 2);
+        assert!(matches!(meta, Some(SessionRecord::Meta { .. })));
+    }
+
+    fn sample_shape(system: &str) -> dsb_context::PrefixShape {
+        dsb_context::PrefixShape {
+            system: dsb_context::sub_hash(system.as_bytes()),
+            ..dsb_context::PrefixShape::default()
+        }
+    }
+
+    fn snapshot(system: &str) -> PrefixSnapshot {
+        PrefixSnapshot {
+            epoch_short: format!("epoch-{system}"),
+            shape: sample_shape(system),
+        }
+    }
+
+    /// Baselines are additive: old files load, new files carry the shape.
+    fn meta_of(store: &SessionStore, id: &str) -> SessionRecord {
+        let (_, _, meta) = store.load(id).unwrap();
+        meta.expect("meta line")
+    }
+
+    fn snapshot_of(store: &SessionStore, id: &str) -> Option<PrefixSnapshot> {
+        match meta_of(store, id) {
+            SessionRecord::Meta {
+                prefix_snapshot, ..
+            } => prefix_snapshot,
+            other => panic!("expected meta, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn prefix_snapshot_roundtrip() {
+        let dir = tempdir().unwrap();
+        let store = SessionStore::new(dir.path());
+        let snap = snapshot("sys-a");
+        let id = store
+            .create_with_snapshot(Some("snap"), Some("/tmp/ws"), Some(&snap))
+            .unwrap();
+        store
+            .save_with_snapshot(
+                &id,
+                &[ChatMessage::user("hi")],
+                Some("/tmp/ws"),
+                Some(&snap),
+            )
+            .unwrap();
+        let loaded = snapshot_of(&store, &id).expect("snapshot stored");
+        assert_eq!(loaded, snap);
+    }
+
+    #[test]
+    fn save_without_snapshot_preserves_the_existing_baseline() {
+        let dir = tempdir().unwrap();
+        let store = SessionStore::new(dir.path());
+        let snap = snapshot("sys-a");
+        let id = store.create(Some("keep"), Some("/tmp/ws")).unwrap();
+        store
+            .save_with_snapshot(
+                &id,
+                &[ChatMessage::user("hi")],
+                Some("/tmp/ws"),
+                Some(&snap),
+            )
+            .unwrap();
+        // A plain save (the older call shape) must not drop the baseline —
+        // dropping it would silently disable attribution for the session.
+        store
+            .save(
+                &id,
+                &[ChatMessage::user("hi"), ChatMessage::assistant("ok")],
+                None,
+            )
+            .unwrap();
+        assert_eq!(snapshot_of(&store, &id), Some(snap));
+    }
+
+    #[test]
+    fn legacy_meta_without_snapshot_loads() {
+        let dir = tempdir().unwrap();
+        let store = SessionStore::new(dir.path());
+        let id = "legacy";
+        std::fs::write(
+            dir.path().join(format!("{id}.jsonl")),
+            concat!(
+                r#"{"type":"meta","id":"legacy","created_at_unix":1,"workspace":"/tmp/ws"}"#,
+                "\n",
+                r#"{"type":"message","message":{"role":"user","content":"hi"}}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        let (msgs, holes, meta) = store.load(id).unwrap();
+        assert!(holes.is_empty());
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(
+            snapshot_of(&store, id),
+            None,
+            "a pre-§1.5.1 file carries no baseline, and must not be invented"
+        );
         assert!(matches!(meta, Some(SessionRecord::Meta { .. })));
     }
 

@@ -64,7 +64,7 @@ the one-time code or `NPM_OTP`).
 ## Manual asset fallback (reliable path when CI is stuck)
 
 ```bash
-WT=~/Projects/OpenSources/deepseek-build-release-4.0.4   # tag worktree
+WT=/path/to/deepseek-build-release-4.0.4               # tag worktree
 git -C "$WT" fetch origin && git -C "$WT" checkout v4.0.4
 cd "$WT" && ./scripts/build-grok-pager.sh release        # cold build: 30-60+ min
 # stage the fresh agent binary

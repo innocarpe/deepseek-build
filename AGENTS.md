@@ -167,6 +167,32 @@ single clone and no Orca, work as usual: branch, commit, PR
   from the people who would fix them. Reading, planning and review may use any
   tool; the session that *writes the change* is `deepseek-build`.
 
+## One session, one unit
+
+The opening message, or the brief a dispatch handed over, is this session's
+**one unit**. The order is [`skills/session-unit`](skills/session-unit/SKILL.md).
+Worktree commands stay in [`worktree-dispatch`](skills/worktree-dispatch/SKILL.md);
+the PR stays in [`pr-authoring`](skills/pr-authoring/SKILL.md).
+
+- **Write the done-condition in one sentence before editing.** Take it from
+  the opening. Do not later swap it for a smaller goal that is only what this
+  session can finish easily, and do not add work the opening did not name.
+- **Carry the unit through without waiting for another prompt** when the
+  opening asked for the work: implement, run the checks that change needs,
+  one-concern commits, then the PR. Stop short of push or PR only when the
+  opening said to stop there. Merge only when the opening granted it, using
+  the merge method this file states under **Merge on GitHub**.
+- **A defect in a file this unit is already changing**, which no other
+  session is editing, is part of finishing — its own commit, same unit.
+  Anything the opening did not name (a new behavior, a fresh investigation,
+  a drive-by in a file this unit is not already changing) is the **next**
+  unit. Do not start it here. Open a new worktree and a `deepseek-build`
+  tab for it, with that unit's done-condition as the first line of the
+  brief. Report the tab. Do not ask whether to open it.
+- **When the unit is done, say so first.** Name whether the done-condition
+  holds, the evidence, and any unit you handed off. Do not offer another
+  unit in this session.
+
 ## Product CI (future)
 
 Real CI belongs when there is something to **build and test** (provider, tools,

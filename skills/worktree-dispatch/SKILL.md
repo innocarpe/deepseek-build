@@ -150,8 +150,9 @@ What a brief carries:
   `Depends on #N` if stacked
 - **Boundaries** — which worktree is theirs; the primary checkout and other
   worktrees are off-limits; the one-Grok-build-at-a-time rule
-- **Harness** — follow `AGENTS.md` and `skills/pr-authoring`; `gh` with
-  `--repo` and a per-command token; push to `origin`
+- **Harness** — follow `AGENTS.md`, `skills/session-unit`, and
+  `skills/pr-authoring`; `gh` with `--repo` and a per-command token; push
+  to `origin`
 - **Authority** — whether merging was granted, stated either way
 - **Report** — PR URL, test evidence, what was left out
 

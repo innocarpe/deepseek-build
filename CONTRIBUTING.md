@@ -18,6 +18,7 @@ Thanks for your interest. This project is early: **docs and specs land before co
 | [docs/contributing/examples.md](docs/contributing/examples.md) | Filled PR body examples (`spec`/`feat`/`fix`/`docs`) |
 | [docs/contributing/review-checklist.md](docs/contributing/review-checklist.md) | Review / self-merge checklist |
 | [skills/pr-authoring/SKILL.md](skills/pr-authoring/SKILL.md) | **Agent skill** for writing/opening PRs |
+| [skills/session-unit/SKILL.md](skills/session-unit/SKILL.md) | **Agent skill** for finishing one opening unit and handing the next to a new tab |
 | [docs/contributing/commits.md](docs/contributing/commits.md) | Conventional Commits |
 | [docs/contributing/versioning.md](docs/contributing/versioning.md) | **SemVer only** (`MAJOR.MINOR.PATCH`, never bare `1.0`) |
 | [docs/contributing/releases.md](docs/contributing/releases.md) | Release checklist draft; dual CLI names |

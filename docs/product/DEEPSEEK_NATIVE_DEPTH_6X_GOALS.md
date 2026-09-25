@@ -53,9 +53,9 @@ table below is the corrected inventory, with the evidence path for each.
 | Runtime invariant: request equals the log projection | **Present as of the Wave 1 unit.** `request_log_invariant.rs` checks non-system items before `run_turn_via_sampler` (`turn.rs`). System messages are the Spec 10 overlay. A tool result may be the logged text, the hard-clear placeholder, or a head/tail trim. Anything else fails the turn. An item that cannot be serialized fails closed | **Taken** |
 | Context attached *beside* a tool result | **Present in this tree.** `PostToolUse` `additional_context` is a separate `ConversationItem` via `wrap_hook_note` (`reminders.rs`), pushed in `tool_calls.rs` after the tool result. `post_tool_use_delivery_tests.rs` asserts block/context do not replace `model_output` | **Dropped** — already on the live path. Re-measured 2026-09-26; the 1.0.41 note that said absent is stale |
 | Guard that may deny but never allow | **Present as of the Wave 1 unit.** `DenyOnly` in `permission/policy.rs` has deny and abstain. `combine_decisions` uses it, so an allow on either side cannot replace a reject or policy deny | **Taken** |
-| Cache-miss **attribution** | **Absent.** Epoch changes are logged as a new hash; nothing records *which component* moved | **Take** (see the coordination note in §3) |
-| Session-cumulative cache surface | **Partial.** `xai-grok-pager/src/views/agent_status.rs:353` has `format_cache_hit_pct` — a *per-turn* `cache 45%` chip; no cumulative counter | **Take** (coordination note) |
-| Scored cache regression bench | **Absent.** Prefix-equality goldens exist; no scenario bench with a threshold | **Take** (coordination note) |
+| Cache-miss **attribution** | **Present on Path A.** `observe_path_a_prefix_change` hashes the five documents `assemble_spec10_path_a_turn` concatenates, and `turn.rs` logs `prefix_change=` when the epoch differs from this session's previous assembly in this process. PR #235 | **Taken** |
+| Session-cumulative cache surface | **Present as a log line.** `Usage.prompt_cache_miss_tokens` is kept. `CacheSessionTotals` on the in-memory session ledger logs `cache_session=` from `emit_turn_completed`. The chip at `agent_status.rs` is still the per-turn percentage. The counter is not persisted. PR #238 | **Taken** |
+| Scored cache regression bench | **Present for the overlay mock.** Spec 10 §1.9, `crates/dsb-agent/tests/cache_guard.rs`, PR #229. It scores `dsb-context` bytes, not the bytes Path A sends. A live threshold is per route (wire inventory §6) | **Taken** for the mock |
 | A changed prompt/tool set appended after cached history | **Present for the stable body.** Spec 10 §1.10 / `place_stable_body`. A later body is appended; the earlier system message stays byte-for-byte. A `tools` array replacement is not a history event | **Taken** — U3.1 |
 
 **Two facts that shape everything below:**
@@ -276,7 +276,7 @@ only tests `dsb-context` is Path B evidence under OWNER_BAR §2.1.
 
 | Unit | Deliverable | Dep |
 |---|---|---|
-| **U4.1** | The *not taken* list, with the evidence path for each row of §1 — the discipline [UPSTREAM_SYNC_LEDGER.md](./UPSTREAM_SYNC_LEDGER.md) established for vendor syncs, applied to harness ideas | — |
+| **U4.1** | **Done.** §7 is the *not taken* ledger: each dsh idea this train declined, with the evidence path and the reason. The discipline [UPSTREAM_SYNC_LEDGER.md](./UPSTREAM_SYNC_LEDGER.md) set for vendor syncs, applied to harness ideas | — |
 | **U4.2** | `6.1.0` cut: honesty table filled from merged results, owner-readable summary, release | claimed units |
 
 ---
@@ -329,13 +329,17 @@ Re-plan if any of these become true:
 
 ## 7. What this train deliberately does not do
 
-| Not done | Why |
-|---|---|
-| Spill, compaction cache alignment, snippet staleness, task-output surface | Measured present in the `1.0.41` tree — §1 |
-| Anthropic Messages migration | Re-affirmed Chat Completions ([PRD-v6 §7.2](./PRD-v6.md), 2026-09-26). The §0 condition did not fire. U4.1 still owes the evidence path |
-| A new major line / new PRD | Rule: a minor is not a new PRD unless identity shifts |
-| Agent teams / mailboxes / task boards | Serves a browser UI this product does not have; deferred by [NON_GOALS](./NON_GOALS.md) |
-| Sandbox modes + escalation | Correct vocabulary, no substrate |
-| dsh's request-series bookkeeping | Precise instrument for a model this product does not use |
-| Everything-is-a-plugin | Another product's architecture; not portable to a Rust pager |
-| New TUI surfaces | This train is depth, not surface |
+This is the harness-idea counterpart of [UPSTREAM_SYNC_LEDGER.md](./UPSTREAM_SYNC_LEDGER.md): each row is a thing the dsh sweep put in front of this train, the place the evidence lives, and the decision. A later session inherits the judgment instead of re-reading dsh to rediscover it.
+
+| Idea | Evidence | Decision | Why |
+|---|---|---|---|
+| Request-series bookkeeping (`initial` / `resume` / `change` / `series`, `surfaceOp`, `contentGeneration`) | [dsh-deepseek-harness.md](../research/dsh-deepseek-harness.md) §5 | **Not taken** | dsh reconstructs request identity because the prompt and the tools are history, and compaction can shadow that history. This product's instrument is the prefix hash (spec 10 §1.5). The series would be a second identity for a request model this product does not use. |
+| Agent teams (roster, mailbox, task board, `waitForChange`) | [dsh-deepseek-harness.md](../research/dsh-deepseek-harness.md) §5 · [NON_GOALS.md](./NON_GOALS.md) | **Not taken** | A durable coordination layer for a browser UI that has to remember agents nobody is watching. This product's L3 is worktree plus subagent fan-out. NON_GOALS defers that class. |
+| Sandbox escalation | [dsh-deepseek-harness.md](../research/dsh-deepseek-harness.md) §4, `escalation.ts:28-30,166-209` | **Not taken** | One wider-only retry, with a justification, approved before it runs. That needs sandbox modes to escalate between. This product has allow / deny / ask and no such modes. |
+| Everything-is-a-plugin | [dsh-deepseek-harness.md](../research/dsh-deepseek-harness.md) §1 shape table and §5 | **Not taken** | Cordis, on the order of 90 service keys. That is what makes dsh's seams possible and its boot path long. This product ships a Rust pager and an overlay, not a plugin host. |
+| Anthropic Messages transport | [dsh-deepseek-harness.md](../research/dsh-deepseek-harness.md) §6 · [wire inventory](../research/chat-completions-wire-inventory-2026-09-25.md) §6 · [PRD-v6 §7.2](./PRD-v6.md) · [ADR 0005](../adr/0005-deepseek-provider-contract.md) | **Not taken.** Re-affirmed 2026-09-26 | Official Chat Completions, model `deepseek-chat`, twelve HTTP 200 calls: a stable prefix hit 1280/228 on a 1508-token prompt, an appended system message kept 1280/1524 (84%), and a `prompt_cache_key` did not change the hit. The §0 condition that would open a `7.0.0` major did not fire. Effort levels, signed thinking blocks, and image handling were not measured, and they are not recorded as a reason to switch. |
+| Webhook runtime, session query tools, schedule, deliverables | [dsh-deepseek-harness.md](../research/dsh-deepseek-harness.md) §5 | **Not taken** | Surfaces with no current product need. |
+| Cordis / HMR / live profile patching | [dsh-deepseek-harness.md](../research/dsh-deepseek-harness.md) §5 | **Not taken** | Patches replace whole config rows. Not a model for this repo. |
+| Spill, compaction cache alignment, snippet staleness, task-output surface | This board §1 | **Not re-implemented** | Measured present in the `1.0.41` tree. The snippet contract is stricter than dsh's path-scoped version token. |
+| New TUI surfaces | This board §0 | **Not taken** | The train is depth. The §1.5.2 chip stays the existing per-turn percentage. The new session line is a log, not a new pane. |
+| A new major line / a new PRD | [versions/README.md](./versions/README.md) §Rules 1 | **Not taken** | Identity did not shift. The Messages condition in §0 did not fire. |

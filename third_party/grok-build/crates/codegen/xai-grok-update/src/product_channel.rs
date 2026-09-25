@@ -28,7 +28,7 @@ use semver::Version;
 /// `true` when `version` is a release SemVer: it parses, and it has no
 /// pre-release identifiers. Build metadata is ignored, matching semver's
 /// ordering rules.
-pub fn release_semver_omits_channel_label(version: &str) -> bool {
+pub(crate) fn release_semver_omits_channel_label(version: &str) -> bool {
     match Version::parse(version.trim()) {
         Ok(parsed) => parsed.pre.is_empty(),
         Err(_) => false,
@@ -39,7 +39,7 @@ pub fn release_semver_omits_channel_label(version: &str) -> bool {
 ///
 /// `Some("alpha")` when `current > stable`, `Some("stable")` when
 /// `current <= stable`, `None` when either side fails to parse.
-pub fn compare_channel(current: &str, stable: &str) -> Option<&'static str> {
+pub(crate) fn compare_channel(current: &str, stable: &str) -> Option<&'static str> {
     let current_v = Version::parse(current).ok()?;
     let stable_v = Version::parse(stable).ok()?;
     if current_v > stable_v {
@@ -56,7 +56,7 @@ pub fn compare_channel(current: &str, stable: &str) -> Option<&'static str> {
 /// no cached pointer returns `""`, matching the historical
 /// `channel_label` behavior. A pre-release with a pointer uses
 /// [`compare_channel`].
-pub fn channel_label_for(current: &str, cached_stable: Option<&str>) -> &'static str {
+pub(crate) fn channel_label_for(current: &str, cached_stable: Option<&str>) -> &'static str {
     if release_semver_omits_channel_label(current) {
         return "";
     }
@@ -73,7 +73,7 @@ pub fn channel_label_for(current: &str, cached_stable: Option<&str>) -> &'static
 /// Machine-readable channel. A release SemVer is `"stable"` whether or not
 /// a pointer is cached. A pre-release is `None` without a pointer, otherwise
 /// the upstream comparison.
-pub fn channel_name_for(current: &str, cached_stable: Option<&str>) -> Option<&'static str> {
+pub(crate) fn channel_name_for(current: &str, cached_stable: Option<&str>) -> Option<&'static str> {
     if release_semver_omits_channel_label(current) {
         return Some("stable");
     }

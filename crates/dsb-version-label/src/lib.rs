@@ -4,16 +4,15 @@
 //! binary and this crate compile the same file. Building `xai-grok-update`
 //! pulls in the vendored pager; this crate does not.
 
+#[cfg(test)]
 #[path = "../../../third_party/grok-build/crates/codegen/xai-grok-update/src/product_channel.rs"]
 mod product_channel;
 
-pub use product_channel::{
-    channel_label_for, channel_name_for, compare_channel, release_semver_omits_channel_label,
-};
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::product_channel::{
+        channel_label_for, channel_name_for, compare_channel, release_semver_omits_channel_label,
+    };
 
     #[test]
     fn release_with_a_stale_pointer_has_no_alpha_suffix() {

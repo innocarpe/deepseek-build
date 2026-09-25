@@ -6,15 +6,7 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color {
     Color::Rgb(r, g, b)
 }
 
-/// Oscura Midnight palette.
-///
-/// Deep, dark backgrounds with a subtle purple/blue tint (OKLCH hue 265),
-/// inspired by the Oscura Midnight palette (narative/oscura). Accent colors
-/// lean purple to give the theme its distinctive identity.
-///
-/// Base colors were converted from OKLCH to sRGB programmatically via
-/// the `coloraide` Python library. Purple accent colors are hand-picked
-/// to complement the hue-265 background tint.
+/// Deep backgrounds with OKLCH hue 265; accents are hand-picked purple to match that tint.
 #[allow(dead_code)]
 mod palette {
     use super::*;
@@ -23,6 +15,7 @@ mod palette {
     pub const BASE: Color = rgb(3, 3, 4); // #030304  oklch(0.1 0.005 265)
     pub const SURFACE: Color = rgb(4, 5, 7); // #040507  oklch(0.115 0.005 265)
     pub const ELEVATED: Color = rgb(15, 18, 22); // #0F1216  oklch(0.18 0.01 265)
+    pub const CODE_BG: Color = rgb(38, 41, 47); // #26292F  oklch(0.28 0.012 265)
     pub const PANEL: Color = rgb(4, 4, 6); // #040406  oklch(0.11 0.006 265)
 
     // -- text (neutral, no color cast) ----------------------------------------
@@ -40,9 +33,9 @@ mod palette {
     pub const AMBER: Color = rgb(241, 189, 0); // #F1BD00  oklch(0.82 0.18 90)
 
     // -- purple accent ramp (the "purple hints") ------------------------------
-    pub const PURPLE: Color = rgb(155, 126, 206); // #9B7ECE — signature purple
-    pub const PURPLE_DIM: Color = rgb(110, 90, 154); // #6E5A9A — muted purple
-    pub const PURPLE_BRIGHT: Color = rgb(196, 167, 231); // #C4A7E7 — vivid lavender
+    pub const PURPLE: Color = rgb(155, 126, 206); // #9B7ECE, signature purple
+    pub const PURPLE_DIM: Color = rgb(110, 90, 154); // #6E5A9A, muted purple
+    pub const PURPLE_BRIGHT: Color = rgb(196, 167, 231); // #C4A7E7, vivid lavender
 
     // -- cyan (for running indicators, links) ---------------------------------
     pub const CYAN: Color = rgb(125, 207, 223); // #7DCFDF
@@ -92,7 +85,7 @@ impl Theme {
 
             accent_verify: PURPLE,
 
-            accent_remember: rgb(139, 195, 74), // #8BC34A — Material Design light green
+            accent_remember: rgb(139, 195, 74), // #8BC34A, Material Design light green
 
             selection_border: HIGHLIGHT_HIGH,
             hover_border: HIGHLIGHT_MED,
@@ -101,12 +94,8 @@ impl Theme {
 
             accent_model: CYAN,
 
-            // Thumb must sit clearly above the track: `ELEVATED` (Σrgb 55)
-            // was *darker* than the `HIGHLIGHT_LOW` track (Σrgb 62), which
-            // made the scrollbar invisible — and follow mode blends the
-            // thumb 40% toward the track, shrinking the delta further.
-            // `HIGHLIGHT_HIGH` matches the weight of the theme's visible
-            // chrome (selection border) and Rose Pine's thumb brightness.
+            // The thumb must sit clearly above the track, and follow mode blends the thumb 40% toward the track, shrinking the contrast
+            // `HIGHLIGHT_HIGH` matches the weight of the theme's visible chrome (selection border) and Rose Pine's thumb brightness
             scrollbar_bg: HIGHLIGHT_LOW,
             scrollbar_fg: HIGHLIGHT_HIGH,
 
@@ -139,7 +128,7 @@ impl Theme {
             md_task_checked: TEAL,
             md_task_unchecked: TEXT_DIM,
             md_muted: MUTED,
-            md_code_bg: SURFACE,
+            md_code_bg: CODE_BG,
             md_text: TEXT,
             link_fg: CYAN,
         }

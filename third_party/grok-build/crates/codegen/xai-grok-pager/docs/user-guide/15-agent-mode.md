@@ -57,13 +57,13 @@ Typical clients: IDE extensions (Zed, Neovim, Emacs), custom tools, and ACP SDKs
 Agent options apply to every transport (`stdio`, `serve`, `headless`, `leader`). They go after `agent` and before the mode name. Mode-specific flags go after the mode (for example `serve --bind`).
 
 ```bash
-grok agent --always-approve --model grok-build stdio
+grok agent --always-approve --model grok-4.6 stdio
 grok agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
 ```
 
 | Flag | Description |
 | ---- | ----------- |
-| `-m, --model <MODEL>` | Model ID (for example `grok-build`). |
+| `-m, --model <MODEL>` | Model ID (for example `grok-4.6`). |
 | `--always-approve` | Run without interactive tool-permission prompts. Alias: `--yolo`. |
 | `--reauth` | Authenticate before the agent starts. |
 | `--agent-profile <PATH>` | Load an agent profile from a file. |
@@ -78,6 +78,8 @@ grok agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
 ```
 
 Clients connect over WebSocket and authenticate with the secret token. If you omit `--secret`, the agent prints a generated token at startup, or set `GROK_AGENT_SECRET`. The process keeps state across client reconnects. Permissions match other entry points; see [Permissions and safety](22-permissions-and-safety.md).
+
+This is a server you run yourself — Grok's hosted cloud sandboxes do not run `grok agent serve`.
 
 ---
 
@@ -168,6 +170,27 @@ The agent sends push notifications to clients for real-time updates:
 | `x.ai/fs/index/delta`      | Incremental file index update        |
 | `x.ai/session_notification`| Session-specific updates (diff review, retry state, auto-compact) |
 | `x.ai/session/update`      | Session update (tool calls, content) |
+
+---
+
+## Session config options
+
+`session/new` and `session/load` responses include a typed `configOptions` list (standard ACP, not an `x.ai/` extension). Change a live option with `session/set_config_option`.
+
+| `configId` | Category | Effect |
+|------------|----------|--------|
+| `model` | `model` | Switches the session model (`allowed_models`, chat gateway routing). Value must be a string id. |
+| `reasoning_effort` | `thought_level` | Applies effort to the current model without changing the model (no prompt rewrite, no `allowed_models` gate). Value must be a string id (`minimal`, `low`, `medium`, `high`, `xhigh`). Dropped with a warning when the model does not advertise `supportsReasoningEffort`. |
+
+```json
+{
+  "sessionId": "…",
+  "configId": "reasoning_effort",
+  "value": { "value": "high" }
+}
+```
+
+The response is the **complete, updated** option list. A `config_option_update` session notification mirrors it to every subscribed client. In leader mode the proxy snoops `configId: model` so each client's `default_model` stays in sync. Boolean values are rejected; exposing boolean options is not implemented yet.
 
 ---
 

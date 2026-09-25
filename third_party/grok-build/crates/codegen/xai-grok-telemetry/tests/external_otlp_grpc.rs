@@ -1,11 +1,12 @@
-//! gRPC transport coverage for the external OTEL stream. This mirrors the
-//! primary HTTP/protobuf wire test in `external_otlp.rs`, but must live in its
-//! own integration-test binary because the external telemetry registry is a
-//! process-global `OnceLock`.
+//! gRPC transport coverage for the external OTEL stream, mirroring the primary HTTP/protobuf wire test in `external_otlp.rs`.
+//! It lives in its own integration-test binary because the external telemetry registry is a process-global `OnceLock`.
 
 mod otlp_collector;
 
+use std::time::Duration;
+
 use otlp_collector as col;
+use xai_grok_test_support::{OtelMetricData, OtelRecorder, OtelSignal, OtelTemporality};
 
 const CANARY_MODEL: &str = "sk-CANARYgrpcabcdefghij1234567890";
 const CANARY_PROMPT: &str = "CANARY_GRPC_PROMPT_TEXT do not export";
@@ -13,9 +14,8 @@ const CANARY_MCP: &str = "canary-grpc-internal-mcp-server";
 
 #[test]
 fn external_stream_grpc_end_to_end() {
-    let collected = col::Collected::default();
-    let endpoint =
-        col::start_collector_with_protocol(collected.clone(), col::CollectorProtocol::Grpc);
+    let recorder = OtelRecorder::new();
+    let endpoint = col::start_grpc_collector(recorder.clone());
 
     let mut cfg = xai_grok_telemetry::external::ExternalOtelConfig::resolve_with(
         |name| match name {
@@ -59,6 +59,7 @@ fn external_stream_grpc_end_to_end() {
         hook_names: vec![],
         agents_md_dir_names: vec![],
         memory_enabled: false,
+        memory_retrieval_mode: xai_grok_telemetry::events::MemoryRetrievalMode::Disabled,
         is_git_repo: true,
         auto_update: None,
     });
@@ -68,6 +69,7 @@ fn external_stream_grpc_end_to_end() {
         client_identifier: None,
         screen_mode: None,
         prompt_text: Some(CANARY_PROMPT.into()),
+        command_name: None,
     });
     xai_grok_telemetry::log_event(xai_grok_telemetry::events::ModelResponseReceived {
         model_id: CANARY_MODEL.into(),
@@ -77,17 +79,19 @@ fn external_stream_grpc_end_to_end() {
         completion_tokens: Some(7),
         reasoning_tokens: None,
         cached_prompt_tokens: None,
+        cache_creation_tokens: None,
+        context_tokens: None,
+        cost_usd_ticks: None,
     });
 
     xai_grok_telemetry::external::flush();
-    assert!(
-        col::wait_until(std::time::Duration::from_secs(10), || {
-            collected.logs_len() > 0 && collected.metrics_len() > 0
-        }),
-        "gRPC collector must receive both signals"
-    );
+    col::block_on(recorder.wait_for_signals(
+        Duration::from_secs(10),
+        &[OtelSignal::Logs, OtelSignal::Metrics],
+    ))
+    .expect("gRPC collector must receive both signals");
 
-    let event_names = col::event_names(&collected);
+    let event_names = recorder.event_names();
     for expected in [
         "grok_code.session_start",
         "grok_code.user_prompt",
@@ -99,7 +103,7 @@ fn external_stream_grpc_end_to_end() {
         );
     }
 
-    let metrics = col::metric_points(&collected);
+    let metrics = recorder.metric_points();
     assert!(
         metrics.iter().any(|p| p.name == "grok_code.session.count"),
         "missing session.count in {metrics:?}"
@@ -109,17 +113,20 @@ fn external_stream_grpc_end_to_end() {
         "missing token.usage in {metrics:?}"
     );
     for point in metrics {
+        let OtelMetricData::Sum { temporality, .. } = point.data else {
+            continue;
+        };
         assert_eq!(
-            point.temporality,
-            col::TEMPORALITY_DELTA,
+            OtelTemporality::Delta,
+            temporality,
             "default temporality must be Delta over gRPC"
         );
     }
 
-    let raw = collected.raw_text();
-    assert!(!raw.contains("CANARY"), "canary reached the gRPC wire");
+    let wire = recorder.body_text().unwrap();
+    assert!(!wire.contains("CANARY"), "canary reached the gRPC wire");
     assert!(
-        !raw.contains(CANARY_MCP),
+        !wire.contains(CANARY_MCP),
         "MCP server name reached the gRPC wire"
     );
 

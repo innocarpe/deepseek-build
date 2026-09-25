@@ -1,10 +1,11 @@
 //! Tests for ChatStateActor.
 
+use std::collections::HashMap;
 use std::num::NonZeroU64;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
-use xai_grok_sampling_types::{ConversationItem, SamplingConfig};
+use xai_grok_sampling_types::{ConversationItem, SamplingConfig, SyntheticReason};
 
 use crate::StrictAppendAck;
 use crate::actor::ChatStateActor;
@@ -20,17 +21,9 @@ fn test_config_with_window(context_window: u64) -> SamplingConfig {
     SamplingConfig {
         base_url: "https://api.example.com".to_string(),
         model: "test-model".to_string(),
-        max_completion_tokens: None,
-        temperature: None,
-        top_p: None,
-        api_backend: Default::default(),
-        extra_headers: Default::default(),
-        query_params: Default::default(),
-        env_http_headers: Default::default(),
         context_window: NonZeroU64::new(context_window)
             .expect("test context_window must be non-zero"),
-        reasoning_effort: None,
-        stream_tool_calls: None,
+        ..Default::default()
     }
 }
 
@@ -106,36 +99,6 @@ impl TestHarness {
 }
 
 // ============================================================================
-// Lifecycle tests
-// ============================================================================
-
-#[tokio::test]
-async fn actor_spawns_and_shuts_down_via_cancellation() {
-    let (mock, _rx) = MockChatPersistence::new();
-    let (event_tx, _event_rx) = mpsc::unbounded_channel();
-    let token = tokio_util::sync::CancellationToken::new();
-    let _handle = ChatStateActor::spawn(
-        vec![],
-        test_config(),
-        Box::new(mock),
-        event_tx,
-        token.clone(),
-    );
-    token.cancel();
-    tokio::time::sleep(Duration::from_millis(50)).await;
-}
-
-#[tokio::test]
-async fn actor_shuts_down_when_all_handles_dropped() {
-    let (mock, _rx) = MockChatPersistence::new();
-    let (event_tx, _event_rx) = mpsc::unbounded_channel();
-    let token = tokio_util::sync::CancellationToken::new();
-    let handle = ChatStateActor::spawn(vec![], test_config(), Box::new(mock), event_tx, token);
-    drop(handle);
-    tokio::time::sleep(Duration::from_millis(50)).await;
-}
-
-// ============================================================================
 // Mutation tests
 // ============================================================================
 
@@ -149,7 +112,81 @@ async fn push_user_message_appends_and_persists() {
 
     let records = h.drain_persistence();
     assert_eq!(records.len(), 1);
-    assert!(matches!(&records[0], PersistenceRecord::Message(_)));
+    assert!(matches!(
+        records.first(),
+        Some(PersistenceRecord::Message(_))
+    ));
+}
+
+#[tokio::test]
+async fn push_user_messages_batch_appends_and_persists_in_order() {
+    let mut h = TestHarness::new();
+    h.handle
+        .try_push_user_messages_batch(vec![
+            ConversationItem::interjection("first"),
+            ConversationItem::interjection("second"),
+        ])
+        .unwrap();
+
+    let conversation = h.handle.get_conversation().await;
+    assert_eq!(
+        conversation
+            .iter()
+            .map(ConversationItem::text_content)
+            .collect::<Vec<_>>(),
+        ["first", "second"]
+    );
+    assert_eq!(
+        h.drain_persistence()
+            .into_iter()
+            .filter_map(|record| match record {
+                PersistenceRecord::Message(item) => Some(item.text_content()),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        ["first", "second"]
+    );
+}
+
+#[test]
+fn user_messages_batch_uses_one_command() {
+    let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
+    let handle = crate::handle::ChatStateHandle::new(cmd_tx);
+
+    handle
+        .try_push_user_messages_batch(vec![
+            ConversationItem::interjection("first"),
+            ConversationItem::interjection("second"),
+        ])
+        .unwrap();
+
+    let command = cmd_rx.try_recv().expect("one batch command");
+    let crate::commands::ChatStateCommand::PushUserMessagesBatch { items } = command else {
+        panic!("expected user-message batch command");
+    };
+    assert_eq!(
+        items
+            .iter()
+            .map(ConversationItem::text_content)
+            .collect::<Vec<_>>(),
+        ["first", "second"]
+    );
+    assert!(cmd_rx.try_recv().is_err(), "batch must use one send");
+}
+
+#[test]
+fn closed_mailbox_rejects_entire_batch() {
+    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+    drop(cmd_rx);
+    let handle = crate::handle::ChatStateHandle::new(cmd_tx);
+
+    assert_eq!(
+        handle.try_push_user_messages_batch(vec![
+            ConversationItem::interjection("first"),
+            ConversationItem::interjection("second"),
+        ]),
+        Err(crate::ChatStateMailboxClosed)
+    );
 }
 
 #[tokio::test]
@@ -167,7 +204,10 @@ async fn push_user_message_and_ack_waits_for_actor_acceptance() {
 
     let records = h.drain_persistence();
     assert_eq!(records.len(), 1);
-    assert!(matches!(&records[0], PersistenceRecord::Message(_)));
+    assert!(matches!(
+        records.first(),
+        Some(PersistenceRecord::Message(_))
+    ));
 }
 
 #[tokio::test]
@@ -200,7 +240,13 @@ async fn strict_switch_append_preserves_prefix_and_deduplicates_generation() {
         assert_eq!(serde_json::to_vec(actual).unwrap(), *expected);
     }
     assert_eq!(
-        serde_json::to_vec(&conversation[3]).unwrap(),
+        serde_json::to_vec({
+            let Some(item) = conversation.get(3) else {
+                panic!("expected item 3: {conversation:?}");
+            };
+            item
+        })
+        .unwrap(),
         serde_json::to_vec(&reminder).unwrap()
     );
     assert!(matches!(
@@ -296,7 +342,9 @@ async fn committed_storage_result_converges_actor_memory() {
     let conversation = h.handle.get_conversation().await;
     assert_eq!(conversation.len(), 1);
     assert_eq!(
-        conversation[0].working_directory_switch_generation(),
+        conversation
+            .first()
+            .and_then(|i| i.working_directory_switch_generation()),
         Some(2)
     );
 }
@@ -330,7 +378,10 @@ async fn already_present_replaces_stale_switch_in_actor_memory() {
     ));
     let conversation = h.handle.get_conversation().await;
     assert_eq!(conversation.len(), 1);
-    assert_eq!(conversation[0].text_content(), "authoritative");
+    assert_eq!(
+        conversation.first().map(|i| i.text_content()).as_deref(),
+        Some("authoritative")
+    );
 }
 
 #[tokio::test]
@@ -368,7 +419,10 @@ async fn committed_already_present_replaces_retry_candidate_in_actor_memory() {
     ));
     let conversation = h.handle.get_conversation().await;
     assert_eq!(conversation.len(), 1);
-    assert_eq!(conversation[0].text_content(), "authoritative");
+    assert_eq!(
+        conversation.first().map(|i| i.text_content()).as_deref(),
+        Some("authoritative")
+    );
 }
 
 #[tokio::test]
@@ -623,10 +677,8 @@ async fn estimated_tokens_tracks_synthetic_user_message_delta() {
     assert_eq!(h.handle.get_total_tokens().await, 100_000);
 }
 
-/// Regression: a normal user prompt pushed at turn start must increment
-/// the delta. The bump is voided when the model responds and
-/// `record_token_usage` includes the prompt in `usage.total_tokens`,
-/// keeping the post-response total accurate.
+/// Regression: a normal user prompt pushed at turn start must increment the delta.
+/// The bump is voided when the model responds and usage already includes the prompt.
 #[tokio::test]
 async fn estimated_tokens_tracks_real_user_message_and_resets_on_response() {
     let h = TestHarness::new();
@@ -649,10 +701,8 @@ async fn estimated_tokens_tracks_real_user_message_and_resets_on_response() {
     assert_eq!(h.handle.get_total_tokens().await, 103_000);
 }
 
-/// Regression: pushing the assistant response back into the chat
-/// must NOT bump the delta — the model already counted it in
-/// `usage.completion_tokens` (which is folded into the just-applied
-/// `total_tokens`). Bumping again would double-count the assistant.
+/// Regression: pushing the assistant response back must NOT bump the delta.
+/// The model already counted it in `usage.completion_tokens`; bumping again double-counts.
 #[tokio::test]
 async fn assistant_response_push_does_not_bump_estimated_delta() {
     let h = TestHarness::new();
@@ -665,6 +715,21 @@ async fn assistant_response_push_does_not_bump_estimated_delta() {
         estimated, 100_000,
         "assistant push must not increment the delta (already in `usage.total_tokens`)"
     );
+}
+
+#[tokio::test]
+async fn provider_counted_model_output_persists_without_bumping_estimate() {
+    let h = TestHarness::new();
+    h.handle.record_token_usage(100_000);
+    h.handle.push_model_output(ConversationItem::Reasoning(
+        xai_grok_sampling_types::synthesized_reasoning_item("r".repeat(4_000)),
+    ));
+
+    assert!(matches!(
+        h.handle.get_conversation().await.as_slice(),
+        [ConversationItem::Reasoning(_)]
+    ));
+    assert_eq!(h.handle.get_estimated_total_tokens().await, 100_000);
 }
 
 #[tokio::test]
@@ -722,7 +787,166 @@ async fn replace_conversation_persists_and_emits_reset() {
 
     let records = h.drain_persistence();
     assert_eq!(records.len(), 1);
-    assert!(matches!(&records[0], PersistenceRecord::ReplaceHistory(_)));
+    assert!(matches!(
+        records.first(),
+        Some(PersistenceRecord::ReplaceHistory(_))
+    ));
+}
+
+#[tokio::test]
+async fn strip_conversation_images_replaces_only_listed_urls_and_persists() {
+    let mut user = match ConversationItem::user("look at this") {
+        ConversationItem::User(u) => u,
+        _ => unreachable!(),
+    };
+    user.add_image("data:image/png;base64,AAAA");
+    let mut later = match ConversationItem::user("and this one") {
+        ConversationItem::User(u) => u,
+        _ => unreachable!(),
+    };
+    later.add_image("data:image/png;base64,BBBB");
+    let mut h = TestHarness::with_conversation(vec![
+        ConversationItem::User(user),
+        ConversationItem::User(later),
+    ]);
+
+    let outcome = h
+        .handle
+        .strip_conversation_images(vec!["data:image/png;base64,AAAA".into()])
+        .await;
+    assert_eq!(
+        outcome,
+        crate::StripOutcome::Applied { stripped: 1 },
+        "ack must carry the disk-applied count"
+    );
+
+    let conv = h.handle.get_conversation().await; // sync point
+    assert_eq!(
+        conv.len(),
+        2,
+        "in-place strip must not add or remove conversation items"
+    );
+    let Some(ConversationItem::User(u)) = conv.first() else {
+        panic!("expected user item");
+    };
+    assert!(
+        u.content
+            .iter()
+            .all(|p| !matches!(p, xai_grok_sampling_types::ContentPart::Image { .. })),
+        "listed image part must be replaced"
+    );
+    let Some(ConversationItem::User(survivor)) = conv.get(1) else {
+        panic!("expected user item");
+    };
+    assert!(
+        survivor
+            .content
+            .iter()
+            .any(|p| matches!(p, xai_grok_sampling_types::ContentPart::Image { .. })),
+        "unlisted image must survive the scoped strip"
+    );
+
+    let records = h.drain_persistence();
+    // The recoverability contract: strip rewrites go through the single
+    // backup-gated flavor, never the plain, unguarded ReplaceHistory.
+    assert!(
+        records
+            .iter()
+            .any(|r| matches!(r, PersistenceRecord::ReplaceHistoryForStrip(_))),
+        "strip must persist via the backup-gated flavor, got {records:?}"
+    );
+    assert!(
+        !records
+            .iter()
+            .any(|r| matches!(r, PersistenceRecord::ReplaceHistory(_))),
+        "strip must not use the unguarded replace, got {records:?}"
+    );
+}
+
+#[tokio::test]
+async fn strip_conversation_images_does_not_reseed_provider_tokens() {
+    let mut user = match ConversationItem::user("look at this") {
+        ConversationItem::User(u) => u,
+        _ => unreachable!(),
+    };
+    user.add_image("data:image/png;base64,AAAA");
+    let mut h = TestHarness::with_conversation(vec![ConversationItem::User(user)]);
+    h.handle.record_token_usage(100_000);
+    let _ = h.handle.get_total_tokens().await;
+    h.drain_events();
+
+    let outcome = h
+        .handle
+        .strip_conversation_images(vec!["data:image/png;base64,AAAA".into()])
+        .await;
+    assert_eq!(
+        outcome,
+        crate::StripOutcome::Applied { stripped: 1 },
+        "ack must carry the disk-applied count"
+    );
+
+    assert_eq!(
+        h.handle.get_total_tokens().await,
+        100_000,
+        "provider total must survive a surgical strip"
+    );
+    assert!(
+        !h.drain_events()
+            .iter()
+            .any(|e| matches!(e, ChatStateEvent::ConversationReset { .. })),
+        "strip must not emit ConversationReset"
+    );
+}
+
+/// The honest-failure half of the contract: a failed disk write must
+/// surface as WriteFailed (never as Applied), so nobody tells the user a
+/// still-poisoned file was cleaned.
+#[tokio::test]
+async fn strip_conversation_images_reports_write_failure() {
+    let mut user = match ConversationItem::user("look at this") {
+        ConversationItem::User(u) => u,
+        _ => unreachable!(),
+    };
+    user.add_image("data:image/png;base64,AAAA");
+    let (mock, persistence_rx) = MockChatPersistence::new_failing_strip_writes();
+    let h = TestHarness::with_persistence(
+        vec![ConversationItem::User(user)],
+        test_config(),
+        mock,
+        persistence_rx,
+    );
+
+    let outcome = h
+        .handle
+        .strip_conversation_images(vec!["data:image/png;base64,AAAA".into()])
+        .await;
+    assert_eq!(
+        outcome,
+        crate::StripOutcome::WriteFailed { stripped: 1 },
+        "a failed disk write must never read as Applied"
+    );
+}
+
+#[tokio::test]
+async fn strip_conversation_images_is_a_noop_without_images() {
+    let mut h = TestHarness::with_conversation(vec![ConversationItem::user("plain text")]);
+
+    let outcome = h
+        .handle
+        .strip_conversation_images(vec!["data:image/png;base64,AAAA".into()])
+        .await;
+    assert_eq!(
+        outcome,
+        crate::StripOutcome::NoMatch,
+        "no match must be typed, not a fake success"
+    );
+
+    let conv = h.handle.get_conversation().await; // sync point
+    assert_eq!(conv.len(), 1);
+    assert!(
+        h.drain_persistence().is_empty(),
+        "no images stripped must mean no persistence write"
+    );
 }
 
 #[tokio::test]
@@ -921,20 +1145,59 @@ async fn compaction_reseed_without_provider_count_matches_plain_estimate() {
 }
 
 #[tokio::test]
-async fn non_compaction_replace_does_not_carry_overhead() {
+async fn non_compaction_replace_carries_confirmed_total() {
+    // Estimates run high vs the provider count (retained reasoning never
+    // reaches the wire): a rewind/mode-switch/goal-prune replace must scale
+    // from the confirmed count, not reseed to the raw estimate.
     let h = TestHarness::new();
     h.handle
         .push_user_message(ConversationItem::user("x".repeat(4000)));
-    h.handle.record_token_usage(51_000);
+    h.handle.record_token_usage(500);
+    // Estimate at last response = 1_000, confirmed = 500 → ratio 0.5.
 
     h.handle
         .replace_conversation(vec![ConversationItem::user("q".repeat(4000))]);
 
     let total = h.handle.get_total_tokens().await;
     assert_eq!(
-        total, 1_000,
-        "non-compaction replace (e.g. rewind) keeps the plain estimate"
+        total, 500,
+        "same-size replace carries the provider-confirmed count"
     );
+}
+
+#[tokio::test]
+async fn replace_never_increases_total_tokens() {
+    // A growing replace (harness rebuild injecting AGENTS.md) is capped at the
+    // confirmed total; the brief under-count self-heals on the next usage.
+    let h = TestHarness::new();
+    h.handle
+        .push_user_message(ConversationItem::user("x".repeat(4000)));
+    h.handle.record_token_usage(1_500);
+
+    h.handle
+        .replace_conversation(vec![ConversationItem::user("q".repeat(40_000))]);
+
+    assert_eq!(h.handle.get_total_tokens().await, 1_500);
+}
+
+#[tokio::test]
+async fn truncate_scales_from_confirmed_total() {
+    // Rewind sibling path: `TruncateToPromptIndex` must use the same carry as
+    // `replace_conversation`.
+    let h = TestHarness::new();
+    h.handle
+        .push_user_message(ConversationItem::user("x".repeat(4000)));
+    h.handle.increment_prompt_index();
+    h.handle
+        .push_user_message(ConversationItem::user("y".repeat(4000)));
+    h.handle.increment_prompt_index();
+    h.handle.record_token_usage(1_000);
+    // Estimate at last response = 2_000, confirmed = 1_000 → ratio 0.5.
+
+    h.handle.truncate_to_prompt_index(1).await;
+
+    // Keeps the first user item (raw estimate 1_000) → scaled to 500.
+    assert_eq!(h.handle.get_total_tokens().await, 500);
 }
 
 #[tokio::test]
@@ -947,38 +1210,7 @@ async fn flush_calls_persistence_flush() {
 
     let records = h.drain_persistence();
     assert_eq!(records.len(), 1);
-    assert!(matches!(&records[0], PersistenceRecord::Flush));
-}
-
-#[tokio::test]
-async fn restore_snapshot_restores_all_fields() {
-    let mut h = TestHarness::new();
-    h.handle.push_user_message(ConversationItem::user("msg"));
-    h.handle.record_token_usage(500);
-    h.handle.increment_prompt_index();
-
-    // Drain events from the mutations above
-    let _ = h.handle.get_conversation().await;
-    h.drain_events();
-
-    let snapshot = h.handle.snapshot().await.unwrap();
-    assert_eq!(snapshot.prompt_index, 1);
-    assert_eq!(snapshot.total_tokens, 500);
-    assert_eq!(snapshot.conversation.len(), 1);
-
-    // Replace state
-    h.handle.replace_conversation(vec![]);
-    let _ = h.handle.get_conversation().await;
-
-    // Restore
-    h.handle.restore_snapshot(snapshot);
-
-    let conv = h.handle.get_conversation().await;
-    assert_eq!(conv.len(), 1);
-    let idx = h.handle.get_prompt_index().await;
-    assert_eq!(idx, 1);
-    let tokens = h.handle.get_total_tokens().await;
-    assert_eq!(tokens, 500);
+    assert!(matches!(records.first(), Some(PersistenceRecord::Flush)));
 }
 
 // ============================================================================
@@ -997,13 +1229,6 @@ async fn get_conversation_returns_current_state() {
 }
 
 #[tokio::test]
-async fn get_total_tokens_returns_zero_initially() {
-    let h = TestHarness::new();
-    let tokens = h.handle.get_total_tokens().await;
-    assert_eq!(tokens, 0);
-}
-
-#[tokio::test]
 async fn replace_system_head_swaps_head_and_preserves_turns() {
     let h = TestHarness::with_conversation(vec![
         ConversationItem::system("old"),
@@ -1014,9 +1239,11 @@ async fn replace_system_head_swaps_head_and_preserves_turns() {
     assert_eq!(changed, Some(true));
     let conv = h.handle.get_conversation().await;
     assert_eq!(conv.len(), 3, "must not wipe user/assistant turns");
-    assert!(matches!(&conv[0], ConversationItem::System(s) if s.content.as_ref() == "new prompt"));
-    assert!(matches!(conv[1], ConversationItem::User(_)));
-    assert!(matches!(conv[2], ConversationItem::Assistant(_)));
+    assert!(
+        matches!(conv.first(), Some(ConversationItem::System(s)) if s.content.as_ref() == "new prompt")
+    );
+    assert!(matches!(conv.get(1), Some(ConversationItem::User(_))));
+    assert!(matches!(conv.get(2), Some(ConversationItem::Assistant(_))));
 }
 
 #[tokio::test]
@@ -1033,7 +1260,9 @@ async fn replace_system_head_noop_when_head_matches_modulo_newline() {
         "trailing-newline-only diff is a no-op"
     );
     let conv = h.handle.get_conversation().await;
-    assert!(matches!(&conv[0], ConversationItem::System(s) if s.content.as_ref() == "same\n"));
+    assert!(
+        matches!(conv.first(), Some(ConversationItem::System(s)) if s.content.as_ref() == "same\n")
+    );
     assert!(
         h.drain_persistence().is_empty(),
         "a no-op must not re-persist"
@@ -1047,14 +1276,14 @@ async fn replace_system_head_inserts_when_absent() {
     assert_eq!(changed, Some(true));
     let conv = h.handle.get_conversation().await;
     assert_eq!(conv.len(), 2, "inserts System at head, keeps the user turn");
-    assert!(matches!(&conv[0], ConversationItem::System(s) if s.content.as_ref() == "sys"));
-    assert!(matches!(conv[1], ConversationItem::User(_)));
+    assert!(
+        matches!(conv.first(), Some(ConversationItem::System(s)) if s.content.as_ref() == "sys")
+    );
+    assert!(matches!(conv.get(1), Some(ConversationItem::User(_))));
 }
 
-/// Lost-update safety: an item pushed just before the head swap survives, because
-/// both operations serialize through the actor mailbox — the swap acts on the
-/// actor's current conversation, never a stale caller-side snapshot. This is the
-/// property that makes a mid-turn reconnect safe.
+/// Lost-update safety: an item pushed just before the head swap survives.
+/// Both operations serialize through the actor mailbox, so a mid-turn reconnect is safe.
 #[tokio::test]
 async fn replace_system_head_retains_concurrently_pushed_item() {
     let h = TestHarness::with_conversation(vec![ConversationItem::system("old")]);
@@ -1068,14 +1297,14 @@ async fn replace_system_head_retains_concurrently_pushed_item() {
         2,
         "the item pushed before the swap must not be lost"
     );
-    assert!(matches!(&conv[0], ConversationItem::System(s) if s.content.as_ref() == "new"));
-    assert!(matches!(conv[1], ConversationItem::Assistant(_)));
+    assert!(
+        matches!(conv.first(), Some(ConversationItem::System(s)) if s.content.as_ref() == "new")
+    );
+    assert!(matches!(conv.get(1), Some(ConversationItem::Assistant(_))));
 }
 
-/// A head swap during an active turn capture must not drop the in-flight
-/// turn's captured tail (regression: `mem::take`ing the conversation before
-/// `replace_conversation` snapshotted it emptied the tail — a `debug_assert`
-/// panic in dev, a silently truncated capture in release).
+/// A head swap during an active turn capture must not drop the in-flight captured tail.
+/// `mem::take` before `replace_conversation` snapshotted emptied the tail (panic in dev, truncated in release).
 #[tokio::test]
 async fn replace_system_head_preserves_active_turn_capture() {
     let h = TestHarness::with_conversation(vec![ConversationItem::system("old")]);
@@ -1097,10 +1326,13 @@ async fn replace_system_head_preserves_active_turn_capture() {
         2,
         "mid-turn head swap must not drop the captured turn tail"
     );
-    assert!(matches!(&capture.messages[0], ConversationItem::User(_)));
     assert!(matches!(
-        &capture.messages[1],
-        ConversationItem::Assistant(_)
+        capture.messages.first(),
+        Some(ConversationItem::User(_))
+    ));
+    assert!(matches!(
+        capture.messages.get(1),
+        Some(ConversationItem::Assistant(_))
     ));
 }
 
@@ -1111,17 +1343,6 @@ async fn empty_conversation_queries_return_defaults() {
     assert_eq!(h.handle.get_prompt_index().await, 0);
     assert_eq!(h.handle.get_total_tokens().await, 0);
     assert!(h.handle.get_agent_edited_paths().await.is_empty());
-}
-
-#[tokio::test]
-async fn check_auto_compact_returns_none_when_under_threshold() {
-    let h = TestHarness::with_context_window(10000);
-    h.handle.record_token_usage(100);
-    // Sync point
-    let _ = h.handle.get_total_tokens().await;
-
-    let trigger = h.handle.check_auto_compact_needed(85).await;
-    assert!(trigger.is_none());
 }
 
 #[tokio::test]
@@ -1172,20 +1393,18 @@ async fn update_sampling_config_is_queryable() {
         model: "grok-3".to_string(),
         max_completion_tokens: Some(4096),
         temperature: Some(0.5),
-        top_p: None,
-        api_backend: Default::default(),
-        extra_headers: Default::default(),
-        query_params: Default::default(),
-        env_http_headers: Default::default(),
+        max_retries: Some(6),
+        rate_limit_retry_threshold: Some(4),
         context_window: NonZeroU64::new(200_000).unwrap(),
-        reasoning_effort: None,
-        stream_tool_calls: None,
+        ..Default::default()
     };
     h.handle.update_sampling_config(new_config.clone());
 
     let config = h.handle.get_sampling_config().await.unwrap();
     assert_eq!(config.model, "grok-3");
     assert_eq!(config.context_window, NonZeroU64::new(200_000).unwrap());
+    assert_eq!(config.max_retries, Some(6));
+    assert_eq!(config.rate_limit_retry_threshold, Some(4));
 }
 
 #[tokio::test]
@@ -1294,7 +1513,7 @@ async fn truncate_to_zero_keeps_only_system() {
 
     let conv = h.handle.get_conversation().await;
     assert_eq!(conv.len(), 1); // just "sys"
-    assert!(matches!(&conv[0], ConversationItem::System(_)));
+    assert!(matches!(conv.first(), Some(ConversationItem::System(_))));
     assert_eq!(h.handle.get_prompt_index().await, 0);
 }
 
@@ -1423,6 +1642,37 @@ async fn build_request_includes_all_messages() {
 }
 
 #[tokio::test]
+async fn build_request_projects_agent_message_for_model_without_mutating_history() {
+    let raw = format!(
+        "{}\npayload starts with the exact label",
+        crate::compaction_utils::AGENT_MESSAGE_MODEL_LABEL
+    );
+    let raw_item = ConversationItem::agent_message(&raw);
+    let raw_bytes = serde_json::to_vec(&raw_item).unwrap();
+    let h = TestHarness::with_conversation(vec![raw_item]);
+
+    let request = h
+        .handle
+        .build_request(vec![], None, false, None, "c".into(), "r".into())
+        .await
+        .unwrap();
+    assert_eq!(
+        request.items.first().map(|i| i.text_content()),
+        Some(format!(
+            "{}\n{raw}",
+            crate::compaction_utils::AGENT_MESSAGE_MODEL_LABEL
+        ))
+    );
+
+    let persisted = h.handle.get_conversation().await;
+    assert_eq!(persisted.first().map(|i| i.text_content()), Some(raw));
+    let Some(persisted0) = persisted.first() else {
+        panic!("expected persisted item: {persisted:?}");
+    };
+    assert_eq!(serde_json::to_vec(persisted0).unwrap(), raw_bytes);
+}
+
+#[tokio::test]
 async fn build_request_with_empty_conversation() {
     let h = TestHarness::new();
     let request = h
@@ -1445,7 +1695,7 @@ async fn build_request_preserves_system_message() {
         .await
         .unwrap();
     assert_eq!(request.items.len(), 2);
-    if let ConversationItem::System(ref sys) = request.items[0] {
+    if let Some(ConversationItem::System(sys)) = request.items.first() {
         assert_eq!(sys.content.as_ref(), "You are a coding assistant.");
     } else {
         panic!("expected System item");
@@ -1471,7 +1721,7 @@ async fn build_request_injects_memory_reminder() {
         .await
         .unwrap();
 
-    if let ConversationItem::System(ref sys) = request.items[0] {
+    if let Some(ConversationItem::System(sys)) = request.items.first() {
         assert!(sys.content.contains("Remember: user prefers Rust"));
         assert!(sys.content.starts_with("You are helpful."));
     } else {
@@ -1496,7 +1746,10 @@ async fn build_request_injects_memory_when_no_system() {
         .unwrap();
 
     assert_eq!(request.items.len(), 2); // new System + original User
-    assert!(matches!(&request.items[0], ConversationItem::System(_)));
+    assert!(matches!(
+        request.items.first(),
+        Some(ConversationItem::System(_))
+    ));
 }
 
 #[tokio::test]
@@ -1524,7 +1777,10 @@ async fn build_request_repairs_dangling_tool_calls() {
 
     // Synthetic ToolResult present (inserted at construction, not at request time).
     assert_eq!(request.items.len(), 4);
-    assert!(matches!(&request.items[3], ConversationItem::ToolResult(_)));
+    assert!(matches!(
+        request.items.get(3),
+        Some(ConversationItem::ToolResult(_))
+    ));
 }
 
 #[tokio::test]
@@ -1549,7 +1805,10 @@ async fn build_request_with_tool_definitions() {
         .unwrap();
 
     assert_eq!(request.tools.len(), 1);
-    assert_eq!(request.tools[0].name, "read_file");
+    assert_eq!(
+        request.tools.first().map(|t| t.name.as_str()),
+        Some("read_file")
+    );
 }
 
 #[tokio::test]
@@ -1560,13 +1819,8 @@ async fn build_request_uses_sampling_config() {
         max_completion_tokens: Some(8192),
         temperature: Some(0.7),
         top_p: Some(0.9),
-        api_backend: Default::default(),
-        extra_headers: Default::default(),
-        query_params: Default::default(),
-        env_http_headers: Default::default(),
         context_window: NonZeroU64::new(128_000).unwrap(),
-        reasoning_effort: None,
-        stream_tool_calls: None,
+        ..Default::default()
     };
     let h = TestHarness::with_config(vec![ConversationItem::user("hi")], config);
 
@@ -1606,7 +1860,7 @@ async fn build_request_does_not_mutate_actor_state() {
     // Actor's own conversation should be unchanged
     let conv = h.handle.get_conversation().await;
     assert_eq!(conv.len(), 2);
-    if let ConversationItem::System(ref sys) = conv[0] {
+    if let Some(ConversationItem::System(sys)) = conv.first() {
         assert_eq!(sys.content.as_ref(), "sys"); // no memory injected into original
     }
 }
@@ -1631,14 +1885,14 @@ async fn build_request_can_persist_memory_into_actor_state() {
         .await
         .unwrap();
 
-    if let ConversationItem::System(ref sys) = request.items[0] {
+    if let Some(ConversationItem::System(sys)) = request.items.first() {
         assert!(sys.content.contains("Remember this"));
     } else {
         panic!("expected System item in request");
     }
 
     let conv = h.handle.get_conversation().await;
-    if let ConversationItem::System(ref sys) = conv[0] {
+    if let Some(ConversationItem::System(sys)) = conv.first() {
         assert!(sys.content.contains("Remember this"));
     } else {
         panic!("expected persisted System item");
@@ -1690,23 +1944,8 @@ async fn build_request_with_multiple_tool_calls_and_results() {
 // Parallel tool calls with mixed accept/reject
 // ============================================================================
 
-/// Simulates the exact sequence that `xai-grok-shell`'s `execute_tool_calls`
-/// produces when the model emits 3 parallel tool calls and:
-///   - Tool #1 (read_file):       user **accepts** → executed successfully
-///   - Tool #2 (edit_file):       user **rejects** → handle_tool_not_executed
-///   - Tool #3 (run_terminal_cmd): **skipped** due to earlier rejection
-///
-/// In the shell, `execute_tool_calls` iterates sequentially. When tool #2 is
-/// rejected, `final_result` is set to `PermissionReject`, causing tool #3 to
-/// be skipped with a synthetic cancellation message pushed as a ToolResult.
-///
-/// The conversation should end up as:
-///   [0] System
-///   [1] User
-///   [2] Assistant (3 tool calls)
-///   [3] ToolResult for call_1 (success)
-///   [4] ToolResult for call_2 (rejection reason)
-///   [5] ToolResult for call_3 (cancellation due to earlier rejection)
+/// Parallel tool-call sequence: accept, reject, then skip the rest with a synthetic cancel.
+/// The conversation must end with a ToolResult for every call, including the skipped one.
 #[tokio::test]
 async fn parallel_tool_calls_accept_first_reject_second_skip_third() {
     use xai_grok_sampling_types::ToolCall;
@@ -1726,10 +1965,8 @@ async fn parallel_tool_calls_accept_first_reject_second_skip_third() {
 
     h.handle.increment_prompt_index();
 
-    // ── Model response: 3 parallel tool calls ───────────────────────────
-    // The model's single assistant message contains all 3 tool calls.
-    // In the real code, this is built from the streaming response and pushed
-    // via `push_assistant_response`.
+    // Model response: one assistant message holding all 3 parallel tool calls.
+    // In production this is built from the stream and pushed via `push_assistant_response`.
     let assistant_with_tools =
         ConversationItem::Assistant(xai_grok_sampling_types::AssistantItem {
             content: "I'll read the file, fix it, and run tests.".into(),
@@ -1793,26 +2030,29 @@ async fn parallel_tool_calls_accept_first_reject_second_skip_third() {
 
     // [0] System
     assert!(
-        matches!(&conv[0], ConversationItem::System(s) if s.content.as_ref() == "You are a helpful coding assistant."),
+        matches!(conv.first(), Some(ConversationItem::System(s)) if s.content.as_ref() == "You are a helpful coding assistant."),
         "item[0] should be the system prompt"
     );
 
     // [1] User
     assert!(
-        matches!(&conv[1], ConversationItem::User(_)),
+        matches!(conv.get(1), Some(ConversationItem::User(_))),
         "item[1] should be the user message"
     );
 
     // [2] Assistant with 3 tool calls
-    match &conv[2] {
-        ConversationItem::Assistant(a) => {
+    match conv.get(2) {
+        Some(ConversationItem::Assistant(a)) => {
             assert_eq!(a.tool_calls.len(), 3, "assistant should have 3 tool calls");
-            assert_eq!(a.tool_calls[0].id.as_ref(), "call_1");
-            assert_eq!(a.tool_calls[0].name, "read_file");
-            assert_eq!(a.tool_calls[1].id.as_ref(), "call_2");
-            assert_eq!(a.tool_calls[1].name, "edit_file");
-            assert_eq!(a.tool_calls[2].id.as_ref(), "call_3");
-            assert_eq!(a.tool_calls[2].name, "run_terminal_cmd");
+            let Some([c0, c1, c2]) = a.tool_calls.get(..3) else {
+                panic!("expected 3 tool calls: {:?}", a.tool_calls);
+            };
+            assert_eq!(c0.id.as_ref(), "call_1");
+            assert_eq!(c0.name, "read_file");
+            assert_eq!(c1.id.as_ref(), "call_2");
+            assert_eq!(c1.name, "edit_file");
+            assert_eq!(c2.id.as_ref(), "call_3");
+            assert_eq!(c2.name, "run_terminal_cmd");
             assert_eq!(
                 a.content.as_ref(),
                 "I'll read the file, fix it, and run tests."
@@ -1822,8 +2062,8 @@ async fn parallel_tool_calls_accept_first_reject_second_skip_third() {
     }
 
     // [3] ToolResult for call_1 — success
-    match &conv[3] {
-        ConversationItem::ToolResult(tr) => {
+    match conv.get(3) {
+        Some(ConversationItem::ToolResult(tr)) => {
             assert_eq!(tr.tool_call_id, "call_1");
             assert!(
                 tr.content.contains("hello wrold"),
@@ -1834,8 +2074,8 @@ async fn parallel_tool_calls_accept_first_reject_second_skip_third() {
     }
 
     // [4] ToolResult for call_2 — rejected
-    match &conv[4] {
-        ConversationItem::ToolResult(tr) => {
+    match conv.get(4) {
+        Some(ConversationItem::ToolResult(tr)) => {
             assert_eq!(tr.tool_call_id, "call_2");
             assert!(
                 tr.content.contains("rejected") || tr.content.contains("denied"),
@@ -1847,8 +2087,8 @@ async fn parallel_tool_calls_accept_first_reject_second_skip_third() {
     }
 
     // [5] ToolResult for call_3 — cancelled due to earlier rejection
-    match &conv[5] {
-        ConversationItem::ToolResult(tr) => {
+    match conv.get(5) {
+        Some(ConversationItem::ToolResult(tr)) => {
             assert_eq!(tr.tool_call_id, "call_3");
             assert!(
                 tr.content.contains("cancelled")
@@ -1861,10 +2101,8 @@ async fn parallel_tool_calls_accept_first_reject_second_skip_third() {
     }
 }
 
-/// After parallel tool calls with rejection, verify that `build_request`
-/// sees no dangling tool calls (every call has a matching ToolResult).
-/// This is important because dangling calls trigger synthetic repair which
-/// would corrupt the rejection messages.
+/// After parallel tool calls with rejection, `build_request` must see no dangling calls.
+/// Dangling calls trigger synthetic repair which would corrupt the rejection messages.
 #[tokio::test]
 async fn parallel_tool_calls_with_rejection_has_no_dangling_calls() {
     use xai_grok_sampling_types::ToolCall;
@@ -1933,12 +2171,15 @@ async fn parallel_tool_calls_with_rejection_has_no_dangling_calls() {
         .collect();
 
     assert_eq!(tool_results.len(), 3);
-    assert_eq!(tool_results[0].tool_call_id, "call_1");
-    assert_eq!(tool_results[0].content.as_ref(), "file contents");
-    assert_eq!(tool_results[1].tool_call_id, "call_2");
-    assert_eq!(tool_results[1].content.as_ref(), "rejected by user");
-    assert_eq!(tool_results[2].tool_call_id, "call_3");
-    assert!(tool_results[2].content.contains("cancelled"));
+    let Some([tr0, tr1, tr2]) = tool_results.get(..3) else {
+        panic!("expected 3 tool results: {tool_results:?}");
+    };
+    assert_eq!(tr0.tool_call_id, "call_1");
+    assert_eq!(tr0.content.as_ref(), "file contents");
+    assert_eq!(tr1.tool_call_id, "call_2");
+    assert_eq!(tr1.content.as_ref(), "rejected by user");
+    assert_eq!(tr2.tool_call_id, "call_3");
+    assert!(tr2.content.contains("cancelled"));
 }
 
 /// Verify that persistence records all 5 pushes (assistant + 3 tool results)
@@ -1998,15 +2239,8 @@ async fn parallel_tool_calls_with_rejection_persists_all_items() {
 // Race condition: cancellation mid-tool-execution → dangling calls on reload
 // ============================================================================
 
-/// Simulates the race condition where:
-///   1. Model emits 3 parallel tool calls (single assistant message)
-///   2. Tool #1 executes and its result is persisted
-///   3. User cancels (Ctrl+C) or app crashes BEFORE tool #2/#3 results are pushed
-///   4. On session reload, chat_history.jsonl has the assistant (3 calls) + only 1 result
-///
-/// `ChatState::new` now repairs dangling tool calls eagerly at initialization,
-/// so the actor's in-memory conversation is clean from the start — not just the
-/// clone produced by `build_request`.
+/// Reload after cancel/crash mid-parallel-tools: history has the assistant plus only some results.
+/// `ChatState::new` repairs dangling calls eagerly so in-memory state is clean from the start.
 #[tokio::test]
 async fn dangling_tool_calls_after_crash_are_repaired_on_load() {
     use xai_grok_sampling_types::ToolCall;
@@ -2077,28 +2311,35 @@ async fn dangling_tool_calls_after_crash_are_repaired_on_load() {
     );
 
     // call_1: real result (persisted before crash)
-    assert_eq!(tool_results[0].tool_call_id, "call_1");
+    let Some(tr0) = tool_results.first() else {
+        panic!("expected tool results: {tool_results:?}");
+    };
+    assert_eq!(tr0.tool_call_id, "call_1");
     assert!(
-        tool_results[0].content.contains("fn main"),
+        tr0.content.contains("fn main"),
         "call_1 should have the original result"
     );
 
     // call_2: synthetic repair
-    assert_eq!(tool_results[1].tool_call_id, "call_2");
+    let Some(tr1) = tool_results.get(1) else {
+        panic!("expected tool results: {tool_results:?}");
+    };
+    assert_eq!(tr1.tool_call_id, "call_2");
     assert!(
-        tool_results[1].content.contains("cancelled")
-            || tool_results[1].content.contains("not executed"),
+        tr1.content.contains("cancelled") || tr1.content.contains("not executed"),
         "call_2 should have a synthetic cancellation result, got: {}",
-        tool_results[1].content
+        tr1.content
     );
 
     // call_3: synthetic repair
-    assert_eq!(tool_results[2].tool_call_id, "call_3");
+    let Some(tr2) = tool_results.get(2) else {
+        panic!("expected tool results: {tool_results:?}");
+    };
+    assert_eq!(tr2.tool_call_id, "call_3");
     assert!(
-        tool_results[2].content.contains("cancelled")
-            || tool_results[2].content.contains("not executed"),
+        tr2.content.contains("cancelled") || tr2.content.contains("not executed"),
         "call_3 should have a synthetic cancellation result, got: {}",
-        tool_results[2].content
+        tr2.content
     );
 
     // build_request should also see 6 items (no double-repair)
@@ -2239,16 +2480,8 @@ async fn all_tool_calls_dangling_after_crash() {
 // Live-session cancellation: user cancels mid-tool-execution (no restart)
 // ============================================================================
 
-/// Simulates an in-session abort where:
-///   1. Model emits 3 parallel tool calls → assistant pushed to conversation
-///   2. User immediately cancels (Ctrl+C) → tokio task aborted
-///   3. Zero tool results pushed (abort happened before execute_tool_calls)
-///   4. TUI stays alive, user types a new prompt
-///
-/// This is different from the reload scenario: `ChatState::new` doesn't run
-/// again because the actor is still alive. The fix is that `push_user_message`
-/// now calls `repair_dangling_tool_calls` before appending the new user
-/// message, so the conversation is cleaned up in-place.
+/// In-session abort: cancel before any tool results, then a new prompt, actor still alive.
+/// `push_user_message` must repair dangling calls in place; `ChatState::new` does not run again.
 #[tokio::test]
 async fn live_cancel_before_any_tool_execution_repairs_on_next_user_message() {
     use xai_grok_sampling_types::ToolCall;
@@ -2319,8 +2552,8 @@ async fn live_cancel_before_any_tool_execution_repairs_on_next_user_message() {
 
     // Verify the synthetic repairs are in the right place
     for (idx, expected_call_id) in [(5, "call_1"), (6, "call_2"), (7, "call_3")] {
-        match &conv[idx] {
-            ConversationItem::ToolResult(tr) => {
+        match conv.get(idx) {
+            Some(ConversationItem::ToolResult(tr)) => {
                 assert_eq!(tr.tool_call_id, expected_call_id);
                 assert!(
                     tr.content.contains("cancelled") || tr.content.contains("not executed"),
@@ -2339,7 +2572,7 @@ async fn live_cancel_before_any_tool_execution_repairs_on_next_user_message() {
 
     // New user message is at the end
     assert!(
-        matches!(&conv[8], ConversationItem::User(_)),
+        matches!(conv.get(8), Some(ConversationItem::User(_))),
         "item[8] should be the new user message"
     );
 
@@ -2408,8 +2641,8 @@ async fn live_cancel_after_partial_tool_results_repairs_remaining() {
     );
 
     // call_1 should still have the real result
-    match &conv[3] {
-        ConversationItem::ToolResult(tr) => {
+    match conv.get(3) {
+        Some(ConversationItem::ToolResult(tr)) => {
             assert_eq!(tr.tool_call_id, "call_1");
             assert_eq!(tr.content.as_ref(), "file contents here");
         }
@@ -2421,8 +2654,8 @@ async fn live_cancel_after_partial_tool_results_repairs_remaining() {
 
     // call_2 and call_3 should be synthetic repairs
     for (idx, expected_call_id) in [(4, "call_2"), (5, "call_3")] {
-        match &conv[idx] {
-            ConversationItem::ToolResult(tr) => {
+        match conv.get(idx) {
+            Some(ConversationItem::ToolResult(tr)) => {
                 assert_eq!(tr.tool_call_id, expected_call_id);
                 assert!(
                     tr.content.contains("cancelled") || tr.content.contains("not executed"),
@@ -2437,7 +2670,7 @@ async fn live_cancel_after_partial_tool_results_repairs_remaining() {
     }
 
     // New user message at the end
-    assert!(matches!(&conv[6], ConversationItem::User(_)));
+    assert!(matches!(conv.get(6), Some(ConversationItem::User(_))));
 }
 
 // Turn message capture tests
@@ -2461,14 +2694,17 @@ async fn turn_capture_collects_all_message_types() {
         .expect("capture was active");
 
     assert_eq!(capture.messages.len(), 3);
-    assert!(matches!(&capture.messages[0], ConversationItem::User(_)));
     assert!(matches!(
-        &capture.messages[1],
-        ConversationItem::Assistant(_)
+        capture.messages.first(),
+        Some(ConversationItem::User(_))
     ));
     assert!(matches!(
-        &capture.messages[2],
-        ConversationItem::ToolResult(_)
+        capture.messages.get(1),
+        Some(ConversationItem::Assistant(_))
+    ));
+    assert!(matches!(
+        capture.messages.get(2),
+        Some(ConversationItem::ToolResult(_))
     ));
     assert!(!capture.compaction_occurred);
 }
@@ -2505,22 +2741,31 @@ async fn harness_trace_items_ride_own_turn_not_the_live_capture() {
 
     // The main turn capture holds only the live items — no harness pair.
     assert_eq!(capture.messages.len(), 3);
-    assert!(matches!(&capture.messages[0], ConversationItem::User(_)));
     assert!(matches!(
-        &capture.messages[1],
-        ConversationItem::Assistant(_)
+        capture.messages.first(),
+        Some(ConversationItem::User(_))
     ));
-    assert!(matches!(&capture.messages[2], ConversationItem::User(_)));
+    assert!(matches!(
+        capture.messages.get(1),
+        Some(ConversationItem::Assistant(_))
+    ));
+    assert!(matches!(
+        capture.messages.get(2),
+        Some(ConversationItem::User(_))
+    ));
 
     // The harness pair is drained as its own standalone trace turn.
     let harness = h.handle.take_harness_trace_turns().await;
     assert_eq!(harness.len(), 1, "one sealed verifier trace turn");
-    assert_eq!(harness[0].len(), 2);
+    let Some(turn) = harness.first() else {
+        panic!("expected a harness turn: {harness:?}");
+    };
+    assert_eq!(turn.len(), 2);
     assert!(matches!(
-        &harness[0][0],
-        ConversationItem::Assistant(a) if !a.tool_calls.is_empty()
+        turn.first(),
+        Some(ConversationItem::Assistant(a)) if !a.tool_calls.is_empty()
     ));
-    assert!(matches!(&harness[0][1], ConversationItem::ToolResult(_)));
+    assert!(matches!(turn.get(1), Some(ConversationItem::ToolResult(_))));
 
     // Harness items never enter the live conversation fed to the model.
     let live_after = h.handle.get_conversation().await.len();
@@ -2562,21 +2807,27 @@ async fn harness_trace_recorded_before_capture_seals_into_own_turn() {
     // The main capture holds only the live turn items — the planner pair does
     // not lead it.
     assert_eq!(capture.messages.len(), 2);
-    assert!(matches!(&capture.messages[0], ConversationItem::User(_)));
     assert!(matches!(
-        &capture.messages[1],
-        ConversationItem::Assistant(_)
+        capture.messages.first(),
+        Some(ConversationItem::User(_))
+    ));
+    assert!(matches!(
+        capture.messages.get(1),
+        Some(ConversationItem::Assistant(_))
     ));
 
     // The planner pair is its own harness trace turn.
     let harness = h.handle.take_harness_trace_turns().await;
     assert_eq!(harness.len(), 1);
-    assert_eq!(harness[0].len(), 2);
+    let Some(turn) = harness.first() else {
+        panic!("expected a harness turn: {harness:?}");
+    };
+    assert_eq!(turn.len(), 2);
     assert!(matches!(
-        &harness[0][0],
-        ConversationItem::Assistant(a) if !a.tool_calls.is_empty()
+        turn.first(),
+        Some(ConversationItem::Assistant(a)) if !a.tool_calls.is_empty()
     ));
-    assert!(matches!(&harness[0][1], ConversationItem::ToolResult(_)));
+    assert!(matches!(turn.get(1), Some(ConversationItem::ToolResult(_))));
 }
 
 #[tokio::test]
@@ -2617,7 +2868,7 @@ async fn harness_trace_turns_separate_per_flush_and_drain_clears() {
     h.handle.flush_harness_trace_turn();
     let reused = h.handle.take_harness_trace_turns().await;
     assert_eq!(reused.len(), 1, "append-after-drain seals a fresh turn");
-    assert_eq!(reused[0].len(), 2);
+    assert_eq!(reused.first().map(|t| t.len()), Some(2));
 }
 
 #[tokio::test]
@@ -2650,12 +2901,18 @@ async fn turn_capture_survives_compaction_and_flags_it() {
         .expect("capture was active");
 
     assert_eq!(capture.messages.len(), 3);
-    assert!(matches!(&capture.messages[0], ConversationItem::User(_)));
     assert!(matches!(
-        &capture.messages[1],
-        ConversationItem::Assistant(_)
+        capture.messages.first(),
+        Some(ConversationItem::User(_))
     ));
-    assert!(matches!(&capture.messages[2], ConversationItem::User(_)));
+    assert!(matches!(
+        capture.messages.get(1),
+        Some(ConversationItem::Assistant(_))
+    ));
+    assert!(matches!(
+        capture.messages.get(2),
+        Some(ConversationItem::User(_))
+    ));
     assert!(capture.compaction_occurred);
 }
 
@@ -2719,7 +2976,10 @@ async fn begin_capture_clears_previous_buffer() {
         .expect("capture was active");
 
     assert_eq!(capture.messages.len(), 1);
-    assert!(matches!(&capture.messages[0], ConversationItem::User(_)));
+    assert!(matches!(
+        capture.messages.first(),
+        Some(ConversationItem::User(_))
+    ));
 }
 
 #[tokio::test]
@@ -2769,10 +3029,8 @@ async fn turn_capture_survives_integrity_repair_prefix_shrink() {
     use xai_grok_sampling_types::ToolCall;
     let h = TestHarness::new();
 
-    // Build a prefix (before the capture starts) holding three removable
-    // duplicate ToolResults — one per tool call. `dedup_duplicate_tool_results`
-    // keeps the last result per id and drops the earlier one, shrinking the
-    // prefix by three items when integrity repair later runs.
+    // Prefix holds three removable duplicate ToolResults, one per tool call.
+    // Dedup keeps the last result per id, shrinking the prefix by three when repair runs.
     let call = |id: &'static str| ToolCall {
         id: id.into(),
         name: "t".into(),
@@ -2804,11 +3062,10 @@ async fn turn_capture_survives_integrity_repair_prefix_shrink() {
     h.handle
         .push_assistant_response(ConversationItem::assistant("turn-1"));
 
-    // Integrity repair removes the three prefix duplicates, shrinking the
-    // conversation to len 5 while the un-rebased offset stays at 7 (offset 7 >
-    // len 5). Without the fix the later take_turn_messages slice is out of range,
-    // panics the actor, and the query comes back as None.
-    h.handle.repair_dangling_after_harness_halt("test-halt");
+    // Integrity repair shrinks the conversation below the un-rebased capture offset.
+    // Without the fix the later slice is out of range, panics the actor, and the query returns None.
+    h.handle
+        .repair_dangling_after_harness_halt("test-halt", HashMap::new());
 
     // Second turn item lands after the rebase — it must still be captured.
     h.handle
@@ -2824,12 +3081,12 @@ async fn turn_capture_survives_integrity_repair_prefix_shrink() {
     // the deduped prefix items leak in.
     assert_eq!(capture.messages.len(), 2);
     assert!(matches!(
-        &capture.messages[0],
-        ConversationItem::Assistant(a) if a.content.as_ref() == "turn-1" && a.tool_calls.is_empty()
+        capture.messages.first(),
+        Some(ConversationItem::Assistant(a)) if a.content.as_ref() == "turn-1" && a.tool_calls.is_empty()
     ));
     assert!(matches!(
-        &capture.messages[1],
-        ConversationItem::Assistant(a) if a.content.as_ref() == "turn-2" && a.tool_calls.is_empty()
+        capture.messages.get(1),
+        Some(ConversationItem::Assistant(a)) if a.content.as_ref() == "turn-2" && a.tool_calls.is_empty()
     ));
 }
 
@@ -2844,7 +3101,8 @@ async fn integrity_repair_does_not_flag_compaction() {
 
     // An in-place integrity repair goes through `snapshot_turn_slice` like
     // compaction does, but it is NOT compaction — the flag must stay unset.
-    h.handle.repair_dangling_after_harness_halt("test-halt");
+    h.handle
+        .repair_dangling_after_harness_halt("test-halt", HashMap::new());
 
     let capture = h
         .handle
@@ -2882,7 +3140,10 @@ async fn turn_capture_survives_persisted_memory_reminder_prepend() {
         )
         .await
         .unwrap();
-    assert!(matches!(&request.items[0], ConversationItem::System(_)));
+    assert!(matches!(
+        request.items.first(),
+        Some(ConversationItem::System(_))
+    ));
 
     let capture = h
         .handle
@@ -2892,22 +3153,19 @@ async fn turn_capture_survives_persisted_memory_reminder_prepend() {
 
     // Exactly the two turn items, in order.
     assert_eq!(capture.messages.len(), 2);
-    assert!(matches!(&capture.messages[0], ConversationItem::User(_)));
     assert!(matches!(
-        &capture.messages[1],
-        ConversationItem::Assistant(a) if a.content.as_ref() == "turn-a"
+        capture.messages.first(),
+        Some(ConversationItem::User(_))
+    ));
+    assert!(matches!(
+        capture.messages.get(1),
+        Some(ConversationItem::Assistant(a)) if a.content.as_ref() == "turn-a"
     ));
 }
 
 // ============================================================================
 // Narrow targeted query tests
 // ============================================================================
-
-#[tokio::test]
-async fn get_conversation_len_empty() {
-    let h = TestHarness::new();
-    assert_eq!(h.handle.get_conversation_len().await, 0);
-}
 
 #[tokio::test]
 async fn get_conversation_len_matches_full_conversation() {
@@ -3019,10 +3277,461 @@ async fn get_last_assistant_text_in_turn_walks_past_synthetic_injections() {
 }
 
 #[tokio::test]
+async fn get_assistant_text_in_turn_concatenates_multi_round_bubbles() {
+    let h = TestHarness::new();
+    h.handle.push_user_message(ConversationItem::user("q"));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("first bubble"));
+    h.handle
+        .push_tool_result(ConversationItem::tool_result("call-1", "ok"));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("last bubble"));
+
+    assert_eq!(
+        h.handle.get_last_assistant_text_in_turn().await.as_deref(),
+        Some("last bubble"),
+        "last-bubble helper stays last-only"
+    );
+    assert_eq!(
+        h.handle.get_assistant_text_in_turn().await.as_deref(),
+        Some("first bubble\nlast bubble"),
+        "completed multi-round turn must export earlier bubbles, not only the last"
+    );
+}
+
+#[tokio::test]
+async fn get_assistant_text_in_turn_stops_at_boundary() {
+    let h = TestHarness::new();
+    h.handle.push_user_message(ConversationItem::user("q1"));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("previous turn"));
+    h.handle.push_user_message(ConversationItem::user("q2"));
+    assert!(h.handle.get_assistant_text_in_turn().await.is_none());
+}
+
+#[tokio::test]
 async fn get_last_assistant_text_no_assistant_messages() {
     let h = TestHarness::new();
     h.handle.push_user_message(ConversationItem::user("hi"));
     assert!(h.handle.get_last_assistant_text().await.is_none());
+}
+
+#[tokio::test]
+async fn get_trailing_assistant_report_single_item_matches_last_assistant_text() {
+    let h = TestHarness::new();
+    h.handle.push_user_message(ConversationItem::user("q"));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("the answer"));
+
+    assert_eq!(
+        h.handle.get_trailing_assistant_report().await.as_deref(),
+        Some("the answer")
+    );
+    assert_eq!(
+        h.handle.get_trailing_assistant_report().await,
+        h.handle.get_last_assistant_text().await,
+        "normal turn must match the single-item query"
+    );
+}
+
+#[tokio::test]
+async fn get_trailing_assistant_report_joins_salvaged_segments() {
+    let h = TestHarness::new();
+    h.handle.push_user_message(ConversationItem::user("q"));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("seg1"));
+    // The Length-salvage continue reminder committed between segments.
+    h.handle
+        .push_user_message(ConversationItem::length_continue_reminder("continue"));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("seg2"));
+
+    // Joined forward with no separator: Length cuts mid-token, so the
+    // continuation carries its own leading whitespace when one is needed.
+    assert_eq!(
+        h.handle.get_trailing_assistant_report().await.as_deref(),
+        Some("seg1seg2")
+    );
+}
+
+#[tokio::test]
+async fn get_trailing_assistant_report_skips_reasoning_between_segments() {
+    let h = TestHarness::new();
+    h.handle.push_user_message(ConversationItem::user("q"));
+    h.handle.push_tool_result(ConversationItem::Reasoning(
+        xai_grok_sampling_types::synthesized_reasoning_item("r1"),
+    ));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("seg1"));
+    h.handle
+        .push_user_message(ConversationItem::length_continue_reminder("continue"));
+    // Reasoning models commit a reasoning sibling before each segment; the
+    // turn loop pushes it via the same non-Assistant commit path used here.
+    h.handle.push_tool_result(ConversationItem::Reasoning(
+        xai_grok_sampling_types::synthesized_reasoning_item("r2"),
+    ));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("seg2"));
+
+    assert_eq!(
+        h.handle.get_trailing_assistant_report().await.as_deref(),
+        Some("seg1seg2"),
+        "reasoning siblings are not report content and not a boundary"
+    );
+}
+
+#[tokio::test]
+async fn get_trailing_assistant_report_stops_at_non_salvage_reminder() {
+    let h = TestHarness::new();
+    h.handle.push_user_message(ConversationItem::user("q"));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("Analysis done."));
+    // A todo-gate style nudge separates two DISTINCT answers; joining them
+    // with no separator would garble the report.
+    h.handle
+        .push_user_message(ConversationItem::system_reminder("finish your todos"));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("Final report: X."));
+
+    assert_eq!(
+        h.handle.get_trailing_assistant_report().await.as_deref(),
+        Some("Final report: X."),
+        "only the Length-continue reminder joins segments"
+    );
+}
+
+#[tokio::test]
+async fn get_trailing_assistant_report_stops_at_tool_boundary() {
+    use xai_grok_sampling_types::ToolCall;
+    let h = TestHarness::new();
+    h.handle.push_user_message(ConversationItem::user("q"));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("pre-tool commentary"));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant_tool_calls(vec![ToolCall {
+            id: "call_1".into(),
+            name: "my_tool".to_string(),
+            arguments: "{}".into(),
+        }]));
+    h.handle
+        .push_tool_result(ConversationItem::tool_result("call_1", "ok"));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("final report"));
+
+    // Tool items and tool-calling assistants end the walk: text before them
+    // belongs to an earlier step, not the trailing report.
+    assert_eq!(
+        h.handle.get_trailing_assistant_report().await.as_deref(),
+        Some("final report")
+    );
+}
+
+#[tokio::test]
+async fn get_trailing_assistant_report_stops_at_real_user_message() {
+    let h = TestHarness::new();
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("previous turn"));
+    h.handle.push_user_message(ConversationItem::user("q2"));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("this turn"));
+
+    assert_eq!(
+        h.handle.get_trailing_assistant_report().await.as_deref(),
+        Some("this turn")
+    );
+}
+
+#[tokio::test]
+async fn get_trailing_assistant_report_skips_empty_assistant_items() {
+    let h = TestHarness::new();
+    h.handle.push_user_message(ConversationItem::user("q"));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("real report"));
+    // Reasoning-only responses commit an empty assistant item.
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("   \n  "));
+
+    assert_eq!(
+        h.handle.get_trailing_assistant_report().await.as_deref(),
+        Some("real report")
+    );
+}
+
+#[tokio::test]
+async fn cancel_integrity_repair_drops_stranded_continue_reminder() {
+    let h = TestHarness::new();
+    h.handle.push_user_message(ConversationItem::user("q"));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("partial"));
+    // Cancel raced between the reminder push and the continuation sample.
+    h.handle
+        .push_user_message(ConversationItem::length_continue_reminder("continue"));
+
+    h.handle
+        .repair_dangling_after_harness_halt("test-cancel", HashMap::new());
+    let conv = h.handle.get_conversation().await;
+    assert!(
+        !matches!(
+            conv.last(),
+            Some(ConversationItem::User(u))
+                if u.synthetic_reason
+                    == xai_grok_sampling_types::SyntheticReason::LengthContinue
+        ),
+        "the stranded reminder must not survive the cancel repair"
+    );
+    assert_eq!(
+        h.handle.get_trailing_assistant_report().await.as_deref(),
+        Some("partial"),
+        "the committed partial stays"
+    );
+}
+
+#[tokio::test]
+async fn recovery_prompt_drops_stranded_continue_reminder() {
+    let h = TestHarness::new();
+    h.handle.push_user_message(ConversationItem::user("q"));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("partial"));
+    h.handle
+        .push_user_message(ConversationItem::length_continue_reminder("continue"));
+    // The continuation died; the recovery wrapper injects its prompt.
+    h.handle
+        .push_user_message(ConversationItem::auto_recovery("try again"));
+
+    let conv = h.handle.get_conversation().await;
+    assert!(
+        !conv.iter().any(|i| matches!(
+            i,
+            ConversationItem::User(u)
+                if u.synthetic_reason
+                    == xai_grok_sampling_types::SyntheticReason::LengthContinue
+        )),
+        "the dead continuation's reminder must not precede the recovery prompt"
+    );
+}
+
+#[tokio::test]
+async fn next_real_prompt_drops_stranded_continue_reminder() {
+    let h = TestHarness::new();
+    h.handle.push_user_message(ConversationItem::user("q"));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("partial"));
+    h.handle
+        .push_user_message(ConversationItem::length_continue_reminder("continue"));
+    // Cancel raced the continuation; the user types a new prompt.
+    h.handle.push_user_message(ConversationItem::user("next q"));
+
+    let conv = h.handle.get_conversation().await;
+    assert!(
+        !conv.iter().any(|i| matches!(
+            i,
+            ConversationItem::User(u)
+                if u.synthetic_reason
+                    == xai_grok_sampling_types::SyntheticReason::LengthContinue
+        )),
+        "the stranded reminder must not precede the new prompt"
+    );
+    assert!(matches!(
+        conv.last(),
+        Some(ConversationItem::User(u)) if u.synthetic_reason.is_human()
+    ));
+}
+
+/// No trailing `LengthContinue` item anywhere in the conversation.
+async fn assert_no_continue_reminder(h: &TestHarness, context: &str) {
+    let conv = h.handle.get_conversation().await;
+    assert!(
+        !conv.iter().any(|i| matches!(
+            i,
+            ConversationItem::User(u)
+                if u.synthetic_reason
+                    == xai_grok_sampling_types::SyntheticReason::LengthContinue
+        )),
+        "{context}: the dead continuation's reminder must be popped"
+    );
+}
+
+/// Seed `[user, partial assistant, stranded reminder]`.
+fn seed_stranded_reminder(h: &TestHarness) {
+    h.handle.push_user_message(ConversationItem::user("q"));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("partial"));
+    h.handle
+        .push_user_message(ConversationItem::length_continue_reminder("continue"));
+}
+
+#[tokio::test]
+async fn stop_hook_feedback_drops_stranded_continue_reminder() {
+    let h = TestHarness::new();
+    seed_stranded_reminder(&h);
+    // The turn completed truncated; the stop gate keeps the model working.
+    h.handle
+        .push_user_message(ConversationItem::stop_hook_feedback("keep going"));
+    assert_no_continue_reminder(&h, "stop-hook feedback").await;
+}
+
+#[tokio::test]
+async fn goal_directive_drops_stranded_continue_reminder() {
+    let h = TestHarness::new();
+    seed_stranded_reminder(&h);
+    h.handle
+        .push_user_message(ConversationItem::goal_summary("next goal round"));
+    assert_no_continue_reminder(&h, "goal directive").await;
+}
+
+#[tokio::test]
+async fn drained_interjection_drops_stranded_continue_reminder() {
+    let h = TestHarness::new();
+    seed_stranded_reminder(&h);
+    // The continuation failed empty; the turn drains a queued interjection.
+    // Drains are deferred while a continuation is in flight, so a trailing
+    // reminder at this push is always dead.
+    h.handle
+        .push_user_message(ConversationItem::interjection("also do this"));
+    assert_no_continue_reminder(&h, "drained interjection").await;
+}
+
+#[tokio::test]
+async fn working_directory_switch_push_drops_stranded_continue_reminder() {
+    let h = TestHarness::new();
+    seed_stranded_reminder(&h);
+    h.handle
+        .push_user_message(ConversationItem::working_directory_switch(
+            "cd /elsewhere",
+            2,
+        ));
+    assert_no_continue_reminder(&h, "directory-switch push").await;
+}
+
+#[tokio::test]
+async fn working_directory_switch_append_drops_stranded_continue_reminder() {
+    let mut h = TestHarness::new();
+    seed_stranded_reminder(&h);
+    // Resume-time disk-authoritative append (not a push): must not bury the
+    // stranded reminder behind the switch item.
+    h.handle
+        .append_working_directory_switch_and_ack(
+            "cd /elsewhere".to_string(),
+            NonZeroU64::new(2).expect("nonzero"),
+        )
+        .await
+        .expect("append acked");
+    assert_no_continue_reminder(&h, "directory-switch append").await;
+    // The pop's history rewrite must precede the acked append; a rewrite
+    // after it would erase the durably-acknowledged switch item from disk.
+    let records = h.drain_persistence();
+    let append_at = records
+        .iter()
+        .position(|r| matches!(r, PersistenceRecord::AcknowledgedMessage(_)))
+        .expect("the switch append reached persistence");
+    assert!(
+        !records
+            .iter()
+            .skip(append_at)
+            .any(|r| matches!(r, PersistenceRecord::ReplaceHistory(_))),
+        "no history rewrite may follow the acked append: {records:?}"
+    );
+}
+
+#[tokio::test]
+async fn get_trailing_assistant_report_joins_later_reminderless_segments() {
+    let h = TestHarness::new();
+    h.handle.push_user_message(ConversationItem::user("q"));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("one, "));
+    // The reminder is injected on the first continue only; segments from
+    // later continues sit adjacent (with at most Reasoning between).
+    h.handle
+        .push_user_message(ConversationItem::length_continue_reminder("continue"));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("two, "));
+    h.handle.push_tool_result(ConversationItem::Reasoning(
+        xai_grok_sampling_types::synthesized_reasoning_item("r"),
+    ));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("three"));
+
+    assert_eq!(
+        h.handle.get_trailing_assistant_report().await.as_deref(),
+        Some("one, two, three"),
+        "the budget-2 exhaustion path produces three segments; all must join"
+    );
+}
+
+#[tokio::test]
+async fn get_trailing_assistant_report_joins_into_a_tool_calling_tail() {
+    use xai_grok_sampling_types::ToolCall;
+    let h = TestHarness::new();
+    h.handle.push_user_message(ConversationItem::user("q"));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("cut sen"));
+    h.handle
+        .push_user_message(ConversationItem::length_continue_reminder("continue"));
+    // The continuation finishes the sentence and then calls a tool.
+    let mut tail = ConversationItem::assistant_tool_calls(vec![ToolCall {
+        id: "call_1".into(),
+        name: "my_tool".to_string(),
+        arguments: "{}".into(),
+    }]);
+    if let ConversationItem::Assistant(a) = &mut tail {
+        a.content = "tence, done.".into();
+    }
+    h.handle.push_assistant_response(tail);
+
+    assert_eq!(
+        h.handle.get_trailing_assistant_report().await.as_deref(),
+        Some("cut sentence, done."),
+        "earlier salvage segments join into a tool-calling tail"
+    );
+}
+
+#[tokio::test]
+async fn get_trailing_assistant_report_survives_trailing_reminder() {
+    let h = TestHarness::new();
+    h.handle.push_user_message(ConversationItem::user("q"));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("final report"));
+    // Todo-gate impasse: the reminder lands after the final text and the
+    // turn completes without sampling again. The report must survive.
+    h.handle
+        .push_user_message(ConversationItem::system_reminder("todo impasse"));
+
+    assert_eq!(
+        h.handle.get_trailing_assistant_report().await.as_deref(),
+        Some("final report")
+    );
+}
+
+#[tokio::test]
+async fn get_trailing_assistant_report_survives_trailing_tool_results() {
+    use xai_grok_sampling_types::ToolCall;
+    let h = TestHarness::new();
+    h.handle.push_user_message(ConversationItem::user("q"));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant("commentary then stop"));
+    h.handle
+        .push_assistant_response(ConversationItem::assistant_tool_calls(vec![ToolCall {
+            id: "call_1".into(),
+            name: "my_tool".to_string(),
+            arguments: "{}".into(),
+        }]));
+    // Stationarity-style tail: the turn ends right after tool results with
+    // no further assistant text. The last commentary must survive, unjoined.
+    h.handle
+        .push_tool_result(ConversationItem::tool_result("call_1", "ok"));
+
+    assert_eq!(
+        h.handle.get_trailing_assistant_report().await.as_deref(),
+        Some("commentary then stop")
+    );
+}
+
+#[tokio::test]
+async fn get_trailing_assistant_report_no_assistant_text() {
+    let h = TestHarness::new();
+    assert!(h.handle.get_trailing_assistant_report().await.is_none());
+    h.handle.push_user_message(ConversationItem::user("hi"));
+    assert!(h.handle.get_trailing_assistant_report().await.is_none());
 }
 
 #[tokio::test]
@@ -3110,7 +3819,7 @@ async fn get_first_user_text_image_first_returns_none() {
         content: vec![ContentPart::Image {
             url: "data:image/png;base64,abc".into(),
         }],
-        synthetic_reason: None,
+        synthetic_reason: SyntheticReason::Human,
         ..Default::default()
     }));
 
@@ -3134,7 +3843,7 @@ async fn get_first_user_text_image_then_text_returns_none() {
                 text: "describe this image".into(),
             },
         ],
-        synthetic_reason: None,
+        synthetic_reason: SyntheticReason::Human,
         ..Default::default()
     }));
 
@@ -3157,7 +3866,7 @@ async fn get_first_user_text_text_then_image_returns_text() {
                 url: "data:image/png;base64,abc".into(),
             },
         ],
-        synthetic_reason: None,
+        synthetic_reason: SyntheticReason::Human,
         ..Default::default()
     }));
 
@@ -3235,13 +3944,8 @@ async fn get_system_message_returns_first_system() {
     assert!(matches!(sys, ConversationItem::System(s) if s.content.as_ref() == "You are helpful."));
 }
 
-// ============================================================================
-// Subagent bootstrap regression tests
-//
-// These verify that `replace_conversation` correctly syncs the system prompt
-// into a ChatStateActor that was spawned before the prompt was built — the
-// exact sequence used by `spawn_session_actor` for subagents.
-// ============================================================================
+// Subagent bootstrap: `replace_conversation` must sync the system prompt into an actor
+// spawned before the prompt was built — the `spawn_session_actor` sequence.
 
 #[tokio::test]
 async fn fresh_subagent_bootstrap_has_system_message_after_replace() {
@@ -3396,8 +4100,8 @@ async fn prune_retained_hard_clears_old_tool_results() {
     let conv = handle.get_conversation().await;
     // Turns are laid out as [User, Assistant, ToolResult] * 8.
     // ToolResult for turn 0 is at index 2.
-    let oldest_tr = match &conv[2] {
-        ConversationItem::ToolResult(tr) => tr.content.clone(),
+    let oldest_tr = match conv.get(2) {
+        Some(ConversationItem::ToolResult(tr)) => tr.content.clone(),
         other => panic!("expected ToolResult at index 2, got {other:?}"),
     };
     assert_eq!(
@@ -3407,8 +4111,8 @@ async fn prune_retained_hard_clears_old_tool_results() {
     );
 
     // Recent turns (6, 7) must be untouched.
-    let recent_tr_6 = match &conv[6 * 3 + 2] {
-        ConversationItem::ToolResult(tr) => tr.content.clone(),
+    let recent_tr_6 = match conv.get(6 * 3 + 2) {
+        Some(ConversationItem::ToolResult(tr)) => tr.content.clone(),
         other => panic!("expected ToolResult, got {other:?}"),
     };
     assert_eq!(
@@ -3455,6 +4159,101 @@ async fn prune_retained_disabled_is_noop() {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn apply_turn_request_pruning_soft_trims_old_results_over_half_window() {
+    use crate::actor::ChatStateActor;
+    use crate::persistence::MockChatPersistence;
+    use crate::types::PruningConfig;
+
+    let (mock, _rx) = MockChatPersistence::new();
+    let (event_tx, _) = tokio::sync::mpsc::unbounded_channel();
+    let token = tokio_util::sync::CancellationToken::new();
+    let config = PruningConfig {
+        keep_last_n_turns: 2,
+        soft_trim_threshold: 4000,
+        soft_trim_head: 20,
+        soft_trim_tail: 20,
+        hard_clear_age_turns: 10,
+        ..Default::default()
+    };
+    let handle = ChatStateActor::spawn_with_pruning(
+        vec![],
+        test_config_with_window(10_000),
+        config,
+        Box::new(mock),
+        event_tx,
+        token,
+    );
+
+    push_turns(&handle, 5, 8_000).await;
+    handle.record_token_usage(6_001);
+    let _ = handle.get_total_tokens().await;
+
+    let conv = handle.get_conversation().await;
+    let pruned = handle.apply_turn_request_pruning(conv.clone()).await;
+
+    let stored_oldest = match conv.get(2) {
+        Some(ConversationItem::ToolResult(tr)) => tr.content.len(),
+        other => panic!("expected ToolResult at index 2, got {other:?}"),
+    };
+    assert_eq!(stored_oldest, 8_000);
+
+    let pruned_oldest = match pruned.get(2) {
+        Some(ConversationItem::ToolResult(tr)) => tr.content.as_ref(),
+        other => panic!("expected ToolResult at index 2, got {other:?}"),
+    };
+    assert!(
+        pruned_oldest.contains("[…trimmed…]"),
+        "expected soft trim, got {pruned_oldest:?}"
+    );
+    assert!(pruned_oldest.len() < 8_000);
+
+    let recent = match pruned.get(4 * 3 + 2) {
+        Some(ConversationItem::ToolResult(tr)) => tr.content.len(),
+        other => panic!("expected ToolResult, got {other:?}"),
+    };
+    assert_eq!(recent, 8_000);
+}
+
+#[tokio::test]
+async fn apply_turn_request_pruning_is_noop_under_half_window() {
+    use crate::actor::ChatStateActor;
+    use crate::persistence::MockChatPersistence;
+
+    let (mock, _rx) = MockChatPersistence::new();
+    let (event_tx, _) = tokio::sync::mpsc::unbounded_channel();
+    let token = tokio_util::sync::CancellationToken::new();
+    let handle = ChatStateActor::spawn_with_pruning(
+        vec![],
+        test_config_with_window(10_000),
+        Default::default(),
+        Box::new(mock),
+        event_tx,
+        token,
+    );
+
+    push_turns(&handle, 5, 8_000).await;
+    handle.record_token_usage(4_000);
+    let _ = handle.get_total_tokens().await;
+
+    let conv = handle.get_conversation().await;
+    let pruned = handle.apply_turn_request_pruning(conv.clone()).await;
+    let oldest = match pruned.get(2) {
+        Some(ConversationItem::ToolResult(tr)) => tr.content.len(),
+        other => panic!("expected ToolResult at index 2, got {other:?}"),
+    };
+    assert_eq!(oldest, 8_000);
+}
+
+#[tokio::test]
+async fn apply_turn_request_pruning_keeps_items_when_actor_is_gone() {
+    let handle = crate::handle::ChatStateHandle::noop();
+    let items = vec![ConversationItem::user("keep me")];
+    let out = handle.apply_turn_request_pruning(items).await;
+    assert_eq!(out.len(), 1);
+    assert!(matches!(out.first(), Some(ConversationItem::User(_))));
 }
 
 /// Retained conversation size is bounded after many turns: old tool results
@@ -3572,15 +4371,18 @@ async fn prune_retained_rewind_still_correct() {
     // Verify we have the right item types: (User, Assistant, ToolResult) * 3.
     for turn in 0..3 {
         assert!(
-            matches!(&conv[turn * 3], ConversationItem::User(_)),
+            matches!(conv.get(turn * 3), Some(ConversationItem::User(_))),
             "item[{turn}*3] should be User"
         );
         assert!(
-            matches!(&conv[turn * 3 + 1], ConversationItem::Assistant(_)),
+            matches!(conv.get(turn * 3 + 1), Some(ConversationItem::Assistant(_))),
             "item[{turn}*3+1] should be Assistant"
         );
         assert!(
-            matches!(&conv[turn * 3 + 2], ConversationItem::ToolResult(_)),
+            matches!(
+                conv.get(turn * 3 + 2),
+                Some(ConversationItem::ToolResult(_))
+            ),
             "item[{turn}*3+2] should be ToolResult"
         );
     }
@@ -3589,15 +4391,8 @@ async fn prune_retained_rewind_still_correct() {
     rx.drain();
 }
 
-/// Regression test: synthetic `User` items injected mid-turn (e.g. system
-/// warnings) must NOT cause old tool results to be cleared earlier than
-/// `hard_clear_age_turns` real turns.
-///
-/// Scenario: 3 real turns with tool results, then 2 synthetic User items
-/// injected without incrementing `prompt_index`, then a 4th real turn.
-/// With `hard_clear_age_turns = 5`, none of the 4 tool results should be
-/// cleared yet (the oldest is only 4 real turns old after the 4th real turn
-/// starts, since prompt_index is 4 at prune time).
+/// Synthetic mid-turn `User` items must not clear old tool results before `hard_clear_age_turns` real turns.
+/// Age is measured in real turns (`prompt_index`), not every `User` item.
 #[tokio::test]
 async fn prune_retained_synthetic_user_does_not_advance_age() {
     use crate::actor::ChatStateActor;
@@ -3644,10 +4439,8 @@ async fn prune_retained_synthetic_user_does_not_advance_age() {
     // Sync
     let conv = handle.get_conversation().await;
 
-    // None of the 3 original tool results should be cleared:
-    // oldest real age = 3 turns (turn 0 is 3 real turns ago), threshold = 5.
-    // Without the synthetic-count compensation, the 2 synthetic User items
-    // would make turn 0's TR appear age 5, causing premature clearing.
+    // None of the original tool results should be cleared: oldest real age is under the threshold.
+    // Without synthetic-count compensation the extra User items would cause a premature clear.
     for item in &conv {
         if let ConversationItem::ToolResult(tr) = item {
             assert_ne!(
@@ -3689,10 +4482,8 @@ async fn get_last_model_metadata_returns_default_when_no_assistant() {
     assert!(meta.model_fingerprint.is_none());
 }
 
-/// Reproduce: after compaction replaces the conversation, `get_sampling_config`
-/// must still return the original model/context_window/api_backend. The
-/// `SamplingConfig` lives in a separate field — `replace_conversation` must
-/// not touch it.
+/// After compaction replaces the conversation, `get_sampling_config` must still return the original config.
+/// `SamplingConfig` is a separate field — `replace_conversation` must not touch it.
 #[tokio::test]
 async fn sampling_config_survives_compaction_replacement() {
     use xai_grok_sampling_types::ApiBackend;
@@ -3700,16 +4491,12 @@ async fn sampling_config_survives_compaction_replacement() {
     let config = SamplingConfig {
         base_url: "https://api.example.com".to_string(),
         model: "grok-build".to_string(),
-        max_completion_tokens: None,
         temperature: Some(0.7),
         top_p: Some(0.95),
         api_backend: ApiBackend::Responses,
-        extra_headers: Default::default(),
-        query_params: Default::default(),
-        env_http_headers: Default::default(),
+        conversation_group_id: Some("conversation-group".into()),
         context_window: NonZeroU64::new(500_000).unwrap(),
-        reasoning_effort: None,
-        stream_tool_calls: None,
+        ..Default::default()
     };
 
     let h = TestHarness::with_config(
@@ -3760,6 +4547,11 @@ async fn sampling_config_survives_compaction_replacement() {
         ApiBackend::Responses,
         "BUG: api_backend switched to ChatCompletions after compaction"
     );
+    assert_eq!(
+        post.conversation_group_id.as_ref().map(|id| id.as_ref()),
+        Some("conversation-group"),
+        "conversation group changed after compaction"
+    );
 
     // Post-compaction: model metadata is LOST (no AssistantItem in compacted history).
     // This is the visible symptom -- fingerprint/hash disappears from /session-info.
@@ -3774,27 +4566,17 @@ async fn sampling_config_survives_compaction_replacement() {
     );
 }
 
-/// After compaction, the `build_session_info` display path uses
-/// `get_sampling_config().model` as the source-of-truth model slug.
-/// If that model slug is e.g. "grok-build" and not in the ModelState
-/// catalog with a display name, the pager shows the raw slug. This
-/// test verifies the pager's `current_model_name()` behavior when the
-/// model ID doesn't match any catalog entry.
+/// After compaction, session-info display uses `get_sampling_config().model` as the slug.
+/// If that slug is not in the catalog, the pager shows the raw slug — this locks that behavior.
 #[tokio::test]
 async fn model_metadata_lost_after_compaction_then_recovered_on_next_turn() {
     let config = SamplingConfig {
         base_url: "https://api.example.com".to_string(),
         model: "grok-build".to_string(),
-        max_completion_tokens: None,
         temperature: Some(0.7),
         top_p: Some(0.95),
-        api_backend: Default::default(),
-        extra_headers: Default::default(),
-        query_params: Default::default(),
-        env_http_headers: Default::default(),
         context_window: NonZeroU64::new(500_000).unwrap(),
-        reasoning_effort: None,
-        stream_tool_calls: None,
+        ..Default::default()
     };
 
     let h = TestHarness::with_config(
@@ -3854,19 +4636,8 @@ async fn model_metadata_lost_after_compaction_then_recovered_on_next_turn() {
     );
 }
 
-/// Verify that a context_window downgrade via `update_sampling_config`
-/// causes `check_auto_compact_needed` to fire when token usage already
-/// exceeds the new (smaller) window.
-///
-/// This exercises the actor's arithmetic: if anything (model switch,
-/// session resume, etc.) shrinks the context window below accumulated
-/// token usage, auto-compact must trigger.
-///
-/// Note: `handle_model_metadata_update` in acp_session.rs now blocks
-/// response-header downgrades (only upgrades accepted), so this path
-/// is mainly reachable via model switches. The actor itself still
-/// accepts any value via `update_sampling_config` — the guard lives
-/// in the session layer.
+/// A context_window downgrade via `update_sampling_config` must fire auto-compact when usage already exceeds the new window.
+/// The actor accepts any value; the session layer blocks response-header downgrades, so this is mainly model switches.
 #[tokio::test]
 async fn context_window_downgrade_triggers_auto_compact() {
     use xai_grok_sampling_types::ApiBackend;
@@ -3875,16 +4646,11 @@ async fn context_window_downgrade_triggers_auto_compact() {
     let config = SamplingConfig {
         base_url: "https://api.x.ai/v1".to_string(),
         model: "grok-4.5".to_string(),
-        max_completion_tokens: None,
         temperature: Some(0.7),
         top_p: Some(0.95),
         api_backend: ApiBackend::Responses,
-        extra_headers: Default::default(),
-        query_params: Default::default(),
-        env_http_headers: Default::default(),
         context_window: NonZeroU64::new(500_000).unwrap(),
-        reasoning_effort: None,
-        stream_tool_calls: None,
+        ..Default::default()
     };
 
     let h = TestHarness::with_config(vec![], config);
@@ -3939,31 +4705,12 @@ async fn context_window_downgrade_triggers_auto_compact() {
     );
 }
 
-// ============================================================================
-// KV Cache Prefix Stability Tests
-//
-// These test `build_conversation_request()` output prefix stability through
-// the full pipeline -- pruning, memory injection, image pruning, snapshot
-// restore. Prefix stability within a compaction epoch is the invariant that
-// keeps the inference engine's prefix / KV cache hitting. The sibling-Reasoning refactor
-// deleted the placeholder/splice machinery these tests previously had to work
-// around.
-//
-// These target the refactored sibling-Reasoning shape:
-//   - No `__RAW_OUTPUT_PLACEHOLDER__` sentinels
-//   - No `extract_raw_input_items()` / `splice_raw_input_items()`
-//   - Reasoning lives as `ConversationItem::Reasoning(rs::ReasoningItem)`
-//     siblings; the From<&ConversationRequest> for rs::CreateResponse impl
-//     emits them inline in `input` order.
-// ============================================================================
+// KV-cache prefix stability through `build_conversation_request` (prune, memory, images, restore).
+// Prefix stability within a compaction epoch is what keeps the inference prefix cache hitting.
+// Targets the sibling-Reasoning shape: no placeholder/splice machinery.
 
-/// Serialize a ConversationRequest using only the public
-/// `From<&ConversationRequest> for rs::CreateResponse` trait impl.
-///
-/// After the sibling-Reasoning refactor there is no placeholder/splice dance: the `Vec<rs::InputItem>`
-/// produced by the From impl is directly the wire shape (modulo
-/// `patch_reasoning_text_types` which only stamps a `type` field on nested
-/// reasoning content blocks and does not reorder items).
+/// Serialize a ConversationRequest via the public `From` impl only.
+/// After the sibling-Reasoning refactor the From output is the wire shape; type-stamping does not reorder items.
 fn serialize_via_public_api(
     req: &xai_grok_sampling_types::ConversationRequest,
 ) -> serde_json::Value {
@@ -3993,8 +4740,8 @@ fn assert_prefix_stable_pair(
     let base_body = serialize_via_public_api(base);
     let ext_body = serialize_via_public_api(extended);
 
-    let base_input = base_body["input"].as_array().unwrap();
-    let ext_input = ext_body["input"].as_array().unwrap();
+    let base_input = base_body.get("input").and_then(|v| v.as_array()).unwrap();
+    let ext_input = ext_body.get("input").and_then(|v| v.as_array()).unwrap();
 
     assert!(
         ext_input.len() >= base_input.len(),
@@ -4003,7 +4750,7 @@ fn assert_prefix_stable_pair(
         base_input.len(),
     );
     assert_eq!(
-        &ext_input[..base_input.len()],
+        ext_input.get(..base_input.len()).unwrap_or(&[]),
         base_input.as_slice(),
         "{label}: prefix broken. Base has {} items, extended has {}. \
          First divergence at index {}",
@@ -4119,12 +4866,8 @@ async fn prefix_stable_with_consistent_memory_injection() {
     assert_prefix_stable_pair(&req1, &req2, "memory-injected turn 1 -> turn 2");
 }
 
-/// Prefix stability with Reasoning siblings (encrypted reasoning) through
-/// the full build_request pipeline. This is the structural equivalent of the
-/// earlier `prefix_stable_with_raw_output_through_build_request` test --
-/// it exercises the exact code path that caused a prefix-instability incident,
-/// but on the post-refactor data model where reasoning rides as a typed sibling
-/// rather than an `AssistantItem.raw_output` blob.
+/// Prefix stability with Reasoning siblings through the full build_request pipeline.
+/// Structural equivalent of the earlier raw_output test on the post-refactor data model.
 #[tokio::test]
 async fn prefix_stable_with_reasoning_siblings_through_build_request() {
     let h = TestHarness::with_conversation(vec![
@@ -4294,11 +5037,8 @@ async fn prefix_stable_with_synthetic_user_messages() {
     assert_prefix_stable_pair(&req1, &req2, "with synthetic user messages");
 }
 
-/// Prefix stability after size-gated image eviction. Once the serialized body
-/// nears the 50 MB ceiling, old user turns' images are replaced with text
-/// placeholders on the request clone -- text items before the evicted region
-/// must stay prefix-stable in their relative ordering. The image here is sized
-/// past `IMAGE_COMPACT_TRIGGER_BYTES` so the eviction actually fires.
+/// Prefix stability after size-gated image eviction near the 50 MB ceiling.
+/// Text items before the evicted region must stay prefix-stable in relative order.
 #[tokio::test]
 async fn prefix_stable_after_image_pruning() {
     use xai_grok_sampling_types::ContentPart;
@@ -4306,7 +5046,7 @@ async fn prefix_stable_after_image_pruning() {
     // Large enough that the serialized body crosses the compaction trigger.
     let big_image_url = format!(
         "data:image/png;base64,{}",
-        "A".repeat(crate::actor::request_builder::IMAGE_COMPACT_TRIGGER_BYTES)
+        "A".repeat(crate::image_budget::IMAGE_COMPACT_TRIGGER_BYTES)
     );
 
     let h = TestHarness::with_conversation(vec![
@@ -4320,7 +5060,7 @@ async fn prefix_stable_after_image_pruning() {
                     url: big_image_url.into(),
                 },
             ],
-            synthetic_reason: None,
+            synthetic_reason: SyntheticReason::Human,
             ..Default::default()
         }),
         ConversationItem::assistant("I see it"),
@@ -4345,7 +5085,7 @@ async fn prefix_stable_after_image_pruning() {
                     url: "data:image/png;base64,newImageData".into(),
                 },
             ],
-            synthetic_reason: None,
+            synthetic_reason: SyntheticReason::Human,
             ..Default::default()
         }));
 
@@ -4355,19 +5095,17 @@ async fn prefix_stable_after_image_pruning() {
         .await
         .unwrap();
 
-    // Image stripping mutates the old user turn's content, so full
-    // byte-level prefix stability cannot hold at that item. We verify:
-    //   1. System prompt preserved
-    //   2. Items grew
-    //   3. Text items appear in the same relative order
+    // Image stripping mutates the old user turn, so full byte-level prefix stability cannot hold there.
+    // Verify system prompt preserved, items grew, and text items keep relative order.
     let body1 = serialize_via_public_api(&req1);
     let body2 = serialize_via_public_api(&req2);
 
-    let input1 = body1["input"].as_array().unwrap();
-    let input2 = body2["input"].as_array().unwrap();
+    let input1 = body1.get("input").and_then(|v| v.as_array()).unwrap();
+    let input2 = body2.get("input").and_then(|v| v.as_array()).unwrap();
 
     assert_eq!(
-        input1[0], input2[0],
+        input1.first(),
+        input2.first(),
         "system prompt must be preserved after image pruning"
     );
     assert!(
@@ -4389,7 +5127,7 @@ async fn prefix_stable_after_image_pruning() {
     let texts2 = extract_text_items(input2);
     let mut idx2 = 0;
     for t1 in &texts1 {
-        while idx2 < texts2.len() && &texts2[idx2] != t1 {
+        while texts2.get(idx2).is_some_and(|x| x != t1) {
             idx2 += 1;
         }
         assert!(
@@ -4400,11 +5138,8 @@ async fn prefix_stable_after_image_pruning() {
     }
 }
 
-/// Regression for the image cache-miss bug: with normal small images (well
-/// under the 50 MB ceiling), an old user turn's image is preserved across
-/// turns instead of being rewritten to a placeholder. Rewriting old images on
-/// every turn busted the KV-cache prefix (the over-aggressive earlier
-/// behavior this size-gate replaces).
+/// Regression: small images under the 50 MB ceiling must be preserved across turns.
+/// Rewriting old images every turn busted the KV-cache prefix (the behavior this size-gate replaces).
 #[tokio::test]
 async fn build_request_preserves_small_old_images() {
     use xai_grok_sampling_types::{ContentPart, UserItem};
@@ -4420,7 +5155,7 @@ async fn build_request_preserves_small_old_images() {
                     url: "data:image/png;base64,iVBORw0KGgo=".into(),
                 },
             ],
-            synthetic_reason: None,
+            synthetic_reason: SyntheticReason::Human,
             ..Default::default()
         }),
         ConversationItem::assistant("I see it"),
@@ -4445,10 +5180,77 @@ async fn build_request_preserves_small_old_images() {
     );
 }
 
-/// Prefix stability after tool result pruning. When context utilization
-/// exceeds 50%, old tool results are soft-trimmed or hard-cleared, but
-/// this happens on a clone -- items outside the pruned region must
-/// remain identical.
+#[tokio::test]
+async fn build_request_budgets_tool_images_on_request_copy_only() {
+    use xai_grok_sampling_types::{ContentPart, ToolCall};
+
+    let image_url = format!(
+        "data:image/png;base64,{}",
+        "A".repeat(crate::image_budget::IMAGE_COMPACT_TRIGGER_BYTES)
+    );
+    let source = vec![
+        ConversationItem::assistant_tool_calls(vec![ToolCall {
+            id: "call-1".into(),
+            name: "read_file".into(),
+            arguments: r#"{"target_file":"image.png"}"#.into(),
+        }]),
+        ConversationItem::tool_result_with_images(
+            "call-1",
+            "tool text",
+            vec![ContentPart::Image {
+                url: image_url.into(),
+            }],
+        ),
+    ];
+    let source_bytes = serde_json::to_vec(&source).unwrap().len();
+    let mut h = TestHarness::with_conversation(source);
+    let request = h
+        .handle
+        .build_request(vec![], None, false, None, "c".into(), "r".into())
+        .await
+        .unwrap();
+    let event = h.next_event().await;
+    let canonical = h.handle.get_conversation().await;
+
+    let ChatStateEvent::ImageBudget {
+        body_bytes,
+        body_bytes_after,
+        inline_images,
+        needs_image_compaction,
+        evicted,
+        ..
+    } = event
+    else {
+        panic!("expected image budget event");
+    };
+    assert_eq!(body_bytes, source_bytes);
+    assert_eq!(
+        body_bytes_after,
+        serde_json::to_vec(&request.items).unwrap().len()
+    );
+    assert_eq!(inline_images, 1);
+    assert!(needs_image_compaction);
+    assert_eq!(evicted, 1);
+    let Some(ConversationItem::ToolResult(request_result)) = request.items.get(1) else {
+        panic!("expected request tool result");
+    };
+    assert!(request_result.images.is_empty());
+    assert_eq!(request_result.tool_call_id, "call-1");
+    assert!(request_result.content.starts_with("tool text\n\n"));
+    assert!(
+        request_result
+            .content
+            .contains("images from this tool result were removed")
+    );
+    let Some(ConversationItem::ToolResult(canonical_result)) = canonical.get(1) else {
+        panic!("expected canonical tool result");
+    };
+    assert_eq!(canonical_result.images.len(), 1);
+    assert_eq!(canonical_result.content.as_ref(), "tool text");
+}
+
+/// Prefix stability after tool result pruning above 50% utilization.
+/// Pruning happens on a clone — items outside the pruned region must remain identical.
 #[tokio::test]
 async fn prefix_stable_after_tool_result_pruning() {
     let h = TestHarness::with_context_window(10_000);
@@ -4482,11 +5284,12 @@ async fn prefix_stable_after_tool_result_pruning() {
 
     let body1 = serialize_via_public_api(&req1);
     let body2 = serialize_via_public_api(&req2);
-    let input1 = body1["input"].as_array().unwrap();
-    let input2 = body2["input"].as_array().unwrap();
+    let input1 = body1.get("input").and_then(|v| v.as_array()).unwrap();
+    let input2 = body2.get("input").and_then(|v| v.as_array()).unwrap();
 
     assert_eq!(
-        input1[0], input2[0],
+        input1.first(),
+        input2.first(),
         "system prompt must be stable after pruning"
     );
     assert!(
@@ -4510,7 +5313,7 @@ async fn prefix_stable_after_tool_result_pruning() {
     let users2 = extract_user_texts(input2);
     let mut idx2 = 0;
     for u1 in &users1 {
-        while idx2 < users2.len() && &users2[idx2] != u1 {
+        while users2.get(idx2).is_some_and(|x| x != u1) {
             idx2 += 1;
         }
         assert!(
@@ -4619,8 +5422,8 @@ async fn prefix_stable_after_session_resume() {
 
     let body2 = serialize_via_public_api(&req2);
     let body3 = serialize_via_public_api(&req3);
-    let input2 = body2["input"].as_array().unwrap();
-    let input3 = body3["input"].as_array().unwrap();
+    let input2 = body2.get("input").and_then(|v| v.as_array()).unwrap();
+    let input3 = body3.get("input").and_then(|v| v.as_array()).unwrap();
     assert_eq!(
         input2, input3,
         "restored snapshot must produce identical request items"
@@ -4723,4 +5526,35 @@ async fn repair_history_command_refused_while_turn_active() {
         .unwrap()
         .unwrap();
     assert_eq!(report.stripped_tool_result_ids, vec!["call_ORPHAN"]);
+}
+
+#[tokio::test]
+async fn restore_snapshot_restores_all_fields() {
+    let mut h = TestHarness::new();
+    h.handle.push_user_message(ConversationItem::user("msg"));
+    h.handle.record_token_usage(500);
+    h.handle.increment_prompt_index();
+
+    // Drain events from the mutations above
+    let _ = h.handle.get_conversation().await;
+    h.drain_events();
+
+    let snapshot = h.handle.snapshot().await.unwrap();
+    assert_eq!(snapshot.prompt_index, 1);
+    assert_eq!(snapshot.total_tokens, 500);
+    assert_eq!(snapshot.conversation.len(), 1);
+
+    // Replace state
+    h.handle.replace_conversation(vec![]);
+    let _ = h.handle.get_conversation().await;
+
+    // Restore
+    h.handle.restore_snapshot(snapshot);
+
+    let conv = h.handle.get_conversation().await;
+    assert_eq!(conv.len(), 1);
+    let idx = h.handle.get_prompt_index().await;
+    assert_eq!(idx, 1);
+    let tokens = h.handle.get_total_tokens().await;
+    assert_eq!(tokens, 500);
 }

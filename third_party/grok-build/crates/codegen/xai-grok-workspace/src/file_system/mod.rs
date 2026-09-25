@@ -7,13 +7,11 @@ pub use ext_fs::{
     FsReadFileReq, FsWriteFileReq,
 };
 
-// Client-facing read-only fs ops (`workspace.client_fs_*`). Not re-exported:
-// its wire types live in `xai_grok_workspace_types::rpc::fs` (the `ClientFs*`
-// types) and would collide with the shell-facing `ext_fs` names above.
+// Client-facing read-only fs ops (`workspace.client_fs_*`)
+// Not re-exported: the `ClientFs*` types live in `xai_grok_workspace_types::rpc::fs` and would collide with the shell-facing `ext_fs` names above
 pub(crate) mod client_fs;
 
-// Shared filesystem core: paginated listing + binary-safe ranged reads,
-// used by `client_fs`, `ext_fs`, and the shell-local `session::file_system`.
+// Shared filesystem core: paginated listing and binary-safe ranged reads, used by `client_fs`, `ext_fs`, and the shell-local `session::file_system`
 mod walk;
 pub use walk::{
     ChunkPayload, ListOptions, ListPage, ListedEntry, MAX_LIST_COLLECT, MAX_READ_BYTES,
@@ -26,7 +24,7 @@ pub mod adapter;
 pub use adapter::AcpFsAdapter;
 
 mod codebase_index;
-pub use codebase_index::CodebaseIndexManager;
+pub use codebase_index::{CodebaseIndexManager, get_index_cache_path};
 
 mod fs;
 pub use fs::{AsyncFileSystem, AsyncFsWrapper, FsError, bytes_to_string};
@@ -38,10 +36,17 @@ mod mock_fs;
 pub use mock_fs::MockFs;
 
 mod file_tree;
-pub use file_tree::{ListContentsLimits, list_contents};
+pub use file_tree::{ListContentsLimits, list_contents, list_contents_multi};
+
+// Shared subprocess teardown for the session-triggered git/jj status spawns.
+mod process;
+
+// `core.fsmonitor` pin resolution for the session-triggered git status.
+mod fsmonitor;
+pub use fsmonitor::{FsmonitorOverride, probe_fsmonitor_override};
 
 mod git_status;
-pub use git_status::{git_status, git_status_short};
+pub use git_status::{git_status, git_status_short_pinned};
 
 mod jj_status;
 pub use jj_status::jj_status;
@@ -49,8 +54,7 @@ pub use jj_status::jj_status;
 mod attach_file;
 pub use attach_file::{FileReference, render_embedded_resource, render_file_reference};
 
-mod fuzzy;
-pub use fuzzy::{
+pub use xai_fuzzy_file_search::{
     FuzzyFileMatcher, FuzzyFileMatcherDaemon, FuzzyMatchResult, FuzzyMatcherDaemonResults,
     FuzzyMatcherStatus,
 };
@@ -72,7 +76,7 @@ use std::{
 };
 use uuid::Uuid;
 
-// Canonical in xai-grok-workspace-types; re-exported for existing paths.
+// These types are canonical in xai-grok-workspace-types; the re-export keeps existing import paths working
 pub use xai_grok_workspace_types::rpc::search::{ClientId, ContentSearchRequest, TargetClientId};
 
 impl From<ContentSearchRequest> for ContentSearchParams {
@@ -109,31 +113,6 @@ const DEFAULT_TOP_K: usize = 1000;
 
 pub type FuzzySearchId = String;
 
-impl Serialize for FuzzyMatchResult {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeStruct;
-        use std::borrow::Cow;
-
-        let path_str = self.path.to_string();
-        let node_type = if self.is_dir { "directory" } else { "file" };
-        let name: Cow<str> = std::path::Path::new(&path_str)
-            .file_name()
-            .map(|s| s.to_string_lossy())
-            .unwrap_or(Cow::Borrowed(&path_str));
-
-        let mut state = serializer.serialize_struct("FuzzyMatchResult", 5)?;
-        state.serialize_field("name", &name)?;
-        state.serialize_field("type", node_type)?;
-        state.serialize_field("path", &path_str)?;
-        state.serialize_field("score", &self.score)?;
-        state.serialize_field("indices", &self.indices)?;
-        state.end()
-    }
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FuzzySearchData {
@@ -144,18 +123,14 @@ pub struct FuzzySearchData {
 }
 
 /// Result of one fuzzy-search poll tick (see [`WorkspaceHandle::fuzzy_poll`]).
-///
-/// Consumed in-process by the shell's notification driver, so it carries the
-/// (non-`Deserialize`) match results directly rather than going over RPC.
-///
-/// [`WorkspaceHandle::fuzzy_poll`]: crate::handle::WorkspaceHandle::fuzzy_poll
+/// Consumed in-process, so it carries non-`Deserialize` match results directly rather than over RPC.
 #[derive(Debug, Clone)]
 pub enum FuzzyPollOutcome {
-    /// The query was superseded by a newer change — stop polling.
+    /// The query was superseded by a newer change; stop polling.
     Stale,
-    /// The search no longer exists — stop polling.
+    /// The search no longer exists; stop polling.
     Closed,
-    /// The search exists but produced no new results this tick — keep polling.
+    /// The search exists but produced no new results this tick; keep polling.
     Pending,
     /// New results, with paths already absolutized against the search root.
     Update(FuzzySearchData),
@@ -171,10 +146,8 @@ pub struct FuzzySearchContext {
     pub query_version: usize,
     /// The root path for this search (used to convert relative paths to absolute).
     pub root: PathBuf,
-    /// Session ID for routing notifications.
     /// Used by the relay to route notifications to session subscribers.
     pub session_id: Option<String>,
-    /// Target client ID for routing notifications.
     /// Extracted from `_meta.clientId` in the open request.
     pub target_client_id: TargetClientId,
 }
@@ -238,7 +211,6 @@ impl FuzzySearchManager {
         search_id
     }
 
-    /// Get the session ID for a search, if one was set.
     /// Used for routing notifications to session subscribers.
     pub fn get_session_id(&self, search_id: &str) -> Option<String> {
         self.searches
@@ -246,7 +218,6 @@ impl FuzzySearchManager {
             .and_then(|ctx| ctx.session_id.clone())
     }
 
-    /// Get the target client ID for a search, if one was set.
     /// Used for routing notifications to the correct client via relay.
     pub fn get_target_client_id(&self, search_id: &str) -> TargetClientId {
         self.searches
@@ -255,7 +226,6 @@ impl FuzzySearchManager {
             .unwrap_or_default()
     }
 
-    /// Get the root path for a search.
     /// Used to convert relative paths to absolute paths in results.
     pub fn get_root(&self, search_id: &str) -> Option<PathBuf> {
         self.searches.get(search_id).map(|ctx| ctx.root.clone())

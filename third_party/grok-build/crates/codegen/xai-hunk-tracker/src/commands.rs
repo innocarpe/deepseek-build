@@ -13,7 +13,6 @@ use crate::types::{
 /// Commands sent to the HunkTrackerActor via mpsc channel.
 #[derive(Debug)]
 pub enum HunkTrackerCommand {
-    // === Mutation Commands (fire-and-forget) ===
     /// Agent tool wrote to a file - record it and compute hunks
     RecordAgentWrite {
         path: PathBuf,
@@ -40,7 +39,14 @@ pub enum HunkTrackerCommand {
     /// Set tracking mode
     SetMode { mode: TrackingMode },
 
-    // === Action Commands (accept/reject hunks) ===
+    /// Re-root the actor after a session cwd remount (path virtualization).
+    /// Reply fires after `file_states` keys have been rewritten so callers
+    /// can wait before recording writes under the new cwd.
+    SetWorkingDir {
+        working_dir: PathBuf,
+        reply: oneshot::Sender<()>,
+    },
+
     /// Apply action (accept/reject) to a specific hunk
     HunkAction {
         hunk_id: HunkId,
@@ -68,7 +74,6 @@ pub enum HunkTrackerCommand {
         reply: oneshot::Sender<Result<Vec<HunkId>, HunkActionError>>,
     },
 
-    // === Query Commands (request-response via oneshot) ===
     /// Get all current hunks
     GetAllHunks {
         reply: oneshot::Sender<Vec<Arc<Hunk>>>,
@@ -121,7 +126,6 @@ pub enum HunkTrackerCommand {
         reply: oneshot::Sender<Vec<FileContentEntry>>,
     },
 
-    // === Session Summary Commands ===
     /// Get complete session summary (stats + pending turns)
     GetSessionSummary {
         reply: oneshot::Sender<SessionSummary>,
@@ -140,7 +144,6 @@ pub enum HunkTrackerCommand {
     /// content from disk. Used after a git HEAD/index change to reconcile stale state.
     RefreshAllBaselines,
 
-    // === Snapshot / Restore Commands (for cross-session sync-back) ===
     /// Take a snapshot of all hunk tracker state for preservation across
     /// session kill/reload cycles.
     SnapshotState {

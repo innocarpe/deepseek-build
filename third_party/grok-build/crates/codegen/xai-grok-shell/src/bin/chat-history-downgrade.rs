@@ -1,27 +1,21 @@
-//! normalize chat_history.jsonl, convert any v1 (ConversationItem) to v0 (ChatRequestMessage) format.
-//! Used for data processing pipeline.
+//! Normalizes chat_history.jsonl for the data processing pipeline, converting v1 (`ConversationItem`) lines to v0 (`ChatRequestMessage`) format.
 //!
 //! Usage:
 //!   chat-history-downgrade <INPUT> <OUTPUT>
 //!
 //! ## Reasoning-shape compatibility
 //!
-//! Two on-disk v1 shapes carry reasoning, both must be downgraded into
-//! the v0 `reasoning_content: Option<String>` field:
+//! Two on-disk v1 shapes carry reasoning, and both must be downgraded into the v0 `reasoning_content: Option<String>` field:
 //!
-//! 1. **Legacy shape** -- reasoning lived as a field on the
-//!    assistant item itself: `{"type":"assistant","reasoning":{"text":...},...}`.
-//!    Post-refactor `AssistantItem` no longer has that field, so serde
-//!    silently drops it on deserialize. We pre-extract it from the raw
-//!    JSON before parsing as `ConversationItem`.
+//! 1. **Legacy shape**: reasoning lived as a field on the assistant item itself: `{"type":"assistant","reasoning":{"text":...},...}`.
+//!    `AssistantItem` no longer has that field, so serde silently drops it on deserialize.
+//!    The converter pre-extracts it from the raw JSON before parsing as `ConversationItem`.
 //!
-//! 2. **Current shape** -- reasoning is a sibling
-//!    `ConversationItem::Reasoning(rs::ReasoningItem)` item that precedes
-//!    the assistant in the JSONL stream. The downgrade buffers these
-//!    sibling lines and folds their text into the next assistant's
-//!    `reasoning_content`, matching what `conversation_to_chat_messages`
-//!    does at the in-process layer. Intervening user / tool messages
-//!    clear the buffer.
+//! 2. **Current shape**: reasoning is a sibling `ConversationItem::Reasoning(rs::ReasoningItem)` item preceding the assistant in the JSONL stream.
+//!    The downgrade buffers them and folds their text into the next assistant's `reasoning_content`, matching `conversation_to_chat_messages`.
+//!    Intervening user / tool messages clear the buffer.
+
+#![deny(clippy::indexing_slicing)]
 
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
@@ -41,22 +35,14 @@ struct Args {
     output: PathBuf,
 }
 
-/// Convert one v1 JSONL line to a v0 `ChatRequestMessage`, threading
-/// `pending_reasoning` across calls so sibling `Reasoning` items are
-/// folded into the following assistant.
-///
-/// Returns:
-/// - `Ok(Some(msg))` -- emit this v0 message.
-/// - `Ok(None)` -- line was a sibling `Reasoning` item; its text has been
-///   buffered into `pending_reasoning` for the next assistant. Skip emit.
-/// - `Err(_)` -- line was neither v1 nor v0 parseable.
+/// Convert one v1 JSONL line to a v0 `ChatRequestMessage`. `pending_reasoning` threads across calls so sibling `Reasoning` items fold into the following assistant.
+/// `Ok(None)`: a sibling `Reasoning` line; its text is buffered in `pending_reasoning` for the next assistant and nothing is emitted. `Err(_)`: the line parsed as neither v1 nor v0.
 fn convert_line(
     trimmed: &str,
     pending_reasoning: &mut Vec<String>,
 ) -> anyhow::Result<Option<ChatRequestMessage>> {
     // Inspect the raw JSON first so we can:
-    //   (a) extract a legacy `assistant.reasoning.text` field before
-    //       strongly-typed parsing drops it, and
+    //   (a) extract a legacy `assistant.reasoning.text` field before strongly-typed parsing drops it, and
     //   (b) buffer sibling `Reasoning` lines.
     let raw: serde_json::Value = serde_json::from_str(trimmed)
         .map_err(|e| anyhow::anyhow!("line is not valid JSON: {e}"))?;
@@ -70,11 +56,8 @@ fn convert_line(
         return Ok(None);
     }
 
-    // (a) Legacy reasoning field on the assistant item.
-    // Tries `reasoning.text` first (chat-completions-style) then
-    // `reasoning.encrypted` (responses-API-style); the latter is opaque
-    // bytes so we surface it as a placeholder rather than dropping it
-    // silently. Real text wins if both are present.
+    // (a) Legacy reasoning field on the assistant item. Tries `reasoning.text` first (chat-completions style), then `reasoning.encrypted` (responses-API style)
+    // The encrypted form is opaque bytes, so it becomes a placeholder rather than being dropped silently Real text wins if both are present
     let legacy_reasoning: Option<String> = if item_type == Some("assistant") {
         raw.get("reasoning").and_then(|r| {
             r.get("text")
@@ -98,8 +81,7 @@ fn convert_line(
                 .map_err(|_| anyhow::anyhow!("failed to parse as v1 or v0: {v1_err}"))?,
         };
 
-    // Attach reasoning to assistant messages, with the legacy field
-    // taking precedence when both sources exist.
+    // Attach reasoning to assistant messages, with the legacy field taking precedence when both sources exist
     if let Some(text) = legacy_reasoning {
         chat_msg.reasoning_content = Some(text);
         pending_reasoning.clear();
@@ -107,17 +89,15 @@ fn convert_line(
         chat_msg.reasoning_content = Some(pending_reasoning.join("\n"));
         pending_reasoning.clear();
     } else if !matches!(chat_msg.role, Role::Assistant) {
-        // Intervening user / tool message clears pending reasoning --
-        // matches `conversation_to_chat_messages` (attaches to the
-        // immediately-following assistant only).
+        // An intervening user / tool message clears pending reasoning, matching `conversation_to_chat_messages`
+        // Reasoning attaches only to the immediately-following assistant
         pending_reasoning.clear();
     }
 
     Ok(Some(chat_msg))
 }
 
-/// Extract joined reasoning text from a sibling `Reasoning` JSON value.
-/// Joins `summary[].text` and `content[].text` blocks.
+/// Extract reasoning text from a sibling `Reasoning` JSON value, joining `summary[].text` and `content[].text` blocks.
 fn extract_reasoning_text(raw: &serde_json::Value) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
     if let Some(summary) = raw.get("summary").and_then(|s| s.as_array()) {
@@ -177,25 +157,22 @@ fn main() -> anyhow::Result<()> {
 }
 
 // ============================================================================
-// Tests — hardcoded JSON fixtures so schema changes in either
-// ConversationItem (v1) or ChatRequestMessage (v0) will break these.
+// Tests: hardcoded JSON fixtures so schema changes in either ConversationItem (v1) or ChatRequestMessage (v0) will break these
 // ============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Parse a single v1 JSON line, convert to v0, re-serialize, and
-    /// re-parse as v0. Returns the v0 JSON string for further assertions.
-    /// Uses a fresh empty `pending_reasoning` buffer so single-line tests
-    /// stay self-contained.
+    /// Parse a single v1 JSON line, convert to v0, re-serialize, and re-parse as v0.
+    /// Returns the v0 JSON string for further assertions.
+    /// Uses a fresh empty `pending_reasoning` buffer so single-line tests stay self-contained.
     fn convert_line_for_test(v1_json: &str) -> String {
         let mut pending = Vec::new();
         let v0 = convert_line(v1_json, &mut pending)
             .expect("convert_line should succeed")
             .expect("v1 line should produce a v0 message (not a buffered Reasoning)");
         let out = serde_json::to_string(&v0).expect("v0 should serialize");
-        // Verify the output is valid v0
         let _: ChatRequestMessage =
             serde_json::from_str(&out).expect("v0 output should round-trip");
         out
@@ -210,8 +187,11 @@ mod tests {
         let v1 = r#"{"type":"system","content":"You are a helpful assistant."}"#;
         let out = convert_line_for_test(v1);
         let v = v0_value(&out);
-        assert_eq!(v["role"], "system");
-        assert_eq!(v["content"], "You are a helpful assistant.");
+        assert_eq!(v.get("role").and_then(|x| x.as_str()), Some("system"));
+        assert_eq!(
+            v.get("content").and_then(|x| x.as_str()),
+            Some("You are a helpful assistant.")
+        );
     }
 
     #[test]
@@ -219,9 +199,9 @@ mod tests {
         let v1 = r#"{"type":"user","content":[{"type":"text","text":"Hello!"}]}"#;
         let out = convert_line_for_test(v1);
         let v = v0_value(&out);
-        assert_eq!(v["role"], "user");
+        assert_eq!(v.get("role").and_then(|x| x.as_str()), Some("user"));
         // v0 content must be a plain string, not an array of blocks
-        assert_eq!(v["content"], "Hello!");
+        assert_eq!(v.get("content").and_then(|x| x.as_str()), Some("Hello!"));
     }
 
     #[test]
@@ -229,10 +209,22 @@ mod tests {
         let v1 = r#"{"type":"user","content":[{"type":"text","text":"Look at this"},{"type":"image","url":"https://example.com/img.png"}]}"#;
         let out = convert_line_for_test(v1);
         let v = v0_value(&out);
-        assert_eq!(v["role"], "user");
-        let blocks = v["content"].as_array().expect("content should be array");
+        assert_eq!(v.get("role").and_then(|x| x.as_str()), Some("user"));
+        let blocks = v
+            .get("content")
+            .and_then(|c| c.as_array())
+            .expect("content should be array");
         assert_eq!(blocks.len(), 2);
-        assert_eq!(blocks[1]["image_url"]["url"], "https://example.com/img.png");
+        let Some(image) = blocks.get(1) else {
+            panic!("expected image block: {blocks:?}");
+        };
+        assert_eq!(
+            image
+                .get("image_url")
+                .and_then(|u| u.get("url"))
+                .and_then(|x| x.as_str()),
+            Some("https://example.com/img.png")
+        );
     }
 
     #[test]
@@ -240,28 +232,31 @@ mod tests {
         let v1 = r#"{"type":"assistant","content":"Hi there!","tool_calls":[]}"#;
         let out = convert_line_for_test(v1);
         let v = v0_value(&out);
-        assert_eq!(v["role"], "assistant");
-        assert_eq!(v["content"], "Hi there!");
+        assert_eq!(v.get("role").and_then(|x| x.as_str()), Some("assistant"));
+        assert_eq!(v.get("content").and_then(|x| x.as_str()), Some("Hi there!"));
     }
 
-    /// Legacy shape: `reasoning` was a field on the
-    /// assistant item. Post-refactor the field doesn't exist on
-    /// `AssistantItem`, so serde would silently drop it. We pre-extract
-    /// it from the raw JSON to preserve downstream data fidelity.
+    /// Legacy shape: `reasoning` was a field on the assistant item.
+    /// `AssistantItem` no longer has that field, so serde would silently drop it; the converter pre-extracts it from the raw JSON.
     #[test]
     fn test_assistant_with_reasoning() {
         let v1 = r#"{"type":"assistant","content":"The answer is 42.","reasoning":{"text":"Let me think..."},"tool_calls":[],"model_id":"grok-3"}"#;
         let out = convert_line_for_test(v1);
         let v = v0_value(&out);
-        assert_eq!(v["role"], "assistant");
-        assert_eq!(v["content"], "The answer is 42.");
-        assert_eq!(v["reasoning_content"], "Let me think...");
-        assert_eq!(v["model_id"], "grok-3");
+        assert_eq!(v.get("role").and_then(|x| x.as_str()), Some("assistant"));
+        assert_eq!(
+            v.get("content").and_then(|x| x.as_str()),
+            Some("The answer is 42.")
+        );
+        assert_eq!(
+            v.get("reasoning_content").and_then(|x| x.as_str()),
+            Some("Let me think...")
+        );
+        assert_eq!(v.get("model_id").and_then(|x| x.as_str()), Some("grok-3"));
     }
 
-    /// Current shape: reasoning is a sibling line
-    /// before the assistant. The downgrade buffers it and folds the
-    /// text into the next assistant's `reasoning_content`.
+    /// Current shape: reasoning is a sibling line before the assistant.
+    /// The downgrade buffers it and folds the text into the next assistant's `reasoning_content`.
     #[test]
     fn test_sibling_reasoning_folds_into_following_assistant() {
         let mut pending = Vec::new();
@@ -280,14 +275,19 @@ mod tests {
             .expect("assistant line produces a v0 message");
         let v: serde_json::Value =
             serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
-        assert_eq!(v["role"], "assistant");
-        assert_eq!(v["content"], "The answer is 42.");
-        assert_eq!(v["reasoning_content"], "Let me think...");
+        assert_eq!(v.get("role").and_then(|x| x.as_str()), Some("assistant"));
+        assert_eq!(
+            v.get("content").and_then(|x| x.as_str()),
+            Some("The answer is 42.")
+        );
+        assert_eq!(
+            v.get("reasoning_content").and_then(|x| x.as_str()),
+            Some("Let me think...")
+        );
         assert!(pending.is_empty(), "buffer must be flushed after attaching");
     }
 
-    /// Multiple sibling Reasoning lines before one assistant get joined
-    /// with newlines (matches `conversation_to_chat_messages`).
+    /// Multiple sibling Reasoning lines before one assistant get joined with newlines (matches `conversation_to_chat_messages`).
     #[test]
     fn test_multiple_sibling_reasoning_joined_into_one_assistant() {
         let mut pending = Vec::new();
@@ -305,13 +305,15 @@ mod tests {
         let a = convert_line(a_line, &mut pending).unwrap().unwrap();
         let v: serde_json::Value =
             serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
-        assert_eq!(v["reasoning_content"], "first\nsecond\nthird");
+        assert_eq!(
+            v.get("reasoning_content").and_then(|x| x.as_str()),
+            Some("first\nsecond\nthird")
+        );
         assert!(pending.is_empty());
     }
 
-    /// An intervening user / tool message clears pending reasoning --
-    /// matches the `conversation_to_chat_messages` semantic where
-    /// reasoning attaches only to the immediately-following assistant.
+    /// An intervening user / tool message clears pending reasoning, as `conversation_to_chat_messages` does.
+    /// Reasoning attaches only to the immediately-following assistant.
     #[test]
     fn test_intervening_user_clears_pending_reasoning() {
         let mut pending = Vec::new();
@@ -332,14 +334,12 @@ mod tests {
         let v: serde_json::Value =
             serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
         assert!(
-            v.get("reasoning_content").is_none() || v["reasoning_content"].is_null(),
+            v.get("reasoning_content").is_none_or(|x| x.is_null()),
             "orphan reasoning must not attach to assistant across a user turn"
         );
     }
 
-    /// Legacy assistant.reasoning field wins over buffered sibling
-    /// reasoning -- the explicit per-assistant field is the more
-    /// specific signal.
+    /// The legacy assistant.reasoning field wins over buffered sibling reasoning: the explicit per-assistant field is the more specific signal.
     #[test]
     fn test_legacy_field_overrides_buffered_sibling() {
         let mut pending = Vec::new();
@@ -351,7 +351,10 @@ mod tests {
         let a = convert_line(a_line, &mut pending).unwrap().unwrap();
         let v: serde_json::Value =
             serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
-        assert_eq!(v["reasoning_content"], "from legacy field");
+        assert_eq!(
+            v.get("reasoning_content").and_then(|x| x.as_str()),
+            Some("from legacy field")
+        );
         assert!(pending.is_empty());
     }
 
@@ -360,11 +363,27 @@ mod tests {
         let v1 = r#"{"type":"assistant","content":"","tool_calls":[{"id":"call_1","name":"bash","arguments":"{\"command\":\"ls\"}"}]}"#;
         let out = convert_line_for_test(v1);
         let v = v0_value(&out);
-        assert_eq!(v["role"], "assistant");
-        let tc = &v["tool_calls"][0];
-        assert_eq!(tc["id"], "call_1");
-        assert_eq!(tc["function"]["name"], "bash");
-        assert_eq!(tc["function"]["arguments"], r#"{"command":"ls"}"#);
+        assert_eq!(v.get("role").and_then(|x| x.as_str()), Some("assistant"));
+        let Some(tc) = v
+            .get("tool_calls")
+            .and_then(|c| c.as_array())
+            .and_then(|a| a.first())
+        else {
+            panic!("expected one tool call: {v:?}");
+        };
+        assert_eq!(tc.get("id").and_then(|x| x.as_str()), Some("call_1"));
+        assert_eq!(
+            tc.get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(|x| x.as_str()),
+            Some("bash")
+        );
+        assert_eq!(
+            tc.get("function")
+                .and_then(|f| f.get("arguments"))
+                .and_then(|x| x.as_str()),
+            Some(r#"{"command":"ls"}"#)
+        );
     }
 
     #[test]
@@ -373,20 +392,26 @@ mod tests {
             r#"{"type":"tool_result","tool_call_id":"call_1","content":"file1.txt\nfile2.txt"}"#;
         let out = convert_line_for_test(v1);
         let v = v0_value(&out);
-        assert_eq!(v["role"], "tool");
-        assert_eq!(v["tool_call_id"], "call_1");
-        assert_eq!(v["content"], "file1.txt\nfile2.txt");
+        assert_eq!(v.get("role").and_then(|x| x.as_str()), Some("tool"));
+        assert_eq!(
+            v.get("tool_call_id").and_then(|x| x.as_str()),
+            Some("call_1")
+        );
+        assert_eq!(
+            v.get("content").and_then(|x| x.as_str()),
+            Some("file1.txt\nfile2.txt")
+        );
     }
 
     #[test]
     fn test_v0_passthrough() {
-        // Already v0 — should pass through without error
+        // Already v0: it passes through without error
         let v0_input = r#"{"role":"system","content":"Hello"}"#;
         let parsed: ChatRequestMessage =
             serde_json::from_str(v0_input).expect("v0 fixture should parse as ChatRequestMessage");
         let out = serde_json::to_string(&parsed).unwrap();
         let v = v0_value(&out);
-        assert_eq!(v["role"], "system");
+        assert_eq!(v.get("role").and_then(|x| x.as_str()), Some("system"));
     }
 
     #[test]
@@ -412,11 +437,9 @@ mod tests {
         let input_path = dir.path().join("input.jsonl");
         let output_path = dir.path().join("output.jsonl");
 
-        // Write v1 input
         std::fs::write(&input_path, v1_lines.join("\n") + "\n").unwrap();
 
-        // Run the conversion logic using the same `convert_line` the
-        // binary's main loop uses, so the test exercises the real path.
+        // Run the conversion using the same `convert_line` the binary's main loop uses, so the test exercises the real path
         let reader = BufReader::new(File::open(&input_path).unwrap());
         let mut writer = BufWriter::new(File::create(&output_path).unwrap());
         let mut count = 0;
@@ -445,9 +468,8 @@ mod tests {
         }
     }
 
-    /// Full-file round trip with the new-shape sibling Reasoning lines
-    /// interleaved between turns. Verifies the binary's buffered
-    /// extraction folds correctly across the whole stream.
+    /// Full-file round trip with sibling Reasoning lines interleaved between turns.
+    /// Verifies the buffered extraction folds correctly across the whole stream.
     #[test]
     fn test_full_file_roundtrip_with_sibling_reasoning() {
         let v1_lines = [
@@ -490,14 +512,26 @@ mod tests {
         let lines: Vec<&str> = output.lines().collect();
         assert_eq!(lines.len(), 5);
 
-        let a1: serde_json::Value = serde_json::from_str(lines[2]).unwrap();
-        assert_eq!(a1["role"], "assistant");
-        assert_eq!(a1["content"], "a1");
-        assert_eq!(a1["reasoning_content"], "think 1");
+        let Some(a1_line) = lines.get(2) else {
+            panic!("expected 5 output lines: {lines:?}");
+        };
+        let a1: serde_json::Value = serde_json::from_str(a1_line).unwrap();
+        assert_eq!(a1.get("role").and_then(|x| x.as_str()), Some("assistant"));
+        assert_eq!(a1.get("content").and_then(|x| x.as_str()), Some("a1"));
+        assert_eq!(
+            a1.get("reasoning_content").and_then(|x| x.as_str()),
+            Some("think 1")
+        );
 
-        let a2: serde_json::Value = serde_json::from_str(lines[4]).unwrap();
-        assert_eq!(a2["role"], "assistant");
-        assert_eq!(a2["content"], "a2");
-        assert_eq!(a2["reasoning_content"], "think 2");
+        let Some(a2_line) = lines.get(4) else {
+            panic!("expected 5 output lines: {lines:?}");
+        };
+        let a2: serde_json::Value = serde_json::from_str(a2_line).unwrap();
+        assert_eq!(a2.get("role").and_then(|x| x.as_str()), Some("assistant"));
+        assert_eq!(a2.get("content").and_then(|x| x.as_str()), Some("a2"));
+        assert_eq!(
+            a2.get("reasoning_content").and_then(|x| x.as_str()),
+            Some("think 2")
+        );
     }
 }

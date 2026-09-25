@@ -1,12 +1,9 @@
 //! Bearer resolution for voice STT requests.
-//! The voice clients are long-lived: a single voice session opens many STT
-//! WebSocket connections over its lifetime, and an OAuth/session bearer rotates
-//! (~15 min). Capturing a token once at startup would 401 mid-session. So
-//! instead of a static `String`, the clients hold a [`SharedVoiceAuth`] and
-//! resolve a fresh bearer at the point of each connection.
+//! The voice clients are long-lived: a single voice session opens many STT WebSocket connections over its lifetime.
+//! An OAuth/session bearer rotates (~15 min), so capturing a token once at startup would 401 mid-session.
+//! Instead of a static `String`, the clients hold a [`SharedVoiceAuth`] and resolve a fresh bearer at the point of each connection.
 //!
-//! This crate stays dependency-light: it defines its own minimal async trait
-//! rather than depending on the shell's `AuthManager` / tools' `ApiKeyProvider`.
+//! This crate stays dependency-light: it defines its own minimal async trait instead of the shell's `AuthManager` or tools' `ApiKeyProvider`.
 //! The pager adapts the shell's refreshing provider onto this trait.
 
 use std::future::{Future, ready};
@@ -16,8 +13,19 @@ use std::sync::Arc;
 #[cfg(feature = "audio")]
 use crate::error::VoiceError;
 
+/// Why there is no bearer for `wss://api.x.ai/v1/stt`; neither variant is a cue to try another credential.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum VoiceAuthError {
+    #[error(
+        "voice needs an xAI credential for this account: sign in with an xAI login or set XAI_API_KEY"
+    )]
+    ForeignSession,
+    #[error("not signed in — run `grok login`, set XAI_API_KEY, or set a model api_key/env_key")]
+    NotSignedIn,
+}
+
 pub trait VoiceAuthProvider: std::fmt::Debug + Send + Sync + 'static {
-    fn bearer(&self) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>>;
+    fn bearer(&self) -> Pin<Box<dyn Future<Output = Result<String, VoiceAuthError>> + Send + '_>>;
 }
 
 /// Shared provider handed to the voice pipeline.
@@ -25,18 +33,13 @@ pub type SharedVoiceAuth = Arc<dyn VoiceAuthProvider>;
 
 #[cfg(feature = "audio")]
 pub(crate) async fn require_bearer(auth: &SharedVoiceAuth) -> Result<String, VoiceError> {
-    auth.bearer().await.ok_or_else(|| {
-        VoiceError::Auth(
-            "not signed in — run `grok login`, set XAI_API_KEY, or set a model api_key/env_key"
-                .into(),
-        )
-    })
+    auth.bearer()
+        .await
+        .map_err(|error| VoiceError::Auth(error.to_string()))
 }
 
 /// A fixed bearer that never refreshes.
-///
-/// Used by the standalone `voice-probe` binary and tests, where there is no
-/// `AuthManager` — only a raw `XAI_API_KEY`.
+/// Used by the standalone `voice-probe` binary and tests, where there is no `AuthManager`, only a raw `XAI_API_KEY`.
 pub struct StaticVoiceAuth(pub String);
 
 impl std::fmt::Debug for StaticVoiceAuth {
@@ -48,14 +51,13 @@ impl std::fmt::Debug for StaticVoiceAuth {
 }
 
 impl VoiceAuthProvider for StaticVoiceAuth {
-    fn bearer(&self) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
-        Box::pin(ready(Some(self.0.clone())))
+    fn bearer(&self) -> Pin<Box<dyn Future<Output = Result<String, VoiceAuthError>> + Send + '_>> {
+        Box::pin(ready(Ok(self.0.clone())))
     }
 }
 
 impl StaticVoiceAuth {
-    /// Build a [`SharedVoiceAuth`] from a static key, trimming whitespace and
-    /// rejecting an empty value.
+    /// Build a [`SharedVoiceAuth`] from a static key, trimming whitespace and rejecting an empty value.
     pub fn shared(key: impl Into<String>) -> Option<SharedVoiceAuth> {
         let key = key.into().trim().to_string();
         if key.is_empty() {
@@ -72,7 +74,7 @@ mod tests {
     #[tokio::test]
     async fn static_provider_resolves() {
         let provider = StaticVoiceAuth::shared("  sk-test  ").unwrap();
-        assert_eq!(provider.bearer().await.as_deref(), Some("sk-test"));
+        assert_eq!(provider.bearer().await.as_deref(), Ok("sk-test"));
     }
 
     #[test]

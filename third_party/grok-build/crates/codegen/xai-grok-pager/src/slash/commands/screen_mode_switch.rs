@@ -1,25 +1,22 @@
-//! `/minimal` and `/fullscreen` — session-scoped re-exec of the active session.
+//! `/minimal` and `/fullscreen`: session-scoped in-process screen-mode switch, performed by the event loop via `app::mode_switch`.
 
 use crate::app::actions::Action;
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
 use crate::slash::{ModeSupport, Remedy};
 
-/// Reopen the active session in the other screen mode (`/minimal` ⇄ `/fullscreen`).
+/// Reopen the active session in the other screen mode (`/minimal` or `/fullscreen`).
 pub struct ScreenModeSwitchCommand {
-    /// `true` → `/minimal` (fullscreen → scrollback-native);
-    /// `false` → `/fullscreen` (minimal → alt-screen TUI).
+    /// `true` means `/minimal` (fullscreen to scrollback-native); `false` means `/fullscreen` (minimal to alt-screen TUI).
     to_minimal: bool,
 }
 
 impl ScreenModeSwitchCommand {
-    /// `/minimal`: offered in the full TUI (alt-screen or `--no-alt-screen`
-    /// inline), relaunches with `--minimal`.
+    /// `/minimal`: offered in the full TUI (alt-screen or `--no-alt-screen` inline), switches this session to scrollback-native rendering.
     pub const fn minimal() -> Self {
         Self { to_minimal: true }
     }
 
-    /// `/fullscreen` (alias `/full`): offered in minimal, relaunches without
-    /// `--minimal`.
+    /// `/fullscreen` (alias `/full`): offered in minimal, switches this session to the alt-screen TUI.
     pub const fn fullscreen() -> Self {
         Self { to_minimal: false }
     }
@@ -44,9 +41,9 @@ impl SlashCommand for ScreenModeSwitchCommand {
 
     fn description(&self) -> &str {
         if self.to_minimal {
-            "Reopen this session in minimal (scrollback-native) mode — switch back with /fullscreen"
+            "Switch this session to minimal (scrollback-native) mode, back with /fullscreen"
         } else {
-            "Reopen this session in fullscreen mode — switch back with /minimal"
+            "Switch this session to fullscreen mode, back with /minimal"
         }
     }
 

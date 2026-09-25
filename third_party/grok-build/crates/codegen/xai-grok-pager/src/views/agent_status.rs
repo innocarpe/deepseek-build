@@ -1,15 +1,12 @@
-//! Agent status bar — composable right-aligned status items with separators.
-//!
-//! Provides [`AgentStatusBar`] which collects items as `Line<'static>` spans,
-//! lays them out right-aligned with dim `│` separators, and renders into a
-//! buffer row.  Returns hit-test areas keyed by item ID.
+//! [`AgentStatusBar`] collects items as `Line<'static>` spans, lays them out right-aligned with faint `│` separators, and renders into a buffer row.
+//! Returns hit-test areas keyed by item ID.
 //!
 //! # Example
 //!
 //! ```ignore
 //! let mut status = AgentStatusBar::new(&theme);
 //! status.push("context", context_line);
-//! status.push("badge", badge_line);
+//! status.push("queue", queue_line);
 //! let areas = status.render(buf, status_bar_rect);
 //! let context_area = areas.get("context");
 //! ```
@@ -26,10 +23,11 @@ use super::turn_status::SPINNER_DIVISOR;
 use crate::app::agent::{GoalDisplayPhase, GoalDisplayState, GoalDisplayStatus};
 use crate::app::agent_view::McpInitProgress;
 use crate::theme::Theme;
+use crate::views::tasks_pane::TaskStatusCounts;
 
 /// A named status bar item.
 struct StatusEntry {
-    /// Identifier for hit-test lookup (e.g., "context", "badge").
+    /// Identifier for hit-test lookup (e.g., "context", "queue").
     id: &'static str,
     /// Pre-built styled content.
     line: Line<'static>,
@@ -39,8 +37,7 @@ struct StatusEntry {
 
 /// Builder for the agent status bar.
 ///
-/// Collect items with [`push`], then call [`render`] to lay them out
-/// right-aligned with separators and get back hit-test areas.
+/// Collect items with [`push`], then call [`render`] to lay them out right-aligned with separators and get back hit-test areas.
 pub struct AgentStatusBar<'a> {
     items: Vec<StatusEntry>,
     theme: &'a Theme,
@@ -49,7 +46,6 @@ pub struct AgentStatusBar<'a> {
 }
 
 impl<'a> AgentStatusBar<'a> {
-    /// Create a new empty status bar.
     pub fn new(theme: &'a Theme) -> Self {
         Self {
             items: Vec::new(),
@@ -58,53 +54,52 @@ impl<'a> AgentStatusBar<'a> {
         }
     }
 
-    /// Add an item to the status bar.
-    ///
-    /// Items are rendered left-to-right in push order, but the entire
-    /// group is right-aligned within the status bar area.
+    /// Items are rendered left-to-right in push order, but the entire group is right-aligned within the status bar area.
     pub fn push(&mut self, id: &'static str, line: Line<'static>) {
         let width = line.width() as u16;
         self.items.push(StatusEntry { id, line, width });
     }
 
-    /// Build a separator span: ` │ ` in dim color.
-    fn separator(&self) -> Span<'static> {
-        Span::styled(
-            format!(" {SEPARATOR} "),
-            Style::default()
-                .fg(self.theme.gray_dim)
-                .bg(self.theme.bg_base),
-        )
+    /// Prepend an item sized with [`Self::room_for_front`], so it can never push the items already pushed off the row.
+    pub fn push_front(&mut self, id: &'static str, line: Line<'static>) {
+        let width = line.width() as u16;
+        self.items.insert(0, StatusEntry { id, line, width });
     }
 
-    /// Render all items right-aligned into the given area.
-    ///
-    /// Layout: `··· item0 │ item1 │ item2` — separators appear only *between*
-    /// items, never before the first or after the last.
-    ///
-    /// Returns a map of item ID → screen `Rect` for hit-testing.
+    /// Columns a prepended item may take in a row `area_width` wide: what the current group and its joining separator leave.
+    pub fn room_for_front(&self, area_width: u16) -> u16 {
+        let joining_sep = if self.items.is_empty() {
+            0
+        } else {
+            SEPARATOR_WIDTH
+        };
+        area_width.saturating_sub(self.right_pad + self.width() + joining_sep)
+    }
+
+    /// Columns the group occupies: items plus the separators between them.
+    fn width(&self) -> u16 {
+        let items: u16 = self.items.iter().map(|e| e.width).sum();
+        let seps = (self.items.len() as u16).saturating_sub(1);
+        items + seps * SEPARATOR_WIDTH
+    }
+
+    /// Render all items right-aligned into the given area. Layout: `··· item0 │ item1 │ item2`;
+    /// separators appear only between items, never before the first or after the last. Returns a map
+    /// from item ID to screen `Rect` for hit-testing.
     pub fn render(self, buf: &mut Buffer, area: Rect) -> HashMap<&'static str, Rect> {
         if area.height == 0 || area.width == 0 || self.items.is_empty() {
             return HashMap::new();
         }
 
-        // Fill background
         buf.set_style(area, Style::default().bg(self.theme.bg_base));
 
-        let sep = self.separator();
-        let sep_w = sep.width() as u16; // 3
-
-        // Total width: items plus the separators *between* them only — no
-        // leading separator before the first item or trailing one after the
-        // last.
-        let items_width: u16 = self.items.iter().map(|e| e.width).sum();
-        let num_seps = (self.items.len() as u16).saturating_sub(1);
-        let total_width = items_width + num_seps * sep_w;
+        let sep = separator(self.theme);
+        let sep_w = SEPARATOR_WIDTH;
 
         // Right-align: compute starting x
         let start_x = area
             .x
-            .saturating_add(area.width.saturating_sub(self.right_pad + total_width));
+            .saturating_add(area.width.saturating_sub(self.right_pad + self.width()));
 
         let mut x = start_x;
         let mut areas = HashMap::new();
@@ -134,9 +129,57 @@ impl<'a> AgentStatusBar<'a> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Goal status line
-// ---------------------------------------------------------------------------
+/// ` │ ` a step fainter than the chips it divides — the divider between status-bar items and between the header's title and
+/// location.
+pub(crate) fn separator(theme: &Theme) -> Span<'static> {
+    Span::styled(format!(" {SEPARATOR} "), theme.faint().bg(theme.bg_base))
+}
+
+/// Display width of [`separator`].
+const SEPARATOR_WIDTH: u16 = 3;
+
+pub(crate) fn task_status_line(
+    counts: TaskStatusCounts,
+    theme: &Theme,
+    is_hovered: bool,
+) -> Option<Line<'static>> {
+    if counts == TaskStatusCounts::default() {
+        return None;
+    }
+
+    let hover = if is_hovered {
+        ratatui::style::Modifier::BOLD
+    } else {
+        ratatui::style::Modifier::empty()
+    };
+    let running_style = Style::default()
+        .fg(theme.accent_running)
+        .bg(theme.bg_base)
+        .add_modifier(hover);
+    let paused_style = Style::default()
+        .fg(theme.warning)
+        .bg(theme.bg_base)
+        .add_modifier(hover);
+    let mut spans = Vec::with_capacity(2);
+
+    if counts.running > 0 {
+        // Static, and the same diamond the task rows use
+        // The header sits in view the whole session, so a spinner here reads as noise rather than progress
+        spans.push(Span::styled(
+            format!("{} {}", crate::glyphs::diamond_filled(), counts.running),
+            running_style,
+        ));
+    }
+    if counts.paused_workflows > 0 {
+        let prefix = if counts.running > 0 { "  " } else { "" };
+        spans.push(Span::styled(
+            format!("{prefix}P {}", counts.paused_workflows),
+            paused_style,
+        ));
+    }
+
+    Some(Line::from(spans))
+}
 
 /// Format a token count compactly: `500`, `1.5k`, `50k`, `1.5M`.
 pub(crate) fn format_tokens_compact(tokens: i64) -> String {
@@ -165,9 +208,9 @@ fn format_elapsed_compact(ms: u64) -> String {
     }
 }
 
-/// Build the status-chip label. Paused variants render their
-/// `pause_label()`, Budget → "Budget", Done → "Done"; an Active goal
-/// uses the shared [`active_phase_label`] suffix.
+/// Build the status-chip label.
+/// Paused variants render their `pause_label()`, Budget renders "Budget", Done renders "Done".
+/// An Active goal uses the shared [`active_phase_label`] suffix.
 fn goal_phase_label(goal: &GoalDisplayState) -> String {
     match goal.status {
         GoalDisplayStatus::UserPaused
@@ -183,15 +226,12 @@ fn goal_phase_label(goal: &GoalDisplayState) -> String {
     }
 }
 
-/// Live phase suffix for an Active goal — the single source of truth
-/// shared by the status chip and the goal-detail modal so they cannot
-/// disagree. The transient `verifying_completion` overlay wins, then
-/// `planning`, then the steady-state phase.
+/// Live phase suffix for an Active goal, shared by the status chip and the goal-detail modal so they cannot disagree.
+/// The transient `verifying_completion` overlay wins, then `planning`, then the steady-state phase.
 pub fn active_phase_label(goal: &GoalDisplayState) -> String {
     if goal.verifying_completion {
         let attempts = classifier_attempts_label(goal);
-        // Omit the "(n/m)" suffix until the first counter arrives so the
-        // chip reads "Verifying" instead of a confusing "Verifying (0/0)".
+        // Omit the "(n/m)" suffix until the first counter arrives so the chip reads "Verifying" instead of a confusing "Verifying (0/0)"
         return if attempts.is_empty() {
             "Verifying".into()
         } else {
@@ -208,12 +248,9 @@ pub fn active_phase_label(goal: &GoalDisplayState) -> String {
     }
 }
 
-/// Format the classifier "attempts: n/m" counter for both the
-/// status chip and the modal so the two displays cannot drift.
-/// Returns the empty string when both fields are absent / zero — no
-/// classifier run has been reserved yet, so there is no meaningful
-/// counter. Callers render it only when non-empty: the chip drops the
-/// `(n/m)` suffix, the modal falls back to an em-dash.
+/// Format the classifier "attempts: n/m" counter for both the status chip and the modal so the two displays cannot drift.
+/// Returns the empty string when both fields are absent / zero: no classifier run has been reserved yet, so there is no meaningful counter.
+/// Callers render it only when non-empty: the chip drops the `(n/m)` suffix, the modal falls back to a hyphen.
 pub fn classifier_attempts_label(goal: &GoalDisplayState) -> String {
     let attempt = goal.classifier_runs_attempted.unwrap_or(0);
     let max = goal.classifier_max_runs.unwrap_or(0);
@@ -223,13 +260,9 @@ pub fn classifier_attempts_label(goal: &GoalDisplayState) -> String {
     format!("{attempt}/{max}")
 }
 
-/// Build a compact goal status `Line` for the agent status bar.
-///
-/// Format: `[Goal: {label}]  {tokens}  {elapsed}`
-///
-/// When `hovered` is true the label is bolded/underlined to signal
-/// clickability.  When the goal is `Active`, a braille spinner driven
-/// by `tick` is prepended.
+/// Build a compact goal status `Line` for the agent status bar. Format: `[Goal: {label}] {tokens}
+/// {elapsed}`. When `hovered` is true the label is bolded/underlined to signal clickability. When
+/// the goal is `Active`, a braille spinner driven by `tick` is prepended.
 pub fn goal_status_line(
     goal: &GoalDisplayState,
     theme: &Theme,
@@ -252,8 +285,7 @@ pub fn goal_status_line(
     let elapsed_str = format_elapsed_compact(goal.live_elapsed_ms());
 
     let dim_style = Style::default().fg(theme.gray_dim).bg(theme.bg_base);
-    // Paused goals use an inverted warning-colour chip so the chip background
-    // visually matches the modal's `theme.warning` status row.
+    // Paused goals use an inverted warning-colour chip so the chip background visually matches the modal's `theme.warning` status row
     let mut label_style = if goal.status.is_paused() {
         Style::default().fg(theme.bg_base).bg(theme.warning)
     } else if matches!(
@@ -276,7 +308,7 @@ pub fn goal_status_line(
     let chip_name = "Goal";
     let goal_text = if is_active {
         let frames = crate::glyphs::dot_spinner_frames();
-        let frame = frames[(tick / 4) % frames.len()];
+        let frame = frames.get((tick / 4) % frames.len()).copied().unwrap_or("");
         format!("{frame} {chip_name}: {label}")
     } else {
         format!("{chip_name}: {label}")
@@ -290,21 +322,8 @@ pub fn goal_status_line(
     ])
 }
 
-// ---------------------------------------------------------------------------
-// MCP connecting indicator
-// ---------------------------------------------------------------------------
-
-/// Build the compact MCP-connecting indicator for the agent status bar.
-///
-/// Format: `⠋ MCP (1/4)` — a braille spinner (driven by `tick`, same cadence as
-/// the turn-status spinner) followed by the connected/total server count.
-/// Rendered in `theme.gray_dim` so it reads as dim, matching the directory path
-/// shown on the same row.
-///
-/// Returns `None` while `progress.total == 0` (a startup seed). That state
-/// renders `⠋ Starting session…` above the prompt (see
-/// [`crate::views::turn_status`]) rather than as a chip here — the top-bar chip
-/// only shows real server counts once the shell reports `total > 0`.
+/// The chip shows real server counts only. "Starting session…" is the turn-status row's job
+/// (see [`crate::views::turn_status`]).
 pub fn mcp_status_line(
     progress: &McpInitProgress,
     tick: u64,
@@ -317,7 +336,10 @@ pub fn mcp_status_line(
     let frame_idx = (tick / SPINNER_DIVISOR) as usize % frames.len();
     let style = Style::default().fg(theme.gray_dim).bg(theme.bg_base);
     Some(Line::from(vec![
-        Span::styled(format!("{} ", frames[frame_idx]), style),
+        Span::styled(
+            format!("{} ", frames.get(frame_idx).copied().unwrap_or("")),
+            style,
+        ),
         Span::styled(
             format!("MCP ({}/{})", progress.connected, progress.total),
             style,
@@ -358,6 +380,10 @@ pub fn format_cache_hit_pct(cached_read_tokens: u64, input_tokens: u64) -> Optio
     let pct = (cached as f64 / input_tokens as f64) * 100.0;
     Some(format!("cache {pct:.0}%"))
 }
+
+#[cfg(test)]
+#[path = "agent_status_task_tests.rs"]
+mod task_tests;
 
 #[cfg(test)]
 mod tests {
@@ -514,10 +540,8 @@ mod tests {
 
     #[test]
     fn status_chip_shows_verifying_completion_when_flag_set() {
-        // Status-chip behaviour: an Active goal with
-        // `verifying_completion = true` renders the "Verifying (n/m)"
-        // label instead of the regular phase label so the user can see
-        // the classifier run.
+        // An Active goal with `verifying_completion = true` renders the "Verifying (n/m)" label instead of the regular phase label
+        // The user can then see the classifier run
         let mut g = make_goal(
             GoalDisplayStatus::Active,
             GoalDisplayPhase::Executing,
@@ -538,8 +562,7 @@ mod tests {
 
     #[test]
     fn status_chip_verifying_omits_counter_when_counts_absent() {
-        // Before the first counter arrives (both fields None) the chip reads
-        // "Verifying", not "Verifying (0/0)".
+        // Before the first counter arrives (both fields None) the chip reads "Verifying", not "Verifying (0/0)"
         let mut g = make_goal(
             GoalDisplayStatus::Active,
             GoalDisplayPhase::Executing,
@@ -562,7 +585,7 @@ mod tests {
             0,
             0,
         );
-        // Both None → empty (no run reserved yet).
+        // Both None gives empty (no run reserved yet)
         assert_eq!(classifier_attempts_label(&g), "");
         // Explicit zeros also count as "no counter".
         g.classifier_runs_attempted = Some(0);
@@ -577,9 +600,8 @@ mod tests {
 
     #[test]
     fn live_elapsed_ms_clamps_to_carried_floor() {
-        // The displayed clock must never tick below the carried monotonic
-        // floor, even when the latest authoritative base is lower (the
-        // pager's extrapolation outran the shell's flush point).
+        // The displayed clock must never tick below the carried monotonic floor, even when the latest authoritative base is lower
+        // (The pager's extrapolation outran the shell's flush point.)
         let mut g = make_goal(
             GoalDisplayStatus::UserPaused,
             GoalDisplayPhase::Idle,
@@ -608,9 +630,8 @@ mod tests {
 
     #[test]
     fn status_chip_shows_planning_when_flag_set() {
-        // An Active goal with `planning = true` renders the "Planning"
-        // label instead of the regular phase label so the user can see
-        // the planner subagent run while it executes.
+        // An Active goal with `planning = true` renders the "Planning" label instead of the regular phase label
+        // The user can see the planner subagent run while it executes
         let mut g = make_goal(
             GoalDisplayStatus::Active,
             GoalDisplayPhase::Idle,
@@ -629,8 +650,7 @@ mod tests {
 
     #[test]
     fn status_chip_verifying_wins_over_planning() {
-        // Deterministic precedence: the two flags never overlap in
-        // practice, but if both were set `verifying_completion` wins.
+        // Deterministic precedence: the two flags never overlap in practice, but if both were set `verifying_completion` wins
         let mut g = make_goal(
             GoalDisplayStatus::Active,
             GoalDisplayPhase::Idle,
@@ -647,9 +667,8 @@ mod tests {
 
     #[test]
     fn status_chip_planning_suppressed_on_non_active_status() {
-        // The "Planning" label is gated on `Active`: a paused goal that
-        // somehow still carries `planning = true` shows its terminal
-        // label, not the in-flight one.
+        // The "Planning" label is gated on `Active`
+        // A paused goal that somehow still carries `planning = true` shows its terminal label, not the in-flight one
         let mut g = make_goal(
             GoalDisplayStatus::UserPaused,
             GoalDisplayPhase::Idle,
@@ -663,10 +682,9 @@ mod tests {
 
     #[test]
     fn status_chip_verifying_suppressed_on_non_active_status() {
-        // The chip text is gated on `Active`: a paused / complete /
-        // budget-limited goal that somehow still carries
-        // `verifying_completion = true` must show its terminal label,
-        // not the in-flight one.
+        // The chip text is gated on `Active`
+        // A paused, complete, or budget-limited goal can still carry `verifying_completion = true`
+        // It must show its terminal label, not the in-flight one
         let mut g = make_goal(
             GoalDisplayStatus::UserPaused,
             GoalDisplayPhase::Executing,
@@ -680,15 +698,7 @@ mod tests {
 
     #[test]
     fn goal_line_paused_chip_uses_warning_background() {
-        // Paused chips render with the
-        // `theme.warning` background to visually warn the user. Pin the
-        // background colour on the label span so a regression that drops
-        // the chip-vs-modal colour alignment gets caught.
-        //
-        // Use the unquantized `groknight()` theme directly so warning and
-        // bg_base remain distinguishable in the test env — `Theme::current()`
-        // collapses both to ANSI `Reset` on 16-colour terminals, which
-        // would defeat the assertion.
+        // Paused chips render with the `theme.warning` background to visually warn the user.
         let g = make_goal(
             GoalDisplayStatus::UserPaused,
             GoalDisplayPhase::Executing,
@@ -710,8 +720,7 @@ mod tests {
 
     #[test]
     fn goal_line_active_chip_does_not_use_warning_background() {
-        // Negative companion: an Active goal must keep the standard
-        // accent-plan-on-bg-base chip style.
+        // Negative companion: an Active goal must keep the standard accent-plan-on-bg-base chip style
         let g = make_goal(
             GoalDisplayStatus::Active,
             GoalDisplayPhase::Executing,
@@ -790,9 +799,6 @@ mod tests {
         assert_eq!(goal_phase_label(&g), "Executing");
     }
 
-    // The old deliverable-index parity test is removed because deliverables
-    // are no longer part of the simplified goal model.
-
     #[test]
     fn goal_line_contains_expected_text() {
         let g = make_goal(
@@ -851,7 +857,6 @@ mod tests {
         let progress = McpInitProgress {
             total: 4,
             connected: 1,
-            started_at: std::time::Instant::now(),
         };
         let t = Theme::current();
         let line = mcp_status_line(&progress, 0, &t).expect("total > 0 must render a line");
@@ -869,7 +874,6 @@ mod tests {
         let progress = McpInitProgress {
             total: 2,
             connected: 0,
-            started_at: std::time::Instant::now(),
         };
         let line = mcp_status_line(&progress, 0, &t).expect("total > 0 must render a line");
         for span in &line.spans {
@@ -883,19 +887,16 @@ mod tests {
 
     #[test]
     fn mcp_status_line_hidden_for_zero_total() {
-        // total == 0 (startup seed) renders nothing in the top bar — that state
-        // shows "Starting session…" above the prompt instead.
+        // A 0-server report renders no chip
         let progress = McpInitProgress {
             total: 0,
             connected: 0,
-            started_at: std::time::Instant::now(),
         };
         let t = Theme::current();
         assert!(mcp_status_line(&progress, 0, &t).is_none());
     }
 
-    /// Separators appear only *between* items — never before the first item or
-    /// after the last (no leading/trailing divider).
+    /// Separators appear only *between* items, never before the first item or after the last (no leading/trailing divider).
     #[test]
     fn status_bar_separators_only_between_items() {
         let theme = Theme::current();
@@ -908,7 +909,9 @@ mod tests {
         let mut buf = Buffer::empty(area);
         bar.render(&mut buf, area);
 
-        let row: String = (0..area.width).map(|x| buf[(x, 0)].symbol()).collect();
+        let row: String = (0..area.width)
+            .filter_map(|x| buf.cell((x, 0)).map(|c| c.symbol()))
+            .collect();
         let trimmed = row.trim();
 
         // Exactly two dividers (between the three items), none at the ends.
@@ -924,8 +927,7 @@ mod tests {
         assert_eq!(trimmed, format!("AA {SEPARATOR} BB {SEPARATOR} CC"));
     }
 
-    /// A single item renders with no separators at all (it is both first and
-    /// last).
+    /// A single item renders with no separators at all (it is both first and last).
     #[test]
     fn status_bar_single_item_has_no_separators() {
         let theme = Theme::current();
@@ -936,7 +938,9 @@ mod tests {
         let mut buf = Buffer::empty(area);
         bar.render(&mut buf, area);
 
-        let row: String = (0..area.width).map(|x| buf[(x, 0)].symbol()).collect();
+        let row: String = (0..area.width)
+            .filter_map(|x| buf.cell((x, 0)).map(|c| c.symbol()))
+            .collect();
         assert_eq!(row.trim(), "XX");
         assert!(!row.contains(SEPARATOR));
     }

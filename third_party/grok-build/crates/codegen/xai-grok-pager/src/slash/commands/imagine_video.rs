@@ -4,39 +4,21 @@ use xai_grok_tools::implementations::grok_build::{
     imagine_video_usage_message,
 };
 
-use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
+use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand, slash_meta};
 
 const REQUIRED_TOOLS: &[&str] = &[IMAGE_TO_VIDEO_TOOL_NAME];
 
 pub struct ImagineVideoCommand;
 
 impl SlashCommand for ImagineVideoCommand {
-    fn name(&self) -> &str {
-        IMAGINE_VIDEO_COMMAND_NAME
-    }
-
-    fn description(&self) -> &str {
-        "Generate a video from a text description"
-    }
-
-    fn usage(&self) -> &str {
-        "/imagine-video <description>"
-    }
-
-    fn takes_args(&self) -> bool {
-        true
-    }
-
-    fn args_required(&self) -> bool {
-        true
-    }
-
-    fn arg_placeholder(&self) -> Option<&str> {
-        Some("description of the video to generate")
-    }
-
-    fn required_tools(&self) -> &[&str] {
-        REQUIRED_TOOLS
+    slash_meta! {
+        name: IMAGINE_VIDEO_COMMAND_NAME,
+        description: "Generate a video from a text description",
+        usage: "/imagine-video <description>",
+        takes_args: true,
+        args_required: true,
+        arg_placeholder: "description of the video to generate",
+        required_tools: REQUIRED_TOOLS,
     }
 
     fn run(&self, _ctx: &mut CommandExecCtx, args: &str) -> CommandResult {
@@ -96,10 +78,10 @@ mod tests {
                 assert_eq!(display_text, "/imagine-video a cat playing piano");
                 assert!(!display_as_skill);
                 assert_eq!(prompt_blocks.len(), 1);
-                let text = match &prompt_blocks[0] {
-                    acp::ContentBlock::Text(t) => &t.text,
-                    _ => panic!("expected Text block"),
+                let [acp::ContentBlock::Text(t)] = prompt_blocks.as_slice() else {
+                    panic!("expected Text block, got {prompt_blocks:?}");
                 };
+                let text = &t.text;
                 assert!(
                     text.contains("image_to_video"),
                     "skill should reference image_to_video"

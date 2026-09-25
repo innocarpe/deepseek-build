@@ -8,25 +8,21 @@ description = "Core host-local workspace library (FS, VCS, execution, discovery)
 [dependencies]
 anyhow = { workspace = true }
 arc-swap = { workspace = true }
-# Diagnostics HTTP server (in-guest readiness/status endpoint); pinned to the
-# workspace version already used by the sibling preview proxy.
-axum = { workspace = true }
 dunce = { workspace = true }
 xai-grok-version = { workspace = true }
 async-stream = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 fs2 = { workspace = true }
-dirs = "6"
 parking_lot = { workspace = true }
 git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2"] }
 ignore = { workspace = true }
-md5 = { workspace = true }
 regex = { workspace = true }
-rusqlite = { version = "0.37", features = ["bundled"] }
+rand = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+strum = { workspace = true }
 tokio = { workspace = true, features = [
     "fs",
     "io-std",
@@ -42,9 +38,15 @@ uuid = { workspace = true, features = ["v4", "v5", "v7"] }
 xai-grok-agent = { path = "../xai-grok-agent" }
 xai-grok-tools = { path = "../xai-grok-tools" }
 xai-grok-tools-api = { path = "../xai-grok-tools-api" }
+# `DiagHandle`, held by the hub config and threaded through `connect_hub`.
+xai-grok-diag-server = { workspace = true }
 xai-grok-workspace-client = { path = "../xai-grok-workspace-client" }
+# Daemon/process-lifecycle machinery for `bin/workspace_server.rs` only; the
+# library never references it.
+xai-grok-workspace-daemon = { path = "../xai-grok-workspace-daemon" }
 xai-grok-workspace-types = { path = "../xai-grok-workspace-types" }
 xai-grok-config = { workspace = true }
+xai-dirs = { workspace = true }
 # Leaf config value types (RemoteSettings, BoolFlag) for the folder-trust decision.
 xai-grok-config-types = { workspace = true }
 toml = { workspace = true, features = ["preserve_order"] }
@@ -60,11 +62,12 @@ bstr = "1.12.1"
 hashbrown = "0.16.1"
 nohash-hasher = "0.2.0"
 rustc-hash = "2.1.1"
-nucleo = { workspace = true }
+# Backs `file_system`'s fuzzy path picker (matcher + background daemon).
+xai-fuzzy-file-search = { workspace = true }
 indexmap = { workspace = true, features = ["serde"] }
 smallvec = { workspace = true }
 chrono = { workspace = true }
-tree-sitter = "0.25.10"
+tree-sitter = { workspace = true }
 tree-sitter-bash = "0.25"
 url = { workspace = true }
 xai-grok-env = { workspace = true }
@@ -80,10 +83,10 @@ xai-computer-hub-sdk = { workspace = true, features = ["metrics"] }
 xai-computer-hub-mcp-adapter = { path = "../../common/xai-computer-hub-mcp-adapter" }
 xai-grok-mcp = { path = "../xai-grok-mcp" }
 xai-file-utils = { path = "../xai-file-utils" }
+xai-grok-session-events = { workspace = true }
 xai-grok-auth = { path = "../xai-grok-auth" }
 xai-grok-telemetry = { workspace = true }
 xai-tty-utils = { workspace = true }
-xai-sqlite-journal = { workspace = true }
 reqwest = { workspace = true }
 xai-tool-protocol = { workspace = true }
 xai-tool-runtime = { workspace = true }
@@ -102,22 +105,19 @@ tracing-subscriber = { workspace = true }
 # "enable" required for the SDK's spans to record at all.
 fastrace = { workspace = true, features = ["enable"] }
 xai-tracing = { workspace = true }
-rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+xai-grok-extra-ca = { workspace = true }
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 tempfile = { workspace = true }
 zstd = { workspace = true }
 wait-timeout = { workspace = true }
 
-# Only referenced by the Unix self-daemonize path (fork/setsid/dup2/chdir).
+# Raw fd/dirent/poll calls in foreign-session capability probes, the fuzzy
+# walker's rlimit guard, and the envrc reader.
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
 
 [target.'cfg(unix)'.dev-dependencies]
 nix = { workspace = true, features = ["signal", "process"] }
-
-# Only referenced by the Windows self-daemonize path (SetStdHandle).
-[target.'cfg(windows)'.dependencies]
-windows = { workspace = true }
 
 [[bin]]
 name = "xai-workspace-server"
@@ -131,14 +131,15 @@ path = "src/bin/workspace_server_probe.rs"
 default = ["sandbox-enforce"]
 compression = []
 test-support = []
+test-util = []
 sandbox-enforce = ["xai-grok-sandbox/enforce"]
 default-bazel = [
     "sandbox-enforce",
     ]
 
 [dev-dependencies]
-filetime = { workspace = true }
 tempfile = { workspace = true }
+axum = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 xai-test-utils = { path = "../../common/xai-test-utils" }
 # Decode tar.gz archives produced by workspace upload helpers in tests.

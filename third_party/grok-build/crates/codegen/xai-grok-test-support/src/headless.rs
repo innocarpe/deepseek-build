@@ -1,6 +1,4 @@
 //! Headless mode (`grok -p`) test runner.
-//!
-//! Runs the grok binary as a subprocess with the mock server, captures output.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
@@ -18,21 +16,19 @@ pub struct HeadlessResult {
     pub stdout: String,
     pub stderr: String,
     pub timed_out: bool,
-    /// Wall time of the headless command invocation; logged so CI timeout
-    /// budgets can be tuned against observed durations.
+    /// Wall time of the headless command invocation; logged so CI timeout budgets can be tuned against observed durations.
     pub elapsed: Duration,
 }
 
-/// Timeout for one headless grok invocation: 60 seconds, multiplied by
-/// [`crate::scaled`]'s `GROK_TEST_TIMEOUT_SCALE`.
+/// Timeout for one headless grok invocation: 60 seconds, multiplied by [`crate::scaled`]'s `GROK_TEST_TIMEOUT_SCALE`.
 fn headless_timeout() -> Duration {
     crate::scaled(Duration::from_secs(60))
 }
 
 const HEADLESS_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Run `grok` with the given args against the mock server, bounded by the
-/// scaled headless timeout. Uses an isolated HOME and disables telemetry.
+/// Run `grok` with the given args against the mock server, bounded by the scaled headless timeout.
+/// Uses an isolated HOME and disables telemetry.
 pub async fn run_headless(
     server: &MockInferenceServer,
     args: &[&str],
@@ -41,16 +37,19 @@ pub async fn run_headless(
     run_headless_with_env(server, args, cwd, &[]).await
 }
 
-/// Like [`run_headless`], but with extra environment variables applied after the
-/// sandbox baseline so they take precedence — e.g. to re-enable a feature the
-/// baseline turns off.
+/// Like [`run_headless`], but with extra environment variables applied after the sandbox baseline so they take precedence.
+/// Example: re-enable a feature the baseline turns off.
 pub async fn run_headless_with_env(
     server: &MockInferenceServer,
     args: &[&str],
     cwd: &Path,
     env: &[(&str, &str)],
 ) -> HeadlessResult {
-    let sandbox = TestSandbox::builder().mock_url(server.url()).build();
+    let mut sandbox = TestSandbox::builder().mock_url(server.url()).build();
+    // The baseline clears the env, so this is the child's only route to trusting the throwaway CA.
+    if let Some(ca_pem) = server.ca_pem_path() {
+        sandbox.set_env("GROK_EXTRA_CA_BUNDLE", ca_pem);
+    }
     let mut cmd = tokio::process::Command::new(grok_binary());
     cmd.args(args).current_dir(cwd);
     run_headless_with_cmd_and_sandbox(cmd, &sandbox, env).await
@@ -72,8 +71,7 @@ pub async fn run_headless_in_sandbox_with_env(
     run_headless_in_sandbox_borrowed_with_env(cmd, &sandbox, overrides).await
 }
 
-/// Run a custom headless command while leaving the caller's sandbox available
-/// for post-run artifact inspection.
+/// Run a custom headless command while leaving the caller's sandbox available for post-run artifact inspection.
 pub async fn run_headless_in_sandbox_borrowed(
     cmd: tokio::process::Command,
     sandbox: &TestSandbox,
@@ -167,8 +165,7 @@ async fn run_headless_with_cmd_and_sandbox(
     .await;
 
     let elapsed = started.elapsed();
-    // Timing breadcrumb for tuning CI timeout budgets against observed
-    // durations (visible with --nocapture).
+    // Logged so CI timeout budgets can be tuned against observed durations (visible with --nocapture)
     eprintln!(
         "[harness-timing] headless command {}: {elapsed:?} (timed_out={timed_out})",
         program.display()
@@ -231,11 +228,16 @@ const CRASH_PATTERNS: &[&str] = &[
     "undefined symbol",
     "SIGABRT",
     "cannot open shared object",
+    "has overflowed its stack",
 ];
 
 /// Diagnostic helper: format the tail of stderr for assertion messages.
 pub fn stderr_tail(stderr: &str, max_chars: usize) -> &str {
-    &stderr[stderr.len().saturating_sub(max_chars)..]
+    stderr
+        .len()
+        .checked_sub(max_chars)
+        .and_then(|start| stderr.get(start..))
+        .unwrap_or(stderr)
 }
 
 /// Assert that a headless run succeeded (non-timeout, zero exit code).

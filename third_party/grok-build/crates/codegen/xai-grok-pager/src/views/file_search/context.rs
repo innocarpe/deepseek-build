@@ -1,4 +1,4 @@
-//! @-context detection: parses `@query` tokens from prompt text + cursor position.
+//! @-context detection: parses `@query` tokens from prompt text and cursor position.
 //!
 //! Given the prompt text and cursor position, determines whether the cursor is
 //! inside an `@`-token and extracts the query string for fuzzy matching.
@@ -13,8 +13,8 @@
 //!
 //! ## Special modes
 //!
-//! - **Dir mode**: query ends with `/` → restrict matches to directories only.
-//! - **Hidden mode**: query starts with `!` → show hidden/gitignored files.
+//! - **Dir mode**: a query ending with `/` restricts matches to directories only.
+//! - **Hidden mode**: a query starting with `!` shows hidden/gitignored files.
 
 use std::ops::Range;
 
@@ -45,29 +45,23 @@ impl AtContext {
         self.query.strip_prefix('!').unwrap_or(&self.query)
     }
 
-    /// Byte range covering only the path portion of the @-token: starts
-    /// after the leading `@` and (in hidden mode) the `!` prefix, ends at
-    /// the @-token end. This is the range that should be replaced when
-    /// inserting a path while preserving the `@` and any hidden-mode
-    /// marker (see `accept_file_search_result_no_space` and
-    /// `FileSearchState::try_replace`).
+    /// Byte range covering only the path portion of the @-token.
     pub fn path_range(&self) -> Range<usize> {
         let prefix = 1 + if self.is_hidden_mode() { 1 } else { 0 };
         self.range.start + prefix..self.range.end
     }
 }
 
-/// Detect an @-completion context from prompt text and cursor position.
-///
-/// Returns `None` if the cursor is not inside an @-token, or if the `@` is
-/// preceded by an alphanumeric/underscore character (e.g., `email@`).
+/// Detect an @-completion context from prompt text and cursor position. Returns `None` if the
+/// cursor is not inside an @-token, or if the `@` is preceded by an alphanumeric/underscore
+/// character (e.g., `email@`).
 pub fn detect(text: &str, cursor: usize) -> Option<AtContext> {
     detect_with_drill(text, cursor, None)
 }
 
-/// Like [`detect`], but treats whitespace *inside* `drill_prefix` (the path of
-/// the directory being drilled into) as part of the @-token, so `@my dir/` stays
-/// one token. Self-validating: inert once the path content stops matching it.
+/// Like [`detect`], but treats whitespace *inside* `drill_prefix` (the path of the directory being drilled into) as part of the @-token.
+/// `@my dir/` thus stays one token.
+/// Once the text after `@` stops matching the prefix, it stops applying and whitespace terminates the token again.
 pub fn detect_with_drill(
     text: &str,
     cursor: usize,
@@ -79,10 +73,10 @@ pub fn detect_with_drill(
     }
 
     // Find the rightmost `@` before the cursor.
-    let at_idx = text[..cursor].rfind('@')?;
+    let at_idx = text.get(..cursor)?.rfind('@')?;
 
     // Reject if `@` is preceded by alphanumeric or underscore (email-like).
-    if let Some(ch) = text[..at_idx].chars().next_back()
+    if let Some(ch) = text.get(..at_idx)?.chars().next_back()
         && (ch.is_alphanumeric() || ch == '_')
     {
         return None;
@@ -90,7 +84,7 @@ pub fn detect_with_drill(
 
     // Path content starts after `@` (+ optional `!` hidden-mode marker).
     let content_start = at_idx + 1;
-    let after_bang = if text[content_start..].starts_with('!') {
+    let after_bang = if text.get(content_start..)?.starts_with('!') {
         content_start + 1
     } else {
         content_start
@@ -103,7 +97,8 @@ pub fn detect_with_drill(
     });
 
     // Find the end of the @-token: first whitespace, comma, or semicolon after `@`.
-    let token_end = text[at_idx + 1..]
+    let token_end = text
+        .get(at_idx + 1..)?
         .char_indices()
         .find_map(|(offset, ch)| {
             let abs = at_idx + 1 + offset;
@@ -125,7 +120,7 @@ pub fn detect_with_drill(
     Some(AtContext {
         range: at_idx..token_end,
         cursor,
-        query: text[at_idx + 1..cursor].to_owned(),
+        query: text.get(at_idx + 1..cursor)?.to_owned(),
     })
 }
 
@@ -171,14 +166,14 @@ mod tests {
 
     #[test]
     fn rejected_email_like() {
-        // @ preceded by alphanumeric — should not trigger.
+        // @ preceded by alphanumeric does not trigger
         assert!(detect("user@example", 12).is_none());
         assert!(detect("test_@foo", 9).is_none());
     }
 
     #[test]
     fn cursor_past_token() {
-        // Cursor is after the space following the token — no match.
+        // Cursor is after the space following the token: no match
         assert!(detect("@foo bar", 5).is_none());
         assert!(detect("@foo bar", 8).is_none());
     }
@@ -215,7 +210,7 @@ mod tests {
 
     #[test]
     fn at_after_special_chars() {
-        // @ preceded by space, parens, etc. — should trigger.
+        // @ preceded by space, parens, etc. still triggers.
         assert!(detect("(@foo", 5).is_some());
         assert!(detect(" @foo", 5).is_some());
         assert!(detect(",@foo", 5).is_some());
@@ -271,14 +266,13 @@ mod tests {
 
     #[test]
     fn path_range_with_prefix_text_offset() {
-        // @-token preceded by other text: path_range respects the
-        // absolute offset of the @ in the input.
+        // @-token preceded by other text: path_range respects the absolute offset of the @ in the input
         let ctx = detect("hello @bar", 10).unwrap();
         assert_eq!(ctx.range, 6..10);
         assert_eq!(ctx.path_range(), 7..10);
     }
 
-    // ── Drill-aware detection (whitespace inside a drilled dir name) ─────
+    // Drill-aware: whitespace inside a drilled dir name.
 
     #[test]
     fn drill_prefix_allows_internal_space() {
@@ -311,7 +305,7 @@ mod tests {
 
     #[test]
     fn drill_prefix_mismatch_falls_back_to_whitespace_terminator() {
-        // Prefix mismatch → space terminates as usual (sentence typing preserved).
+        // Prefix mismatch: space terminates as usual, so typing a sentence still works
         assert!(detect_with_drill("@foo bar", 8, Some("my dir")).is_none());
     }
 
@@ -338,8 +332,7 @@ mod tests {
 
     #[test]
     fn drill_prefix_inert_when_backspaced_out_of_prefix() {
-        // Self-validation: `@my di` no longer starts with `my dir`, so the
-        // anchor goes inert and the space re-terminates.
+        // `@my di` no longer starts with `my dir`, so the prefix stops applying and the space terminates the token again
         assert!(detect_with_drill("@my di", 6, Some("my dir")).is_none());
     }
 
@@ -353,13 +346,13 @@ mod tests {
 
     #[test]
     fn drill_prefix_empty_collapses_to_no_prefix() {
-        // Empty prefix anchors nothing → terminates as if no prefix were set.
+        // An empty prefix covers no text, so the token terminates as if no prefix were set
         assert!(detect_with_drill("@my dir", 7, Some("")).is_none());
     }
 
     #[test]
     fn drill_prefix_allows_second_level_space_segment() {
-        // Both spaces fall inside the drilled prefix → one token.
+        // Both spaces fall inside the drilled prefix, so it stays one token
         let ctx = detect_with_drill("@a b/c d", 8, Some("a b/c d")).unwrap();
         assert_eq!(ctx.range, 0..8);
         assert_eq!(ctx.query, "a b/c d");

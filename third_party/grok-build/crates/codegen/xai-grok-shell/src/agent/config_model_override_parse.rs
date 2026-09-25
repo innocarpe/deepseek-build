@@ -1,19 +1,16 @@
 //! Resilient parsing for `[model.<id>]` TOML overrides.
 //!
-//! It also defines [`ConfigWarning`] and [`WarningTarget`], the shared warning
-//! vocabulary; the `[auth_provider.*]` parser in `config.rs` emits them too.
+//! It also defines [`ConfigWarning`] and [`WarningTarget`], the shared warning vocabulary.
+//! The `[auth_provider.*]` parser in `config.rs` emits them too.
 //!
-//! A model entry must survive a bad field: warn and skip the field, never
-//! drop the model (managed configs must not lose catalog entries).
+//! A model entry must survive a bad field: warn and skip the field, never drop the model (managed configs must not lose catalog entries).
 //!
-//! Every table is deserialized through `serde_ignored`, so unknown fields
-//! warn on every path and [`ConfigModelOverride`] stays the single source of
-//! truth for the field set. When the whole-table parse fails, fields that
-//! fail to parse on their own are pruned (one warning each) and the table is
-//! parsed again. Non-table values are dropped with a warning.
+//! Every table is deserialized through `serde_ignored`, so unknown fields warn on every path.
+//! [`ConfigModelOverride`] thus stays the single source of truth for the field set.
+//! When the whole-table parse fails, fields that fail to parse on their own are pruned (one warning each) and the table is parsed again.
+//! Non-table values are dropped with a warning.
 //!
-//! Warnings are retained on `Config::config_warnings` and surfaced by
-//! `grok inspect`.
+//! Warnings are retained on `Config::config_warnings` and surfaced by `grok inspect`.
 
 use indexmap::IndexMap;
 use serde::Serialize;
@@ -32,23 +29,20 @@ pub enum ConfigWarningKind {
     DuplicateAlias,
     /// Entry value is not a TOML table; entry dropped.
     NotATable,
-    /// Fields are individually valid but conflict (e.g. `auth_provider`
-    /// shadowed by `api_key`/`env_key`); all fields kept, one is inert.
+    /// Fields are individually valid but conflict (e.g. `auth_provider` shadowed by `api_key`/`env_key`); all fields kept, one is inert.
     ConflictingFields,
-    /// Entry failed to parse even after skipping invalid fields; the model
-    /// keeps an empty override.
+    /// Entry failed to parse even after skipping invalid fields; the model keeps an empty override.
     UnparseableEntry,
 }
 
-/// What a [`ConfigWarning`] is about. Serialize-only: `grok inspect --json`
-/// emits it, nothing deserializes it back.
+/// What a [`ConfigWarning`] is about.
+/// Serialize-only: `grok inspect --json` emits it, nothing deserializes it back.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(tag = "target", rename_all = "camelCase")]
 pub enum WarningTarget {
     /// The `[model]` section as a whole (e.g. not a table).
     ModelSection,
-    /// A `[model.<key>]` entry; `field` names a key when the warning is
-    /// field-specific.
+    /// A `[model.<key>]` entry; `field` names a key when the warning is field-specific.
     Model {
         key: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -56,8 +50,7 @@ pub enum WarningTarget {
     },
     /// The `[auth_provider]` section as a whole.
     AuthProviderSection,
-    /// An `[auth_provider.<name>]` table; `field` names a key when the
-    /// warning is field-specific.
+    /// An `[auth_provider.<name>]` table; `field` names a key when the warning is field-specific.
     AuthProvider {
         name: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -204,8 +197,7 @@ pub(crate) struct ParsedModelOverrides {
     pub warnings: Vec<ConfigWarning>,
 }
 
-/// Parses every `[model.<id>]` entry in `raw_config`, returning the overrides
-/// and a warning for each skipped field or dropped entry.
+/// Parses every `[model.<id>]` entry in `raw_config`, returning the overrides and a warning for each skipped field or dropped entry.
 pub(crate) fn parse_model_overrides(raw_config: &toml::Value) -> ParsedModelOverrides {
     let mut models = IndexMap::new();
     let mut warnings = Vec::new();
@@ -242,8 +234,7 @@ pub(crate) fn parse_model_overrides(raw_config: &toml::Value) -> ParsedModelOver
     ParsedModelOverrides { models, warnings }
 }
 
-/// Logs the warnings when they differ from the previous parse, so a
-/// persistently broken config logs once per process instead of once per parse.
+/// Logs the warnings when they differ from the previous parse, so a persistently broken config logs once per process instead of once per parse.
 pub(crate) fn log_config_warnings(warnings: &[ConfigWarning]) {
     use std::hash::{Hash as _, Hasher as _};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -285,8 +276,7 @@ fn parse_model_override_table(
     let mut warnings = Vec::new();
     dedupe_aliases(model_key, &mut table, &mut warnings);
 
-    // Unknown-field warnings come from whichever parse produces the returned
-    // entry, so both paths report them identically.
+    // Unknown-field warnings come from whichever parse produces the returned entry, so both paths report them identically
     let (entry, mut warnings) = match deserialize_with_unknown_fields(table.clone()) {
         Ok((entry, unknown)) => {
             warnings.extend(unknown_field_warnings(model_key, unknown));
@@ -300,9 +290,8 @@ fn parse_model_override_table(
                     (entry, warnings)
                 }
                 Err(error) => {
-                    // Reachable only when fields conflict jointly, e.g. an
-                    // alias pair missing from `ALIASES`. Keep the model
-                    // rather than dropping it.
+                    // Reachable only when fields conflict jointly, e.g. an alias pair missing from `ALIASES`.
+                    // Keep the model rather than dropping it
                     warnings.push(ConfigWarning::model(
                         model_key,
                         None,
@@ -318,9 +307,8 @@ fn parse_model_override_table(
     };
 
     if entry.auth_provider.is_some() {
-        // A non-empty `api_key` always shadows; an `env_key` only shadows when
-        // its variable resolves at runtime, which parse time can't know. Warn
-        // accordingly so the message matches what actually happens.
+        // A non-empty `api_key` always shadows; an `env_key` only shadows when its variable resolves at runtime, which parse time can't know
+        // Warn accordingly so the message matches what actually happens
         let has_static_api_key = entry
             .api_key
             .as_deref()
@@ -356,14 +344,12 @@ fn parse_model_override_table(
     (entry, warnings)
 }
 
-/// `(canonical, legacy)` key pairs that serde rejects as duplicate fields
-/// when both appear in one table. Keep in sync with the `#[serde(alias)]`
-/// attributes on [`ConfigModelOverride`].
+/// `(canonical, legacy)` key pairs that serde rejects as duplicate fields when both appear in one table.
+/// Keep in sync with the `#[serde(alias)]` attributes on [`ConfigModelOverride`].
 const ALIASES: &[(&str, &str)] = &[("compactions_remaining", "send_compactions_remaining")];
 
 /// Removes one key of each [`ALIASES`] pair that appears twice in `table`.
-/// The canonical key wins; when its value doesn't parse, the legacy key is
-/// kept instead.
+/// The canonical key wins; when its value doesn't parse, the legacy key is kept instead.
 fn dedupe_aliases(
     model_key: &str,
     table: &mut toml::map::Map<String, toml::Value>,
@@ -373,7 +359,10 @@ fn dedupe_aliases(
         if !(table.contains_key(canonical) && table.contains_key(legacy)) {
             continue;
         }
-        match field_parse_error(canonical, &table[canonical]) {
+        let Some(value) = table.get(canonical) else {
+            continue;
+        };
+        match field_parse_error(canonical, value) {
             None => {
                 table.remove(legacy);
                 warnings.push(ConfigWarning::model(
@@ -396,8 +385,7 @@ fn dedupe_aliases(
     }
 }
 
-/// Deserializes `table`, also returning the unknown field names that serde
-/// would otherwise silently discard.
+/// Deserializes `table`, also returning the unknown field names that serde would otherwise silently discard.
 fn deserialize_with_unknown_fields(
     table: toml::map::Map<String, toml::Value>,
 ) -> Result<(ConfigModelOverride, Vec<String>), toml::de::Error> {
@@ -458,6 +446,7 @@ mod tests {
     use crate::sampling::ApiBackend;
     use xai_grok_sampling_types::{
         CompactionAtTokens, CompactionsRemaining, ReasoningEffort, ReasoningEffortOption,
+        ReasoningSummary,
     };
 
     fn parse_cfg(toml_str: &str) -> crate::agent::config::Config {
@@ -537,6 +526,45 @@ mod tests {
     }
 
     #[test]
+    fn reasoning_summary_parses_and_reaches_the_resolved_model() {
+        let cfg = parse_cfg(
+            r#"
+            [model.bedrock]
+            model = "xai.grok-4.6"
+            base_url = "https://bedrock-mantle.us-west-2.api.aws/openai/v1"
+            api_backend = "responses"
+            env_key = "BEDROCK_TOKEN"
+            reasoning_summary = "none"
+            "#,
+        );
+        assert_eq!(
+            cfg.config_models.get("bedrock").unwrap().reasoning_summary,
+            Some(ReasoningSummary::None)
+        );
+        let resolved = crate::agent::config::resolve_model_list(&cfg, None);
+        assert_eq!(
+            resolved.get("bedrock").unwrap().info.reasoning_summary,
+            Some(ReasoningSummary::None)
+        );
+    }
+
+    #[test]
+    fn invalid_reasoning_summary_skips_field_keeps_model() {
+        let cfg = parse_cfg(
+            r#"
+            [model."grok-4.5"]
+            model = "grok-4.5"
+            reasoning_summary = "verbose"
+            "#,
+        );
+        let model = cfg.config_models.get("grok-4.5").unwrap();
+        assert!(model.reasoning_summary.is_none());
+        assert!(cfg.config_warnings.iter().any(|w| {
+            w.kind == ConfigWarningKind::InvalidValue && w.field() == Some("reasoning_summary")
+        }));
+    }
+
+    #[test]
     fn unknown_field_warns_but_keeps_known_fields() {
         let (models, warnings) = parse_raw(
             r#"
@@ -563,8 +591,7 @@ mod tests {
         );
     }
 
-    /// An unknown field warns the same whether or not another field fails to
-    /// parse.
+    /// An unknown field warns the same whether or not another field fails to parse.
     #[test]
     fn unknown_field_warning_is_path_independent() {
         let unknown_of = |toml_str: &str| {
@@ -588,8 +615,10 @@ mod tests {
             "#,
         );
         assert_eq!(fast, slow);
-        assert_eq!(fast.len(), 1);
-        assert_eq!(fast[0].field(), Some("temprature"));
+        let [fast0] = fast.as_slice() else {
+            panic!("expected one warning: {fast:?}");
+        };
+        assert_eq!(fast0.field(), Some("temprature"));
     }
 
     #[test]
@@ -646,18 +675,22 @@ mod tests {
             entry.compactions_remaining,
             Some(CompactionsRemaining::Fixed(2))
         );
-        assert_eq!(warnings.len(), 1);
-        assert_eq!(warnings[0].kind, ConfigWarningKind::InvalidValue);
-        assert_eq!(warnings[0].field(), Some("compactions_remaining"));
+        let [warning] = warnings.as_slice() else {
+            panic!("expected one warning: {warnings:?}");
+        };
+        assert_eq!(warning.kind, ConfigWarningKind::InvalidValue);
+        assert_eq!(warning.field(), Some("compactions_remaining"));
     }
 
     #[test]
     fn non_table_model_section_warns_and_is_ignored() {
         let (models, warnings) = parse_raw(r#"model = "grok-4""#);
         assert!(models.is_empty());
-        assert_eq!(warnings.len(), 1);
-        assert_eq!(warnings[0].kind, ConfigWarningKind::NotATable);
-        assert!(matches!(warnings[0].target, WarningTarget::ModelSection));
+        let [warning] = warnings.as_slice() else {
+            panic!("expected one warning: {warnings:?}");
+        };
+        assert_eq!(warning.kind, ConfigWarningKind::NotATable);
+        assert!(matches!(warning.target, WarningTarget::ModelSection));
     }
 
     #[test]
@@ -669,20 +702,23 @@ mod tests {
             "#,
         );
         assert!(models.is_empty(), "a scalar cannot define a model");
-        assert_eq!(warnings.len(), 1);
-        assert_eq!(warnings[0].kind, ConfigWarningKind::NotATable);
+        let [warning] = warnings.as_slice() else {
+            panic!("expected one warning: {warnings:?}");
+        };
+        assert_eq!(warning.kind, ConfigWarningKind::NotATable);
         assert!(matches!(
-            &warnings[0].target,
+            &warning.target,
             WarningTarget::Model { key, field: None } if key == "oops"
         ));
     }
 
-    /// Exhaustive literal (no `..`): a new struct field is a compile error
-    /// here until the drift-guard tests cover it.
+    /// Exhaustive literal (no `..`): a new struct field is a compile error here until the drift-guard tests cover it.
     fn fully_populated_override() -> ConfigModelOverride {
         ConfigModelOverride {
             model: Some("m".into()),
+            model_family: None,
             base_url: Some("https://example.com".into()),
+            mtls_cert_dir: Some("/run/model-identity".into()),
             name: Some("Model M".into()),
             description: Some("desc".into()),
             api_key: Some("key".into()),
@@ -704,12 +740,15 @@ mod tests {
                 .into_iter()
                 .collect(),
             context_window: Some(200_000),
+            max_request_bytes: None,
             auto_compact_threshold_percent: Some(80),
             system_prompt_label: Some("label".into()),
             use_concise: Some(true),
             agent_type: Some("agent".into()),
             inference_idle_timeout_secs: Some(60),
             max_retries: Some(3),
+            rate_limit_retry_threshold: Some(4),
+            subagent_rate_limit_max_attempts: Some(8),
             hidden: Some(false),
             supported_in_api: Some(true),
             reasoning_effort: Some(ReasoningEffort::High),
@@ -726,6 +765,7 @@ mod tests {
             compaction_at_tokens: Some(CompactionAtTokens::Fixed(100_000)),
             show_model_fingerprint: Some(true),
             stream_tool_calls: Some(false),
+            reasoning_summary: Some(ReasoningSummary::None),
         }
     }
 
@@ -745,9 +785,8 @@ mod tests {
     fn fully_populated_override_round_trips_with_only_the_shadowing_warning() {
         let serialized = toml::Value::try_from(fully_populated_override()).unwrap();
         let (models, warnings) = parse_single_entry(serialized.as_table().unwrap().clone());
-        // The exhaustive literal deliberately sets `api_key`, `env_key`, AND
-        // `auth_provider`: the one legal-but-warned combination. Any other
-        // warning (skipped/unknown field) still fails the guard.
+        // The exhaustive literal deliberately sets `api_key`, `env_key`, AND `auth_provider`: the one legal-but-warned combination
+        // Any other warning (skipped/unknown field) still fails the guard
         let unexpected: Vec<_> = warnings
             .iter()
             .filter(|w| w.kind != ConfigWarningKind::ConflictingFields)
@@ -758,9 +797,8 @@ mod tests {
         assert_eq!(reparsed, serialized, "round-trip must be lossless");
     }
 
-    /// `auth_provider` alongside `api_key`/`env_key` warns (static keys
-    /// win in `resolve_credentials`, so the provider never runs) but keeps
-    /// both fields.
+    /// `auth_provider` alongside `api_key`/`env_key` warns but keeps both fields.
+    /// Static keys win in `resolve_credentials`, so the provider never runs.
     #[test]
     fn auth_provider_shadowed_by_static_key_warns() {
         let mut entry = toml::map::Map::new();
@@ -770,9 +808,11 @@ mod tests {
             toml::Value::String("corp".into()),
         );
         let (models, warnings) = parse_single_entry(entry);
-        assert_eq!(warnings.len(), 1);
-        assert_eq!(warnings[0].kind, ConfigWarningKind::ConflictingFields);
-        assert_eq!(warnings[0].field(), Some("auth_provider"));
+        let [warning] = warnings.as_slice() else {
+            panic!("expected one warning: {warnings:?}");
+        };
+        assert_eq!(warning.kind, ConfigWarningKind::ConflictingFields);
+        assert_eq!(warning.field(), Some("auth_provider"));
         let parsed = models.get("m").unwrap();
         assert_eq!(parsed.api_key.as_deref(), Some("sk-x"));
         assert_eq!(parsed.auth_provider.as_deref(), Some("corp"));
@@ -794,9 +834,11 @@ mod tests {
             toml::Value::String("corp".into()),
         );
         let (_, warnings) = parse_single_entry(entry);
-        assert_eq!(warnings.len(), 1);
-        assert_eq!(warnings[0].kind, ConfigWarningKind::ConflictingFields);
-        assert!(warnings[0].reason.contains("may be shadowed"));
+        let [warning] = warnings.as_slice() else {
+            panic!("expected one warning: {warnings:?}");
+        };
+        assert_eq!(warning.kind, ConfigWarningKind::ConflictingFields);
+        assert!(warning.reason.contains("may be shadowed"));
 
         // An empty api_key does not shadow, so it must not warn.
         let mut entry = toml::map::Map::new();
@@ -809,25 +851,40 @@ mod tests {
         assert_eq!(warnings, Vec::new());
     }
 
-    /// Drift guard: every `#[serde(alias)]` on [`ConfigModelOverride`] must
-    /// have a matching `ALIASES` pair, and vice versa. An unregistered alias
-    /// would send both-keys configs to the empty-override fallback.
+    /// Drift guard: every `#[serde(alias)]` on [`ConfigModelOverride`] must have a matching `ALIASES` pair, and vice versa.
+    /// An unregistered alias would send both-keys configs to the empty-override fallback.
     #[test]
     fn every_struct_alias_is_registered_in_aliases() {
         let source = include_str!("config.rs");
         let start = source
             .find("pub struct ConfigModelOverride {")
             .expect("ConfigModelOverride definition in config.rs");
-        let block = &source[start..];
-        let block = &block[..block.find("\n}").expect("struct end")];
+        let Some(block) = source.get(start..) else {
+            panic!("ConfigModelOverride slice after find");
+        };
+        let end = block.find("\n}").expect("struct end");
+        let Some(block) = block.get(..end) else {
+            panic!("struct end not a char boundary");
+        };
 
         let mut found = Vec::new();
         let mut rest = block;
         while let Some(pos) = rest.find("#[serde(alias = \"") {
-            let after = &rest[pos + "#[serde(alias = \"".len()..];
-            let legacy = &after[..after.find('"').expect("closing quote")];
-            let field = &after[after.find("pub ").expect("field after alias") + 4..];
-            let canonical = &field[..field.find(':').expect("field type colon")];
+            let Some(after) = rest.get(pos + "#[serde(alias = \"".len()..) else {
+                break;
+            };
+            let quote = after.find('"').expect("closing quote");
+            let Some(legacy) = after.get(..quote) else {
+                break;
+            };
+            let pub_at = after.find("pub ").expect("field after alias");
+            let Some(field) = after.get(pub_at + 4..) else {
+                break;
+            };
+            let colon = field.find(':').expect("field type colon");
+            let Some(canonical) = field.get(..colon) else {
+                break;
+            };
             found.push((canonical.to_owned(), legacy.to_owned()));
             rest = after;
         }
@@ -850,9 +907,9 @@ mod tests {
         );
     }
 
-    /// Drift guard for `ALIASES`, in both directions: every pair must be a
-    /// real serde alias (a both-keys table fails a plain parse), and the
-    /// parser must resolve it to the canonical key with a single warning.
+    /// Drift guard for `ALIASES`, in both directions.
+    /// Every pair must be a real serde alias (a both-keys table fails a plain parse).
+    /// The parser must resolve it to the canonical key with a single warning.
     #[test]
     fn every_aliases_pair_is_a_real_serde_alias_and_dedupes() {
         let reference = toml::Value::try_from(fully_populated_override()).unwrap();
@@ -877,9 +934,11 @@ mod tests {
                 Some(value),
                 "canonical value must be retained"
             );
-            assert_eq!(warnings.len(), 1);
-            assert_eq!(warnings[0].kind, ConfigWarningKind::DuplicateAlias);
-            assert_eq!(warnings[0].field(), Some(legacy));
+            let [warning] = warnings.as_slice() else {
+                panic!("expected one warning: {warnings:?}");
+            };
+            assert_eq!(warning.kind, ConfigWarningKind::DuplicateAlias);
+            assert_eq!(warning.field(), Some(legacy));
         }
     }
 }

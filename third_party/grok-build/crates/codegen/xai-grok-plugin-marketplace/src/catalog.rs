@@ -1,13 +1,10 @@
 //! Parse the CI-generated `plugin-index.json` component catalog.
 //!
-//! Directory precedence mirrors `index::load_index`:
-//! `.grok-plugin/plugin-index.json` (preferred), then
-//! `.claude-plugin/plugin-index.json` — but only one filename is probed per
-//! directory, and a present-but-unreadable/unparseable preferred catalog does
-//! not fall back to the other directory (never serve possibly-stale data when
-//! the authoritative file is broken). The catalog is presentation-layer
-//! enrichment only: failures degrade to `None` and never fail a marketplace
-//! listing.
+//! Directory precedence mirrors `index::load_index`: `.grok-plugin/plugin-index.json` is preferred, then `.claude-plugin/plugin-index.json`.
+//! Unlike `load_index`, only that one filename is probed per directory.
+//! A preferred catalog that is present but unreadable or unparseable does not fall back to the other directory.
+//! Falling back when the authoritative file is broken could serve stale data.
+//! The catalog only adds display detail: failures degrade to `None` and never fail a marketplace listing.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -26,20 +23,17 @@ pub struct PluginCatalog {
     pub plugins: HashMap<String, CatalogEntry>,
 }
 
-/// Per-plugin catalog entry.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CatalogEntry {
-    /// Commit the components were extracted from (required for URL-sourced
-    /// entries; optional for in-repo plugins).
+    /// Commit the components were extracted from (required for URL-sourced entries; optional for in-repo plugins).
     #[serde(default)]
     pub sha: Option<String>,
     pub components: PluginComponents,
 }
 
 impl PluginCatalog {
-    /// Components for an index entry, gated on the pinned SHA for
-    /// URL-sourced entries: when `index_sha` is `Some`, the catalog entry
-    /// must carry an equal `sha` or the components are treated as absent.
+    /// Returns the components for an index entry, gated on the pinned SHA for URL-sourced entries.
+    /// When `index_sha` is `Some`, the catalog entry must carry an equal `sha` or the components are treated as absent.
     pub fn components_for(
         &self,
         index_name: &str,
@@ -61,9 +55,8 @@ impl PluginCatalog {
     }
 }
 
-/// Load `plugin-index.json` from a marketplace root, or `None` when absent,
-/// malformed, or of an unsupported version. A missing file falls through to
-/// the next candidate directory; a broken one does not (see module docs).
+/// Load `plugin-index.json` from a marketplace root, or `None` when absent, malformed, or of an unsupported version.
+/// A missing file falls through to the next candidate directory; a broken one does not (see module docs).
 pub fn load_catalog(marketplace_root: &Path) -> Option<PluginCatalog> {
     let candidates = [
         marketplace_root
@@ -109,6 +102,13 @@ pub fn load_catalog(marketplace_root: &Path) -> Option<PluginCatalog> {
 mod tests {
     use super::*;
 
+    fn nth<T>(xs: &[T], i: usize) -> &T {
+        let Some(x) = xs.get(i) else {
+            panic!("expected item {i}, got {} items", xs.len());
+        };
+        x
+    }
+
     fn write_catalog(dir: &Path, subdir: &str, content: &str) {
         let d = dir.join(subdir);
         std::fs::create_dir_all(&d).unwrap();
@@ -138,13 +138,13 @@ mod tests {
         let catalog = load_catalog(dir.path()).unwrap();
         let components = catalog.components_for("superpowers", None).unwrap();
         assert_eq!(components.skills.len(), 1);
-        assert_eq!(components.skills[0].name, "brainstorming");
+        assert_eq!(nth(&components.skills, 0).name, "brainstorming");
         assert_eq!(
-            components.skills[0].description.as_deref(),
+            nth(&components.skills, 0).description.as_deref(),
             Some("Structured ideation")
         );
-        assert_eq!(components.commands[0].name, "/brainstorm");
-        assert_eq!(components.hooks[0].name, "PreToolUse");
+        assert_eq!(nth(&components.commands, 0).name, "/brainstorm");
+        assert_eq!(nth(&components.hooks, 0).name, "PreToolUse");
         assert!(components.agents.is_empty());
     }
 
@@ -217,10 +217,10 @@ mod tests {
             }"#,
         );
         let catalog = load_catalog(dir.path()).unwrap();
-        assert_eq!(
-            catalog.components_for("p", None).unwrap().skills[0].name,
-            "s"
-        );
+        let Some(skill) = catalog.components_for("p", None).unwrap().skills.first() else {
+            panic!("expected a skill");
+        };
+        assert_eq!(skill.name, "s");
     }
 
     #[test]
@@ -238,8 +238,11 @@ mod tests {
         );
         let catalog = load_catalog(dir.path()).unwrap();
         let components = catalog.components_for("p", None).unwrap();
-        assert_eq!(components.skills[0].name, "a[31mb");
-        assert_eq!(components.skills[0].description.as_deref(), Some("xy"));
+        assert_eq!(nth(&components.skills, 0).name, "a[31mb");
+        assert_eq!(
+            nth(&components.skills, 0).description.as_deref(),
+            Some("xy")
+        );
     }
 
     #[test]

@@ -210,8 +210,6 @@ pub struct ScheduledTask {
     pub recurring: bool,
     #[serde(default)]
     pub durable: bool,
-    #[serde(default)]
-    pub foreground: bool,
     pub created_at: DateTime<Utc>,
     pub last_fired_at: Option<DateTime<Utc>>,
     pub expires_at: Option<DateTime<Utc>>,
@@ -219,10 +217,9 @@ pub struct ScheduledTask {
     pub last_subagent_id: Option<String>,
     #[serde(default)]
     pub iterations_since_fresh: u32,
-    /// Set when the prompt is patched: the next fire starts a fresh
-    /// transcript instead of resuming the old task's. The anchor itself is
-    /// kept until then so the in-flight guard can still see a running
-    /// iteration.
+    /// Set when the prompt is patched: the next fire starts a fresh transcript instead of resuming
+    /// the old task's. The anchor itself is kept until then so the in-flight guard can still see a
+    /// running iteration.
     #[serde(default)]
     pub chain_reset_pending: bool,
 }
@@ -230,6 +227,11 @@ pub struct ScheduledTask {
 pub const LOOP_FRESH_CHAIN_EVERY: u32 = 10;
 
 pub const LOOP_COMPLETION_OUTPUT_CAP: usize = 4_000;
+
+/// How long a recurring scheduled task lives before auto-expiry. Single source of truth for the
+/// TTL: task construction stamps `expires_at = now + days(this)`, and user-facing copy (pager
+/// notice, tool descriptions) must read the same constant so the number cannot drift.
+pub const RECURRING_TASK_TTL_DAYS: i64 = 7;
 
 const MAX_SCHEDULER_TRANSITIONS: usize = 50;
 
@@ -258,16 +260,15 @@ impl ScheduledTask {
             now
         };
         Self {
-            id: uuid::Uuid::now_v7().to_string().replace('-', "")[..12].to_string(),
+            id: uuid::Uuid::now_v7().to_string(),
             interval_secs,
             prompt,
             recurring,
             durable,
-            foreground: false,
             created_at,
             last_fired_at: None,
             expires_at: if recurring {
-                Some(now + chrono::Duration::days(7))
+                Some(now + chrono::Duration::days(RECURRING_TASK_TTL_DAYS))
             } else {
                 None
             },
@@ -283,9 +284,27 @@ impl ScheduledTask {
         anchor + chrono::Duration::seconds(self.interval_secs as i64)
     }
 
+    /// Next moment the actor must wake for this task: the sooner of the next fire and the auto-expiry deadline. Sleeping
+    /// purely on `next_fire_at` would let a task whose interval stretches past `expires_at` outlive the TTL (an 8-day
+    /// interval must still expire at day 7, not when its first fire comes due).
+    pub fn next_wake_at(&self) -> DateTime<Utc> {
+        match self.expires_at {
+            Some(expires_at) => self.next_fire_at().min(expires_at),
+            None => self.next_fire_at(),
+        }
+    }
+
     /// Whether this task has expired (recurring tasks only).
     pub fn is_expired(&self, now: DateTime<Utc>) -> bool {
         self.expires_at.is_some_and(|exp| now >= exp)
+    }
+
+    /// The next run still to come; `None` for an expired task or a one-shot that already ran.
+    pub fn pending_fire_at(&self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        if self.is_expired(now) || (!self.recurring && self.last_fired_at.is_some()) {
+            return None;
+        }
+        Some(self.next_fire_at())
     }
 }
 
@@ -342,12 +361,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_recurring_task_has_7_day_expiry() {
+    fn new_recurring_task_has_ttl_expiry() {
         let task = ScheduledTask::new(300, "check deploy".into(), true, false);
         assert!(task.expires_at.is_some());
         let expiry = task.expires_at.unwrap();
         let diff = expiry - task.created_at;
-        assert_eq!(diff.num_days(), 7);
+        assert_eq!(diff.num_days(), RECURRING_TASK_TTL_DAYS);
     }
 
     #[test]
@@ -401,9 +420,16 @@ mod tests {
     }
 
     #[test]
-    fn task_id_is_12_chars() {
-        let task = ScheduledTask::new(300, "test".into(), true, false);
-        assert_eq!(task.id.len(), 12);
+    fn task_ids_are_full_unique_uuid_v7_values() {
+        let first = ScheduledTask::new(300, "first".into(), true, false);
+        let second = ScheduledTask::new(300, "second".into(), true, false);
+
+        assert_ne!(first.id, second.id);
+        for id in [&first.id, &second.id] {
+            let parsed = uuid::Uuid::parse_str(id).unwrap();
+            assert_eq!(parsed.get_version_num(), 7);
+            assert_eq!(parsed.to_string(), *id);
+        }
     }
 
     #[test]

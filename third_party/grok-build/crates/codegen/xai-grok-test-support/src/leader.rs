@@ -1,30 +1,35 @@
 //! Leader-mode (`grok agent --leader stdio`) test harness.
 //!
-//! The fixture owns only subprocess handles it created: one initial persistent
-//! leader and each returned stdio client. Lock-file PIDs are observations only;
-//! detached replacement generations are never adopted or signaled.
+//! The fixture owns only subprocess handles it created: one initial persistent leader and each returned stdio client.
+//! Lock-file PIDs are observations only; a detached replacement leader is never adopted or signaled.
 
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-use agent_client_protocol::{self as acp, Agent as _};
-use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
-use xai_acp_lib::LineBufferedRead;
+use agent_client_protocol as acp;
 
+use crate::acp_agent_connection::{AgentConnection, timed, timed_ok};
+use crate::acp_policy::ClientPolicy;
+use crate::acp_transcript::TranscriptEntry;
 use crate::env::grok_binary;
 use crate::mock_server::MockInferenceServer;
 use crate::process::{TestOutput, TestProcess, TestProcessConfig, TestProcessTree, TestStdin};
 use crate::sandbox::TestSandbox;
+use crate::scaled;
 
-/// Env var naming the binary that elects/hosts the leader in a two-binary
-/// (version-skew) test. Falls back to [`grok_binary`]'s resolution.
+/// `initialize` waits for the leader election and the relay handshake as well as the agent's own startup.
+const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(60);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const LEADER_RECONNECTED_METHOD: &str = "x.ai/leader_reconnected";
+
+/// Env var naming the binary that elects/hosts the leader in a two-binary (version-skew) test.
+/// Falls back to [`grok_binary`]'s resolution.
 pub const LEADER_BINARY_ENV: &str = "GROK_BINARY_LEADER";
 
-/// Env var naming the binary for the second (usually newer) client in a
-/// two-binary test. Falls back to [`grok_binary`]'s resolution.
+/// Env var naming the binary for the second (usually newer) client in a two-binary test.
+/// Falls back to [`grok_binary`]'s resolution.
 pub const CLIENT_BINARY_ENV: &str = "GROK_BINARY_CLIENT";
 
 fn role_binary(env_key: &str) -> PathBuf {
@@ -50,81 +55,9 @@ pub fn client_binary() -> PathBuf {
     role_binary(CLIENT_BINARY_ENV)
 }
 
-/// Capture for notifications and reconnect signals.
-#[derive(Default)]
-pub struct Capture {
-    chunks: std::sync::Mutex<Vec<String>>,
-    notification_count: AtomicU32,
-    reconnected_count: AtomicU32,
-    models_update_count: AtomicU32,
-    settings_update_count: AtomicU32,
-}
-
-struct LeaderAcpClient {
-    capture: Arc<Capture>,
-}
-
-#[async_trait::async_trait(?Send)]
-impl acp::Client for LeaderAcpClient {
-    async fn request_permission(
-        &self,
-        args: acp::RequestPermissionRequest,
-    ) -> acp::Result<acp::RequestPermissionResponse> {
-        let outcome = args
-            .options
-            .iter()
-            .find(|option| option.kind == acp::PermissionOptionKind::AllowOnce)
-            .or(args.options.first())
-            .map(|option| {
-                acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new(
-                    option.option_id.clone(),
-                ))
-            })
-            .unwrap_or(acp::RequestPermissionOutcome::Cancelled);
-        Ok(acp::RequestPermissionResponse::new(outcome))
-    }
-
-    async fn session_notification(&self, args: acp::SessionNotification) -> acp::Result<()> {
-        self.capture
-            .notification_count
-            .fetch_add(1, Ordering::SeqCst);
-        if let acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk { content, .. }) =
-            args.update
-            && let acp::ContentBlock::Text(text) = content
-        {
-            self.capture.chunks.lock().unwrap().push(text.text);
-        }
-        Ok(())
-    }
-
-    async fn ext_notification(&self, args: acp::ExtNotification) -> acp::Result<()> {
-        match &*args.method {
-            "x.ai/leader_reconnected" => {
-                self.capture
-                    .reconnected_count
-                    .fetch_add(1, Ordering::SeqCst);
-            }
-            "x.ai/models/update" => {
-                self.capture
-                    .models_update_count
-                    .fetch_add(1, Ordering::SeqCst);
-            }
-            "x.ai/settings/update" => {
-                self.capture
-                    .settings_update_count
-                    .fetch_add(1, Ordering::SeqCst);
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-}
-
-/// Owns the concrete initial persistent leader shared by a test's clients.
-///
-/// Production-created replacement generations are outside this fixture's
-/// ownership. [`Self::wait_for_new_leader`] may observe one for assertions but
-/// never turns its lock-file PID into signal authority.
+/// Owns the concrete initial persistent leader shared by a test's clients. A replacement leader spawned by the code under
+/// test is outside this fixture's ownership. [`Self::wait_for_new_leader`] may observe one for assertions but never
+/// signals the PID it reads.
 pub struct LeaderFixture {
     inner: Arc<Mutex<LeaderFixtureState>>,
 }
@@ -168,11 +101,12 @@ impl Drop for FixtureClientRegistration {
     }
 }
 
-/// A `grok agent --leader stdio` client subprocess speaking ACP over pipes.
+/// A `grok agent --leader stdio` client subprocess speaking ACP over pipes. It answers the agent with the
+/// default [`ClientPolicy`], reads its counters from the transcript, and runs every request under a scaled
+/// budget; a timeout, or a failed setup request, panics with the child's stderr.
 pub struct LeaderStdioClient {
-    pub conn: acp::ClientSideConnection,
+    connection: AgentConnection,
     process: TestProcess,
-    capture: Arc<Capture>,
     registration: Option<FixtureClientRegistration>,
 }
 
@@ -195,8 +129,7 @@ impl LeaderFixture {
         Self::start_with_binary_timeout(binary, server, cwd, sandbox, Duration::from_secs(30)).await
     }
 
-    /// Start a leader pointed at an arbitrary base URL; offline-startup tests
-    /// aim it at an unreachable endpoint to prove it boots from local data.
+    /// Start a leader pointed at an arbitrary base URL; offline-startup tests aim it at an unreachable endpoint to prove it boots from local data.
     pub async fn start_with_base_url(
         base_url: &str,
         cwd: &Path,
@@ -258,7 +191,7 @@ impl LeaderFixture {
             .env("GROK_TRACE_UPLOAD_URL", base_url)
             .env("XAI_API_KEY", "test-key-for-ci")
             .env("GROK_LEADER_SOCKET", &socket)
-            .env("RUST_LOG", "xai_grok_shell=debug");
+            .env("RUST_LOG", "xai_grok_shell=debug,xai_grok_login=debug");
         let log_path = sandbox.grok_home().join("leader.log");
         match std::fs::File::create(&log_path) {
             Ok(log) => {
@@ -316,8 +249,7 @@ impl LeaderFixture {
             .await
     }
 
-    /// Spawn a relay client whose own endpoints point at an arbitrary base URL;
-    /// pairs with [`Self::start_with_base_url`] for a fully offline stack.
+    /// Spawn a relay client whose own endpoints point at an arbitrary base URL; pairs with [`Self::start_with_base_url`] for a fully offline stack.
     pub async fn spawn_client_with_base_url(
         &self,
         base_url: &str,
@@ -444,8 +376,7 @@ impl LeaderFixture {
         .map_err(|error| io::Error::other(format!("leader reap task: {error}")))?
     }
 
-    /// On failed test cleanup, hard-kill the concrete initial leader and leak
-    /// its already-signaled owner so unwind cannot run blocking Drop cleanup.
+    /// On failed test cleanup, hard-kill the concrete initial leader and leak its already-signaled owner so unwind cannot run blocking Drop cleanup.
     /// Lock-file and detached replacement PIDs are never consulted or signaled.
     pub fn contain_failed_cleanup_for_unwind(&self) {
         let leader = self
@@ -461,8 +392,8 @@ impl LeaderFixture {
         }
     }
 
-    /// Close the directly-owned clients first, then shut down the concrete
-    /// initial leader. Detached replacements are intentionally untouched.
+    /// Close the directly-owned clients first, then shut down the concrete initial leader.
+    /// Detached replacements are intentionally untouched.
     pub async fn close(&self) -> io::Result<()> {
         let state = self.inner.clone();
         tokio::task::spawn_blocking(move || {
@@ -570,9 +501,8 @@ fn reap_exited_persistent_leader(
             format!("persistent leader pid {} did not exit", leader.pid),
         ));
     }
-    // macOS may report EPERM when the group contains only the unreaped zombie
-    // leader. The direct child is already known exited; attempt descendant
-    // cleanup while its PGID is reserved, then revoke before consuming status.
+    // macOS may report EPERM when the group contains only the unreaped zombie leader
+    // The direct child is already known exited; attempt descendant cleanup while its PGID is reserved, then release before consuming status
     // Focused tests separately prove a live descendant is removed.
     let _ = leader.tree.kill();
     leader.tree.release();
@@ -644,7 +574,7 @@ impl LeaderStdioClient {
                 .env("GROK_TRACE_UPLOAD_URL", base_url)
                 .env("XAI_API_KEY", "test-key-for-ci")
                 .env("GROK_LEADER_SOCKET", leader_socket)
-                .env("RUST_LOG", "xai_grok_shell=debug"),
+                .env("RUST_LOG", "xai_grok_shell=debug,xai_grok_login=debug"),
         )
         .map_err(|error| {
             io::Error::new(
@@ -657,30 +587,10 @@ impl LeaderStdioClient {
             )
         })?;
 
-        let outgoing = process
-            .take_stdin()
-            .ok_or_else(|| io::Error::other("leader stdio client stdin pipe missing"))?
-            .compat_write();
-        let incoming = process
-            .take_stdout()
-            .ok_or_else(|| io::Error::other("leader stdio client stdout pipe missing"))?
-            .compat();
-
-        let capture = Arc::new(Capture::default());
-        let client = LeaderAcpClient {
-            capture: capture.clone(),
-        };
-        let incoming = LineBufferedRead::spawn_local(incoming);
-        let (conn, handle_io) =
-            acp::ClientSideConnection::new(client, outgoing, incoming, |future| {
-                tokio::task::spawn_local(future);
-            });
-        tokio::task::spawn_local(handle_io);
-
-        Ok(Self {
-            conn,
+        let connection = AgentConnection::connect(&mut process, ClientPolicy::default());
+        Ok(LeaderStdioClient {
+            connection,
             process,
-            capture,
             registration: Some(registration),
         })
     }
@@ -705,8 +615,7 @@ impl LeaderStdioClient {
         self.process.start_kill();
     }
 
-    /// Request a nonblocking hard kill while retaining concrete process and
-    /// fixture-registration ownership for unwind containment.
+    /// Request a nonblocking hard kill while retaining concrete process and fixture-registration ownership for unwind containment.
     pub fn contain_failed_cleanup_for_unwind(&mut self) {
         self.process.start_kill();
     }
@@ -724,80 +633,38 @@ impl LeaderStdioClient {
     }
 
     pub fn captured_text(&self) -> String {
-        self.capture.chunks.lock().unwrap().join("")
+        self.connection.handler().transcript().agent_text()
     }
 
+    /// Initialize, then authenticate with the `xai.api_key` method.
     pub async fn initialize(&self) -> acp::InitializeResponse {
-        let init = tokio::time::timeout(
-            Duration::from_secs(60),
-            self.conn.initialize(
-                acp::InitializeRequest::new(acp::ProtocolVersion::V1)
-                    .client_capabilities(
-                        acp::ClientCapabilities::new()
-                            .fs(acp::FileSystemCapabilities::new())
-                            .terminal(false),
-                    )
-                    .meta(
-                        serde_json::json!({
-                            "startupHints": {
-                                "nonInteractive": true,
-                                "skipGitStatus": true,
-                                "skipProjectLayout": true
-                            },
-                            "clientType": "test-client",
-                            "clientVersion": "0.0.0-test"
-                        })
-                        .as_object()
-                        .cloned(),
-                    ),
-            ),
+        timed_ok(
+            &self.process,
+            "initialize",
+            INITIALIZE_TIMEOUT,
+            self.connection.initialize_and_authenticate(),
         )
         .await
-        .unwrap_or_else(|_| panic!("initialize timed out\nstderr:\n{}", self.stderr_text()))
-        .expect("initialize failed");
-
-        let api_key_method = init
-            .auth_methods
-            .iter()
-            .find(|method| &*method.id().0 == "xai.api_key")
-            .expect("xai.api_key auth method");
-        self.conn
-            .authenticate(
-                acp::AuthenticateRequest::new(api_key_method.id().clone())
-                    .meta(serde_json::json!({"headless": true}).as_object().cloned()),
-            )
-            .await
-            .expect("authenticate failed");
-        init
     }
 
     pub async fn create_session(&self, cwd: &Path) -> acp::SessionId {
-        self.create_session_inner(cwd, None).await
+        timed_ok(
+            &self.process,
+            "session/new",
+            REQUEST_TIMEOUT,
+            self.connection.new_session(cwd),
+        )
+        .await
     }
 
     pub async fn create_session_with_model(&self, cwd: &Path, model_id: &str) -> acp::SessionId {
-        self.create_session_inner(
-            cwd,
-            serde_json::json!({ "modelId": model_id })
-                .as_object()
-                .cloned(),
+        timed_ok(
+            &self.process,
+            &format!("session/new with modelId={model_id}"),
+            REQUEST_TIMEOUT,
+            self.connection.new_session_with_model(cwd, model_id),
         )
         .await
-    }
-
-    async fn create_session_inner(&self, cwd: &Path, meta: Option<acp::Meta>) -> acp::SessionId {
-        tokio::time::timeout(
-            Duration::from_secs(30),
-            self.conn.new_session(
-                acp::NewSessionRequest::new(cwd.to_path_buf())
-                    .mcp_servers(vec![])
-                    .meta(meta),
-            ),
-        )
-        .await
-        .unwrap_or_else(|_| panic!("session/new timed out\nstderr:\n{}", self.stderr_text()))
-        .expect("session/new failed")
-        .session_id
     }
 
     pub async fn prompt(
@@ -805,35 +672,68 @@ impl LeaderStdioClient {
         session_id: &acp::SessionId,
         text: &str,
     ) -> acp::Result<acp::PromptResponse> {
-        tokio::time::timeout(
-            Duration::from_secs(30),
-            self.conn.prompt(acp::PromptRequest::new(
-                session_id.clone(),
-                vec![acp::ContentBlock::Text(acp::TextContent::new(
-                    text.to_string(),
-                ))],
-            )),
+        self.prompt_with_budget(session_id, text, REQUEST_TIMEOUT)
+            .await
+    }
+
+    /// A prompt that may span a leader outage runs under the caller's `budget` instead of the request one.
+    pub async fn prompt_with_budget(
+        &self,
+        session_id: &acp::SessionId,
+        text: &str,
+        budget: Duration,
+    ) -> acp::Result<acp::PromptResponse> {
+        timed(
+            &self.process,
+            "prompt",
+            budget,
+            self.connection.prompt(session_id, text),
         )
         .await
-        .unwrap_or_else(|_| panic!("prompt timed out\nstderr:\n{}", self.stderr_text()))
     }
 
-    pub fn reconnected_count(&self) -> u32 {
-        self.capture.reconnected_count.load(Ordering::SeqCst)
+    pub async fn set_model(
+        &self,
+        session_id: &acp::SessionId,
+        model_id: &str,
+    ) -> acp::Result<acp::SetSessionModelResponse> {
+        timed(
+            &self.process,
+            &format!("session/set_model({model_id})"),
+            REQUEST_TIMEOUT,
+            self.connection.set_model(session_id, model_id),
+        )
+        .await
     }
 
-    pub fn notification_count(&self) -> u32 {
-        self.capture.notification_count.load(Ordering::SeqCst)
+    pub fn reconnected_count(&self) -> usize {
+        self.connection
+            .handler()
+            .transcript()
+            .ext_notification_count(LEADER_RECONNECTED_METHOD)
+    }
+
+    pub fn notification_count(&self) -> usize {
+        self.connection
+            .handler()
+            .transcript()
+            .session_update_count()
     }
 
     /// Count of `x.ai/models/update` notifications received (catalog self-heal).
-    pub fn models_update_count(&self) -> u32 {
-        self.capture.models_update_count.load(Ordering::SeqCst)
+    pub fn models_update_count(&self) -> usize {
+        self.connection
+            .handler()
+            .transcript()
+            .ext_notification_count("x.ai/models/update")
     }
 
     /// Count of `x.ai/settings/update` notifications received (settings self-heal).
-    pub fn settings_update_count(&self) -> u32 {
-        self.capture.settings_update_count.load(Ordering::SeqCst)
+    pub fn settings_update_count(&self) -> usize {
+        self.connection
+            .handler()
+            .transcript()
+            .ext_notification_count("x.ai/settings/update")
     }
 }
 
@@ -869,20 +769,26 @@ pub async fn wait_for_live_leader(home: &Path, timeout: Duration) -> Option<u32>
     None
 }
 
-/// Wait for evidence that the bridge finished its reconnect replay.
+/// Wait for evidence that the bridge finished its reconnect replay: a `x.ai/leader_reconnected` notification
+/// or a `session/update` beyond `baseline`, within the scaled `timeout`.
 pub async fn wait_for_replay_notifications(
     client: &LeaderStdioClient,
-    baseline: u32,
+    baseline: usize,
     timeout: Duration,
 ) -> bool {
-    let deadline = tokio::time::Instant::now() + timeout;
-    while tokio::time::Instant::now() < deadline {
-        if client.reconnected_count() > 0 || client.notification_count() > baseline {
-            return true;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    false
+    let replayed = client.connection.handler().transcript().wait_until(|entries| {
+        let reconnected = entries.iter().any(|entry| {
+            matches!(entry, TranscriptEntry::ExtNotification { method, .. } if method == LEADER_RECONNECTED_METHOD)
+        });
+        let session_updates = entries
+            .iter()
+            .filter(|entry| matches!(entry, TranscriptEntry::SessionUpdate(_)))
+            .count();
+        reconnected || session_updates > baseline
+    });
+    tokio::time::timeout(scaled(timeout), replayed)
+        .await
+        .is_ok()
 }
 
 pub fn leader_log(home: &Path) -> String {

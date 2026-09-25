@@ -1,5 +1,4 @@
-//! MCP server configuration value types, extracted from xai-grok-shell
-//! (config dependency inversion).
+//! MCP server configuration value types, extracted from xai-grok-shell so crates the shell depends on can use them.
 
 use agent_client_protocol as acp;
 use indexmap::IndexMap;
@@ -8,14 +7,12 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use xai_grok_mcp::oauth_config::McpOAuthConfig;
 
-/// serde default helper. Kept module-local rather than shared — the `pool`
-/// module keeps its own copy for `PoolConfig`.
+/// serde default helper.
 fn default_true() -> bool {
     true
 }
 
-/// Read an MCP OAuth client secret from the named env var. Moved here with
-/// `McpServerConfig` (its only caller).
+/// Read an MCP OAuth client secret from the named env var. `McpServerConfig` is its only caller.
 fn resolve_oauth_client_secret(env_var: Option<&String>) -> Option<String> {
     let env_var = env_var?;
     match std::env::var(env_var) {
@@ -45,8 +42,7 @@ pub enum McpServerTransportConfig {
         cwd: Option<String>,
     },
     StreamableHttp {
-        // Not `default`: a missing url must fail to deserialize, not become a
-        // fake HTTP server with an empty url.
+        // Not `default`: a missing url must fail to deserialize, not become a fake HTTP server with an empty url
         #[serde(alias = "urlTemplate", alias = "url_template")]
         url: String,
         #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
@@ -75,8 +71,7 @@ pub enum McpServerProblemSeverity {
     Warning,
 }
 
-/// A problem found loading an `[mcp_servers.*]` entry. Reported (never fatal)
-/// and surfaced through `grok inspect`.
+/// A problem found loading an `[mcp_servers.*]` entry. It is reported (never fatal) and shown by `grok inspect`.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerConfigProblem {
@@ -87,9 +82,9 @@ pub struct McpServerConfigProblem {
     pub message: String,
 }
 
-/// Recognized wire keys for an `[mcp_servers.*]` entry. Needed because the
-/// flattened untagged transport enum bypasses `serde_ignored`. Kept in sync by
-/// `known_mcp_server_fields_cover_serialized_keys`.
+/// Recognized wire keys for an `[mcp_servers.*]` entry.
+/// It exists because the flattened untagged transport enum bypasses `serde_ignored`.
+/// `known_mcp_server_fields_cover_serialized_keys` keeps it in sync.
 pub const KNOWN_MCP_SERVER_FIELDS: &[&str] = &[
     "args",
     "bearer_token_env_var",
@@ -226,12 +221,11 @@ pub struct McpServerConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_timeout_sec: Option<u64>,
     /// Per-tool timeout overrides in seconds: `{ "create_issue" = 120, "search" = 30 }`.
-    /// Falls back to `tool_timeout_sec` for tools not listed here.
+    /// Tools not listed here fall back to `tool_timeout_sec`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_timeouts: Option<HashMap<String, u64>>,
-    /// Also keep the raw base64 in tool-result text so agents can forward
-    /// bytes via path-based tools (`base64 -d > /tmp/x.png && send_file ...`).
-    /// ~2× tokens per image. Overridden by `_meta.mcpConfig.<server>.exposeImageBase64`.
+    /// Also keep the raw base64 in tool-result text so agents can forward bytes via path-based tools (`base64 -d > /tmp/x.png && send_file ...`).
+    /// It roughly doubles the tokens per image. `_meta.mcpConfig.<server>.exposeImageBase64` overrides it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expose_image_base64: Option<bool>,
 }
@@ -261,16 +255,27 @@ fn render_setup_template(
     while let Some(start) = rest.find("{{") {
         let (prefix, after_start) = rest.split_at(start);
         out.push_str(prefix);
-        let after_start = &after_start[2..];
+        let Some(after_start) = after_start.strip_prefix("{{") else {
+            return Err("unterminated setup variable template".to_string());
+        };
         let Some(end) = after_start.find("}}") else {
             return Err("unterminated setup variable template".to_string());
         };
-        let key = after_start[..end].trim();
+        let Some(key) = after_start.get(..end) else {
+            return Err("unterminated setup variable template".to_string());
+        };
+        let key = key.trim();
         let Some(value) = variables.get(key) else {
             return Err(format!("unresolved setup variable '{key}'"));
         };
         out.push_str(value);
-        rest = &after_start[end + 2..];
+        let Some(remaining) = after_start.get(end..) else {
+            return Err("unterminated setup variable template".to_string());
+        };
+        let Some(remaining) = remaining.strip_prefix("}}") else {
+            return Err("unterminated setup variable template".to_string());
+        };
+        rest = remaining;
     }
     out.push_str(rest);
     Ok(out)
@@ -316,19 +321,17 @@ fn render_setup_templates(
 impl McpServerConfig {
     /// Resolve `setup` templates using stored preferences.
     ///
-    /// v0 supports exactly one select field with options. Multi-field schemas
-    /// are Invalid until the TUI can collect them.
+    /// v0 supports exactly one select field with options. Multi-field schemas are Invalid until the TUI can collect them.
     pub fn resolve_setup(&self, preferences: Option<&McpServerPreferences>) -> McpSetupResolution {
         let Some(setup) = self.setup.as_ref() else {
             return McpSetupResolution::Resolved(Box::new(self.clone()));
         };
 
-        if setup.fields.len() != 1 {
+        let [field] = setup.fields.as_slice() else {
             return McpSetupResolution::Invalid(
                 "setup schema must declare exactly one select field (v0)".to_string(),
             );
-        }
-        let field = &setup.fields[0];
+        };
         if !matches!(field.field_type, McpSetupFieldType::Select) || field.options.is_empty() {
             return McpSetupResolution::Invalid(
                 "setup field must be a non-empty select (v0)".to_string(),
@@ -446,13 +449,12 @@ impl McpServerConfig {
                     })
                     .unwrap_or_default();
 
-                // Add bearer token from environment variable if specified
                 if let Some(env_var) = bearer_token_env_var {
                     match std::env::var(env_var) {
                         Ok(token) => {
                             http_headers.push(acp::HttpHeader::new(
                                 "Authorization",
-                                format!("Bearer {}", token),
+                                format!("Bearer {token}"),
                             ));
                         }
                         Err(_) => {
@@ -516,21 +518,14 @@ impl McpServerConfig {
     }
 }
 
-/// Configuration for relay session sharing.
-/// Set in config.toml under [relay] section.
-///
-/// Example:
-/// ```toml
-/// [relay]
-/// enabled = true
-/// ```
+/// Configuration for relay session sharing, set in config.toml under the `[relay]` section.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RelaySyncConfig {
     pub enabled: Option<bool>,
 }
 
 impl RelaySyncConfig {
-    /// Check if relay sync is enabled. Env var takes precedence over config.
+    /// Check if relay sync is enabled. `GROK_RELAY_SYNC_ENABLED` takes precedence over config.
     pub fn is_enabled(&self) -> bool {
         if let Ok(env_val) = std::env::var("GROK_RELAY_SYNC_ENABLED") {
             return env_val.eq_ignore_ascii_case("true") || env_val == "1";
@@ -687,8 +682,11 @@ mod tests {
         let config: McpConfig = serde_json::from_str(site_select_setup_json()).unwrap();
         let server = config.mcp_servers.get("acme").unwrap();
         let setup = server.setup.as_ref().unwrap();
-        assert_eq!(setup.fields[0].id, "site");
-        assert_eq!(setup.fields[0].default.as_deref(), Some("us1"));
+        let [field] = setup.fields.as_slice() else {
+            panic!("expected exactly one setup field: {:?}", setup.fields);
+        };
+        assert_eq!(field.id, "site");
+        assert_eq!(field.default.as_deref(), Some("us1"));
         assert!(setup.variables.contains_key("url"));
         assert!(matches!(
             server.resolve_setup(None),

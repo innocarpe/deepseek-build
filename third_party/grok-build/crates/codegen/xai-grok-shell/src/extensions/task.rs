@@ -1,6 +1,6 @@
 use agent_client_protocol as acp;
 use serde::{Deserialize, Serialize};
-use xai_grok_tools::types::{KillOutcome, TaskSnapshot};
+use xai_grok_tools::types::{KillOutcome, KillSource, TaskSnapshot};
 
 use xai_grok_tools::implementations::grok_build::task::types::{
     SubagentCancelOutcome, SubagentInspection, SubagentProvenance, SubagentSnapshot,
@@ -13,22 +13,40 @@ use crate::session::ExtMethodResult;
 type ExtResult = Result<acp::ExtResponse, acp::Error>;
 
 /// Wire DTO for the `x.ai/task/kill` ext request.
-///
-/// `pub` (with both serde directions) so ACP clients (xai-grok-pager) build
-/// the request from the same type the agent parses — keeping the wire
-/// contract typed end-to-end instead of duplicated `json!` literals.
+/// `pub` (with both serde directions) so ACP clients (xai-grok-pager) build the request from the same type the agent parses.
+/// That keeps the wire contract typed end-to-end instead of duplicated `json!` literals.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KillTaskRequest {
     pub session_id: String,
     pub task_id: String,
+    /// Single-task UI `[×]` omits this (defaults to [`TaskKillSource::ClientUi`]).
+    /// Bulk teardown (dashboard stop-all, session delete, headless reap) must send [`TaskKillSource::Teardown`].
+    #[serde(default)]
+    pub source: TaskKillSource,
 }
 
-/// Wire DTO for the `x.ai/task/kill` ext response payload (nested under
-/// `result` in the `ExtMethodResult` envelope).
+/// Client-facing kill reason on `x.ai/task/kill`. Older clients omit it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TaskKillSource {
+    #[default]
+    ClientUi,
+    Teardown,
+}
+
+impl From<TaskKillSource> for KillSource {
+    fn from(source: TaskKillSource) -> Self {
+        match source {
+            TaskKillSource::ClientUi => Self::ClientUi,
+            TaskKillSource::Teardown => Self::Teardown,
+        }
+    }
+}
+
+/// Wire DTO for the `x.ai/task/kill` ext response payload (nested under `result` in the `ExtMethodResult` envelope).
 ///
-/// `pub` (with both serde directions) so ACP clients deserialize the typed
-/// outcome instead of probing raw JSON.
+/// `pub` (with both serde directions) so ACP clients deserialize the typed outcome instead of probing raw JSON.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KillTaskResponse {
@@ -50,35 +68,33 @@ struct ListTasksResponse {
 
 /// Wire DTO for the `x.ai/subagent/cancel` ext request.
 ///
-/// `pub` (with both serde directions) so ACP clients (xai-grok-pager) build
-/// the request from the same type the agent parses.
+/// `pub` (with both serde directions) so ACP clients (xai-grok-pager) build the request from the same type the agent parses.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CancelSubagentRequest {
     pub subagent_id: String,
 }
 
-/// Wire mirror of the coordinator's [`SubagentCancelOutcome`], `kind`-tagged so
-/// a client can branch and read the already-finished `status`. Sent alongside
-/// the legacy `cancelled` bool: a new pager prefers this, an old one ignores it.
+/// Wire mirror of the coordinator's [`SubagentCancelOutcome`], `kind`-tagged so a client can branch and read the already-finished `status`.
+/// It is sent alongside the legacy `cancelled` bool: a new pager prefers this, an old one ignores it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SubagentCancelOutcomeDto {
-    /// A live subagent was cancelled — a real `SubagentFinished` is coming.
+    /// A live subagent was cancelled; a real `SubagentFinished` is coming.
     Cancelled,
-    /// Already finished — no finish coming; `status` is the real terminal status.
+    /// The subagent already finished, so no finish event is coming; `status` is the real terminal status.
     AlreadyFinished { status: String },
-    /// The id is unknown (never existed / evicted) — no finish coming.
+    /// The id is unknown (never existed, or evicted), so no finish event is coming.
     NotFound,
-    /// Unknown future `kind` (`#[serde(other)]`): lets an old client still parse
-    /// and fall back to the legacy bool. Never produced by `From`.
+    /// Unknown future `kind` (`#[serde(other)]`): lets an old client still parse and fall back to the legacy bool.
+    /// `From` never produces this variant.
     #[serde(other)]
     Unknown,
 }
 
 impl SubagentCancelOutcomeDto {
     /// Legacy bool for older pagers: true only when a live subagent was stopped.
-    /// Already-finished / not-found → false so an old pager finalizes the row.
+    /// Already-finished and not-found map to false so an old pager finalizes the row.
     fn cancelled_bool(&self) -> bool {
         matches!(self, Self::Cancelled)
     }
@@ -94,8 +110,8 @@ impl From<SubagentCancelOutcome> for SubagentCancelOutcomeDto {
     }
 }
 
-/// Wire DTO for the `x.ai/subagent/cancel` response payload (under `result` in
-/// the `ExtMethodResult` envelope). `pub` + both serde dirs so clients read it typed.
+/// Wire DTO for the `x.ai/subagent/cancel` response payload (under `result` in the `ExtMethodResult` envelope).
+/// `pub` with both serde directions so clients read it typed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CancelSubagentResponse {
@@ -199,8 +215,7 @@ struct GetSubagentResponse {
 
 /// ACP DTO for a single subagent snapshot (any status).
 ///
-/// Extends the identity fields from `SubagentLiveSnapshotDto` with
-/// status-dependent fields for completed/failed/cancelled states.
+/// Extends the identity fields from `SubagentLiveSnapshotDto` with status-dependent fields for completed/failed/cancelled states.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SubagentSnapshotDto {
@@ -349,7 +364,7 @@ pub async fn handle(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
         "x.ai/task/kill" => {
             let req: KillTaskRequest = parse(args)?;
             let result = agent
-                .kill_background_task(&req.session_id, &req.task_id)
+                .kill_background_task(&req.session_id, &req.task_id, req.source.into())
                 .await
                 .map(|outcome| KillTaskResponse {
                     task_id: req.task_id,
@@ -407,6 +422,7 @@ pub(crate) async fn handle_scheduler(agent: &MvpAgent, args: &acp::ExtRequest) -
 /// Handle `x.ai/subagent/*` extension methods.
 pub(crate) async fn handle_subagent(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
     match args.method.as_ref() {
+        "x.ai/subagent/message" => crate::extensions::subagent_message::handle(agent, args).await,
         "x.ai/subagent/cancel" => {
             let req: CancelSubagentRequest = parse(args)?;
             tracing::info!(subagent_id = %req.subagent_id, "Cancelling subagent via ext method");
@@ -477,14 +493,25 @@ mod tests {
     }
 
     #[test]
+    fn kill_task_request_source_defaults_to_client_ui() {
+        let req: KillTaskRequest =
+            serde_json::from_str(r#"{"sessionId":"s","taskId":"t"}"#).expect("legacy kill");
+        assert_eq!(req.source, TaskKillSource::ClientUi);
+        let teardown: KillTaskRequest =
+            serde_json::from_str(r#"{"sessionId":"s","taskId":"t","source":"teardown"}"#)
+                .expect("teardown kill");
+        assert_eq!(teardown.source, TaskKillSource::Teardown);
+    }
+
+    #[test]
     fn delete_scheduled_task_response_serializes_camel_case() {
         let resp = DeleteScheduledTaskResponse {
             task_id: "task-42".into(),
             deleted: true,
         };
         let json = serde_json::to_value(&resp).expect("should serialize");
-        assert_eq!(json["taskId"], "task-42");
-        assert_eq!(json["deleted"], true);
+        assert_eq!(json.get("taskId"), Some(&serde_json::json!("task-42")));
+        assert_eq!(json.get("deleted"), Some(&serde_json::json!(true)));
     }
 
     #[test]
@@ -506,19 +533,37 @@ mod tests {
             error_count: 1,
         };
         let json = serde_json::to_value(&dto).expect("should serialize");
-        assert_eq!(json["subagentId"], "sub-1");
-        assert_eq!(json["parentSessionId"], "parent-1");
-        assert_eq!(json["childSessionId"], "child-1");
-        assert_eq!(json["subagentType"], "explore");
-        assert_eq!(json["startedAtEpochMs"], 1_700_000_000_000_u64);
-        assert_eq!(json["durationMs"], 5000);
-        assert_eq!(json["turnCount"], 2);
-        assert_eq!(json["toolCallCount"], 7);
-        assert_eq!(json["tokensUsed"], 30_000);
-        assert_eq!(json["contextWindowTokens"], 256_000);
-        assert_eq!(json["contextUsagePct"], 23);
-        assert_eq!(json["toolsUsed"], serde_json::json!(["bash", "grep"]));
-        assert_eq!(json["errorCount"], 1);
+        assert_eq!(json.get("subagentId"), Some(&serde_json::json!("sub-1")));
+        assert_eq!(
+            json.get("parentSessionId"),
+            Some(&serde_json::json!("parent-1"))
+        );
+        assert_eq!(
+            json.get("childSessionId"),
+            Some(&serde_json::json!("child-1"))
+        );
+        assert_eq!(
+            json.get("subagentType"),
+            Some(&serde_json::json!("explore"))
+        );
+        assert_eq!(
+            json.get("startedAtEpochMs"),
+            Some(&serde_json::json!(1_700_000_000_000_u64))
+        );
+        assert_eq!(json.get("durationMs"), Some(&serde_json::json!(5000)));
+        assert_eq!(json.get("turnCount"), Some(&serde_json::json!(2)));
+        assert_eq!(json.get("toolCallCount"), Some(&serde_json::json!(7)));
+        assert_eq!(json.get("tokensUsed"), Some(&serde_json::json!(30_000)));
+        assert_eq!(
+            json.get("contextWindowTokens"),
+            Some(&serde_json::json!(256_000))
+        );
+        assert_eq!(json.get("contextUsagePct"), Some(&serde_json::json!(23)));
+        assert_eq!(
+            json.get("toolsUsed"),
+            Some(&serde_json::json!(["bash", "grep"]))
+        );
+        assert_eq!(json.get("errorCount"), Some(&serde_json::json!(1)));
     }
 
     #[test]
@@ -558,7 +603,7 @@ mod tests {
     fn list_running_response_serializes_with_subagents_array() {
         let resp = ListRunningSubagentsResponse { subagents: vec![] };
         let json = serde_json::to_value(&resp).expect("should serialize");
-        assert_eq!(json["subagents"], serde_json::json!([]));
+        assert_eq!(json.get("subagents"), Some(&serde_json::json!([])));
     }
 
     // ── SubagentSnapshotDto serialization tests ────────────────────────
@@ -589,14 +634,20 @@ mod tests {
             Default::default(),
         );
         let json = serde_json::to_value(&dto).expect("should serialize");
-        assert_eq!(json["parentSessionId"], "parent-1");
-        assert_eq!(json["childSessionId"], "child-1");
-        assert_eq!(json["status"], "running");
-        assert_eq!(json["turnCount"], 3);
-        assert_eq!(json["toolCallCount"], 12);
-        assert_eq!(json["tokensUsed"], 45_000);
-        assert_eq!(json["contextUsagePct"], 35);
-        assert_eq!(json["errorCount"], 1);
+        assert_eq!(
+            json.get("parentSessionId"),
+            Some(&serde_json::json!("parent-1"))
+        );
+        assert_eq!(
+            json.get("childSessionId"),
+            Some(&serde_json::json!("child-1"))
+        );
+        assert_eq!(json.get("status"), Some(&serde_json::json!("running")));
+        assert_eq!(json.get("turnCount"), Some(&serde_json::json!(3)));
+        assert_eq!(json.get("toolCallCount"), Some(&serde_json::json!(12)));
+        assert_eq!(json.get("tokensUsed"), Some(&serde_json::json!(45_000)));
+        assert_eq!(json.get("contextUsagePct"), Some(&serde_json::json!(35)));
+        assert_eq!(json.get("errorCount"), Some(&serde_json::json!(1)));
         // Completed-only fields should be absent
         assert!(json.get("output").is_none());
         assert!(json.get("failureError").is_none());
@@ -621,10 +672,13 @@ mod tests {
         let dto =
             SubagentSnapshotDto::from_snapshot(snap, "p".into(), "c".into(), Default::default());
         let json = serde_json::to_value(&dto).expect("should serialize");
-        assert_eq!(json["status"], "completed");
-        assert_eq!(json["output"], "Done, refactored 3 files.");
-        assert_eq!(json["toolCalls"], 8);
-        assert_eq!(json["turns"], 2);
+        assert_eq!(json.get("status"), Some(&serde_json::json!("completed")));
+        assert_eq!(
+            json.get("output"),
+            Some(&serde_json::json!("Done, refactored 3 files."))
+        );
+        assert_eq!(json.get("toolCalls"), Some(&serde_json::json!(8)));
+        assert_eq!(json.get("turns"), Some(&serde_json::json!(2)));
         // Running-only fields should be absent
         assert!(json.get("turnCount").is_none());
         assert!(json.get("tokensUsed").is_none());
@@ -646,8 +700,11 @@ mod tests {
         let dto =
             SubagentSnapshotDto::from_snapshot(snap, "p".into(), "c".into(), Default::default());
         let json = serde_json::to_value(&dto).expect("should serialize");
-        assert_eq!(json["status"], "failed");
-        assert_eq!(json["failureError"], "sampling error");
+        assert_eq!(json.get("status"), Some(&serde_json::json!("failed")));
+        assert_eq!(
+            json.get("failureError"),
+            Some(&serde_json::json!("sampling error"))
+        );
     }
 
     #[test]
@@ -666,8 +723,11 @@ mod tests {
         let dto =
             SubagentSnapshotDto::from_snapshot(snap, "p".into(), "c".into(), Default::default());
         let json = serde_json::to_value(&dto).expect("should serialize");
-        assert_eq!(json["status"], "cancelled");
-        assert_eq!(json["cancelReason"], "user cancelled");
+        assert_eq!(json.get("status"), Some(&serde_json::json!("cancelled")));
+        assert_eq!(
+            json.get("cancelReason"),
+            Some(&serde_json::json!("user cancelled"))
+        );
     }
 
     #[test]
@@ -684,7 +744,7 @@ mod tests {
         let dto =
             SubagentSnapshotDto::from_snapshot(snap, "p".into(), "c".into(), Default::default());
         let json = serde_json::to_value(&dto).expect("should serialize");
-        assert_eq!(json["status"], "cancelled");
+        assert_eq!(json.get("status"), Some(&serde_json::json!("cancelled")));
         assert!(json.get("cancelReason").is_none());
     }
 
@@ -692,7 +752,7 @@ mod tests {
     fn get_subagent_response_null_snapshot() {
         let resp = GetSubagentResponse { snapshot: None };
         let json = serde_json::to_value(&resp).expect("should serialize");
-        assert!(json["snapshot"].is_null());
+        assert!(json.get("snapshot").is_none_or(|v| v.is_null()));
     }
 
     #[test]
@@ -723,12 +783,17 @@ mod tests {
             )),
         };
         let json = serde_json::to_value(&resp).expect("should serialize");
-        let s = &json["snapshot"];
-        assert_eq!(s["status"], "running");
-        assert_eq!(s["subagentId"], "sub-run");
-        assert_eq!(s["parentSessionId"], "parent-1");
-        assert_eq!(s["childSessionId"], "child-1");
-        assert_eq!(s["turnCount"], 2);
+        let Some(s) = json.get("snapshot") else {
+            panic!("expected snapshot: {json}");
+        };
+        assert_eq!(s.get("status"), Some(&serde_json::json!("running")));
+        assert_eq!(s.get("subagentId"), Some(&serde_json::json!("sub-run")));
+        assert_eq!(
+            s.get("parentSessionId"),
+            Some(&serde_json::json!("parent-1"))
+        );
+        assert_eq!(s.get("childSessionId"), Some(&serde_json::json!("child-1")));
+        assert_eq!(s.get("turnCount"), Some(&serde_json::json!(2)));
         // Completed-only fields must be absent
         assert!(s.get("output").is_none());
         assert!(s.get("turns").is_none());
@@ -759,11 +824,16 @@ mod tests {
             )),
         };
         let json = serde_json::to_value(&resp).expect("should serialize");
-        let s = &json["snapshot"];
-        assert_eq!(s["status"], "completed");
-        assert_eq!(s["output"], "Refactored 3 files.");
-        assert_eq!(s["toolCalls"], 7);
-        assert_eq!(s["turns"], 2);
+        let Some(s) = json.get("snapshot") else {
+            panic!("expected snapshot: {json}");
+        };
+        assert_eq!(s.get("status"), Some(&serde_json::json!("completed")));
+        assert_eq!(
+            s.get("output"),
+            Some(&serde_json::json!("Refactored 3 files."))
+        );
+        assert_eq!(s.get("toolCalls"), Some(&serde_json::json!(7)));
+        assert_eq!(s.get("turns"), Some(&serde_json::json!(2)));
         // Running-only fields must be absent
         assert!(s.get("turnCount").is_none());
         assert!(s.get("tokensUsed").is_none());
@@ -825,20 +895,26 @@ mod tests {
             provenance,
         );
         let json = serde_json::to_value(&dto).expect("should serialize");
-        assert_eq!(json["resumedFrom"], "source-agent-id");
-        assert_eq!(json["forkParentPromptId"], "prompt-5");
+        assert_eq!(
+            json.get("resumedFrom"),
+            Some(&serde_json::json!("source-agent-id"))
+        );
+        assert_eq!(
+            json.get("forkParentPromptId"),
+            Some(&serde_json::json!("prompt-5"))
+        );
     }
 
     // ── x.ai/subagent/cancel outcome wire DTO ──────────────────────────
 
     #[test]
     fn subagent_cancel_outcome_dto_maps_from_coordinator_outcome() {
-        // Cancelled → legacy bool true (a real finish is coming).
+        // Cancelled maps to legacy bool true (a real finish is coming)
         let dto = SubagentCancelOutcomeDto::from(SubagentCancelOutcome::Cancelled);
         assert_eq!(dto, SubagentCancelOutcomeDto::Cancelled);
         assert!(dto.cancelled_bool());
 
-        // AlreadyFinished carries the terminal status; legacy bool false.
+        // AlreadyFinished carries the terminal status; the legacy bool is false
         let dto = SubagentCancelOutcomeDto::from(SubagentCancelOutcome::AlreadyFinished {
             status: "completed".into(),
         });
@@ -850,7 +926,7 @@ mod tests {
         );
         assert!(!dto.cancelled_bool());
 
-        // NotFound → legacy bool false.
+        // NotFound maps to legacy bool false
         let dto = SubagentCancelOutcomeDto::from(SubagentCancelOutcome::NotFound);
         assert_eq!(dto, SubagentCancelOutcomeDto::NotFound);
         assert!(!dto.cancelled_bool());
@@ -866,15 +942,20 @@ mod tests {
             }),
         };
         let json = serde_json::to_value(&resp).expect("should serialize");
-        assert_eq!(json["subagentId"], "sa-1");
-        assert_eq!(json["cancelled"], false);
-        assert_eq!(json["outcome"]["kind"], "already_finished");
-        assert_eq!(json["outcome"]["status"], "failed");
+        assert_eq!(json.get("subagentId"), Some(&serde_json::json!("sa-1")));
+        assert_eq!(json.get("cancelled"), Some(&serde_json::json!(false)));
+        assert_eq!(
+            json.pointer("/outcome/kind"),
+            Some(&serde_json::json!("already_finished"))
+        );
+        assert_eq!(
+            json.pointer("/outcome/status"),
+            Some(&serde_json::json!("failed"))
+        );
     }
 
-    /// Wire-compat: a payload from an older shell (no `outcome`) still
-    /// deserializes, leaving `outcome` as `None` so the client falls back to
-    /// the legacy `cancelled` bool.
+    /// Wire-compat: a payload from an older shell (no `outcome`) still deserializes.
+    /// `outcome` stays `None` so the client falls back to the legacy `cancelled` bool.
     #[test]
     fn cancel_subagent_response_deserializes_without_outcome() {
         let resp: CancelSubagentResponse =

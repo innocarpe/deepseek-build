@@ -1,34 +1,29 @@
 use crate::session::user_message::user_query;
 use agent_client_protocol::{self as acp, ImageContent};
 use serde::Deserialize;
+use std::ops::Range;
 use std::path::PathBuf;
 use xai_grok_workspace::file_system::{
     FileReference, render_embedded_resource, render_file_reference,
 };
-/// Parsed prompt with context and query kept separate.
-///
 /// Some templates put `<user_query>` last (context first); Grok puts it first.
-/// Keeping them separate lets the caller truncate context without
-/// searching for the query boundary in a flat string.
+/// Keeping them separate lets the caller truncate context without searching for the query boundary in a flat string.
 #[derive(Debug, Clone)]
 pub struct ParsedPrompt {
     /// Context blocks: `<attached_files>` payloads and resource-link sections.
     /// Grok mode may include editor open/focus metadata; the compat mode does not.
     /// Empty string when there is no context.
     pub context: String,
-    /// The user's query, already wrapped in `<user_query>` tags
-    /// (or raw when verbatim).
+    /// The user's query, already wrapped in `<user_query>` tags (or raw when verbatim).
     pub query: String,
-    /// Skill information block: `<skill_information>` envelope with expanded
-    /// skill content. Empty string when no skills were invoked.
+    /// Skill information block: `<skill_information>` envelope with expanded skill content.
+    /// Empty string when no skills were invoked.
     pub skill_information: String,
-    /// Extracted images from the prompt.
     pub images: Vec<ImageContent>,
     /// Whether the prompt was parsed in query-last mode.
     pub is_cursor: bool,
 }
 impl ParsedPrompt {
-    /// Assemble into the final message string with correct ordering.
     pub fn assemble(&self) -> String {
         Self::assemble_parts_with_skills(
             &self.context,
@@ -37,42 +32,69 @@ impl ParsedPrompt {
             self.is_cursor,
         )
     }
-    /// Assemble context, query, and skill information into the final message string.
-    ///
-    /// Layout:
-    /// - **Grok mode:** `<user_query>` + `<skill_information>` + context
-    /// - **Query-last mode:** context + `<user_query>` + `<skill_information>`
-    ///
-    /// The `<skill_information>` block always follows `<user_query>` immediately
-    /// so the model sees the user's request and skill instructions together.
+    /// Grok mode: `<user_query>`, then `<skill_information>`, then context.
+    /// Query-last mode: context, then `<user_query>`, then `<skill_information>`.
+    /// The `<skill_information>` block always follows `<user_query>` immediately.
     pub fn assemble_parts_with_skills(
         context: &str,
         query: &str,
         skill_information: &str,
         is_cursor: bool,
     ) -> String {
-        let query_block = if skill_information.is_empty() {
-            query.to_string()
-        } else {
-            format!("{query}\n{skill_information}")
-        };
-        if context.is_empty() {
-            return query_block;
-        }
+        Self::assemble_with_layout(context, query, skill_information, is_cursor).0
+    }
+    /// [`Self::assemble_parts_with_skills`] plus the byte range of each part in the result,
+    /// recorded as the parts are pushed, so a part-relative cut maps back to bytes of the assembled
+    /// message.
+    pub fn assemble_with_layout(
+        context: &str,
+        query: &str,
+        skill_information: &str,
+        is_cursor: bool,
+    ) -> (String, PromptLayout) {
         let _ = is_cursor;
-        format!("{query_block}\n\n{context}")
+        let context_first = false;
+        let mut out = String::new();
+        let mut push = |part: &str| {
+            let start = out.len();
+            out.push_str(part);
+            start..out.len()
+        };
+        let mut context_range = None;
+        if context_first {
+            context_range = Some(push(context));
+            push("\n\n");
+        }
+        let query_range = push(query);
+        let skill = if skill_information.is_empty() {
+            None
+        } else {
+            push("\n");
+            Some(push(skill_information))
+        };
+        if !context_first && !context.is_empty() {
+            push("\n\n");
+            context_range = Some(push(context));
+        }
+        let layout = PromptLayout {
+            query: query_range,
+            skill,
+            context: context_range,
+        };
+        (out, layout)
     }
 }
-/// Parses ACP prompt content blocks into a [`ParsedPrompt`] with context
-/// and query kept separate.
-///
-/// When `is_cursor` is true, produces query-last format output:
-/// - `<attached_files>` (bare), resource links, then `<user_query>` last
-/// - File references use `<code_selection>` tags
-///
-/// When `is_cursor` is false, produces original Grok-format output:
-/// - `<user_query>` first, then `<system-reminder>` wrapped `<attached_files>` and resource links
-/// - File references use `<file_contents>` tags
+/// Byte ranges of each non-empty part inside the string [`ParsedPrompt::assemble_with_layout`]
+/// returns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromptLayout {
+    pub query: Range<usize>,
+    pub skill: Option<Range<usize>>,
+    pub context: Option<Range<usize>>,
+}
+/// When `is_cursor` is true, produces query-last format output.
+/// `<attached_files>` (bare), resource links, then `<user_query>` last.
+/// `<user_query>` first, then `<system-reminder>` wrapped `<attached_files>` and resource links.
 pub async fn parse_prompt(
     prompt: &[acp::ContentBlock],
     working_directory: PathBuf,
@@ -84,24 +106,26 @@ pub async fn parse_prompt(
         prompt,
         working_directory,
         _session_info,
+        super::InputAuthority::HumanIntent,
         verbatim,
         is_cursor,
         String::new(),
     )
     .await
 }
-/// Parse prompt with optional pre-built skill information block.
-///
-/// This is the full-featured entry point. `parse_prompt` delegates here with
-/// an empty `skill_information` string for backward compatibility.
+/// This is the full-featured entry point. `parse_prompt` delegates here with an empty `skill_information` string for backward compatibility.
 pub(crate) async fn parse_prompt_with_skills(
     prompt: &[acp::ContentBlock],
     working_directory: PathBuf,
     _session_info: &crate::session::info::Info,
+    authority: super::InputAuthority,
     verbatim: bool,
     is_cursor: bool,
     skill_information: String,
 ) -> Result<ParsedPrompt, acp::Error> {
+    let parse_span =
+        xai_grok_telemetry::region::Region::from_span(tracing::info_span!("prompt.parse"));
+    let allows_file_expansion = authority != super::InputAuthority::ModelAuthoredUntrusted;
     let mut message_parts: Vec<String> = Vec::new();
     let mut image_parts = Vec::new();
     let mut resource_links = Vec::new();
@@ -112,7 +136,7 @@ pub(crate) async fn parse_prompt_with_skills(
             acp::ContentBlock::Image(image_content) => image_parts.push(image_content.clone()),
             acp::ContentBlock::ResourceLink(link) => {
                 resource_links.push(link.clone());
-                if link.meta.is_none() {
+                if allows_file_expansion && link.meta.is_none() {
                     let path = extract_path_from_uri(link);
                     message_parts.push(format!("@{path}"));
                 }
@@ -125,8 +149,21 @@ pub(crate) async fn parse_prompt_with_skills(
         }
     }
     let message = message_parts.join(" ");
-    let file_ref_tokens = collect_file_references(&message);
+    let file_ref_tokens = if allows_file_expansion {
+        collect_file_references(&message)
+    } else {
+        Vec::new()
+    };
     let mut file_ref_contents = Vec::new();
+    let mut at_mention_bytes: usize = 0;
+    let at_mention_span = (!file_ref_tokens.is_empty()).then(|| {
+        xai_grok_telemetry::region::Region::from_span(tracing::info_span!(
+            parent: parse_span.span(),
+            "prompt.at_mention_resolve",
+            file_count = tracing::field::Empty,
+            bytes = tracing::field::Empty,
+        ))
+    });
     for token in file_ref_tokens {
         let Some(mut file_ref) = FileReference::parse(&token) else {
             continue;
@@ -134,10 +171,20 @@ pub(crate) async fn parse_prompt_with_skills(
         file_ref.path = working_directory.join(&file_ref.path);
         let rendered_file = render_file_reference(file_ref, is_cursor).await;
         let success = rendered_file.is_some();
-        tracing::info_span!("at_mention", mention_type = "file", success).in_scope(|| {});
+        xai_grok_telemetry::event_span!("prompt.at_mention", mention_type = "file", success);
         if let Some(rendered_file) = rendered_file {
+            at_mention_bytes += rendered_file.len();
             file_ref_contents.push(rendered_file);
         }
+    }
+    if let Some(at_mention_span) = at_mention_span {
+        at_mention_span
+            .span()
+            .record("file_count", file_ref_contents.len() as i64);
+        at_mention_span
+            .span()
+            .record("bytes", at_mention_bytes as i64);
+        at_mention_span.close();
     }
     let mut embedded_contents = Vec::new();
     for resource in &embedded_resources {
@@ -161,8 +208,8 @@ pub(crate) async fn parse_prompt_with_skills(
         is_cursor,
     })
 }
-/// Returns `(context, query)` — the two halves of the prompt kept separate
-/// so the caller can truncate context without searching for the query boundary.
+/// Returns `(context, query)`, the two halves of the prompt kept separate.
+/// The caller can truncate context without searching for the query boundary.
 fn render_message(
     message: String,
     embedded_contents: Vec<String>,
@@ -210,19 +257,35 @@ fn collect_file_references(message: &str) -> Vec<String> {
             i += 1;
             continue;
         }
-        let Some(at_symbol_offset) = message[i..].find('@') else {
+        let Some(at_symbol_offset) = message.get(i..).and_then(|s| s.find('@')) else {
             break;
         };
-        let start = i + at_symbol_offset + 1;
-        if start >= message.len() || !message.is_char_boundary(start) {
+        let at = i + at_symbol_offset;
+        if !message.is_char_boundary(at) {
+            i = at.saturating_add(1);
+            continue;
+        }
+        let start = at + '@'.len_utf8();
+        if start > message.len() || !message.is_char_boundary(start) {
             break;
         }
-        let rest = &message[start..];
+        if let Some(ch) = message.get(..at).and_then(|s| s.chars().next_back())
+            && (ch.is_alphanumeric() || ch == '_')
+        {
+            i = start;
+            continue;
+        }
+        let Some(rest) = message.get(start..) else {
+            break;
+        };
         let token = rest.split_whitespace().next().unwrap_or("");
         if !token.is_empty() {
             paths.push(token.to_string());
         }
         i = start + token.len().max(1);
+        while i < message.len() && !message.is_char_boundary(i) {
+            i += 1;
+        }
     }
     paths
 }
@@ -280,8 +343,7 @@ fn render_regular_links(links: &[&acp::ResourceLink]) -> String {
     }
     s.trim_end_matches('\n').to_string()
 }
-/// Grok-format resource links: `<focused_files>` / `<open_files>` with
-/// metadata inside a `<system-reminder>` wrapper.
+/// Grok-format resource links: `<focused_files>` / `<open_files>` with metadata inside a `<system-reminder>` wrapper.
 fn render_resource_links_grok(resource_links: &[acp::ResourceLink]) -> String {
     let mut regular_links = Vec::new();
     let mut focused_files = Vec::new();
@@ -358,7 +420,7 @@ mod tests {
             format!("{query}\n\n{context}")
         }
     }
-    /// Shorthand: render + assemble for grok mode.
+    /// Shorthand: render and assemble for grok mode.
     fn render_grok(
         message: &str,
         embedded: Vec<String>,
@@ -410,6 +472,16 @@ mod tests {
     fn test_collect_adjacent_references() {
         let tokens = collect_file_references("@a.rs @b.rs");
         assert_eq!(tokens, vec!["a.rs", "b.rs"]);
+    }
+    #[test]
+    fn test_collect_skips_email_addresses() {
+        let tokens = collect_file_references("email foo@bar.com and also @src/main.rs");
+        assert_eq!(tokens, vec!["src/main.rs"]);
+    }
+    #[test]
+    fn test_collect_email_and_at_ref_with_multibyte() {
+        let tokens = collect_file_references("連絡先 foo@bar.com と @src/main.rs を見て");
+        assert_eq!(tokens, vec!["src/main.rs"]);
     }
     fn make_link(meta: Option<serde_json::Value>) -> acp::ResourceLink {
         let mut link = acp::ResourceLink::new("test.rs", "file:///project/test.rs");
@@ -474,6 +546,73 @@ mod tests {
         })));
         assert!(parse_editor_meta(&link).is_none());
     }
+    #[tokio::test]
+    async fn test_runtime_control_prompt_expands_file_references() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("status.log"), "RUNTIME_FILE_MARKER").unwrap();
+        let blocks = vec![acp::ContentBlock::Text(acp::TextContent::new(
+            "inspect @status.log",
+        ))];
+        let info = crate::session::info::Info {
+            id: agent_client_protocol::SessionId::new("test"),
+            cwd: dir.path().display().to_string(),
+        };
+        let parsed = parse_prompt_with_skills(
+            &blocks,
+            dir.path().to_path_buf(),
+            &info,
+            super::super::InputAuthority::RuntimeControl,
+            false,
+            false,
+            String::new(),
+        )
+        .await
+        .unwrap();
+        assert!(parsed.assemble().contains("RUNTIME_FILE_MARKER"));
+    }
+    #[tokio::test]
+    async fn test_model_authored_prompt_does_not_expand_file_references() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("secret.txt"), "TEXT_SECRET_MARKER").unwrap();
+        std::fs::write(dir.path().join("linked-secret.txt"), "LINK_SECRET_MARKER").unwrap();
+        let blocks = vec![
+            acp::ContentBlock::Text(acp::TextContent::new("inspect @secret.txt")),
+            acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                "linked-secret.txt",
+                "file://linked-secret.txt",
+            )),
+        ];
+        let info = crate::session::info::Info {
+            id: agent_client_protocol::SessionId::new("test"),
+            cwd: dir.path().display().to_string(),
+        };
+        let parsed = parse_prompt_with_skills(
+            &blocks,
+            dir.path().to_path_buf(),
+            &info,
+            super::super::InputAuthority::ModelAuthoredUntrusted,
+            false,
+            false,
+            String::new(),
+        )
+        .await
+        .unwrap();
+        let assembled = parsed.assemble();
+        assert!(parsed.query.contains("inspect @secret.txt"));
+        assert!(!parsed.query.contains("@linked-secret.txt"));
+        assert!(assembled.contains("file://linked-secret.txt"));
+        for forbidden in [
+            "TEXT_SECRET_MARKER",
+            "LINK_SECRET_MARKER",
+            "<attached_files>",
+            "<file_contents",
+        ] {
+            assert!(
+                !assembled.contains(forbidden),
+                "unexpected {forbidden}: {assembled}"
+            );
+        }
+    }
     #[test]
     fn test_grok_render_plain_message() {
         let result = render_grok("hello", vec![], vec![], &[], false);
@@ -536,5 +675,35 @@ mod tests {
             !result.contains("<open_and_recently_viewed_files>"),
             "got: {result}"
         );
+    }
+    /// For every empty/non-empty combination of the parts, in both layouts, the assembled string
+    /// matches an independently built expectation and the layout slices back to the parts.
+    #[test]
+    fn assemble_with_layout_matches_expectation_for_all_part_combinations() {
+        let check = |is_cursor: bool| {
+            for context in ["", "<attached_files>ctx</attached_files>"] {
+                for query in ["", "<user_query>q</user_query>"] {
+                    for skill in ["", "<skill_information>s</skill_information>"] {
+                        let skill_joiner = if skill.is_empty() { "" } else { "\n" };
+                        let block = format!("{query}{skill_joiner}{skill}");
+                        let context_joiner = if context.is_empty() { "" } else { "\n\n" };
+                        let expected = if is_cursor {
+                            format!("{context}{context_joiner}{block}")
+                        } else {
+                            format!("{block}{context_joiner}{context}")
+                        };
+                        let (assembled, layout) =
+                            ParsedPrompt::assemble_with_layout(context, query, skill, is_cursor);
+                        assert_eq!(expected, assembled);
+                        assert_eq!(query, &assembled[layout.query]);
+                        let skill_slice = layout.skill.map(|r| &assembled[r]);
+                        assert_eq!((!skill.is_empty()).then_some(skill), skill_slice);
+                        let context_slice = layout.context.map(|r| &assembled[r]);
+                        assert_eq!((!context.is_empty()).then_some(context), context_slice);
+                    }
+                }
+            }
+        };
+        check(false);
     }
 }

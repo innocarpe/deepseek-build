@@ -9,15 +9,13 @@ pub struct NotificationConfig {
     pub events: Vec<NotificationEventKind>,
     pub sleep_prevention: bool,
     pub progress_bar: bool,
-    /// Show an automatic "where was I" session recap when you return to the
-    /// terminal after being away. Only applies when the shell has rolled out
-    /// session recap (`sessionRecap` on ACP initialize / remote settings). Manual
-    /// `/recap` is gated by the shell flag alone, not this toggle.
+    /// Show an automatic "where was I" session recap when you return to the terminal after being away.
+    /// Only applies when the shell has rolled out session recap (`sessionRecap` on ACP initialize or remote settings).
+    /// Manual `/recap` is gated by the shell flag alone, not this toggle.
     pub session_recap: bool,
-    /// Minimum seconds the terminal must be unfocused ("stepped away") before
-    /// the client requests an automatic recap. A short debounce against quick
-    /// tab blips; the authoritative timing ("≥3 min since the last completed
-    /// turn") is enforced agent-side.
+    /// Minimum seconds the terminal must be unfocused ("stepped away") before the client requests an automatic recap.
+    /// This is a short debounce against quick tab blips.
+    /// The authoritative timing (at least 3 minutes since the last completed turn) is enforced agent-side.
     pub session_recap_threshold_secs: u64,
     pub title: TitleConfig,
     pub hooks: Vec<NotificationHook>,
@@ -99,28 +97,22 @@ pub enum TitleItem {
     ActionRequired,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::AsRefStr, strum::IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum NotificationEventKind {
+    #[strum(serialize = "Turn complete")]
     TurnComplete,
+    #[strum(serialize = "Approval required")]
     ApprovalRequired,
+    #[strum(serialize = "Session ready")]
     SessionReady,
+    #[strum(serialize = "Task complete")]
     TaskComplete,
+    #[strum(serialize = "Agent error")]
     AgentError,
 }
-
-impl NotificationEventKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::TurnComplete => "Turn complete",
-            Self::ApprovalRequired => "Approval required",
-            Self::SessionReady => "Session ready",
-            Self::TaskComplete => "Task complete",
-            Self::AgentError => "Agent error",
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct NotificationHook {
     pub command: String,
@@ -142,10 +134,8 @@ fn default_hook_timeout() -> u64 {
 
 impl NotificationConfig {
     /// Generate a commented TOML template for the `[ui.notifications]` section.
-    ///
-    /// Mirrors the pattern used by `RawAppearanceConfig::to_toml_with_comments()`
-    /// for `pager.toml`. The output is suitable for inclusion in documentation
-    /// or as a starter config snippet.
+    /// Mirrors `RawAppearanceConfig::to_toml_with_comments()` for `pager.toml`.
+    /// The output is suitable for documentation or as a starter config snippet.
     pub fn to_toml_with_comments() -> String {
         "\
 [ui.notifications]
@@ -258,7 +248,7 @@ mod tests {
 
         assert_eq!(parsed.method, NotificationMethod::Bel);
         assert_eq!(parsed.idle_threshold_secs, 60);
-        // Rest should be defaults
+        // The remaining fields keep their defaults
         assert_eq!(parsed.condition, NotificationCondition::Unfocused);
         assert!(parsed.sleep_prevention);
         assert!(parsed.progress_bar);
@@ -273,7 +263,9 @@ mod tests {
         let parsed: NotificationConfig = toml::from_str(toml_str).expect("deserialize hooks");
 
         assert_eq!(parsed.hooks.len(), 1);
-        let hook = &parsed.hooks[0];
+        let Some(hook) = parsed.hooks.first() else {
+            panic!("expected one hook: {:?}", parsed.hooks);
+        };
         assert_eq!(hook.command, "my-script.sh");
         assert!(hook.events.is_empty());
         assert!(hook.only_unfocused);
@@ -367,8 +359,7 @@ mod tests {
     fn to_toml_with_comments_hook_section_is_valid_toml() {
         let template = NotificationConfig::to_toml_with_comments();
         // Uncomment only TOML structural lines (table headers and key = value).
-        // Doc-comment lines (plain English) are left as comments so they
-        // don't produce parse errors.
+        // Plain-English comment lines are left as comments so they don't produce parse errors
         let uncommented: String = template
             .lines()
             .map(|line| {

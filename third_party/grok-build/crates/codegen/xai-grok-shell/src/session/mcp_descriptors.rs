@@ -1,16 +1,10 @@
-//! MCP descriptor mirror.
+//! Some templates read MCP metadata from an on-disk descriptor tree.
+//! This module keeps that tree current as servers connect.
+//! It (re)writes descriptors for connected servers on every MCP tool-set change, not just at the first turn.
 //!
-//! Some templates read MCP metadata from an on-disk descriptor tree. Keep that
-//! tree current as servers connect by (re)writing descriptors for connected
-//! servers on every MCP tool-set change, not just at the first turn.
-//!
-//! Local MCP writes are upsert-only — folders for servers removed mid-session are
-//! not pruned (cleaned on the next session's first-turn build); pruning against
-//! an async-changing client set risks deleting a just-connected server's folder.
-//! Managed gateway writes converge to the admitted gateway catalog so disabled
-//! gateway tools are not discoverable from stale descriptor files.
-//!
-//! Owning the descriptor I/O here keeps `acp_session.rs` thin.
+//! Local MCP writes are upsert-only: folders for servers removed mid-session are not pruned (the next session's first-turn build cleans them).
+//! Pruning while the client set changes asynchronously risks deleting a just-connected server's folder.
+//! Managed gateway writes converge to the admitted gateway catalog so disabled gateway tools are not discoverable from stale descriptor files.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
@@ -26,18 +20,14 @@ pub(crate) struct GatewayToolDescriptor {
     pub(crate) json_schema: serde_json::Value,
 }
 
-/// Per-server descriptor folder: `<mcps_root>/<sanitized server name>`. Uses the
-/// sanitizer shared with `xai-grok-mcp` so the advertised folder matches disk.
+/// Uses the sanitizer shared with `xai-grok-mcp` so the advertised folder matches disk.
 pub(crate) fn server_descriptor_dir(mcps_root: &Path, server_name: &str) -> PathBuf {
     mcps_root.join(sanitize_descriptor_segment(server_name))
 }
 
 /// Upsert the on-disk tool descriptors for the given connected clients.
-///
-/// Safe to run concurrently (the first-turn build and the background handshake
-/// task can both call it): `materialize_descriptors` writes each file
-/// atomically, so overlapping writers converge without a lock. Errors are
-/// logged, not propagated.
+/// Safe to run concurrently (the first-turn build and the background handshake task can both call it).
+/// `materialize_descriptors` writes each file atomically, so overlapping writers converge without a lock.
 pub(crate) async fn materialize_descriptors_for_clients(
     mcps_root: &Path,
     clients: Vec<(String, Arc<McpClient>)>,
@@ -286,11 +276,18 @@ mod tests {
             &std::fs::read_to_string(temp.path().join("linear/tools/list_issues.json")).unwrap(),
         )
         .unwrap();
-        assert_eq!(linear["name"], "list_issues");
-        assert_eq!(linear["description"], "List issues");
+        assert_eq!(linear.get("name"), Some(&serde_json::json!("list_issues")));
         assert_eq!(
-            linear["inputSchema"]["properties"]["limit"]["type"],
-            "number"
+            linear.get("description"),
+            Some(&serde_json::json!("List issues"))
+        );
+        assert_eq!(
+            linear
+                .get("inputSchema")
+                .and_then(|s| s.get("properties"))
+                .and_then(|p| p.get("limit"))
+                .and_then(|l| l.get("type")),
+            Some(&serde_json::json!("number"))
         );
 
         let slack: serde_json::Value = serde_json::from_str(
@@ -298,11 +295,21 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        assert_eq!(slack["name"], "search messages");
-        assert_eq!(slack["description"], "Search Slack");
         assert_eq!(
-            slack["inputSchema"]["properties"]["query"]["type"],
-            "string"
+            slack.get("name"),
+            Some(&serde_json::json!("search messages"))
+        );
+        assert_eq!(
+            slack.get("description"),
+            Some(&serde_json::json!("Search Slack"))
+        );
+        assert_eq!(
+            slack
+                .get("inputSchema")
+                .and_then(|s| s.get("properties"))
+                .and_then(|p| p.get("query"))
+                .and_then(|q| q.get("type")),
+            Some(&serde_json::json!("string"))
         );
     }
 

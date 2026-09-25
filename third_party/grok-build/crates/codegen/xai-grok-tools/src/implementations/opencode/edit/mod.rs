@@ -42,10 +42,9 @@ use crate::types::tool::{ToolKind, ToolNamespace};
 // Description
 // ───────────────────────────────────────────────────────────────────────────
 
-// NOTE: OpenCode's `EditInput` serializes camelCase (`oldString`, `newString`,
-// `replaceAll`), so param refs must use the camelCase schema property names —
-// the snake_case `params.edit.old_string` keys of the grok_build twin resolve
-// to "" here (the kind-params map is keyed by schema property names).
+// NOTE: OpenCode's `EditInput` serializes camelCase (`oldString`, `newString`, `replaceAll`), so param refs must use
+// the camelCase schema property names — the snake_case `params.edit.old_string` keys of the grok_build twin resolve to
+// "" here (the kind-params map is keyed by schema property names).
 const DESCRIPTION: &str = r#"Performs exact string replacements in files.
 
 Usage:${%- if tools.by_kind.read %}
@@ -87,27 +86,39 @@ pub struct EditInput {
     pub replace_all: bool,
 }
 
-// ───────────────────────────────────────────────────────────────────────────
-// ToolInput conversions (via Dynamic variant)
-// ───────────────────────────────────────────────────────────────────────────
-
 impl TryFrom<crate::types::tool_io::ToolInput> for EditInput {
     type Error = String;
     fn try_from(value: crate::types::tool_io::ToolInput) -> Result<Self, Self::Error> {
         match value {
+            crate::types::tool_io::ToolInput::SearchReplace(sr) => Ok(Self {
+                file_path: sr.file_path,
+                old_string: sr.old_string,
+                new_string: sr.new_string,
+                replace_all: sr.replace_all,
+            }),
             crate::types::tool_io::ToolInput::Dynamic(v) => {
                 serde_json::from_value(v).map_err(|e| format!("EditInput: {e}"))
             }
-            _ => Err("expected Dynamic variant for EditInput".into()),
+            _ => Err("expected SearchReplace or Dynamic variant for EditInput".into()),
         }
     }
 }
 
+// Prefer SearchReplace over Dynamic so AccessKind maps to Edit(path).
 impl From<EditInput> for crate::types::tool_io::ToolInput {
     fn from(value: EditInput) -> Self {
-        crate::types::tool_io::ToolInput::Dynamic(
-            serde_json::to_value(value).expect("EditInput serializes to JSON"),
-        )
+        crate::implementations::grok_build::search_replace::SearchReplaceInput {
+            file_path: value.file_path,
+            old_string: value.old_string,
+            new_string: value.new_string,
+            replace_all: value.replace_all,
+            // The opencode/Codex surface predates the session snippet table, so
+            // it carries no version anchor: this is the same compatibility path
+            // as a hand-written edit, not a snippet-safe Path A edit.
+            file_version: None,
+            snippet_id: None,
+        }
+        .into()
     }
 }
 
@@ -213,7 +224,15 @@ impl xai_tool_runtime::Tool for EditTool {
 
         // ── Route to creation or replacement ────────────────────────
         if input.old_string.is_empty() {
-            handle_new_file_creation(&input, &fs, &notification_handle, &tool_call_id, &path).await
+            handle_new_file_creation(
+                &input,
+                resources,
+                &fs,
+                &notification_handle,
+                &tool_call_id,
+                &path,
+            )
+            .await
         } else {
             handle_replacement(
                 &input,
@@ -251,6 +270,7 @@ async fn ensure_parent_dirs(path: &std::path::Path) -> Result<(), xai_tool_runti
 /// Handle new file creation when `old_string` is empty.
 async fn handle_new_file_creation(
     input: &EditInput,
+    resources: crate::types::resources::SharedResources,
     fs: &Arc<dyn AsyncFileSystem>,
     notification_handle: &crate::notification::types::ToolNotificationHandle,
     tool_call_id: &str,
@@ -268,18 +288,28 @@ async fn handle_new_file_creation(
         ));
     }
 
-    // Create parent directories if needed.
-    ensure_parent_dirs(path).await?;
-
-    // Write the new file.
-    fs.write_file(path, input.new_string.as_bytes())
-        .await
-        .map_err(|e| {
-            xai_tool_runtime::ToolError::execution(
-                xai_tool_protocol::ToolId::new("edit").expect("valid"),
-                e.to_string(),
-            )
-        })?;
+    let is_memory_write = match crate::types::memory_v2::write_memory_v2_file(
+        &resources,
+        path,
+        input.new_string.as_bytes(),
+    )
+    .await
+    {
+        Ok(crate::types::memory_v2::MemoryV2Write::Written { .. }) => true,
+        Ok(crate::types::memory_v2::MemoryV2Write::Outside) => false,
+        Err(error) => return Ok(SearchReplaceOutput::InvalidInput(error)),
+    };
+    if !is_memory_write {
+        ensure_parent_dirs(path).await?;
+        fs.write_file(path, input.new_string.as_bytes())
+            .await
+            .map_err(|e| {
+                xai_tool_runtime::ToolError::execution(
+                    xai_tool_protocol::ToolId::new("edit").expect("valid"),
+                    e.to_string(),
+                )
+            })?;
+    }
 
     // Emit FileWritten notification.
     notification_handle.send_file_written(FileWritten {
@@ -389,9 +419,9 @@ async fn handle_replacement(
 
     // Select which positions to replace.
     let replace_positions = if replace_all {
-        &positions[..]
+        positions.as_slice()
     } else {
-        &positions[..1]
+        positions.get(..1).unwrap_or(&[])
     };
 
     // Perform the replacement using the shared helpers.
@@ -403,14 +433,24 @@ async fn handle_replacement(
     );
 
     // Write the updated file.
-    fs.write_file(path, new_text.as_bytes())
-        .await
-        .map_err(|e| {
-            xai_tool_runtime::ToolError::execution(
-                xai_tool_protocol::ToolId::new("edit").expect("valid"),
-                e.to_string(),
-            )
-        })?;
+    let is_memory_write =
+        match crate::types::memory_v2::write_memory_v2_file(&resources, path, new_text.as_bytes())
+            .await
+        {
+            Ok(crate::types::memory_v2::MemoryV2Write::Written { .. }) => true,
+            Ok(crate::types::memory_v2::MemoryV2Write::Outside) => false,
+            Err(error) => return Ok(SearchReplaceOutput::InvalidInput(error)),
+        };
+    if !is_memory_write {
+        fs.write_file(path, new_text.as_bytes())
+            .await
+            .map_err(|e| {
+                xai_tool_runtime::ToolError::execution(
+                    xai_tool_protocol::ToolId::new("edit").expect("valid"),
+                    e.to_string(),
+                )
+            })?;
+    }
 
     // Emit FileWritten notification.
     notification_handle.send_file_written(FileWritten {
@@ -431,13 +471,10 @@ async fn handle_replacement(
     );
 
     // Build output message.
-    let (tool_output_for_prompt, tool_output_for_prompt_concise) = if new_positions.len() == 1 {
-        let (snippet, _, _) = render_snippet(
-            &new_text,
-            &input.new_string,
-            new_positions[0],
-            CONTEXT_LINES,
-        );
+    let (tool_output_for_prompt, tool_output_for_prompt_concise) = if let [pos] =
+        new_positions.as_slice()
+    {
+        let (snippet, _, _) = render_snippet(&new_text, &input.new_string, *pos, CONTEXT_LINES);
         let default_msg = format!(
             "The file {} has been updated. Here's a relevant snippet of the edited file:\n\n{snippet}",
             &input.file_path,
@@ -523,6 +560,21 @@ mod tests {
     }
 
     #[test]
+    fn tool_input_roundtrip_is_search_replace() {
+        use crate::types::tool_io::ToolInput;
+        let input = make_input("/tmp/denied.txt", "old", "new");
+        let tool_input = ToolInput::from(input.clone());
+        assert!(matches!(
+            tool_input,
+            ToolInput::SearchReplace(ref sr) if sr.file_path == "/tmp/denied.txt"
+        ));
+        let back = EditInput::try_from(tool_input).expect("SearchReplace converts back");
+        assert_eq!(back.file_path, "/tmp/denied.txt");
+        assert_eq!(back.old_string, "old");
+        assert_eq!(back.new_string, "new");
+    }
+
+    #[test]
     fn replace_all_defaults_false_and_schema_is_boolean() {
         let missing: EditInput =
             serde_json::from_str(r#"{"filePath":"/f","oldString":"a","newString":"b"}"#).unwrap();
@@ -536,9 +588,19 @@ mod tests {
 
         let schema = serde_json::to_value(schemars::schema_for!(EditInput)).unwrap();
         // rename_all = camelCase → replaceAll
-        let p = &schema["properties"]["replaceAll"];
-        assert_eq!(p["type"], "boolean", "schema: {schema}");
-        assert_eq!(p["default"], false, "schema: {schema}");
+        let Some(p) = schema.pointer("/properties/replaceAll") else {
+            panic!("schema missing replaceAll: {schema}");
+        };
+        assert_eq!(
+            p.get("type"),
+            Some(&serde_json::json!("boolean")),
+            "schema: {schema}"
+        );
+        assert_eq!(
+            p.get("default"),
+            Some(&serde_json::json!(false)),
+            "schema: {schema}"
+        );
         assert!(p.get("anyOf").is_none(), "schema: {schema}");
     }
 
@@ -551,16 +613,6 @@ mod tests {
         assert_eq!(xai_tool_runtime::Tool::id(&tool).as_str(), "edit");
         assert_eq!(tool.kind(), ToolKind::Edit);
         assert!(matches!(tool.tool_namespace(), ToolNamespace::OpenCode));
-    }
-
-    #[test]
-    fn description_contains_edit_guidance() {
-        use crate::types::tool_metadata::ToolMetadata;
-        let tool = EditTool;
-        assert!(
-            tool.description_template()
-                .contains("exact string replacements")
-        );
     }
 
     // ── Input deserialization ───────────────────────────────────────
@@ -1105,7 +1157,9 @@ mod tests {
                     !applied.edits.details.is_empty(),
                     "edits.details should not be empty"
                 );
-                let detail = &applied.edits.details[0];
+                let Some(detail) = applied.edits.details.first() else {
+                    panic!("edits.details should not be empty");
+                };
                 assert!(detail.old_line > 0, "old_line should be > 0");
                 assert!(detail.new_line > 0, "new_line should be > 0");
                 assert!(

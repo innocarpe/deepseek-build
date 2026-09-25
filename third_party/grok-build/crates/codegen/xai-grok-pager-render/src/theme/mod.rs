@@ -1,26 +1,21 @@
-//! Theming for the pager.
-//!
 //! All colors come from the `Theme` struct. No hardcoded colors elsewhere.
 //! The default **product** theme is DeepSeek Night (classic) (DeepSeek blue
-//! `#4D6BFE` on a blue-tinted ramp). The measured C-balanced palette is
-//! selectable as **DeepSeek Night v2**. The hue-neutral DeepSeek Night variant
-//! is first-class/selectable, while retired Grok Night names (`groknight`,
-//! `grok-night`) still parse for config back-compat. The legacy `"dark"` alias
-//! now resolves to the classic DeepSeek Night skin.
+//! accent on the original blue-tinted ramp). The measured C-balanced
+//! **DeepSeek Night v2** and the hue-neutral **DeepSeek Night Neutral** are
+//! selectable beside it; auto dark appearance resolves to the classic skin.
 //!
 //! ## Color support
 //!
-//! Themes are defined in `Color::Rgb` (truecolor). At startup,
-//! [`Theme::current()`] quantizes every color to the terminal's detected
-//! capability level via [`Theme::quantized`]. Runtime-generated colors (syntax
-//! highlighting, blending) are also quantized via [`color_support::quantize`].
+//! GrokNight is defined in `Color::Rgb` (truecolor).
+//! At startup, [`Theme::current()`] quantizes every color to the terminal's detected capability level via [`Theme::quantized`].
+//! Runtime-generated colors (syntax highlighting, blending) are also quantized via [`color_support::quantize`].
 
 pub mod cache;
 pub mod color_support;
-mod deepseeknight;
-mod deepseeknight_v2;
 pub mod env_appearance;
 mod grokday;
+mod deepseeknight;
+mod deepseeknight_v2;
 mod groknight;
 pub mod md_style;
 pub mod osc11;
@@ -33,7 +28,8 @@ pub mod tokyonight;
 pub use color_support::quantize;
 pub use tokyonight::{Theme, pulse_brightness, wave_brightness};
 
-/// Available theme variants.
+use std::sync::LazyLock;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ThemeKind {
     GrokNight = 0,
@@ -41,127 +37,153 @@ pub enum ThemeKind {
     TokyoNight = 2,
     RosePineMoon = 3,
     OscuraMidnight = 5,
+    /// Every bg is `Reset` so the terminal canvas shows through; legible on both polarities without appearance detection.
+    /// Hidden and unparseable while `cache::terminal_theme_enabled()` is off.
+    Terminal = 6,
+    /// Follow system appearance. Disk stores `"auto"`; `cache::CURRENT` holds only the resolved concrete kind. Excluded from [`ALL`].
+    Auto = 4,
     /// Current DeepSeek Build product/default skin — DeepSeek blue `#4D6BFE`
     /// accents on the original blue-tinted ramp.
-    DeepSeekNight = 6,
+    DeepSeekNight = 11,
+    /// Selectable DeepSeek Night v2 alternate — measured C-balanced palette.
+    DeepSeekNightV2 = 12,
     /// Selectable DeepSeek Night Neutral skin — DeepSeek blue `#4D6BFE`
     /// accents on a hue-neutral ramp (same luminance, max gray-ramp legibility).
-    DeepSeekNightNeutral = 7,
-    /// Selectable DeepSeek Night v2 alternate — measured C-balanced palette.
-    DeepSeekNightV2 = 8,
-    /// Meta-variant: follow system dark/light appearance.
-    ///
-    /// Never stored in `cache::CURRENT` — resolved to a concrete
-    /// theme at startup and on live appearance changes. The `"auto"`
-    /// string is stored on disk and in `app.current_ui.theme`, but
-    /// only the resolved concrete kind lives in the cache.
-    /// Excluded from [`ALL`] and [`available()`].
-    Auto = 4,
+    DeepSeekNightNeutral = 13,
 }
 
-/// Picker-visible themes on terminals without truecolor.
-///
-/// DeepSeek Night v2 remains the first picker entry, the original DeepSeek
-/// Night is the product/default skin ("DeepSeek Night (classic)"), and the
-/// hue-neutral **DeepSeek Night Neutral** is listed alongside them. Only the
-/// retired `GrokNight` stays hidden from this catalog.
-const NO_TRUECOLOR: &[ThemeKind] = &[
-    ThemeKind::DeepSeekNightV2,
-    ThemeKind::DeepSeekNight,
-    ThemeKind::DeepSeekNightNeutral,
-    ThemeKind::GrokDay,
-];
-
 impl ThemeKind {
-    /// All picker-visible theme kinds (including those that may not work on
-    /// the current terminal).
+    /// All theme kinds (including those that may not work on the current terminal).
     pub const ALL: &[ThemeKind] = &[
-        ThemeKind::DeepSeekNightV2,
-        // Original DeepSeek Night (v1) — re-listed as "DeepSeek Night (classic)".
-        ThemeKind::DeepSeekNight,
-        // Hue-neutral DeepSeek ramp — same accents, max gray-ramp legibility.
-        ThemeKind::DeepSeekNightNeutral,
+        ThemeKind::GrokNight,
         ThemeKind::GrokDay,
         ThemeKind::TokyoNight,
         ThemeKind::RosePineMoon,
         ThemeKind::OscuraMidnight,
+        ThemeKind::Terminal,
+        // Product skins: v2 first (picker order), then the classic default
+        // and the hue-neutral variant.
+        ThemeKind::DeepSeekNightV2,
+        ThemeKind::DeepSeekNight,
+        ThemeKind::DeepSeekNightNeutral,
     ];
 
-    /// Theme kinds available on the current terminal.
-    ///
-    /// Filters out themes that require truecolor when the terminal
-    /// does not support it (e.g., macOS Terminal.app is 256-color).
-    pub fn available() -> &'static [ThemeKind] {
-        // Two possible results — pick the right const slice based on
-        // the detected color level. No heap allocation needed.
-        const ALL: &[ThemeKind] = ThemeKind::ALL;
-
-        if color_support::detect().has_truecolor() {
-            ALL
+    /// [`ALL`] minus gated `terminal`. Ignores color capability ([`available()`] filters that). Derived from [`ALL`] so a new theme cannot be omitted.
+    pub fn selectable() -> &'static [ThemeKind] {
+        if cache::terminal_theme_enabled() {
+            Self::ALL
         } else {
-            NO_TRUECOLOR
+            static GATED: LazyLock<Vec<ThemeKind>> = LazyLock::new(|| {
+                ThemeKind::ALL
+                    .iter()
+                    .copied()
+                    .filter(|kind| !kind.is_terminal_native())
+                    .collect()
+            });
+            &GATED
         }
     }
 
-    /// Human-readable display name.
+    /// Theme kinds available on the current terminal.
+    ///
+    /// [`selectable()`] minus themes that require truecolor when the terminal does not support it (e.g., macOS Terminal.app is 256-color).
+    pub fn available() -> &'static [ThemeKind] {
+        if color_support::detect().has_truecolor() {
+            return Self::selectable();
+        }
+        if cache::terminal_theme_enabled() {
+            static NO_TRUECOLOR: LazyLock<Vec<ThemeKind>> = LazyLock::new(|| {
+                ThemeKind::ALL
+                    .iter()
+                    .copied()
+                    .filter(|kind| !kind.requires_truecolor())
+                    .collect()
+            });
+            &NO_TRUECOLOR
+        } else {
+            static NO_TRUECOLOR_GATED: LazyLock<Vec<ThemeKind>> = LazyLock::new(|| {
+                ThemeKind::ALL
+                    .iter()
+                    .copied()
+                    .filter(|kind| !kind.requires_truecolor() && !kind.is_terminal_native())
+                    .collect()
+            });
+            &NO_TRUECOLOR_GATED
+        }
+    }
+
     pub fn display_name(self) -> &'static str {
         match self {
-            Self::DeepSeekNightV2 => "deepseeknight-v2",
-            Self::DeepSeekNight => "deepseeknight",
-            Self::DeepSeekNightNeutral => "deepseeknight-neutral",
             Self::GrokNight => "groknight",
             Self::TokyoNight => "tokyonight",
             Self::GrokDay => "grokday",
             Self::RosePineMoon => "rosepine-moon",
             Self::OscuraMidnight => "oscura-midnight",
+            Self::Terminal => "terminal",
+            Self::DeepSeekNightV2 => "deepseeknight-v2",
+            Self::DeepSeekNight => "deepseeknight",
+            Self::DeepSeekNightNeutral => "deepseeknight-neutral",
             Self::Auto => "auto",
         }
     }
 
-    /// Whether this theme requires truecolor (24-bit RGB) to look correct.
-    ///
-    /// TokyoNight uses blue-tinted backgrounds that lose their character
-    /// when quantized to 256 or 16 colors. GrokNight uses neutral grays
-    /// that survive quantization cleanly.
+    /// TokyoNight's blue-tinted backgrounds lose their character below truecolor; neutral grays survive quantization.
     pub fn requires_truecolor(self) -> bool {
         match self {
-            Self::DeepSeekNightV2 => false,
-            Self::DeepSeekNight => false,
-            Self::DeepSeekNightNeutral => false,
             Self::GrokNight => false,
             Self::TokyoNight => true,
             Self::GrokDay => false,
             Self::RosePineMoon => true,
             Self::OscuraMidnight => true,
+            // Reset plus named ANSI-16 entries only — nothing to quantize.
+            Self::Terminal => false,
+            // DeepSeek skins use neutral ramps that survive quantization.
+            Self::DeepSeekNightV2 => false,
+            Self::DeepSeekNight => false,
+            Self::DeepSeekNightNeutral => false,
             // Auto is resolved to a concrete theme before rendering.
             Self::Auto => false,
         }
     }
 
-    /// Parse a theme name (case-insensitive). All string→ThemeKind
-    /// conversions must go through this function.
+    /// Whether this kind paints the terminal-native palette ([`Theme::terminal_default`]) instead of an RGB palette, and so needs the same polarity-safe rendering paths as minimal mode's lock.
+    #[must_use]
+    pub fn is_terminal_native(self) -> bool {
+        self == Self::Terminal
+    }
+
+    /// Alternate lowercase spellings accepted by [`from_name`](Self::from_name), excluding [`display_name`](Self::display_name).
+    pub fn aliases(self) -> &'static [&'static str] {
+        match self {
+            Self::GrokNight => &["grok-night", "dark"],
+            Self::TokyoNight => &["tokyo-night", "tokyo"],
+            Self::GrokDay => &["grok-day", "light", "day"],
+            Self::RosePineMoon => &["rosepine", "rose-pine", "rose-pine-moon"],
+            Self::OscuraMidnight => &["oscura"],
+            Self::Terminal => &["terminal-default", "transparent", "native"],
+            Self::DeepSeekNightV2 => &["deepseek-night-v2", "deepseek2", "dsb2"],
+            Self::DeepSeekNight => &["deepseek-night", "deepseek", "dsb", "dark"],
+            Self::DeepSeekNightNeutral => &["deepseek-neutral", "dsb-neutral"],
+            Self::Auto => &["system"],
+        }
+    }
+
+    /// Parse a theme name (case-insensitive) against [`display_name`](Self::display_name) and [`aliases`](Self::aliases).
+    /// Every conversion from string to `ThemeKind` must go through this function.
+    /// While the `terminal` rollout gate is off its names do not parse, so a configured or typed value falls back like any unknown name.
     pub fn from_name(name: &str) -> Option<Self> {
         let lower = name.to_lowercase();
-        match lower.as_str() {
-            "auto" | "system" => Some(Self::Auto),
-            "deepseeknight-v2" | "deepseek-night-v2" | "deepseek2" | "dsb2" => {
-                Some(Self::DeepSeekNightV2)
-            }
-            "deepseeknight-neutral" | "deepseek-neutral" | "dsb-neutral" => {
-                Some(Self::DeepSeekNightNeutral)
-            }
-            "deepseeknight" | "deepseek-night" | "deepseek" | "dsb" | "dark" => {
-                Some(Self::DeepSeekNight)
-            }
-            "groknight" | "grok-night" => Some(Self::GrokNight),
-            "tokyonight" | "tokyo-night" | "tokyo" => Some(Self::TokyoNight),
-            "grokday" | "grok-day" | "light" | "day" => Some(Self::GrokDay),
-            "rosepine" | "rose-pine" | "rosepine-moon" | "rose-pine-moon" => {
-                Some(Self::RosePineMoon)
-            }
-            "oscura" | "oscura-midnight" => Some(Self::OscuraMidnight),
-            _ => None,
+        let kind = Self::ALL
+            .iter()
+            .chain(std::iter::once(&Self::Auto))
+            .copied()
+            .find(|kind| {
+                kind.display_name() == lower || kind.aliases().contains(&lower.as_str())
+            })?;
+        if kind.is_terminal_native() && !cache::terminal_theme_enabled() {
+            return None;
         }
+        Some(kind)
     }
 
     /// Whether this is the meta "auto" variant (resolved at runtime).
@@ -186,19 +208,19 @@ pub fn canonical_name(value: &str) -> Option<&'static str> {
     ThemeKind::from_name(value).map(|k| k.display_name())
 }
 
-/// Human-friendly display name for a canonical theme value (e.g.
-/// `"groknight"` → `"Grok Night"`). Falls back to `value` verbatim.
+/// Human-friendly display name for a canonical theme value (e.g. `"groknight"` becomes `"Grok Night"`).
+/// Falls back to `value` verbatim.
 pub fn display_name_for_canonical(value: &str) -> &str {
     match value {
         "auto" => "Auto",
-        "deepseeknight-v2" => "DeepSeek Night",
+        "deepseeknight-v2" => "DeepSeek Night v2",
         "deepseeknight" => "DeepSeek Night (classic)",
         "deepseeknight-neutral" => "DeepSeek Night Neutral",
         "groknight" => "Grok Night",
         "grokday" => "Grok Day",
         "tokyonight" => "Tokyo Night",
         "rosepine-moon" => "Rose Pine Moon",
-        "oscura-midnight" => "Oscura Midnight",
+        "terminal" => "Terminal",
         other => other,
     }
 }
@@ -210,12 +232,7 @@ impl Default for Theme {
 }
 
 impl Theme {
-    /// Return a copy with every color quantized to the given level.
-    ///
-    /// This adapts the theme to terminals with limited color support.
-    /// On truecolor terminals the RGB values pass through unchanged;
-    /// on 256-color terminals they are mapped to the nearest indexed
-    /// palette entry; on 16-color terminals they map to ANSI names.
+    /// Truecolor passes through; 256-color maps to nearest index; 16-color maps to ANSI names.
     pub fn quantized(self, level: color_support::ColorLevel) -> Self {
         use color_support::quantize_color;
         let q = |c: ratatui::style::Color| quantize_color(c, level);
@@ -302,24 +319,19 @@ impl Theme {
         }
     }
 
-    /// Get the current theme, quantized to the terminal's color level.
-    ///
-    /// Reads the active theme kind (loaded from `~/.grok/config.toml` on
-    /// first call, then cached in memory), builds the theme from its
-    /// `const fn` constructor, and quantizes to the terminal's color level.
-    ///
-    /// On Windows applies a contrast boost so structural RGB survives the
-    /// display gamma. At [`ColorLevel::Basic`] (or legacy ConHost below
-    /// truecolor) we additionally pin chrome colors to ANSI-named entries
-    /// because every dark RGB collapses onto the same ANSI16 slot otherwise.
-    /// Modern ConHost (Win10 1709+) lands on TrueColor via
-    /// [`color_support::terminal_supports_truecolor`] and skips the overrides.
+    /// Quantized cached kind. Windows boosts contrast so structural RGB survives display gamma.
+    /// Basic or legacy ConHost pins chrome to ANSI names; otherwise every dark RGB collapses onto one ANSI16 slot.
     pub fn current() -> Self {
         let level = color_support::detect();
         if cache::terminal_native_locked() {
             return Self::terminal_default().quantized(level);
         }
-        let base = match cache::current_kind() {
+        let kind = cache::current_kind();
+        // Before polarity adaptations: contrast boost and ANSI16 overrides would paint opaque bgs over `Reset`.
+        if kind.is_terminal_native() {
+            return Self::terminal().quantized(level);
+        }
+        let base = match kind {
             ThemeKind::DeepSeekNightV2 => Self::deepseeknight_v2(),
             ThemeKind::DeepSeekNight => Self::deepseeknight(),
             ThemeKind::DeepSeekNightNeutral => Self::deepseeknight_neutral(),
@@ -328,13 +340,14 @@ impl Theme {
             ThemeKind::GrokDay => Self::grokday(),
             ThemeKind::RosePineMoon => Self::rosepine_moon(),
             ThemeKind::OscuraMidnight => Self::oscura_midnight(),
-            // Auto is resolved to a concrete theme before being stored;
-            // if reached, fall back to the classic product default.
+            // Handled by the early return above.
+            ThemeKind::Terminal => Self::terminal(),
+            // Auto is resolved to a concrete theme before being stored; if
+            // reached, fall back to the product default skin.
             ThemeKind::Auto => Self::deepseeknight(),
         };
-        // Sample polarity pre-quantization — post-quantize `bg_base` may
-        // land on a named/indexed entry whose luminance is host-palette-
-        // dependent.
+        // Sample polarity before quantizing
+        // After quantization `bg_base` may land on a named or indexed entry whose luminance depends on the host palette
         let dark = base.is_dark();
         let adapted = if cfg!(target_os = "windows") {
             base.windows_contrast_boost(dark)
@@ -342,18 +355,8 @@ impl Theme {
             base
         };
         let adapted = adapted.quantized(level);
-        // ANSI16 chrome fallback — fires in two cases:
-        //   1. Any terminal that only advertises 16-color support
-        //      (e.g., `TERM=xterm`, `TERM=ansi`, or `GROK_FORCE_COLOR_LEVEL=basic`),
-        //      where naive quantization collapses every dark RGB onto `Color::Black`.
-        //   2. Legacy Windows ConHost below TrueColor, kept for parity with the
-        //      glyph fallback path also gated on `is_legacy_windows_console()`.
-        //
-        // Both arms require `has_color()` so that `NO_COLOR` (which produces
-        // `ColorLevel::None`) keeps suppressing all SGR output. Without the
-        // explicit gate on the legacy-Windows arm, `ansi16_chrome_overrides`
-        // would repaint `Color::Reset` slots with named ANSI colors and
-        // partially defeat the user's opt-out on ConHost.
+        // Basic or legacy ConHost below truecolor: naive quantization collapses dark RGB onto Black.
+        // `has_color()` is required so `NO_COLOR` is not defeated by named-ANSI repaints of `Reset`.
         if level.has_color()
             && (level == color_support::ColorLevel::Basic
                 || (crate::glyphs::is_legacy_windows_console() && !level.has_truecolor()))
@@ -364,55 +367,38 @@ impl Theme {
         }
     }
 
-    /// Get the currently active theme kind.
     pub fn current_kind() -> ThemeKind {
         cache::current_kind()
     }
 
-    /// Whether this theme paints no diff row bands (`diff_*_bg` = `Reset`),
-    /// in which case changed diff lines carry a whole-line red/green
-    /// *foreground* instead of syntax highlighting on a colored band.
+    /// Whether this theme paints no diff row bands (`diff_*_bg` is `Reset`).
+    /// In that case changed diff lines carry a whole-line red/green *foreground* instead of syntax highlighting on a colored band.
     #[must_use]
     pub fn diff_uses_line_fg(&self) -> bool {
         use ratatui::style::Color;
         self.diff_delete_bg == Color::Reset && self.diff_insert_bg == Color::Reset
     }
 
-    /// Apply a theme kind to the in-memory state without persisting.
-    /// Used by the dispatcher, live-preview, and the appearance watcher.
-    ///
-    /// No-op while the terminal-native lock is engaged.
+    /// In-memory only; the event loop emits OSC 12. No-op while the terminal-native lock is engaged.
     pub fn apply_kind(kind: ThemeKind) -> ThemeKind {
         if cache::terminal_native_locked() {
             return cache::current_kind();
         }
         let effective = Self::clamp_to_terminal(kind);
         cache::set(effective);
-        apply_cursor_color();
         effective
     }
 
-    /// Clamp a theme kind to what the terminal supports.
     fn clamp_to_terminal(kind: ThemeKind) -> ThemeKind {
         if kind.requires_truecolor() && !color_support::detect().has_truecolor() {
-            ThemeKind::DeepSeekNight
+            ThemeKind::GrokNight
         } else {
             kind
         }
     }
 
-    /// Push structural colors further from `bg_base` so they survive
-    /// Windows display gamma (especially non-HiDPI panels) where the
-    /// theme's native ~12-unit RGB steps collapse visually.
-    ///
-    /// Per-field push amounts are tuned for ConHost specifically —
-    /// without colorimetric calibration it takes ~24–32 levels per
-    /// channel before mid-gray distinctions read at all.
-    ///
-    /// The user-prompt block bg is the one asymmetric field: a dark
-    /// step on a light canvas "weighs" far more than the symmetric
-    /// light step on a dark canvas does, so we push much less in that
-    /// direction to stay close to the theme's native RGB on light.
+    /// Native ~12-unit RGB steps collapse under Windows display gamma; ConHost needs ~24-32 levels per channel.
+    /// Prompt-block bg is asymmetric: a dark step on a light canvas weighs more, so that direction is pushed less.
     fn windows_contrast_boost(self, dark: bool) -> Self {
         use ratatui::style::Color;
 
@@ -453,15 +439,14 @@ impl Theme {
     }
 
     /// Style for shell command suggestion ghost text (dimmed italic).
+    /// Inherits [`Self::dim`]'s polarity-safe rule on terminal-native
+    /// palettes instead of painting bright black.
     pub fn ghost_text_style(&self) -> ratatui::style::Style {
-        ratatui::style::Style::default()
-            .fg(self.gray_dim)
-            .add_modifier(ratatui::style::Modifier::ITALIC)
+        self.dim().add_modifier(ratatui::style::Modifier::ITALIC)
     }
 
-    /// True when `bg_base` reads as dark per BT.709 luminance. Must be
-    /// called pre-quantization while `bg_base` is still RGB; named/Reset
-    /// fall back to "dark" (the default theme polarity).
+    /// True when `bg_base` reads as dark per BT.709 luminance.
+    /// Must be called pre-quantization while `bg_base` is still RGB; named/Reset fall back to "dark" (the default theme polarity).
     pub fn is_dark(&self) -> bool {
         use ratatui::style::Color;
         let (r, g, b) = match self.bg_base {
@@ -473,69 +458,32 @@ impl Theme {
             == crate::theme::system_appearance::SystemAppearance::Dark
     }
 
-    /// Pin chrome and semantic-accent colors to ANSI-named entries so
-    /// they survive 16-color quantization. `dark` flips polarity along
-    /// two axes:
-    ///
-    /// 1. **Chrome (bg/borders/scrollbar/text).** ANSI16 has only two
-    ///    grays (DarkGray, Gray = silver) plus Black/White, so chrome
-    ///    pins to those four to preserve the bg/border hierarchy that
-    ///    the theme defines via subtle gray steps.
-    /// 2. **Semantic accents (running/error/success/etc.).** Naive
-    ///    RGB-distance quantization collapses pastel theme hues onto
-    ///    the gray ramp (audit: 18/27 fields became DarkGray or silver
-    ///    on groknight, erasing every state signal). We pin each
-    ///    semantic field to a hue-preserving ANSI16 slot, polarity-aware:
-    ///    bright variants (`Light*`, idx 9–15) on a dark canvas; normal
-    ///    variants (idx 1–7, ~50% luminance) on a light canvas. This
-    ///    drops sub-hue differentiation that ANSI16 cannot represent
-    ///    (e.g., teal and cyan both pin to `Cyan` / `LightCyan`) but
-    ///    guarantees error reads red, success reads green, etc.
-    ///
-    /// Applied both on legacy Windows ConHost and on any terminal that
-    /// advertises only [`color_support::ColorLevel::Basic`].
-    ///
-    /// Surfaces that want to blend with the body canvas (sunken code
-    /// blocks, scrollbar track, paste chip bg) are pinned to the
-    /// theme's polarity (Black for dark themes, White for light themes)
-    /// instead of `Color::Reset` — using `Reset` would defer to the
-    /// user's terminal profile, which can disagree with the selected
-    /// theme (e.g., GrokNight on a white terminal would show white
-    /// "holes" through every sunken surface).
+    /// ANSI16 has two grays; naive distance collapses pastel accents onto that ramp and erases state.
+    /// Pin chrome to the four neutrals and accents to hue-preserving slots (bright on dark, normal on light).
+    /// Canvas-blending surfaces pin to theme polarity, not `Reset`, or the terminal profile punches holes through them.
     fn ansi16_chrome_overrides(self, dark: bool) -> Self {
         use ratatui::style::Color;
-        // Theme polarity canvas — what the body bg should look like.
-        // Matches the natural quantize result for `bg_base` on both
-        // built-in themes, and pins it explicitly so themes whose bg
-        // RGB doesn't quantize cleanly still get the right polarity.
+        // Theme polarity canvas: what the body bg should look like
+        // Matches the natural quantize result for `bg_base` on both built-in themes
+        // The explicit pin gives themes whose bg RGB doesn't quantize cleanly the right polarity anyway
         let canvas_bg = if dark { Color::Black } else { Color::White };
-        // One palette step off the canvas: DarkGray (ANSI 8) on black,
-        // Gray (ANSI 7 / silver) on white. ANSI16 has no slot between
-        // these and the canvas, so the elevation reads louder than the
-        // truecolor design — but it's guaranteed visible on every
-        // 16-color terminal, including museum-grade `TERM=ansi` boxes.
+        // One palette step off the canvas: DarkGray (ANSI 8) on black, Gray (ANSI 7 / silver) on white
+        // ANSI16 has no slot between these and the canvas, so the elevation reads louder than the truecolor design
+        // But it's guaranteed visible on every 16-color terminal, including museum-grade `TERM=ansi` boxes
         let elevated_bg = if dark { Color::DarkGray } else { Color::Gray };
         // Max-contrast fg for focused chrome and assistant body.
         let high_contrast_fg = if dark { Color::White } else { Color::Black };
-        // Mid-tone fg for muted labels — silver on black, dark-gray on
-        // white. This is the higher-contrast of the two muted slots, used
-        // for secondary text that still needs to read clearly.
+        // Mid-tone fg for muted labels: silver on black, dark-gray on white
+        // This is the higher-contrast of the two muted slots, used for secondary text that still needs to read clearly
         let muted_fg = if dark { Color::Gray } else { Color::DarkGray };
-        // Low-contrast fg for "truly dim" surfaces — sits one step closer
-        // to the canvas than `muted_fg`. Used for soft modal/picker frames
-        // and the unselected `>` prompt indicator. The polarity is the
-        // INVERSE of `muted_fg`: DarkGray sits next to Black, Gray (silver)
-        // sits next to White. Distinct from `muted_fg` so dim chrome
-        // doesn't read at the same weight as secondary text.
+        // Low-contrast fg for genuinely dim chrome (soft modal/picker frames, the unselected `>` prompt indicator)
+        // The polarity is the INVERSE of `muted_fg`: DarkGray sits next to Black, Gray (silver) next to White
+        // A separate slot keeps dim chrome from reading at the same weight as secondary text
         let dim_fg = if dark { Color::DarkGray } else { Color::Gray };
 
         // ── Polarity-aware semantic hues ────────────────────────────
-        // Normal ANSI hues (idx 1–7) are designed at ~50% luminance and
-        // read well on light backgrounds. Light variants (idx 9–15) are
-        // full saturation and read well on dark backgrounds. Pinning by
-        // polarity restores the chromatic signal that naive nearest-RGB
-        // quantization erases when pastel theme RGBs collapse onto the
-        // gray ramp.
+        // Normal ANSI hues (idx 1-7) are designed at ~50% luminance and read well on light backgrounds
+        // Light variants (idx 9-15) are full saturation and read well on dark backgrounds
         let red = if dark { Color::LightRed } else { Color::Red };
         let green = if dark {
             Color::LightGreen
@@ -556,41 +504,21 @@ impl Theme {
         let cyan = if dark { Color::LightCyan } else { Color::Cyan };
         Self {
             // ── Elevated surfaces: one step off the canvas ──────────────
-            // Hover/highlight/visual-selection rows need to read as a
-            // distinct "raised" band against the body. Without this every
-            // GrokNight bg field quantizes to Color::Black and these
-            // become invisible.
+            // Hover/highlight/visual-selection rows need to read as a distinct "raised" band against the body
+            // Without this every GrokNight bg field quantizes to Color::Black and these become invisible
             bg_light: elevated_bg,
             bg_highlight: elevated_bg,
             bg_hover: elevated_bg,
             bg_visual: elevated_bg,
 
-            // ── Canvas-matching surfaces ────────────────────────────────
-            // Pin to the theme's polarity, NOT Color::Reset. The truecolor
-            // "subtle sunken / code block" effect can't be replicated in
-            // 16-color, but using the theme polarity guarantees these
-            // blend cleanly with `bg_base` regardless of what the user's
-            // terminal canvas is set to.
+            // Theme polarity, not Reset: 16-color cannot sunken-blend, and Reset would follow a disagreeing terminal canvas.
             bg_dark: canvas_bg,
             md_code_bg: canvas_bg,
             paste_bg: canvas_bg,
             scrollbar_bg: canvas_bg,
 
-            // ── Borders: muted (idle prompt) → muted (selection) → high-contrast (active) ──
-            // The four-tier truecolor border hierarchy collapses onto
-            // three ANSI16 slots:
-            //   - `prompt_border` (idle text-input frame) → `muted_fg`,
-            //     not `dim_fg`. DarkGray (ANSI 8) is tuned near-bg on
-            //     many palettes, so a dim idle frame vanishes the same
-            //     way table chrome did (GB-3759).
-            //   - `hover_border` (transient mouse-hover) → `DarkGray`,
-            //     stable across both polarities so a hover band reads
-            //     consistently.
-            //   - `selection_border` (sticky selection) → `muted_fg`,
-            //     one tier louder than dim, drawing the eye without
-            //     screaming.
-            //   - `prompt_border_active` (focused) → `high_contrast_fg`,
-            //     maximum contrast so focus always pops.
+            // Idle frame uses muted_fg: DarkGray (ANSI 8) is near-bg on many palettes and the frame vanishes.
+            // Hover stays DarkGray; selection is muted_fg; focus is high_contrast_fg.
             prompt_border: muted_fg,
             prompt_border_active: high_contrast_fg,
             selection_border: muted_fg,
@@ -600,55 +528,34 @@ impl Theme {
             scrollbar_fg: muted_fg,
 
             // ── Foreground / text hierarchy ─────────────────────────────
-            // Prompt textarea + chrome captions use these directly (and
-            // blend_color cannot mix named ANSI, so they must already
-            // be readable slots).
+            // Prompt textarea and chrome captions use these directly
+            // blend_color cannot mix named ANSI, so they must already be readable slots
             text_primary: high_contrast_fg,
             text_secondary: muted_fg,
             md_text: high_contrast_fg,
-            // Selected user-prompt `>` (drives the user selection accent
-            // and the OSC 12 cursor color) takes max-contrast fg so the
-            // selection pops against the canvas — White on dark,
-            // Black on light.
+            // Selected user-prompt `>` (drives the user selection accent and the OSC 12 cursor color) takes max-contrast fg
+            // The selection pops against the canvas: White on dark, Black on light
             accent_user: high_contrast_fg,
-            // Two-tier grey: `gray`/`gray_bright` carry secondary text
-            // and need readable contrast, so they take `muted_fg` (the
-            // higher-contrast slot — silver on black, charcoal on
-            // white). `gray_dim` is for genuinely faded chrome (modal
-            // frames, unselected `>` prompt indicator) and takes
-            // `dim_fg` (the lower-contrast slot — DarkGray on black,
-            // silver on white). Two tiers is the most ANSI16 can
-            // express without colliding with the elevated-bg slot.
+            // Two-tier grey: `gray`/`gray_bright` carry secondary text and need readable contrast, so they take `muted_fg`
+            // `gray_dim` is for genuinely faded chrome (modal frames, unselected `>` prompt indicator) and takes `dim_fg`
+            // Two tiers is the most ANSI16 can express without colliding with the elevated-bg slot
             gray: muted_fg,
             gray_bright: muted_fg,
             gray_dim: dim_fg,
 
-            // ── Semantic accents: polarity-aware hue pins ───────────────
-            // State signals (running / completed / error) and content
-            // categories (system / skill / etc.) get
-            // pinned to a hue that survives ANSI16 instead of collapsing
-            // to a gray. ANSI16 only has 6 chromatic slots (no orange,
-            // no teal, no violet), so several truecolor accents
-            // intentionally fold onto the same slot here — the goal is
-            // "preserve the dominant hue family", not "preserve every
-            // sub-hue".
-            //
-            // Magenta family (assistant turn, mid-stream thinking,
-            // running indicator, context-overhead accent). All four use
-            // a purple/violet hue in both built-in themes.
+            // ANSI16 has 6 chromatic slots, so sub-hues fold onto the dominant family. Magenta covers the purple/violet accents.
             accent_assistant: magenta,
             accent_thinking: magenta,
             accent_running: magenta,
             accent_verify: magenta,
-            // Red family — error states and diff deletes.
+            // Red family: error states and diff deletes
             accent_error: red,
             diff_delete_fg: red,
-            // Green family — success states, remember mode, diff inserts.
+            // Green family: success states, remember mode, diff inserts
             accent_success: green,
             accent_remember: green,
             diff_insert_fg: green,
-            // Blue family — system messages, skill invocations, fuzzy
-            // search matches.
+            // Blue family: system messages, skill invocations, fuzzy search matches
             accent_system: blue,
             accent_skill: blue,
             fuzzy_accent: blue,
@@ -656,20 +563,16 @@ impl Theme {
             // ANSI16 has no separate teal slot, so the truecolor teal model accent folds onto cyan here.
             accent_model: cyan,
             running: cyan,
-            // Yellow family — warning text, plan-mode gold, shell
-            // commands, file paths. ANSI16 has no orange or gold slot,
-            // so warm accents all fold onto yellow.
+            // Yellow family: warning text, plan-mode gold, shell commands, file paths
+            // ANSI16 has no orange or gold slot, so warm accents all fold onto yellow
             command: yellow,
             warning: yellow,
             path: yellow,
             accent_plan: yellow,
 
-            // Markdown content: naive Basic quantize lands GrokNight
-            // md_code / md_muted / h4–h6 on DarkGray (ANSI 8). Many
-            // palettes tune that slot near the background, so inline
-            // code and table borders vanish over ssh+tmux (GB-3759).
-            // `md_muted` uses muted_fg, not dim_fg — format_table also
-            // stacks DIM on table borders.
+            // Markdown content: naive Basic quantize lands GrokNight md_code / md_muted / h4-h6 on DarkGray (ANSI 8)
+            // Many palettes tune that slot near the background, so inline code and table borders vanish in tmux over ssh
+            // `md_muted` uses muted_fg, not dim_fg: format_table also stacks DIM on table borders
             md_heading_h1: cyan,
             md_heading_h2: blue,
             md_heading_h3: magenta,
@@ -688,27 +591,64 @@ impl Theme {
     }
 }
 
-/// Set the terminal cursor color to the current theme's `accent_user` via OSC 12.
-///
-/// `Theme::current()` quantizes to the terminal's color level, so on
-/// non-truecolor terminals `accent_user` may be `Color::Indexed` or a
-/// named ANSI variant. OSC 12 accepts an RGB triple regardless of the
-/// terminal's normal SGR color depth, so we resolve every variant back
-/// to RGB via [`crate::render::color::resolve_to_rgb`]. Reset (when
-/// `NO_COLOR` is set) yields `None` — we skip emission entirely so the
-/// terminal keeps its profile-defined cursor color.
-///
-/// Escape sequence: `\x1b]12;rgb:RR/GG/BB\x07`.
+/// Gates OSC 112: an unprompted reset makes Ghostty latch the cursor color and stop tracking theme changes. Only undo what we painted.
+static CURSOR_COLOR_APPLIED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// OSC 12 wants RGB even below truecolor, so every variant is resolved back. `Reset` yields `None` so the terminal keeps its profile cursor.
+pub fn cursor_color_escape() -> Option<String> {
+    let theme = Theme::current();
+    let (r, g, b) = crate::render::color::resolve_to_rgb(theme.accent_user)?;
+    Some(format!("\x1b]12;rgb:{r:02x}/{g:02x}/{b:02x}\x07"))
+}
+
+/// Write [`cursor_color_escape`] inline. Startup only, while no writer thread is live; once the event loop runs, its OSC 12/112 tracker is the single emitter (including screen-mode switches).
 pub fn apply_cursor_color() {
     use std::io::Write;
-    let theme = Theme::current();
-    let Some((r, g, b)) = crate::render::color::resolve_to_rgb(theme.accent_user) else {
+    use std::sync::atomic::Ordering;
+    let Some(escape) = cursor_color_escape() else {
+        // No RGB accent (terminal-native palette, NO_COLOR): undo our own
+        // paint if any, otherwise stay silent (see `CURSOR_COLOR_APPLIED`).
+        reset_cursor_color_if_applied();
         return;
     };
+    CURSOR_COLOR_APPLIED.store(true, Ordering::Relaxed);
     xai_grok_shared::stderr::with_locked_stderr(|stderr| {
-        let _ = write!(stderr, "\x1b]12;rgb:{r:02x}/{g:02x}/{b:02x}\x07");
+        let _ = stderr.write_all(escape.as_bytes());
         let _ = stderr.flush();
     });
+}
+
+/// [`reset_cursor_color`] gated on this session having painted the cursor
+/// (see [`CURSOR_COLOR_APPLIED`]), clearing the flag. Atomic swap, so
+/// panic- and signal-handler-safe.
+pub fn reset_cursor_color_if_applied() {
+    if CURSOR_COLOR_APPLIED.swap(false, std::sync::atomic::Ordering::Relaxed) {
+        reset_cursor_color();
+    }
+}
+
+/// The OSC 112 escape that resets the terminal cursor color to its default.
+pub const CURSOR_COLOR_RESET_ESCAPE: &str = "\x1b]112\x07";
+
+/// Record that a cursor-color escape went out over the render wire (the event
+/// loop's queued emitter, which bypasses [`apply_cursor_color`]), keeping
+/// [`CURSOR_COLOR_APPLIED`] truthful for the teardown reset.
+pub fn note_cursor_color_on_wire(applied: bool) {
+    CURSOR_COLOR_APPLIED.store(applied, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Test-only access to [`CURSOR_COLOR_APPLIED`] so the OSC 12/112 gating is
+/// assertable without capturing the raw stderr fd.
+#[cfg(any(test, feature = "test-support"))]
+pub fn cursor_color_applied_for_test() -> bool {
+    CURSOR_COLOR_APPLIED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Test-only setter for [`CURSOR_COLOR_APPLIED`].
+#[cfg(any(test, feature = "test-support"))]
+pub fn set_cursor_color_applied_for_test(v: bool) {
+    CURSOR_COLOR_APPLIED.store(v, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Reset the terminal cursor color to the terminal's default via OSC 112.
@@ -717,7 +657,7 @@ pub fn apply_cursor_color() {
 pub fn reset_cursor_color() {
     use std::io::Write;
     xai_grok_shared::stderr::with_locked_stderr(|stderr| {
-        let _ = write!(stderr, "\x1b]112\x07");
+        let _ = stderr.write_all(CURSOR_COLOR_RESET_ESCAPE.as_bytes());
         let _ = stderr.flush();
     });
 }
@@ -726,103 +666,23 @@ pub fn reset_cursor_color() {
 mod tests {
     use super::*;
 
+    /// `faint()` sits strictly between the background and `gray_dim` on a palette that can blend, and degrades to the DIM
+    /// attribute with no hard colour on the bandless terminal palette.
     #[test]
-    fn v2_round_trips_through_name() {
-        assert_eq!(
-            ThemeKind::from_name("deepseeknight-v2"),
-            Some(ThemeKind::DeepSeekNightV2)
-        );
-        assert_eq!(
-            ThemeKind::from_name("dsb2"),
-            Some(ThemeKind::DeepSeekNightV2)
-        );
-        assert_eq!(
-            ThemeKind::DeepSeekNightV2.display_name(),
-            "deepseeknight-v2"
-        );
-        assert_eq!(
-            ThemeKind::from_name(ThemeKind::DeepSeekNightV2.display_name()),
-            Some(ThemeKind::DeepSeekNightV2)
-        );
-    }
+    fn faint_is_between_bg_and_gray_dim_or_dim_when_unblendable() {
+        use ratatui::style::{Color, Modifier};
+        let luma = |c: Color| match c {
+            Color::Rgb(r, g, b) => u32::from(r) + u32::from(g) + u32::from(b),
+            other => panic!("expected RGB, got {other:?}"),
+        };
+        let night = Theme::groknight();
+        let faint = night.faint().fg.expect("GrokNight blends to a hard colour");
+        assert!(luma(night.bg_base) < luma(faint) && luma(faint) < luma(night.gray_dim));
 
-    #[test]
-    fn v2_is_listed_and_survives_256_color_terminals() {
-        assert!(ThemeKind::ALL.contains(&ThemeKind::DeepSeekNightV2));
-        assert!(!ThemeKind::DeepSeekNightV2.requires_truecolor());
-    }
-
-    #[test]
-    fn v2_is_dark() {
-        assert!(Theme::deepseeknight_v2().is_dark());
-    }
-
-    #[test]
-    fn default_theme_is_classic() {
-        assert_eq!(Theme::default().bg_base, Theme::deepseeknight().bg_base);
-    }
-
-    #[test]
-    fn current_and_compat_theme_names_still_parse() {
-        for name in [
-            "groknight",
-            "grok-night",
-            "deepseeknight",
-            "deepseek",
-            "dsb",
-            "deepseeknight-neutral",
-            "dsb-neutral",
-        ] {
-            assert!(
-                ThemeKind::from_name(name).is_some(),
-                "{name} must still parse"
-            );
-        }
-    }
-
-    #[test]
-    fn dark_alias_maps_to_classic_deepseek_night() {
-        // The legacy `"dark"` value must land on the product/default skin
-        // (classic DeepSeek Night), not the retired GrokNight theme.
-        assert_eq!(ThemeKind::from_name("dark"), Some(ThemeKind::DeepSeekNight));
-        assert_eq!(ThemeKind::from_name("DARK"), Some(ThemeKind::DeepSeekNight));
-        assert_eq!(ThemeKind::from_name("Dark"), Some(ThemeKind::DeepSeekNight));
-    }
-
-    #[test]
-    fn groknight_stays_hidden_but_neutral_is_listed() {
-        // GrokNight is a retired compatibility theme and stays out of every
-        // picker catalog; DeepSeekNightNeutral is now a first-class choice.
-        assert!(!ThemeKind::ALL.contains(&ThemeKind::GrokNight));
-        assert!(!NO_TRUECOLOR.contains(&ThemeKind::GrokNight));
-        assert!(ThemeKind::ALL.contains(&ThemeKind::DeepSeekNightNeutral));
-    }
-
-    #[test]
-    fn classic_deepseek_theme_is_selectable_again() {
-        // The original DeepSeek Night (v1) was hidden in the v2 switch; it is
-        // re-listed as "DeepSeek Night (classic)" so users can keep the original
-        // look while classic remains the product default. Neutral is listed
-        // alongside it and survives 256-color terminals too.
-        assert_eq!(ThemeKind::ALL[0], ThemeKind::DeepSeekNightV2);
-        assert!(ThemeKind::ALL.contains(&ThemeKind::DeepSeekNight));
-        assert!(NO_TRUECOLOR.contains(&ThemeKind::DeepSeekNight));
-        assert!(NO_TRUECOLOR.contains(&ThemeKind::DeepSeekNightNeutral));
-        assert!(!NO_TRUECOLOR.contains(&ThemeKind::GrokNight));
-        assert!(ThemeKind::available().contains(&ThemeKind::DeepSeekNight));
-        assert!(ThemeKind::available().contains(&ThemeKind::DeepSeekNightNeutral));
-    }
-
-    #[test]
-    fn every_listed_theme_has_a_display_label() {
-        for kind in ThemeKind::ALL {
-            let canonical = kind.display_name();
-            let label = display_name_for_canonical(canonical);
-            assert_ne!(
-                label, canonical,
-                "{canonical} has no human-readable label in display_name_for_canonical"
-            );
-        }
+        let terminal = Theme::terminal_default();
+        let style = terminal.faint();
+        assert_eq!(style.fg, None, "no hard colour on the bandless palette");
+        assert!(style.add_modifier.contains(Modifier::DIM));
     }
 
     #[test]
@@ -842,6 +702,20 @@ mod tests {
         assert_eq!(ThemeKind::from_name("SYSTEM"), Some(ThemeKind::Auto));
     }
 
+    /// Every alias parses back to its own kind, so no alias is shadowed by another kind's name.
+    #[test]
+    fn from_name_accepts_every_alias() {
+        let _guard = cache::test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        cache::reset_for_test();
+        cache::set_terminal_theme_enabled(true);
+        for kind in ThemeKind::ALL.iter().chain([&ThemeKind::Auto]).copied() {
+            for alias in kind.aliases() {
+                assert_eq!(ThemeKind::from_name(alias), Some(kind), "alias {alias}");
+            }
+        }
+        cache::reset_for_test();
+    }
+
     #[test]
     fn display_name_auto() {
         assert_eq!(ThemeKind::Auto.display_name(), "auto");
@@ -859,8 +733,6 @@ mod tests {
         assert!(!ThemeKind::TokyoNight.is_auto());
         assert!(!ThemeKind::RosePineMoon.is_auto());
         assert!(!ThemeKind::OscuraMidnight.is_auto());
-        assert!(!ThemeKind::DeepSeekNight.is_auto());
-        assert!(!ThemeKind::DeepSeekNightNeutral.is_auto());
     }
 
     #[test]
@@ -873,6 +745,28 @@ mod tests {
         assert!(!ThemeKind::available().contains(&ThemeKind::Auto));
     }
 
+    /// With the rollout gate off, the `terminal` theme neither parses nor appears in any catalog; on, both come back.
+    #[test]
+    fn terminal_rollout_gate_hides_and_rejects_the_terminal_theme() {
+        // The gate is a process global (test default: on) — serialize with the other theme-global tests and restore via reset.
+        let _guard = cache::test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        cache::reset_for_test();
+
+        cache::set_terminal_theme_enabled(false);
+        for name in ["terminal", "terminal-default", "transparent", "native"] {
+            assert_eq!(ThemeKind::from_name(name), None, "{name} must not parse");
+        }
+        assert!(!ThemeKind::selectable().contains(&ThemeKind::Terminal));
+        assert!(!ThemeKind::available().contains(&ThemeKind::Terminal));
+
+        cache::set_terminal_theme_enabled(true);
+        assert_eq!(ThemeKind::from_name("terminal"), Some(ThemeKind::Terminal));
+        assert!(ThemeKind::selectable().contains(&ThemeKind::Terminal));
+        assert!(ThemeKind::available().contains(&ThemeKind::Terminal));
+
+        cache::reset_for_test();
+    }
+
     #[test]
     fn is_dark_classifies_built_in_themes() {
         // Sanity-check the polarity sampler against the theme catalog.
@@ -880,8 +774,6 @@ mod tests {
         assert!(Theme::tokyonight().is_dark());
         assert!(Theme::rosepine_moon().is_dark());
         assert!(Theme::oscura_midnight().is_dark());
-        assert!(Theme::deepseeknight().is_dark());
-        assert!(Theme::deepseeknight_neutral().is_dark());
         assert!(!Theme::grokday().is_dark());
     }
 
@@ -891,26 +783,22 @@ mod tests {
         let t = Theme::groknight().ansi16_chrome_overrides(true);
         assert_eq!(t.bg_light, Color::DarkGray);
         assert_eq!(t.bg_highlight, Color::DarkGray);
-        // Idle prompt border sits at `muted_fg` (Gray on dark canvas);
-        // focused border jumps to max-contrast White.
+        // Idle prompt border sits at `muted_fg` (Gray on dark canvas); focused border jumps to max-contrast White
         assert_eq!(t.prompt_border, Color::Gray);
         assert_eq!(t.prompt_border_active, Color::White);
         assert_eq!(t.md_text, Color::White);
         assert_eq!(t.text_primary, Color::White);
         assert_eq!(t.text_secondary, Color::Gray);
-        // Two-tier grey: secondary text (`gray`) reads at the muted
-        // slot (silver), `gray_dim` reads at the dim slot (DarkGray) —
-        // see `ansi16_overrides_gray_hierarchy_collapses_to_two_slots`.
+        // Two-tier grey: secondary text (`gray`) reads at the muted slot (silver), `gray_dim` at the dim slot (DarkGray)
+        // See `ansi16_overrides_gray_hierarchy_collapses_to_two_slots`
         assert_eq!(t.gray, Color::Gray);
         assert_eq!(t.gray_dim, Color::DarkGray);
     }
 
     #[test]
     fn ansi16_overrides_light_inverts_high_contrast_and_elevated_bg() {
-        // Light canvas inverts polarity: elevated bg reads darker
-        // (silver step from white), high-contrast fg is Black, muted
-        // fg is DarkGray, and the dim slot (`gray_dim`) flips to silver
-        // — see `ansi16_overrides_gray_hierarchy_collapses_to_two_slots`.
+        // Light canvas inverts polarity: elevated bg reads darker (silver step from white), high-contrast fg is Black, muted fg is DarkGray
+        // The dim slot (`gray_dim`) flips to silver; see `ansi16_overrides_gray_hierarchy_collapses_to_two_slots`
         use ratatui::style::Color;
         let t = Theme::grokday().ansi16_chrome_overrides(false);
         assert_eq!(t.bg_light, Color::Gray);
@@ -926,11 +814,8 @@ mod tests {
 
     #[test]
     fn ansi16_overrides_preserve_bg_base() {
-        // `bg_base` belongs to the user's terminal session, not to us —
-        // we never overwrite it. Polarity-pinned canvas surfaces
-        // (`bg_dark`, `md_code_bg`, `paste_bg`, `scrollbar_bg`) are
-        // tested separately in
-        // `ansi16_overrides_canvas_matching_surfaces_use_theme_polarity`.
+        // `bg_base` belongs to the user's terminal session, not to us: we never overwrite it
+        // The polarity-pinned canvas surfaces are tested separately in `ansi16_overrides_canvas_matching_surfaces_use_theme_polarity`
         let base = Theme::groknight();
         let t = base.ansi16_chrome_overrides(true);
         assert_eq!(t.bg_base, base.bg_base);
@@ -938,11 +823,9 @@ mod tests {
 
     #[test]
     fn ansi16_overrides_state_accents_pin_to_polarity_aware_hue() {
-        // running / completed / error must read as their hue family
-        // even at ANSI16. Dark canvas → bright (Light*) variants, light
-        // canvas → normal variants. Without these pins the source
-        // pastel RGBs collapse onto silver/DarkGray and every state
-        // signal becomes the same gray.
+        // running / completed / error must read as their hue family even at ANSI16
+        // A dark canvas takes bright (Light*) variants, a light canvas normal variants
+        // Without these pins the source pastel RGBs collapse onto silver/DarkGray and every state signal becomes the same gray
         use ratatui::style::Color;
         let t_dark = Theme::groknight().ansi16_chrome_overrides(true);
         assert_eq!(t_dark.accent_error, Color::LightRed);
@@ -957,8 +840,7 @@ mod tests {
 
     #[test]
     fn ansi16_overrides_md_palette_never_lands_on_dark_gray() {
-        // GB-3759: on a dark canvas no md field may land on DarkGray,
-        // the slot palettes tune near their background.
+        // On a dark canvas no md field may land on DarkGray, the slot palettes tune near their background
         use ratatui::style::Color;
         let t = Theme::groknight().ansi16_chrome_overrides(true);
         for (name, c) in [
@@ -1015,11 +897,9 @@ mod tests {
 
     #[test]
     fn ansi16_overrides_magenta_family_shares_slot() {
-        // assistant turn, mid-stream thinking, running indicator, and
-        // context-overhead accent all use a purple/violet hue in truecolor.
-        // ANSI16 has one magenta slot per polarity, so they all fold
-        // onto it together — they live in different surfaces so the
-        // collision doesn't cause confusion.
+        // assistant turn, mid-stream thinking, running indicator, and context-overhead accent all use a purple/violet hue in truecolor
+        // ANSI16 has one magenta slot per polarity, so they all fold onto it together
+        // They live in different surfaces so the collision doesn't cause confusion
         use ratatui::style::Color;
         let t = Theme::groknight().ansi16_chrome_overrides(true);
         assert_eq!(t.accent_assistant, Color::LightMagenta);
@@ -1030,11 +910,8 @@ mod tests {
 
     #[test]
     fn ansi16_overrides_yellow_family_absorbs_orange_and_gold() {
-        // ANSI16 has no orange or gold slot, so warm accents (command,
-        // warning, path, plan) all fold onto Yellow /
-        // LightYellow. This is intentional: preserving the "warm"
-        // semantic is more important than per-accent differentiation
-        // that the palette cannot represent.
+        // ANSI16 has no orange or gold slot, so warm accents (command, warning, path, plan) all fold onto Yellow / LightYellow
+        // Preserving the warm hue family matters more than per-accent differentiation the palette cannot represent
         use ratatui::style::Color;
         let t_dark = Theme::groknight().ansi16_chrome_overrides(true);
         for f in [
@@ -1069,8 +946,7 @@ mod tests {
 
     #[test]
     fn ansi16_overrides_blue_family_pins_system_skill_fuzzy() {
-        // System messages, skill invocations, and fuzzy-search matches
-        // all carry the same blue family in truecolor.
+        // System messages, skill invocations, and fuzzy-search matches all carry the same blue family in truecolor
         use ratatui::style::Color;
         let t_dark = Theme::groknight().ansi16_chrome_overrides(true);
         assert_eq!(t_dark.accent_system, Color::LightBlue);
@@ -1085,8 +961,7 @@ mod tests {
 
     #[test]
     fn ansi16_overrides_diff_fg_uses_polarity_aware_red_green() {
-        // Diff add/remove rely on fg color for their primary signal at
-        // ANSI16 (the subtle pastel bg tints don't survive quantization).
+        // Diff add/remove rely on fg color for their primary signal at ANSI16 (the subtle pastel bg tints don't survive quantization)
         // Pin fg to red / green so deletes and inserts stay legible.
         use ratatui::style::Color;
         let t_dark = Theme::groknight().ansi16_chrome_overrides(true);
@@ -1100,11 +975,8 @@ mod tests {
 
     #[test]
     fn ansi16_overrides_accent_user_uses_high_contrast() {
-        // accent_user drives the selected-user-prompt `>` color and the
-        // OSC 12 cursor color. It's pinned to max-contrast fg in both
-        // polarities so the selection always pops against the canvas:
-        //   - dark canvas → Color::White
-        //   - light canvas → Color::Black
+        // accent_user drives the selected-user-prompt `>` color and the OSC 12 cursor color
+        // It's pinned to max-contrast fg in both polarities so the selection always pops: White on a dark canvas, Black on a light one
         use ratatui::style::Color;
         let t_dark = Theme::groknight().ansi16_chrome_overrides(true);
         assert_eq!(t_dark.accent_user, Color::White);
@@ -1115,8 +987,7 @@ mod tests {
 
     #[test]
     fn ansi16_overrides_extended_dark_pins_elevated_bg_to_dark_gray() {
-        // Without these pins, every dark RGB bg quantizes to Color::Black
-        // and the hover/visual/highlight bands collapse onto the canvas.
+        // Without these pins, every dark RGB bg quantizes to Color::Black and the hover/visual/highlight bands collapse onto the canvas
         use ratatui::style::Color;
         let t = Theme::groknight().ansi16_chrome_overrides(true);
         assert_eq!(t.bg_hover, Color::DarkGray);
@@ -1133,12 +1004,8 @@ mod tests {
 
     #[test]
     fn ansi16_overrides_canvas_matching_surfaces_use_theme_polarity() {
-        // Sunken bg, code-block bg, paste chip bg, and scrollbar track
-        // must match the theme polarity (Black for dark themes, White
-        // for light) — NOT Color::Reset, which would defer to the
-        // user's terminal canvas and create polarity mismatches when
-        // the theme disagrees with the terminal profile (e.g. GrokNight
-        // running on a white-canvas terminal).
+        // Sunken bg, code-block bg, paste chip bg, and scrollbar track must match the theme polarity (Black for dark themes, White for light)
+        // Color::Reset would defer to the user's terminal canvas, which can disagree with the theme (e.g. GrokNight on a white-canvas terminal).
         use ratatui::style::Color;
         let t_dark = Theme::groknight().ansi16_chrome_overrides(true);
         assert_eq!(t_dark.bg_dark, Color::Black);
@@ -1155,13 +1022,7 @@ mod tests {
 
     #[test]
     fn ansi16_overrides_border_hierarchy_is_distinct() {
-        // Border hierarchy:
-        //   prompt_border (muted, idle) → muted (selection) → high-contrast (focused)
-        // On dark canvas, idle prompt and selection share `Gray` (silver)
-        // so the frame survives palettes that tune ANSI 8 near-bg;
-        // `hover_border` stays `DarkGray`, `prompt_border_active` is `White`.
-        // On light canvas, `prompt_border` / `selection_border` /
-        // `hover_border` all sit on `DarkGray`; focus is `Black`.
+        // Dark: idle/selection share Gray so the frame survives palettes that tune ANSI 8 near-bg. Light: those sit on DarkGray; focus is Black.
         use ratatui::style::Color;
         let t_dark = Theme::groknight().ansi16_chrome_overrides(true);
         assert_eq!(t_dark.hover_border, Color::DarkGray);
@@ -1180,8 +1041,7 @@ mod tests {
 
     #[test]
     fn ansi16_overrides_scrollbar_thumb_visible_against_canvas() {
-        // scrollbar_fg must not equal scrollbar_bg or the thumb is
-        // invisible against the canvas-pinned track.
+        // scrollbar_fg must not equal scrollbar_bg or the thumb is invisible against the canvas-pinned track
         use ratatui::style::Color;
         let t_dark = Theme::groknight().ansi16_chrome_overrides(true);
         assert_eq!(t_dark.scrollbar_fg, Color::Gray);
@@ -1194,18 +1054,7 @@ mod tests {
 
     #[test]
     fn scrollbar_thumb_contrasts_with_track_in_all_themes() {
-        // Regression test for oscura-midnight: its thumb
-        // (`ELEVATED`, Σrgb 55) was *darker* than its track
-        // (`HIGHLIGHT_LOW`, Σrgb 62), so the scrollbar was invisible.
-        // Follow mode makes this stricter: the main-chat scrollbar blends
-        // the thumb 40% toward the track (`views/agent.rs`), so the
-        // full-strength delta must be comfortably visible to survive it.
-        //
-        // Requirements per theme, in native truecolor RGB:
-        //   1. Polarity: thumb sits *away* from the canvas relative to the
-        //      track — lighter on dark themes, darker on light themes.
-        //   2. Magnitude: ≥ 30 summed-RGB units between thumb and track
-        //      (the smallest shipping delta, tokyonight, is 34).
+        // Thumb must sit away from the canvas vs the track, by >=30 summed-RGB, or follow-mode's 40% blend hides the scrollbar.
         use ratatui::style::Color;
         let lum = |c: Color, field: &str, kind: ThemeKind| -> i32 {
             let Color::Rgb(r, g, b) = c else {
@@ -1220,9 +1069,9 @@ mod tests {
                 ThemeKind::TokyoNight => Theme::tokyonight(),
                 ThemeKind::RosePineMoon => Theme::rosepine_moon(),
                 ThemeKind::OscuraMidnight => Theme::oscura_midnight(),
-                ThemeKind::DeepSeekNightV2 => Theme::deepseeknight_v2(),
-                ThemeKind::DeepSeekNight => Theme::deepseeknight(),
-                ThemeKind::DeepSeekNightNeutral => Theme::deepseeknight_neutral(),
+                // Reset plus named ANSI entries: the scrollbar rides the
+                // terminal's own fg/bg contrast, so there is no RGB delta.
+                ThemeKind::Terminal => continue,
                 ThemeKind::Auto => unreachable!("ALL excludes Auto"),
             };
             let track = lum(theme.scrollbar_bg, "scrollbar_bg", kind);
@@ -1246,13 +1095,7 @@ mod tests {
 
     #[test]
     fn ansi16_quantize_without_override_collapses_groknight_backgrounds() {
-        // Regression-ratchet for the override gate in `Theme::current`:
-        // naive `Basic` quantization maps every dark GrokNight bg field
-        // to `Color::Black`, erasing the hierarchy. This test exists to
-        // make the motivation for `ansi16_chrome_overrides` explicit —
-        // if quantization later gains a "dark gray" mid-tone (e.g., via
-        // an ANSI24/ANSI32 level), this test will start failing and the
-        // override scope should be revisited.
+        // Ratchet: naive Basic maps every dark GrokNight bg to Black. If a mid-tone level appears, revisit the override.
         use ratatui::style::Color;
         let q = Theme::groknight().quantized(color_support::ColorLevel::Basic);
         for (name, color) in [
@@ -1275,20 +1118,7 @@ mod tests {
 
     #[test]
     fn ansi16_overrides_gray_hierarchy_collapses_to_two_slots() {
-        // Basic exposes only DarkGray + Gray as named greys (Black and
-        // White are reserved for canvas / max-contrast fg). We split
-        // the dim/medium/bright triplet into two tiers:
-        //   - `gray`, `gray_bright` → `muted_fg` (the higher-contrast
-        //     slot — silver on Black, charcoal on White). Secondary
-        //     text needs to stay readable.
-        //   - `gray_dim` → `dim_fg` (the lower-contrast slot, sitting
-        //     one tier closer to the canvas — DarkGray on Black, silver
-        //     on White). Used for genuinely faded chrome (modal frames,
-        //     unselected `>` prompt indicator).
-        // ANSI16 has only two grey slots so we can't get a true
-        // three-tier hierarchy; collapsing bright+medium onto the
-        // brighter slot keeps secondary text legible while still
-        // separating "dim" from "muted".
+        // ANSI16 has two greys. Bright and medium share muted_fg so secondary text stays readable; dim keeps the lower slot.
         use ratatui::style::Color;
         let t_dark = Theme::groknight().ansi16_chrome_overrides(true);
         assert_eq!(t_dark.gray, Color::Gray);
@@ -1314,7 +1144,7 @@ mod tests {
         use ratatui::style::Color;
         // Truecolor pass-through.
         assert_eq!(resolve_to_rgb(Color::Rgb(12, 34, 56)), Some((12, 34, 56)));
-        // Indexed routes through indexed_to_rgb (16 = (0, 0, 0) — first cube cell).
+        // Indexed routes through indexed_to_rgb; index 16 is (0, 0, 0), the first cube cell
         assert_eq!(resolve_to_rgb(Color::Indexed(16)), Some(indexed_to_rgb(16)));
         // Each named ANSI variant resolves to indexed_to_rgb(0..=15).
         let named = [
@@ -1352,22 +1182,9 @@ mod tests {
             ThemeKind::from_name("groknight"),
             Some(ThemeKind::GrokNight)
         );
-        assert_eq!(ThemeKind::from_name("dark"), Some(ThemeKind::DeepSeekNight));
+        assert_eq!(ThemeKind::from_name("dark"), Some(ThemeKind::GrokNight));
         assert_eq!(ThemeKind::from_name("grokday"), Some(ThemeKind::GrokDay));
         assert_eq!(ThemeKind::from_name("light"), Some(ThemeKind::GrokDay));
-        assert_eq!(
-            ThemeKind::from_name("deepseeknight"),
-            Some(ThemeKind::DeepSeekNight)
-        );
-        assert_eq!(ThemeKind::from_name("dsb"), Some(ThemeKind::DeepSeekNight));
-        assert_eq!(
-            ThemeKind::from_name("deepseeknight-neutral"),
-            Some(ThemeKind::DeepSeekNightNeutral)
-        );
-        assert_eq!(
-            ThemeKind::from_name("dsb-neutral"),
-            Some(ThemeKind::DeepSeekNightNeutral)
-        );
         assert_eq!(
             ThemeKind::from_name("tokyonight"),
             Some(ThemeKind::TokyoNight)
@@ -1386,7 +1203,7 @@ mod tests {
         );
     }
 
-    /// `FromStr` agrees with `from_name` for all canonicals + aliases.
+    /// `FromStr` agrees with `from_name` for all canonicals and aliases.
     #[test]
     fn from_str_matches_from_name_for_all_canonicals() {
         // Mapping `from_name`'s alias matrix into the `FromStr` API.
@@ -1395,7 +1212,7 @@ mod tests {
             ("system", ThemeKind::Auto),
             ("groknight", ThemeKind::GrokNight),
             ("grok-night", ThemeKind::GrokNight),
-            ("dark", ThemeKind::DeepSeekNight),
+            ("dark", ThemeKind::GrokNight),
             ("tokyonight", ThemeKind::TokyoNight),
             ("tokyo-night", ThemeKind::TokyoNight),
             ("tokyo", ThemeKind::TokyoNight),
@@ -1403,13 +1220,6 @@ mod tests {
             ("grok-day", ThemeKind::GrokDay),
             ("light", ThemeKind::GrokDay),
             ("day", ThemeKind::GrokDay),
-            ("deepseeknight", ThemeKind::DeepSeekNight),
-            ("deepseek-night", ThemeKind::DeepSeekNight),
-            ("deepseek", ThemeKind::DeepSeekNight),
-            ("dsb", ThemeKind::DeepSeekNight),
-            ("deepseeknight-neutral", ThemeKind::DeepSeekNightNeutral),
-            ("deepseek-neutral", ThemeKind::DeepSeekNightNeutral),
-            ("dsb-neutral", ThemeKind::DeepSeekNightNeutral),
             ("rosepine", ThemeKind::RosePineMoon),
             ("rose-pine", ThemeKind::RosePineMoon),
             ("rosepine-moon", ThemeKind::RosePineMoon),
@@ -1430,5 +1240,30 @@ mod tests {
         }
         assert_eq!("nonexistent".parse::<ThemeKind>(), Err(()));
         assert_eq!("".parse::<ThemeKind>(), Err(()));
+    }
+
+    /// OSC 12/112 gating on the terminal theme (Reset accent): apply never
+    /// marks the cursor as painted, and the swap-gated reset fires only when
+    /// this session actually painted it — clearing the flag exactly once.
+    #[test]
+    fn cursor_color_gating_stays_silent_on_reset_accent() {
+        let _guard = cache::pin_theme();
+        cache::set(ThemeKind::Terminal);
+
+        // Pure terminal-theme session: apply must not latch the flag.
+        set_cursor_color_applied_for_test(false);
+        apply_cursor_color();
+        assert!(
+            !cursor_color_applied_for_test(),
+            "Reset accent must never mark the cursor as painted"
+        );
+
+        // Reset-accent undoes a prior OSC 12 exactly once. This leg emits one OSC 112 to fd 2; the harness does not capture it.
+        set_cursor_color_applied_for_test(true);
+        apply_cursor_color();
+        assert!(
+            !cursor_color_applied_for_test(),
+            "apply on a Reset accent must clear a previously-painted flag"
+        );
     }
 }

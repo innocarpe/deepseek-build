@@ -9,13 +9,19 @@ use xai_tool_protocol::{
 };
 use xai_tool_runtime::{ToolError, ToolErrorKind};
 
-const REASONS: [WorkspaceGoneReason; 5] = [
+const REASONS: [WorkspaceGoneReason; 6] = [
     WorkspaceGoneReason::IdleTimeout,
     WorkspaceGoneReason::Disconnect,
     WorkspaceGoneReason::Shutdown,
     WorkspaceGoneReason::NotBound,
     WorkspaceGoneReason::InstanceGone,
+    WorkspaceGoneReason::Hibernated,
 ];
+
+fn expected_retryable(reason: WorkspaceGoneReason, phase: WorkspaceGonePhase) -> bool {
+    !(matches!(reason, WorkspaceGoneReason::Hibernated)
+        && matches!(phase, WorkspaceGonePhase::RouteMissing))
+}
 const PHASES: [WorkspaceGonePhase; 2] = [
     WorkspaceGonePhase::InFlightCancelled,
     WorkspaceGonePhase::RouteMissing,
@@ -54,7 +60,7 @@ fn round_trip_through_envelope_is_recognized_for_every_reason_and_phase() {
                     code: WORKSPACE_UNAVAILABLE_SUBCODE.to_owned(),
                     reason,
                     phase,
-                    retryable: true,
+                    retryable: expected_retryable(reason, phase),
                 },
             );
         }

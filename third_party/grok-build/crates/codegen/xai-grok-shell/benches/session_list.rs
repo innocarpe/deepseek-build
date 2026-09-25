@@ -1,18 +1,17 @@
 //! Repeated warm-process benchmark for shell session listing.
 //!
-//! The shell-core case measures `build_unified_list` after request parsing
-//! through local row construction. It excludes response serialization, ACP
-//! transport, and pager parsing, filtering, and rendering. Storage cases are
-//! diagnostics.
+//! The shell-core case measures `build_unified_list` from just after request parsing through local row construction.
+//! It excludes response serialization, ACP transport, and pager parsing, filtering, and rendering.
+//! Storage cases are diagnostics.
 //!
-//! The fixture has 3,000 encoded workspaces and 9,864 summaries. Its 32
-//! same-repo CWDs are the main checkout, 15 DB/filesystem overlaps, one dead
-//! DB-only worktree, and 15 filesystem-only worktrees, all with current labels
-//! and interleaved activity. Another 2,968 unrelated CWDs provide scale.
+//! The fixture has 3,000 encoded workspaces and 9,864 summaries.
+//! Its 32 same-repo CWDs are the main checkout, 15 DB/filesystem overlaps, one dead DB-only worktree, and 15 filesystem-only worktrees.
+//! All have current labels and interleaved activity.
+//! Another 2,968 unrelated CWDs provide scale.
 //!
-//! Setup and exact assertions are outside timing. Samples reuse the tree and
-//! process, so filesystem and JSON work uses a warm OS page cache. Fixed
-//! year-2100 timestamps pass the pager cutoff, though pager stages are excluded.
+//! Setup and exact assertions are outside timing.
+//! Samples reuse the tree and process, so filesystem and JSON work uses a warm OS page cache.
+//! Fixed year-2100 timestamps pass the pager cutoff, though pager stages are excluded.
 //!
 //! Run: `cargo bench -p xai-grok-shell --bench session_list`
 //! Allow roughly 4-8 minutes after compilation for the configured samples.
@@ -37,7 +36,7 @@ use xai_grok_shell::session::storage::{JsonlStorageAdapter, StorageAdapter};
 use xai_grok_shell::session::unified_list::{ListReq, UnifiedListResult, build_unified_list};
 
 const WORKSPACE_COUNT: usize = 3_000;
-// Bump whenever workload semantics change, even if aggregate counts do not.
+// Bump whenever the shape of the workload changes, even if aggregate counts do not
 const FIXTURE_SCHEMA_VERSION: usize = 1;
 const MAIN_CHECKOUT_COUNT: usize = 1;
 const LINKED_WORKTREE_COUNT: usize = 30;
@@ -488,6 +487,8 @@ fn write_summary(
             id: acp::SessionId::new(session_id),
             cwd: cwd.to_owned(),
         },
+        agent_id: None,
+        attempt_id: None,
         cwd_generation: 0,
         previous_cwd: None,
         pending_cwd_switch_reminder: None,
@@ -498,6 +499,8 @@ fn write_summary(
         num_messages: 8 + ordinal % 24,
         num_chat_messages: 8 + ordinal % 24,
         current_model_id: acp::ModelId::new("benchmark-model"),
+        agent_id: None,
+        attempt_id: None,
         parent_session_id: None,
         forked_at: None,
         collection_id: None,
@@ -525,6 +528,7 @@ fn write_summary(
         reasoning_effort: None,
         last_turn_summary: None,
         last_turn_summary_prompt_id: None,
+        last_recap: None,
     };
     let summary_path = session_dir.join("summary.json");
     let bytes = serde_json::to_vec_pretty(&summary).expect("serialize summary");
@@ -613,6 +617,23 @@ fn bench_session_list(c: &mut Criterion) {
                             .list_sessions(Some(black_box(&fixture.picker_cwd))),
                     )
                     .expect("list cwd sessions"),
+            )
+        })
+    });
+
+    // The `/session-info` title path: one summary loaded by (cwd, id).
+    storage.measurement_time(Duration::from_secs(5));
+    storage.throughput(Throughput::Elements(1));
+    storage.bench_function(BenchmarkId::new("single_summary_load", &fixture_id), |b| {
+        let info = Info {
+            id: acp::SessionId::new("bench-session-0000-00"),
+            cwd: fixture.picker_cwd.clone(),
+        };
+        b.iter_with_large_drop(|| {
+            black_box(
+                runtime
+                    .block_on(fixture.adapter.load_summary(black_box(&info)))
+                    .expect("load single summary"),
             )
         })
     });

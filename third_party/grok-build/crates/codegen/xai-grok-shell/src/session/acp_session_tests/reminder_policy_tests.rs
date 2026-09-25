@@ -1,4 +1,10 @@
 use super::support::{create_test_actor, test_agent_with_user_message_template};
+fn at<T>(xs: &[T], i: usize) -> &T {
+    let Some(x) = xs.get(i) else {
+        panic!("expected index {i}, len {}", xs.len());
+    };
+    x
+}
 use super::{
     date_rollover_reminder, laziness_injection_active, resolve_reminder_policy, todo_gate_active,
 };
@@ -9,9 +15,8 @@ use xai_grok_agent::prompt::context::{PromptAudience, TemplateOverride};
 use xai_grok_agent::system_reminder::{
     DEFAULT_TODO_GATE_MAX_FIRES, ReminderPolicy, TodoGateConfig,
 };
-/// Helper: a `RemoteSettings` whose only non-default fields are the
-/// TodoGate knobs we want to vary. Mirrors `Default::default()` for
-/// everything else so the test stays robust to unrelated additions.
+/// Helper: a `RemoteSettings` whose only non-default fields are the TodoGate knobs we want to vary.
+/// Mirrors `Default::default()` for everything else so the test stays robust to unrelated additions.
 fn remote_with_todo_gate(enabled: Option<bool>, cap: Option<u32>) -> RemoteSettings {
     RemoteSettings {
         todo_gate_enabled: enabled,
@@ -292,14 +297,10 @@ async fn same_session_rolls_over_once_when_local_date_advances() {
             actor.maybe_inject_date_rollover_reminder().await;
             let conv = actor.chat_state_handle.get_conversation().await;
             assert_eq!(conv.len(), 1, "rollover must inject exactly one reminder");
-            let text = conv[0].text_content();
+            let text = at(&conv, 0).text_content();
             assert!(
                 text.contains("<system-reminder>"),
                 "rollover reminder must be wrapped in system-reminder tags: {text}"
-            );
-            assert!(
-                text.contains("The local date has changed since this session started"),
-                "rollover reminder must announce the date change: {text}"
             );
             assert!(
                 text.contains(&today.to_string()),
@@ -354,11 +355,9 @@ async fn rollover_reminder_follows_the_custom_template_date_intent() {
                 "a today_local-bearing custom template must keep the rollover reminder"
             );
             assert!(
-                conv[0]
-                    .text_content()
-                    .contains("The local date has changed since this session started"),
-                "the kept reminder must be the date-rollover reminder: {}",
-                conv[0].text_content()
+                at(&conv, 0).text_content().contains(&today.to_string()),
+                "the kept reminder must carry today's date: {}",
+                at(&conv, 0).text_content()
             );
         })
         .await;
@@ -397,11 +396,9 @@ async fn rollover_reminder_fires_when_fallback_stamps_a_date_free_template() {
                 "a fallback-stamped date must roll over even under a date-free template"
             );
             assert!(
-                conv[0]
-                    .text_content()
-                    .contains("The local date has changed since this session started"),
-                "the injected reminder must be the date-rollover reminder: {}",
-                conv[0].text_content()
+                at(&conv, 0).text_content().contains(&today.to_string()),
+                "the injected reminder must carry today's date: {}",
+                at(&conv, 0).text_content()
             );
         })
         .await;

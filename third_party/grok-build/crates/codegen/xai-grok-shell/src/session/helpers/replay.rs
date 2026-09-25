@@ -1,9 +1,7 @@
 //! Replay pipeline for cross-compaction rewind.
 //!
-//! When rewinding to a prompt that precedes a compaction boundary, the in-memory
-//! conversation (and `chat_history.jsonl`) no longer contains the original
-//! messages. This module reconstructs the conversation by streaming
-//! `updates.jsonl` and handling `CompactionCheckpoint` / `RewindMarker` entries.
+//! When rewinding to a prompt before a compaction boundary, the original messages are gone from the in-memory conversation and `chat_history.jsonl`.
+//! This module reconstructs the conversation by streaming `updates.jsonl` and handling `CompactionCheckpoint` / `RewindMarker` entries.
 
 use std::io;
 use std::path::Path;
@@ -14,7 +12,6 @@ use crate::extensions::notification::{
 use crate::sampling::ConversationItem;
 use crate::session::storage::{SessionUpdate, UpdatesIterator};
 
-/// Result of replaying updates.jsonl up to a target prompt index.
 #[derive(Debug)]
 pub struct ReplayResult {
     /// The reconstructed conversation, suitable for replacing in-memory state.
@@ -23,17 +20,13 @@ pub struct ReplayResult {
     pub prompt_index_reached: usize,
     /// The original User(user_info) text from before the first compaction.
     /// Extracted from the checkpoint file's `original_user_info` field.
-    /// `None` if no checkpoint was encountered or the checkpoint predates
-    /// the field (schema_version 1 without it).
+    /// `None` if no checkpoint was encountered, the checkpoint predates the field (schema_version 1 without it), or it could not be read.
     pub original_user_info: Option<String>,
     /// Compaction marker for the rebuilt conversation: `Some(idx)` if a summary survives, else `None`.
     pub last_compaction_prompt_index: Option<usize>,
 }
 
-/// Find the most recent `CompactionCheckpoint` in `updates.jsonl`.
-///
-/// Uses raw-line peeking: only lines containing `"compaction_checkpoint"`
-/// are parsed, skipping full typed deserialization.
+/// Uses raw-line peeking: only lines containing `"compaction_checkpoint"` are parsed, skipping full typed deserialization.
 pub fn find_latest_compaction_checkpoint(
     updates_path: &Path,
 ) -> io::Result<Option<CompactionCheckpointInfo>> {
@@ -82,13 +75,13 @@ pub fn find_latest_compaction_checkpoint(
 }
 
 /// Replay `updates.jsonl` to reconstruct the conversation at `target_prompt_index`.
+/// `RewindMarker`: discards accumulated state beyond the marker's target.
+/// `CompactionCheckpoint`: loads the checkpoint, or reads only `original_user_info`, based on whether the target is
+/// before or after the compaction boundary.
 ///
-/// This handles:
-/// - `RewindMarker`: discards accumulated state beyond the marker's target.
-/// - `CompactionCheckpoint`: loads/ignores checkpoints based on whether the
-///   target is before or after the compaction boundary.
-///
-/// `session_dir` is the path to the session directory (for reading checkpoint files).
+/// # Errors
+/// Fails iff the innermost base still installed at EOF is an unreadable checkpoint; any other unreadable
+/// checkpoint degrades with a warning.
 pub fn replay_to_prompt(
     updates_path: &Path,
     session_dir: &Path,
@@ -114,38 +107,25 @@ pub fn replay_to_prompt(
             }
         };
 
-        let action = state.process_update(&update, session_dir)?;
-        if action == ReplayAction::Stop {
-            break;
-        }
+        state.process_update(&update, session_dir);
     }
 
     // Flush any trailing partial messages.
     state.flush_pending_user();
     state.flush_pending_agent();
 
-    // After processing the entire file, the conversation may extend beyond
-    // the target. `target_prompt_index` means "rewind to before prompt N",
-    // so keep prompts 0..N-1 (N prompts total).
+    if let Some(Base { blob: Err(e), .. }) = state.bases.pop_if(|base| base.blob.is_err()) {
+        return Err(e);
+    }
+
+    // After processing the entire file, the conversation may extend beyond the target
+    // `target_prompt_index` means "rewind to before prompt N", so keep prompts 0..N-1 (N prompts total)
     if state.prompt_counter > target_prompt_index {
-        if state.checkpoint_active && target_prompt_index >= state.checkpoint_prompt_index {
-            let turns_to_keep = target_prompt_index - state.checkpoint_prompt_index;
-            let mut seen_marker = false;
-            let mut user_count = 0;
-            let mut cut_pos = state.conversation.len();
-            for (i, item) in state.conversation[state.checkpoint_base_len..]
-                .iter()
-                .enumerate()
-            {
-                if counts_as_replay_turn_progressive(item, &mut seen_marker) {
-                    user_count += 1;
-                    if user_count > turns_to_keep {
-                        cut_pos = state.checkpoint_base_len + i;
-                        break;
-                    }
-                }
-            }
-            state.conversation.truncate(cut_pos);
+        if let Some(top) = state.bases.last()
+            && target_prompt_index >= top.prompt_index
+        {
+            let (base_len, base_index) = (top.base_len, top.prompt_index);
+            state.truncate_after_base(base_len, target_prompt_index - base_index);
         } else if target_prompt_index == 0 {
             state.conversation.clear();
         } else {
@@ -161,37 +141,37 @@ pub fn replay_to_prompt(
         conversation: state.conversation,
         prompt_index_reached: state.prompt_counter,
         original_user_info: state.original_user_info,
-        last_compaction_prompt_index: state
-            .checkpoint_active
-            .then_some(state.checkpoint_prompt_index),
+        last_compaction_prompt_index: state.bases.last().map(|base| base.prompt_index),
     })
 }
 
-#[derive(Debug, PartialEq)]
-enum ReplayAction {
-    Continue,
-    Stop,
+/// One compaction checkpoint installed as the conversation base; `blob: Err` means its file was unreadable.
+struct Base {
+    prompt_index: usize,
+    /// Conversation length right after installation; items below it are the opaque base and are never counted.
+    base_len: usize,
+    blob: Result<(), io::Error>,
 }
 
-/// Internal state machine for the replay pipeline.
 struct ReplayState {
     /// The prompt index we're trying to reach.
     target: usize,
 
-    /// Accumulated conversation items.
     conversation: Vec<ConversationItem>,
 
     /// Current prompt counter (how many user turns we've seen).
     prompt_counter: usize,
 
-    /// Whether we're inside a contiguous sequence of UserMessageChunk updates
-    /// (used to count user turns correctly — multiple chunks = one turn).
+    /// Whether we're inside a contiguous sequence of UserMessageChunk updates (used to count user turns correctly: multiple chunks are one turn).
     in_user_message: bool,
 
     /// Partial text accumulator for the current user message.
     current_user_text: String,
 
     current_user_prompt_index: Option<usize>,
+
+    /// The current user run is a persisted mid-turn interjection (`_meta.interjection`).
+    current_user_is_interjection: bool,
 
     /// True once any user chunk with `_meta.promptIndex` has been seen.
     /// Unnumbered user runs after that are mid-turn phantoms (not turns).
@@ -200,21 +180,11 @@ struct ReplayState {
     /// Partial text accumulator for the current agent message.
     current_agent_text: String,
 
-    /// Whether there's a pending agent message to flush.
     has_pending_agent: bool,
 
-    /// When set, the replay is operating "after" a loaded checkpoint.
-    /// In this mode, only real `UserMessageChunk` turns from updates.jsonl
-    /// are counted — the User messages inside the compacted history are ignored.
-    checkpoint_active: bool,
-
-    /// The conversation length right after loading a checkpoint. Items before
-    /// this index are the opaque compacted history blob and must NOT be
-    /// truncated or counted for prompt indexing.
-    checkpoint_base_len: usize,
-
-    /// The `prompt_index_at_compaction` from the loaded checkpoint.
-    checkpoint_prompt_index: usize,
+    /// Installed checkpoint bases, innermost last: a loaded one clears the stack, an unreadable one stacks on top,
+    /// and a rewind marker pops every base above its target. While non-empty, only real `UserMessageChunk` turns count.
+    bases: Vec<Base>,
 
     /// The original User(user_info) text from before the first compaction.
     original_user_info: Option<String>,
@@ -229,231 +199,155 @@ impl ReplayState {
             in_user_message: false,
             current_user_text: String::new(),
             current_user_prompt_index: None,
+            current_user_is_interjection: false,
             seen_prompt_index_marker: false,
             current_agent_text: String::new(),
             has_pending_agent: false,
-            checkpoint_active: false,
-            checkpoint_base_len: 0,
-            checkpoint_prompt_index: 0,
+            bases: Vec::new(),
             original_user_info: None,
         }
     }
 
-    fn process_update(
-        &mut self,
-        update: &SessionUpdate,
-        session_dir: &Path,
-    ) -> io::Result<ReplayAction> {
+    fn process_update(&mut self, update: &SessionUpdate, session_dir: &Path) {
         match update {
             SessionUpdate::Xai(notification) => {
                 match &notification.update {
                     XaiSessionUpdate::CompactionCheckpoint(info) => {
-                        return self.handle_checkpoint(info, session_dir);
+                        self.handle_checkpoint(info, session_dir);
                     }
                     XaiSessionUpdate::RewindMarker {
                         target_prompt_index,
                         ..
                     } => {
                         self.handle_rewind_marker(*target_prompt_index);
-                        return Ok(ReplayAction::Continue);
                     }
-                    // Other xAI notifications are informational — skip them.
+                    // Other xAI notifications are informational; skip them
                     _ => {}
                 }
             }
             SessionUpdate::Acp(notification) => {
                 match &notification.update {
                     agent_client_protocol::SessionUpdate::UserMessageChunk(chunk) => {
-                        return Ok(self.handle_user_chunk(chunk));
+                        self.handle_user_chunk(chunk);
                     }
                     agent_client_protocol::SessionUpdate::AgentMessageChunk(chunk) => {
                         self.handle_agent_chunk(chunk);
                     }
                     _ => {
-                        // Other ACP updates (ToolCall, StatusUpdate, etc.)
-                        // don't affect prompt counting — skipped in replay.
+                        // Other ACP updates (ToolCall, StatusUpdate, etc.) don't affect prompt counting, so replay skips them
                     }
                 }
             }
         }
-        Ok(ReplayAction::Continue)
     }
 
-    fn handle_checkpoint(
-        &mut self,
-        info: &CompactionCheckpointInfo,
-        session_dir: &Path,
-    ) -> io::Result<ReplayAction> {
-        if self.target < info.prompt_index_at_compaction {
-            // Target is before this compaction — don't load the compacted
-            // history (we'll reconstruct from raw updates). But the
-            // checkpoint is still required for original_user_info — the
-            // historical User(user_info) that the model saw for these
-            // pre-compaction turns. Without it we'd use the post-compaction
-            // rebuilt user_info, which is wrong data.
-            let checkpoint_path = session_dir.join(&info.checkpoint_file);
-            let bytes = match std::fs::read(&checkpoint_path) {
-                Ok(b) => b,
-                Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                    tracing::error!(
-                        path = %checkpoint_path.display(),
-                        "Compaction checkpoint file missing, cannot restore original user_info"
-                    );
-                    return Err(io::Error::new(
-                        io::ErrorKind::NotFound,
-                        format!(
-                            "Compaction checkpoint file missing: {}. \
-                             Cannot safely rewind past the compaction point.",
-                            checkpoint_path.display()
-                        ),
-                    ));
-                }
-                Err(e) => return Err(e),
-            };
-            match serde_json::from_slice::<CompactionCheckpointFile>(&bytes) {
+    /// Never fails: an unreadable checkpoint is pushed as a `blob: Err` base that a later checkpoint or rewind marker
+    /// can still supersede.
+    fn handle_checkpoint(&mut self, info: &CompactionCheckpointInfo, session_dir: &Path) {
+        let checkpoint_path = session_dir.join(&info.checkpoint_file);
+        let compaction_at = info.prompt_index_at_compaction;
+
+        if self.target < compaction_at {
+            match read_checkpoint_file(&checkpoint_path) {
                 Ok(file) => {
                     if self.original_user_info.is_none() {
                         self.original_user_info = file.original_user_info;
                     }
                 }
                 Err(e) => {
-                    tracing::error!(
+                    tracing::warn!(
                         ?e,
-                        path = %checkpoint_path.display(),
-                        "Compaction checkpoint file corrupt, cannot restore original user_info"
+                        compaction_at,
+                        target = self.target,
+                        "checkpoint unreadable; pre-compaction rewind keeps the current user_info"
                     );
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!(
-                            "Compaction checkpoint file corrupt: {}. \
-                             Cannot safely rewind past the compaction point.",
-                            checkpoint_path.display()
-                        ),
-                    ));
                 }
             }
-            tracing::debug!(
-                target = self.target,
-                checkpoint_at = info.prompt_index_at_compaction,
-                "Replay: using raw updates (target is pre-compaction), original_user_info extracted"
-            );
-            Ok(ReplayAction::Continue)
-        } else {
-            let checkpoint_path = session_dir.join(&info.checkpoint_file);
-            let bytes = match std::fs::read(&checkpoint_path) {
-                Ok(b) => b,
-                Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                    tracing::error!(
-                        path = %checkpoint_path.display(),
-                        "Compaction checkpoint file missing, cannot reconstruct conversation"
-                    );
-                    return Err(io::Error::new(
-                        io::ErrorKind::NotFound,
-                        format!(
-                            "Compaction checkpoint file missing: {}. \
-                             Cannot safely rewind past the compaction point.",
-                            checkpoint_path.display()
-                        ),
-                    ));
-                }
-                Err(e) => return Err(e),
-            };
-            let file: CompactionCheckpointFile = match serde_json::from_slice(&bytes) {
-                Ok(f) => f,
-                Err(e) => {
-                    tracing::error!(
-                        ?e,
-                        path = %checkpoint_path.display(),
-                        "Compaction checkpoint file corrupt, cannot reconstruct conversation"
-                    );
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!(
-                            "Compaction checkpoint file corrupt: {}. \
-                             Cannot safely rewind past the compaction point.",
-                            checkpoint_path.display()
-                        ),
-                    ));
-                }
-            };
+            return;
+        }
 
-            if file.schema_version > 1 {
-                tracing::error!(
-                    schema_version = file.schema_version,
-                    path = %checkpoint_path.display(),
-                    "Unsupported checkpoint schema version, cannot reconstruct conversation"
+        self.in_user_message = false;
+        self.current_user_text.clear();
+        self.current_user_prompt_index = None;
+        self.current_user_is_interjection = false;
+        self.current_agent_text.clear();
+        self.has_pending_agent = false;
+
+        // Counting proceeds as if the blob loaded, so later markers and checkpoints resolve identically either way
+        self.prompt_counter = compaction_at;
+
+        match read_checkpoint_file(&checkpoint_path) {
+            Ok(file) => {
+                // handle_rewind needs original_user_info for the raw-updates prefix case even when the conversation is replaced
+                if self.original_user_info.is_none() {
+                    self.original_user_info = file.original_user_info;
+                }
+
+                self.conversation = file.compacted_history;
+                // Checkpoints predate this binary's validation (or the API's current validators), so heal them like the jsonl loader does
+                // Otherwise a cross-compaction rewind re-injects a stripped poison image and every turn 400s until the next restart
+                let stripped_images =
+                    crate::session::storage::jsonl::strip_invalid_images(&mut self.conversation);
+                if stripped_images > 0 {
+                    tracing::warn!(
+                        count = stripped_images,
+                        "stripped invalid images from compaction checkpoint history"
+                    );
+                }
+                // The synthetic auto-continue prompt goes inside the base so neither the counter nor truncation sees it as a turn
+                if let Some(ac) = &info.auto_continue {
+                    self.conversation
+                        .push(ConversationItem::user(ac.prompt_text.clone()));
+                }
+                self.bases.clear();
+                self.bases.push(Base {
+                    prompt_index: compaction_at,
+                    base_len: self.conversation.len(),
+                    blob: Ok(()),
+                });
+
+                tracing::debug!(
+                    prompt_counter = self.prompt_counter,
+                    "Replay: loaded compaction checkpoint"
                 );
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "Unsupported checkpoint schema version {}. \
-                         Cannot safely rewind past the compaction point.",
-                        file.schema_version
-                    ),
-                ));
             }
-
-            // Capture original_user_info from the checkpoint (even if we
-            // replace the conversation — it's needed by handle_rewind for
-            // the raw-updates prefix case).
-            if self.original_user_info.is_none() {
-                self.original_user_info = file.original_user_info.clone();
-            }
-
-            // Replace accumulated conversation with the compacted history.
-            self.conversation = file.compacted_history;
-            // Checkpoints predate this binary's validation (or the API's
-            // current validators), so heal them like the jsonl loader does
-            // — otherwise a cross-compaction rewind re-injects a stripped
-            // poison image and every turn 400s until the next restart.
-            let stripped_images =
-                crate::session::storage::jsonl::strip_invalid_images(&mut self.conversation);
-            if stripped_images > 0 {
+            Err(e) => {
                 tracing::warn!(
-                    count = stripped_images,
-                    "stripped invalid images from compaction checkpoint history"
+                    ?e,
+                    compaction_at,
+                    "checkpoint unreadable; rewind fails unless a later checkpoint or rewind marker supersedes it"
                 );
-            }
-            self.prompt_counter = info.prompt_index_at_compaction;
-            self.checkpoint_active = true;
-            self.checkpoint_base_len = self.conversation.len();
-            self.checkpoint_prompt_index = info.prompt_index_at_compaction;
-
-            // Flush any in-progress message state.
-            self.in_user_message = false;
-            self.current_user_text.clear();
-            self.current_user_prompt_index = None;
-            self.current_agent_text.clear();
-            self.has_pending_agent = false;
-
-            tracing::debug!(
-                prompt_counter = self.prompt_counter,
-                "Replay: loaded compaction checkpoint"
-            );
-
-            // If the auto-continue prompt was recorded, add it as a user turn.
-            if let Some(ref ac) = info.auto_continue {
-                self.conversation
-                    .push(ConversationItem::user(ac.prompt_text.clone()));
-                // The auto-continue prompt counts as a user turn.
-                // prompt_counter already equals prompt_index_at_compaction.
-            }
-
-            if self.prompt_counter > self.target {
-                // The checkpoint itself is past our target — this shouldn't
-                // normally happen but we handle it gracefully.
-                Ok(ReplayAction::Stop)
-            } else {
-                Ok(ReplayAction::Continue)
+                let word = match e.kind() {
+                    io::ErrorKind::NotFound => "missing",
+                    io::ErrorKind::InvalidData => "corrupt",
+                    io::ErrorKind::Unsupported => "unsupported",
+                    _ => "unreadable",
+                };
+                // The TUI shows one truncated line, so the range and advice lead and the path trails
+                let relative_path = &info.checkpoint_file;
+                let user_error = io::Error::new(
+                    e.kind(),
+                    format!(
+                        "checkpoint for prompts #{compaction_at} onward is {word}. \
+                         Pick a prompt before #{compaction_at} or at or after the next compaction. \
+                         ({relative_path})"
+                    ),
+                );
+                // An unreadable checkpoint never replaced the conversation, so the base below it stays
+                self.bases.push(Base {
+                    prompt_index: compaction_at,
+                    base_len: self.conversation.len(),
+                    blob: Err(user_error),
+                });
             }
         }
     }
 
     fn handle_rewind_marker(&mut self, marker_target: usize) {
-        // Discard any in-progress partial messages — they belong to the
-        // timeline being discarded, so we drop them rather than flushing.
+        // Discard any in-progress partial messages: they belong to the timeline being discarded, so we drop them rather than flushing
         self.current_user_text.clear();
         self.current_user_prompt_index = None;
+        self.current_user_is_interjection = false;
         self.current_agent_text.clear();
         self.has_pending_agent = false;
         self.in_user_message = false;
@@ -462,41 +356,21 @@ impl ReplayState {
             return;
         }
 
-        // `marker_target = N` means "rewind to before prompt N", keeping
-        // prompts 0..N-1 (N prompts total).
-        if self.checkpoint_active && marker_target >= self.checkpoint_prompt_index {
-            // Post-checkpoint truncation: keep the compacted history blob intact
-            // and only discard real user turns appended after it.
-            let turns_to_keep = marker_target - self.checkpoint_prompt_index;
-            let mut seen_marker = false;
-            let mut user_count = 0;
-            let mut cut_pos = self.conversation.len();
-            for (i, item) in self.conversation[self.checkpoint_base_len..]
-                .iter()
-                .enumerate()
-            {
-                if counts_as_replay_turn_progressive(item, &mut seen_marker) {
-                    user_count += 1;
-                    if user_count > turns_to_keep {
-                        cut_pos = self.checkpoint_base_len + i;
-                        break;
-                    }
-                }
-            }
-            self.conversation.truncate(cut_pos);
+        // `marker_target = N` means "rewind to before prompt N", keeping prompts 0..N-1 (N prompts total)
+        while self
+            .bases
+            .last()
+            .is_some_and(|base| base.prompt_index > marker_target)
+        {
+            self.bases.pop();
+        }
+        if let Some(top) = self.bases.last() {
+            let (base_len, base_index) = (top.base_len, top.prompt_index);
+            self.truncate_after_base(base_len, marker_target - base_index);
         } else if marker_target == 0 {
-            // Rewind to the very beginning — discard everything.
             self.conversation.clear();
-            self.checkpoint_active = false;
-        } else if self.checkpoint_active {
-            // Marker target is before the checkpoint — discard the checkpoint
-            // entirely and truncate the pre-checkpoint conversation.
-            self.checkpoint_active = false;
-            let truncate_at = self.truncate_target(marker_target);
-            let keep =
-                crate::sampling::conversation_truncate_for_prompt(&self.conversation, truncate_at);
-            self.conversation.truncate(keep);
         } else {
+            // No base left; a popped loaded blob still heads the conversation and is truncated like raw items (lossy)
             let truncate_at = self.truncate_target(marker_target);
             let keep =
                 crate::sampling::conversation_truncate_for_prompt(&self.conversation, truncate_at);
@@ -506,10 +380,29 @@ impl ReplayState {
         self.prompt_counter = marker_target;
     }
 
-    fn handle_user_chunk(&mut self, chunk: &agent_client_protocol::ContentChunk) -> ReplayAction {
+    /// Keeps the base blob intact and only the first `turns_to_keep` real user turns appended after it.
+    fn truncate_after_base(&mut self, base_len: usize, turns_to_keep: usize) {
+        let mut seen_marker = false;
+        let mut user_count = 0;
+        let mut cut_pos = self.conversation.len();
+        if let Some(tail) = self.conversation.get(base_len..) {
+            for (i, item) in tail.iter().enumerate() {
+                if counts_as_replay_turn_progressive(item, &mut seen_marker) {
+                    user_count += 1;
+                    if user_count > turns_to_keep {
+                        cut_pos = base_len + i;
+                        break;
+                    }
+                }
+            }
+        }
+        self.conversation.truncate(cut_pos);
+    }
+
+    fn handle_user_chunk(&mut self, chunk: &agent_client_protocol::ContentChunk) {
         if crate::session::storage::is_host_turn_chunk(chunk) {
             self.flush_host_turn_boundary();
-            return ReplayAction::Continue;
+            return;
         }
         let chunk_prompt_index = chunk
             .meta
@@ -520,33 +413,36 @@ impl ReplayState {
         if chunk_prompt_index.is_some() {
             self.seen_prompt_index_marker = true;
         }
+        let interjection = crate::session::storage::is_interjection_chunk(chunk);
+        // Each interjection's text chunk is its own item; an interjection never merges with a neighbouring prompt run
+        let opens_interjection =
+            interjection && matches!(chunk.content, agent_client_protocol::ContentBlock::Text(_));
 
         if !self.in_user_message {
             self.flush_pending_agent();
             self.in_user_message = true;
             self.current_user_text.clear();
             self.current_user_prompt_index = chunk_prompt_index;
-        } else if chunk_prompt_index != self.current_user_prompt_index
-            && (chunk_prompt_index.is_some() || self.current_user_prompt_index.is_some())
+            self.current_user_is_interjection = interjection;
+        } else if (chunk_prompt_index != self.current_user_prompt_index
+            && (chunk_prompt_index.is_some() || self.current_user_prompt_index.is_some()))
+            || interjection != self.current_user_is_interjection
+            || opens_interjection
         {
-            // New run: promptIndex changed, or transition between marked/unmarked.
+            // New run: promptIndex changed, transition between marked/unmarked, or an interjection boundary.
             self.flush_pending_user();
             self.in_user_message = true;
             self.current_user_text.clear();
             self.current_user_prompt_index = chunk_prompt_index;
+            self.current_user_is_interjection = interjection;
         } else if self.current_user_prompt_index.is_none() {
             self.current_user_prompt_index = chunk_prompt_index;
         }
 
+        // No early stop when prompt_counter > target: a later RewindMarker can reset the counter back below the target
         if let agent_client_protocol::ContentBlock::Text(t) = &chunk.content {
             self.current_user_text.push_str(&t.text);
         }
-
-        // Note: we do NOT early-stop when prompt_counter > target because a
-        // later RewindMarker could reset the counter back below the target.
-        // The replay processes the entire file and the final conversation
-        // state is correct regardless of timeline branches.
-        ReplayAction::Continue
     }
 
     fn handle_agent_chunk(&mut self, chunk: &agent_client_protocol::ContentChunk) {
@@ -583,8 +479,7 @@ impl ReplayState {
                 .any(|i| matches!(i, ConversationItem::User(u) if u.prompt_index.is_some()))
     }
 
-    /// Absolute `target` when items carry `prompt_index`; else `target - 1`
-    /// for the preamble-aware counting fallback.
+    /// Absolute `target` when items carry `prompt_index`; else `target - 1` for the preamble-aware counting fallback.
     fn truncate_target(&self, target: usize) -> usize {
         if self.conversation_has_markers() {
             target
@@ -594,12 +489,18 @@ impl ReplayState {
     }
 
     fn flush_pending_user(&mut self) {
+        let interjection = std::mem::take(&mut self.current_user_is_interjection);
         if self.current_user_text.is_empty() {
             self.current_user_prompt_index = None;
             return;
         }
         let text = std::mem::take(&mut self.current_user_text);
         let pi = self.current_user_prompt_index.take();
+        if interjection {
+            // Tagged like the live drain's item; never a counted turn
+            self.conversation.push(ConversationItem::interjection(text));
+            return;
+        }
         if let Some(pi) = pi {
             let mut item = ConversationItem::user(text);
             item.set_prompt_index(pi);
@@ -625,8 +526,43 @@ impl ReplayState {
     }
 }
 
-/// Progressive post-checkpoint turn: unmarked users count until the first
-/// marker in the slice; after that only marked users count.
+fn read_checkpoint_file(path: &Path) -> io::Result<CompactionCheckpointFile> {
+    let bytes = std::fs::read(path).map_err(|e| match e.kind() {
+        io::ErrorKind::NotFound => io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Compaction checkpoint file missing: {}", path.display()),
+        ),
+        kind => io::Error::new(
+            kind,
+            format!(
+                "Compaction checkpoint file unreadable: {} ({e})",
+                path.display()
+            ),
+        ),
+    })?;
+    let file: CompactionCheckpointFile = serde_json::from_slice(&bytes).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "Compaction checkpoint file corrupt: {} ({e})",
+                path.display()
+            ),
+        )
+    })?;
+    if file.schema_version > 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "Unsupported checkpoint schema version {} in {}",
+                file.schema_version,
+                path.display()
+            ),
+        ));
+    }
+    Ok(file)
+}
+
+/// Progressive post-checkpoint turn: unmarked users count until the first marker in the slice; after that only marked users count.
 fn counts_as_replay_turn_progressive(item: &ConversationItem, seen_marker: &mut bool) -> bool {
     let ConversationItem::User(u) = item else {
         return false;
@@ -812,6 +748,14 @@ mod tests {
         session_dir: &Path,
         target: usize,
     ) -> ReplayResult {
+        try_replay_updates(updates, session_dir, target).unwrap()
+    }
+
+    fn try_replay_updates(
+        updates: &[SessionUpdate],
+        session_dir: &Path,
+        target: usize,
+    ) -> io::Result<ReplayResult> {
         let updates_path = session_dir.join("updates.jsonl");
         let mut content = Vec::new();
         for u in updates {
@@ -821,7 +765,308 @@ mod tests {
             content.extend(line);
         }
         std::fs::write(&updates_path, content).unwrap();
-        replay_to_prompt(&updates_path, session_dir, target).unwrap()
+        replay_to_prompt(&updates_path, session_dir, target)
+    }
+
+    fn texts_of(result: &ReplayResult) -> Vec<String> {
+        result
+            .conversation
+            .iter()
+            .map(ConversationItem::text_content)
+            .collect()
+    }
+
+    fn two_compactions_updates() -> Vec<SessionUpdate> {
+        vec![
+            make_user_update("s1", "P0"),
+            make_agent_update("s1", "R0"),
+            make_user_update("s1", "P1"),
+            make_agent_update("s1", "R1"),
+            make_checkpoint("ckpt1", 2, None),
+            make_user_update("s1", "P2"),
+            make_agent_update("s1", "R2"),
+            make_checkpoint("ckpt2", 3, None),
+            make_user_update("s1", "P3"),
+            make_agent_update("s1", "R3"),
+        ]
+    }
+
+    fn write_summary_checkpoint(session_dir: &Path, id: &str, at: usize, summary: &str) {
+        write_checkpoint_file(
+            session_dir,
+            id,
+            at,
+            vec![
+                ConversationItem::system("sys"),
+                ConversationItem::user(summary),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_replay_missing_needed_checkpoint_errors() {
+        let tmp = TempDir::new().unwrap();
+        write_summary_checkpoint(tmp.path(), "ckpt1", 2, "summary1");
+
+        let err = try_replay_updates(&two_compactions_updates(), tmp.path(), 3).unwrap_err();
+
+        assert_eq!(io::ErrorKind::NotFound, err.kind());
+        assert_eq!(
+            "checkpoint for prompts #3 onward is missing. \
+             Pick a prompt before #3 or at or after the next compaction. \
+             (compaction_checkpoints/ckpt2.json)",
+            err.to_string()
+        );
+    }
+
+    #[test]
+    fn test_replay_corrupt_needed_checkpoint_errors() {
+        let tmp = TempDir::new().unwrap();
+        write_summary_checkpoint(tmp.path(), "ckpt1", 2, "summary1");
+        let corrupt = tmp.path().join("compaction_checkpoints/ckpt2.json");
+        std::fs::write(&corrupt, b"{not json").unwrap();
+
+        let err = try_replay_updates(&two_compactions_updates(), tmp.path(), 3).unwrap_err();
+
+        assert_eq!(io::ErrorKind::InvalidData, err.kind());
+        assert_eq!(
+            "checkpoint for prompts #3 onward is corrupt. \
+             Pick a prompt before #3 or at or after the next compaction. \
+             (compaction_checkpoints/ckpt2.json)",
+            err.to_string()
+        );
+    }
+
+    #[test]
+    fn test_replay_unsupported_schema_needed_checkpoint_errors() {
+        let tmp = TempDir::new().unwrap();
+        write_summary_checkpoint(tmp.path(), "ckpt1", 2, "summary1");
+        let newer = CompactionCheckpointFile {
+            checkpoint_id: "ckpt2".to_owned(),
+            prompt_index_at_compaction: 3,
+            compacted_history: vec![ConversationItem::system("sys")],
+            schema_version: 2,
+            created_at: "2024-01-01T00:00:00Z".to_owned(),
+            original_user_info: None,
+            reread_file_paths: vec![],
+        };
+        let path = tmp.path().join("compaction_checkpoints/ckpt2.json");
+        std::fs::write(&path, serde_json::to_vec(&newer).unwrap()).unwrap();
+
+        let err = try_replay_updates(&two_compactions_updates(), tmp.path(), 3).unwrap_err();
+
+        assert_eq!(io::ErrorKind::Unsupported, err.kind());
+        assert_eq!(
+            "checkpoint for prompts #3 onward is unsupported. \
+             Pick a prompt before #3 or at or after the next compaction. \
+             (compaction_checkpoints/ckpt2.json)",
+            err.to_string()
+        );
+    }
+
+    #[test]
+    fn test_replay_missing_later_checkpoint_pre_compaction_target_succeeds() {
+        let tmp = TempDir::new().unwrap();
+        let updates = vec![
+            make_user_update("s1", "P0"),
+            make_agent_update("s1", "R0"),
+            make_user_update("s1", "P1"),
+            make_agent_update("s1", "R1"),
+            make_checkpoint("ckpt1", 2, None),
+            make_user_update("s1", "P2"),
+            make_agent_update("s1", "R2"),
+        ];
+
+        let result = try_replay_updates(&updates, tmp.path(), 1).unwrap();
+
+        assert_eq!(vec!["P0", "R0"], texts_of(&result));
+        assert_eq!(None, result.original_user_info);
+        assert_eq!(None, result.last_compaction_prompt_index);
+        assert_eq!(1, result.prompt_index_reached);
+    }
+
+    #[test]
+    fn test_replay_rewind_marker_deactivates_missing_checkpoint() {
+        let tmp = TempDir::new().unwrap();
+        let updates = vec![
+            make_user_update_pi("s1", "P0", 0),
+            make_agent_update("s1", "R0"),
+            make_user_update_pi("s1", "P1", 1),
+            make_agent_update("s1", "R1"),
+            make_user_update_pi("s1", "P2", 2),
+            make_agent_update("s1", "R2"),
+            make_checkpoint("ckpt1", 3, None),
+            make_user_update_pi("s1", "P3", 3),
+            make_agent_update("s1", "R3"),
+            make_rewind_marker(1),
+            make_user_update_pi("s1", "P1_prime", 1),
+            make_agent_update("s1", "R1_prime"),
+            make_user_update_pi("s1", "P2_prime", 2),
+            make_agent_update("s1", "R2_prime"),
+        ];
+
+        let result = try_replay_updates(&updates, tmp.path(), 3).unwrap();
+
+        assert_eq!(
+            vec!["P0", "R0", "P1_prime", "R1_prime", "P2_prime", "R2_prime"],
+            texts_of(&result)
+        );
+        assert_eq!(None, result.last_compaction_prompt_index);
+        assert_eq!(None, result.original_user_info);
+        assert_eq!(3, result.prompt_index_reached);
+    }
+
+    /// The marker pops the unreadable ckpt2 and the loaded ckpt1 below it becomes the base again.
+    #[test]
+    fn test_replay_marker_between_loaded_and_unreadable_checkpoints_keeps_loaded_base() {
+        let tmp = TempDir::new().unwrap();
+        write_summary_checkpoint(tmp.path(), "ckpt1", 2, "summary1");
+        let updates = vec![
+            make_checkpoint("ckpt1", 2, None),
+            make_user_update("s1", "P2"),
+            make_agent_update("s1", "R2"),
+            make_user_update("s1", "P3"),
+            make_agent_update("s1", "R3"),
+            make_checkpoint("ckpt2", 4, None),
+            make_user_update("s1", "P4"),
+            make_agent_update("s1", "R4"),
+            make_rewind_marker(3),
+            make_user_update("s1", "P3_prime"),
+            make_agent_update("s1", "R3_prime"),
+        ];
+
+        let result = try_replay_updates(&updates, tmp.path(), 4).unwrap();
+
+        assert_eq!(
+            vec!["sys", "summary1", "P2", "R2", "P3_prime", "R3_prime"],
+            texts_of(&result)
+        );
+        assert_eq!(Some(2), result.last_compaction_prompt_index);
+        assert_eq!(4, result.prompt_index_reached);
+    }
+
+    /// Both checkpoints are unreadable; the marker pops ckpt2 and the remaining base ckpt1 still fails the replay.
+    #[test]
+    fn test_replay_marker_discards_unreadable_checkpoint_above_unreadable_base() {
+        let tmp = TempDir::new().unwrap();
+        let updates = vec![
+            make_user_update("s1", "P0"),
+            make_agent_update("s1", "R0"),
+            make_user_update("s1", "P1"),
+            make_agent_update("s1", "R1"),
+            make_checkpoint("ckpt1", 2, None),
+            make_user_update("s1", "P2"),
+            make_agent_update("s1", "R2"),
+            make_user_update("s1", "P3"),
+            make_agent_update("s1", "R3"),
+            make_checkpoint("ckpt2", 4, None),
+            make_user_update("s1", "P4"),
+            make_agent_update("s1", "R4"),
+            make_rewind_marker(3),
+        ];
+
+        let err = try_replay_updates(&updates, tmp.path(), 4).unwrap_err();
+
+        assert_eq!(io::ErrorKind::NotFound, err.kind());
+        assert_eq!(
+            "checkpoint for prompts #2 onward is missing. \
+             Pick a prompt before #2 or at or after the next compaction. \
+             (compaction_checkpoints/ckpt1.json)",
+            err.to_string()
+        );
+    }
+
+    /// P1 has no agent reply before ckpt1, so both runs must discard it rather than count it.
+    #[test]
+    fn test_replay_unreadable_superseded_checkpoint_matches_loaded_replay() {
+        let updates = vec![
+            make_user_update_pi("s1", "P0", 0),
+            make_agent_update("s1", "R0"),
+            make_user_update_pi("s1", "P1", 1),
+            make_checkpoint("ckpt1", 2, None),
+            make_user_update_pi("s1", "P2", 2),
+            make_agent_update("s1", "R2"),
+            make_checkpoint("ckpt2", 3, None),
+            make_user_update_pi("s1", "P3", 3),
+            make_agent_update("s1", "R3"),
+        ];
+
+        let both_present = TempDir::new().unwrap();
+        write_summary_checkpoint(both_present.path(), "ckpt1", 2, "summary1");
+        write_summary_checkpoint(both_present.path(), "ckpt2", 3, "summary2");
+        let loaded = try_replay_updates(&updates, both_present.path(), 4).unwrap();
+
+        let first_missing = TempDir::new().unwrap();
+        write_summary_checkpoint(first_missing.path(), "ckpt2", 3, "summary2");
+        let unreadable = try_replay_updates(&updates, first_missing.path(), 4).unwrap();
+
+        assert_eq!(vec!["sys", "summary2", "P3", "R3"], texts_of(&loaded));
+        assert_eq!(texts_of(&loaded), texts_of(&unreadable));
+        assert_eq!(4, loaded.prompt_index_reached);
+        assert_eq!(loaded.prompt_index_reached, unreadable.prompt_index_reached);
+        assert_eq!(
+            loaded.last_compaction_prompt_index,
+            unreadable.last_compaction_prompt_index
+        );
+    }
+
+    /// A persisted interjection chunk as the shell writes it: framed text plus the `interjection` flag.
+    fn make_interjection_update(session_id: &str, typed: &str) -> SessionUpdate {
+        SessionUpdate::Acp(Box::new(acp::SessionNotification::new(
+            acp::SessionId::new(session_id),
+            acp::SessionUpdate::UserMessageChunk(
+                acp::ContentChunk::new(acp::ContentBlock::Text(acp::TextContent::new(
+                    xai_interjection_core::format_interjection(typed.to_string()),
+                )))
+                .meta(
+                    serde_json::json!({ crate::session::storage::INTERJECTION_META_KEY: true })
+                        .as_object()
+                        .cloned(),
+                ),
+            ),
+        )))
+    }
+
+    /// Interjections come back tagged and framed as the live drain pushed them, one item each, and never
+    /// merge with a neighbouring prompt run (here: no agent text between the prompt echo and the drain).
+    #[test]
+    fn test_replay_tags_interjections_and_keeps_them_distinct() {
+        let tmp = TempDir::new().unwrap();
+        let updates = vec![
+            make_user_update_pi("s1", "P0", 0),
+            make_interjection_update("s1", "first"),
+            make_interjection_update("s1", "second"),
+            make_agent_update("s1", "A0"),
+            make_user_update_pi("s1", "P1", 1),
+            make_agent_update("s1", "A1"),
+        ];
+        let result = replay_updates(&updates, tmp.path(), 2);
+        let users: Vec<(String, bool, Option<usize>)> = result
+            .conversation
+            .iter()
+            .filter_map(|c| match c {
+                ConversationItem::User(u) => Some((
+                    c.text_content(),
+                    u.synthetic_reason == crate::sampling::SyntheticReason::Interjection,
+                    u.prompt_index,
+                )),
+                _ => None,
+            })
+            .collect();
+        let framed = |t: &str| xai_interjection_core::format_interjection(t.to_string());
+        assert_eq!(
+            users,
+            vec![
+                ("P0".to_string(), false, Some(0)),
+                (framed("first"), true, None),
+                (framed("second"), true, None),
+                ("P1".to_string(), false, Some(1)),
+            ]
+        );
+        assert_eq!(
+            result.prompt_index_reached, 2,
+            "interjections are never counted as turns"
+        );
     }
 
     #[test]
@@ -872,18 +1117,22 @@ mod tests {
             make_agent_update("s1", "tests added"),
         ];
 
-        // Replay to prompt 1: keep prompts 0..0 = just "hello"
+        // Replay to prompt 1: keep prompts 0..0 (just "hello")
         let result = replay_updates(&updates, tmp.path(), 1);
         assert_eq!(result.prompt_index_reached, 1);
         assert_eq!(result.conversation.len(), 2);
-        assert_eq!(result.conversation[0].text_content(), "hello");
-        assert_eq!(result.conversation[1].text_content(), "hi there");
+        let texts: Vec<_> = result
+            .conversation
+            .iter()
+            .map(|i| i.text_content())
+            .collect();
+        assert_eq!(texts, ["hello", "hi there"]);
     }
 
     #[test]
     fn test_replay_with_rewind_marker() {
         let tmp = TempDir::new().unwrap();
-        // P0, P1, P2, rewind(1) removes P1+P2, P1'
+        // P0, P1, P2, rewind(1) removes P1 and P2, then P1'
         let updates = vec![
             make_user_update("s1", "P0"),
             make_agent_update("s1", "R0"),
@@ -896,10 +1145,10 @@ mod tests {
             make_agent_update("s1", "R1_prime"),
         ];
 
-        // Replay to prompt 2: keep prompts 0..1 = P0, P1'
+        // Replay to prompt 2: keep prompts 0..1 (P0, P1')
         let result = replay_updates(&updates, tmp.path(), 2);
-        // After rewind(1): P0 kept, P1+P2 discarded
-        // P1_prime added as prompt 1 → [P0, R0, P1_prime, R1_prime]
+        // After rewind(1): P0 kept, P1 and P2 discarded
+        // P1_prime added as prompt 1, giving [P0, R0, P1_prime, R1_prime]
         assert_eq!(result.conversation.len(), 4);
         let user_msgs: Vec<String> = result
             .conversation
@@ -935,8 +1184,8 @@ mod tests {
             make_agent_update("s1", "R2"),
         ];
 
-        // Replay to prompt 1 (pre-compaction) — should IGNORE the checkpoint
-        // Keep prompts 0..0 = just P0
+        // Replay to prompt 1 (pre-compaction): should IGNORE the checkpoint
+        // Keep prompts 0..0 (just P0)
         let result = replay_updates(&updates, tmp.path(), 1);
         let user_msgs: Vec<String> = result
             .conversation
@@ -975,20 +1224,20 @@ mod tests {
         ];
 
         // Replay to prompt 3 (post-compaction): keep prompts 0..2
-        // Checkpoint blob + P2 only (P3 removed)
+        // Checkpoint blob and P2 only (P3 removed)
         let result = replay_updates(&updates, tmp.path(), 3);
         assert_eq!(result.conversation.len(), 4);
-        assert_eq!(result.conversation[0].text_content(), "sys");
-        assert_eq!(result.conversation[1].text_content(), "compacted summary");
-        assert_eq!(result.conversation[2].text_content(), "P2");
-        assert_eq!(result.conversation[3].text_content(), "R2");
+        let texts: Vec<_> = result
+            .conversation
+            .iter()
+            .map(|i| i.text_content())
+            .collect();
+        assert_eq!(texts, ["sys", "compacted summary", "P2", "R2"]);
         assert_eq!(result.prompt_index_reached, 3);
     }
 
-    /// A checkpoint written before this binary's validation (or before the
-    /// API tightened its validators) can carry an unsendable image; the
-    /// splice must heal it like the jsonl loader does, or a cross-compaction
-    /// rewind re-poisons a healed session.
+    /// A checkpoint written before this binary's validation (or before the API tightened its validators) can carry an unsendable image.
+    /// The splice must heal it like the jsonl loader does, or a cross-compaction rewind re-poisons a healed session.
     #[test]
     fn test_replay_checkpoint_strips_invalid_images() {
         use base64::Engine as _;
@@ -1022,8 +1271,11 @@ mod tests {
         ];
 
         let result = replay_updates(&updates, tmp.path(), 2);
-        let ConversationItem::User(u) = &result.conversation[1] else {
-            panic!("expected user item from checkpoint");
+        let Some(ConversationItem::User(u)) = result.conversation.get(1) else {
+            panic!(
+                "expected user item from checkpoint: {:?}",
+                result.conversation
+            );
         };
         assert!(
             u.content.iter().all(|p| match p {
@@ -1034,9 +1286,8 @@ mod tests {
         );
     }
 
-    /// Auto-continue prompt is synthetic (not a real user prompt) so it must
-    /// NOT increment prompt_counter. It's appended to the conversation for
-    /// context but the next real prompt still gets the expected index.
+    /// Auto-continue prompt is synthetic (not a real user prompt) so it must NOT increment prompt_counter.
+    /// It's appended to the conversation for context but the next real prompt still gets the expected index.
     #[test]
     fn test_replay_checkpoint_with_auto_continue() {
         let tmp = TempDir::new().unwrap();
@@ -1067,16 +1318,16 @@ mod tests {
             make_agent_update("s1", "R2"),
         ];
 
-        // Replay to prompt 3: keep prompts 0..2 = checkpoint blob + auto-continue + P2
+        // Replay to prompt 3: keep prompts 0..2 (checkpoint blob, auto-continue, P2)
         let result = replay_updates(&updates, tmp.path(), 3);
-        // checkpoint sets counter to 2, auto-continue doesn't increment,
-        // P2 increments to 3 → prompt_index_reached = 3
+        // checkpoint sets counter to 2, auto-continue doesn't increment, P2 increments to 3, so prompt_index_reached is 3
         assert_eq!(result.conversation.len(), 5);
-        assert_eq!(result.conversation[0].text_content(), "sys");
-        assert_eq!(result.conversation[1].text_content(), "compacted");
-        assert_eq!(result.conversation[2].text_content(), "Continue working");
-        assert_eq!(result.conversation[3].text_content(), "P2");
-        assert_eq!(result.conversation[4].text_content(), "R2");
+        let texts: Vec<_> = result
+            .conversation
+            .iter()
+            .map(|i| i.text_content())
+            .collect();
+        assert_eq!(texts, ["sys", "compacted", "Continue working", "P2", "R2"]);
         assert_eq!(result.prompt_index_reached, 3);
     }
 
@@ -1092,7 +1343,7 @@ mod tests {
 
     /// Scenario H: rewind marker after a loaded checkpoint.
     /// checkpoint(at=2), P2, P3, RewindMarker(2), P2'
-    /// Replaying to prompt 2 should give checkpoint + P2' (not P2 or P3).
+    /// Replaying to prompt 2 should give checkpoint and P2' (not P2 or P3).
     #[test]
     fn test_replay_rewind_marker_after_checkpoint() {
         let tmp = TempDir::new().unwrap();
@@ -1122,11 +1373,11 @@ mod tests {
             make_agent_update("s1", "R2_prime"),
         ];
 
-        // Replay to prompt 3: keep 0..2 = checkpoint + P2' (after the rewind marker)
+        // Replay to prompt 3: keep 0..2 (checkpoint and P2', after the rewind marker)
         let result = replay_updates(&updates, tmp.path(), 3);
 
-        // The checkpoint blob has 2 items (system + user summary).
-        // After the rewind marker discards P2+P3, P2' is added.
+        // The checkpoint blob has 2 items (system and user summary)
+        // After the rewind marker discards P2 and P3, P2' is added
         // Result: [sys, summary, P2_prime, R2_prime]
         let user_msgs: Vec<String> = result
             .conversation
@@ -1155,7 +1406,7 @@ mod tests {
     }
 
     /// Scenario E: multiple compactions, rewind to before the first.
-    /// P0, P1 → checkpoint#1(at=2) → P2 → checkpoint#2(at=3) → P3
+    /// P0, P1, checkpoint#1(at=2), P2, checkpoint#2(at=3), P3
     /// Rewind to P1 should ignore both checkpoints.
     #[test]
     fn test_replay_multiple_compactions_rewind_to_before_first() {
@@ -1193,8 +1444,8 @@ mod tests {
             make_agent_update("s1", "R3"),
         ];
 
-        // Rewind to P1 — both checkpoints should be ignored
-        // Keep prompts 0..0 = just P0
+        // Rewind to P1: both checkpoints should be ignored
+        // Keep prompts 0..0 (just P0)
         let result = replay_updates(&updates, tmp.path(), 1);
         assert_eq!(result.conversation.len(), 2);
         let user_msgs: Vec<String> = result
@@ -1244,13 +1495,16 @@ mod tests {
             make_agent_update("s1", "R3"),
         ];
 
-        // Replay to prompt 3: keep prompts 0..2 via ckpt1
-        // ckpt1 loaded (target 3 >= 2), ckpt2 also loaded (target 3 >= 3).
+        // Replay to prompt 3: keep prompts 0..2 via ckpt1 ckpt1 loaded (target 3 >= 2), ckpt2 also loaded (target 3 >= 3).
         // ckpt2 replaces ckpt1. Then P3 is the first post-ckpt2 prompt.
-        // Keep 3 - 3 = 0 post-ckpt2 prompts → just ckpt2 blob.
+        // Keep 3 - 3 = 0 post-ckpt2 prompts, so just the ckpt2 blob.
         let result = replay_updates(&updates, tmp.path(), 3);
         assert_eq!(result.conversation.len(), 2);
-        assert_eq!(result.conversation[0].text_content(), "sys");
-        assert_eq!(result.conversation[1].text_content(), "summary2");
+        let texts: Vec<_> = result
+            .conversation
+            .iter()
+            .map(|i| i.text_content())
+            .collect();
+        assert_eq!(texts, ["sys", "summary2"]);
     }
 }

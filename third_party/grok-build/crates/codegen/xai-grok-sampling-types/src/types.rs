@@ -6,24 +6,16 @@ use std::num::NonZeroU64;
 // TraceContext — cloneable, type-erased context for request tracing
 // ============================================================================
 
-/// Object-safe trait for opaque tracing context attached to requests.
-///
-/// `Clone` is not object-safe, so we use a `clone_box` method instead.
-/// Any concrete type that is `Clone + Send + Sync + Debug + 'static` gets a
-/// blanket impl, so callers just do:
-///
-/// ```ignore
-/// request.trace = Some(Box::new(my_concrete_trace));
-/// ```
+/// Object-safe trait for opaque tracing context attached to requests. `Clone` is not object-safe, so we use a `clone_box`
+/// method instead. Any concrete type that is `Clone + Send + Sync + Debug + 'static` gets a blanket impl, so callers just
+/// do:
 pub trait TraceContext: std::any::Any + Send + Sync + std::fmt::Debug {
-    /// Clone this trace context into a new `Box`.
     fn clone_box(&self) -> Box<dyn TraceContext>;
 
     /// Upcast to `&dyn Any` for downcasting back to the concrete type.
     fn as_any(&self) -> &dyn std::any::Any;
 }
 
-/// Blanket impl: any `T: Clone + Send + Sync + Debug + 'static` is a `TraceContext`.
 impl<T> TraceContext for T
 where
     T: Clone + Send + Sync + std::fmt::Debug + 'static,
@@ -39,19 +31,15 @@ where
 
 impl Clone for Box<dyn TraceContext> {
     fn clone(&self) -> Self {
-        // Explicitly dereference to `&dyn TraceContext` so `clone_box()` dispatches
-        // through the vtable to the concrete type's implementation.
-        //
-        // Without this, `self.clone_box()` resolves via auto-deref to
-        // `<Box<dyn TraceContext> as TraceContext>::clone_box()` (from the blanket impl),
-        // which calls `self.clone()` → `self.clone_box()` → infinite recursion.
+        // Explicitly dereference to `&dyn TraceContext` so `clone_box()` dispatches through the vtable to the concrete type's
+        // implementation. Without the deref, `self.clone_box()` resolves via auto-deref to the blanket impl on `Box<dyn
+        // TraceContext>` itself. That impl calls `self.clone()`, which calls `clone_box()` again, recursing forever
         let inner: &dyn TraceContext = &**self;
         inner.clone_box()
     }
 }
 
-/// Deserialize a field that may be `null` as the default value.
-/// This is useful for fields like `Vec<T>` where `null` should become `vec![]`.
+/// `null` deserializes to the default value, so a `null` `Vec<T>` field becomes `vec![]`.
 fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
     D: Deserializer<'de>,
@@ -98,6 +86,8 @@ pub struct ChatCompletionRequest {
     #[serde(skip)]
     pub x_grok_turn_idx: Option<String>,
     #[serde(skip)]
+    pub x_grok_transient_retry: Option<String>,
+    #[serde(skip)]
     pub x_grok_agent_id: Option<String>,
     #[serde(skip)]
     pub x_grok_deployment_id: Option<String>,
@@ -105,10 +95,12 @@ pub struct ChatCompletionRequest {
     pub x_grok_user_id: Option<String>,
 
     /// Optional opaque tracing context (e.g., where to persist the finalized request payload).
-    /// This is intentionally not serialized or deserialized.
     /// Consumers downcast via `trace.as_ref().unwrap().as_any().downcast_ref::<T>()`.
     #[serde(skip)]
     pub trace: Option<Box<dyn TraceContext>>,
+    /// Caller span's W3C `traceparent`; see [`crate::ConversationRequest::traceparent`].
+    #[serde(skip)]
+    pub traceparent: Option<String>,
 }
 
 impl ChatCompletionRequest {
@@ -131,10 +123,12 @@ impl ChatCompletionRequest {
             x_grok_req_id: None,
             x_grok_session_id: None,
             x_grok_turn_idx: None,
+            x_grok_transient_retry: None,
             x_grok_agent_id: None,
             x_grok_deployment_id: None,
             x_grok_user_id: None,
             trace: None,
+            traceparent: None,
         }
     }
 
@@ -157,10 +151,12 @@ impl ChatCompletionRequest {
             x_grok_req_id: None,
             x_grok_session_id: None,
             x_grok_turn_idx: None,
+            x_grok_transient_retry: None,
             x_grok_agent_id: None,
             x_grok_deployment_id: None,
             x_grok_user_id: None,
             trace: None,
+            traceparent: None,
         }
     }
 
@@ -314,7 +310,6 @@ impl ChatRequestMessage {
         self.role == Role::System
     }
 
-    /// Extract text content from the message content blocks
     pub fn text_content(&self) -> String {
         self.content
             .blocks()
@@ -332,7 +327,6 @@ impl ChatRequestMessage {
         self.content = MessageContent::Text(text.into());
     }
 
-    /// Append text content to existing content
     pub fn append_text_content(&mut self, text: impl Into<String>) {
         if self.content.is_empty() {
             self.set_text_content(text);
@@ -372,7 +366,6 @@ pub fn chat_truncate_for_prompt(
     for (i, msg) in chat_history.iter().enumerate() {
         if matches!(msg.role, Role::User) {
             user_count += 1;
-            // If we've seen more user messages than target + 1, stop here
             if user_count > target_prompt_index + 1 {
                 keep_count = i;
                 break;
@@ -390,10 +383,7 @@ pub enum ToolType {
     Function,
 }
 
-// Re-export ToolDefinition and FunctionTool from xai-grok-tools.
-// The canonical definitions now live there; this re-export keeps
-// all existing `crate::sampling::types::ToolDefinition` imports working.
-pub use xai_grok_tools::types::definition::{FunctionTool, ToolDefinition};
+pub use xai_tool_types::definition::{FunctionTool, ToolDefinition};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
@@ -547,8 +537,7 @@ pub struct Usage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_cache_hit_tokens: Option<u32>,
     /// xAI extension: request price in USD ticks (1 USD = 1e10 ticks).
-    /// The REST mapper backfills `0` for unbilled requests; capture sites
-    /// normalize `0` to "unreported" (see `stream/chat_completions.rs`).
+    /// The REST mapper backfills `0` for unbilled requests; capture sites normalize `0` to "unreported" (see `stream/chat_completions.rs`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_in_usd_ticks: Option<i64>,
 }
@@ -599,17 +588,12 @@ pub struct ChatChunkChoice {
     pub finish_reason: Option<FinishReason>,
 }
 
-/// Streaming delta for a tool call.
-///
-/// In OpenAI-compatible streaming, tool calls arrive across multiple chunks:
-/// - The first chunk carries `id`, `type`, `index`, and the `function.name` + start of `arguments`.
-/// - Subsequent chunks only carry `index` and a `function.arguments` fragment (no `id`, no `name`).
-///
-/// All fields except `index` are therefore optional so we can deserialize every chunk.
+/// The first chunk carries `id`, `type`, `index`, `function.name`, and the start of `arguments`; Subsequent chunks only
+/// carry `index` and a `function.arguments` fragment (no `id`, no `name`). All fields except `index` are therefore
+/// optional so we can deserialize every chunk.
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ToolCallDelta {
-    /// The positional index of the tool call being streamed.
-    /// Used to correlate delta chunks belonging to the same tool call.
+    /// The positional index that correlates delta chunks of the same tool call.
     #[serde(default)]
     pub index: u32,
     /// Only present in the first chunk for this tool call.
@@ -623,8 +607,6 @@ pub struct ToolCallDelta {
     pub function: Option<ToolCallFunctionDelta>,
 }
 
-/// Streaming delta for function name/arguments within a tool call.
-///
 /// `name` is only present in the first chunk; `arguments` may arrive across many chunks.
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ToolCallFunctionDelta {
@@ -643,7 +625,7 @@ pub struct ChatChunkDelta {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
     pub reasoning_content: Option<String>,
-    /// Tool call deltas. Handles `null` in JSON as empty vec.
+    /// A JSON `null` deserializes as an empty vec.
     #[serde(
         default,
         skip_serializing_if = "Vec::is_empty",
@@ -657,10 +639,9 @@ pub struct ChatChunkDelta {
 /// Parameters to control realtime data.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SearchParameters {
-    /// Choose the mode to query realtime data:
-    /// * `off`: no search performed and no external will be considered.
-    /// * `on` (default): the model will search in every source for relevant data.
-    /// * `auto`: the model chooses whether to search data or not and where to search the data.
+    /// Choose the mode to query realtime data: `off`: no search performed and no external sources will be considered; `on`
+    /// (default): the model will search in every source for relevant data; `auto`: the model chooses whether to search data
+    /// or not and where to search the data.
     pub mode: Option<String>,
     /// List of sources to search in. If no sources are specified, the model will look over the web and X by default.
     pub sources: Option<Vec<SearchSource>>,
@@ -681,7 +662,7 @@ pub enum SearchSource {
     X {
         /// X Handles of the users from whom to consider the posts.
         included_x_handles: Option<Vec<String>>,
-        /// DEPRECATED in favor of `included_x_handles`. Use `included_x_handles` instead.
+        /// DEPRECATED in favor of `included_x_handles`.
         x_handles: Option<Vec<String>>,
         /// List of X handles to exclude from the search results.
         excluded_x_handles: Option<Vec<String>>,
@@ -717,11 +698,9 @@ pub enum SearchSource {
     },
 }
 
-/// Per-model config for the `x-compaction-at` request header (a token count).
-///
-/// Deserialized from a polymorphic remote-config value: `true` enables the
-/// header with a value computed as `context_window * auto_compact_threshold_percent / 100`;
-/// `false` (or absent) disables it; an integer `N` sends the constant `N`.
+/// Per-model config for the `x-compaction-at` request header (a token count). The remote-config value is polymorphic:
+/// `true` enables the header with the value `context_window * auto_compact_threshold_percent / 100`. `false` (or absent)
+/// disables it; an integer `N` sends the constant `N`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(untagged)]
 pub enum CompactionAtTokens {
@@ -742,10 +721,9 @@ impl CompactionAtTokens {
     }
 }
 
-/// Per-model config for the `x-compactions-remaining` request header.
-///
-/// `true` sends the dynamic value (1 on the uncompacted prefix, 0 once the session compacts);
-/// `false`/absent disables the header; an integer `N` sends the constant `N`.
+/// Per-model config for the `x-compactions-remaining` request header. `true` sends the dynamic value (1 on the
+/// uncompacted prefix, 0 once the session compacts). `false`/absent disables the header; an integer `N` sends the
+/// constant `N`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(untagged)]
 pub enum CompactionsRemaining {
@@ -764,9 +742,20 @@ impl CompactionsRemaining {
     }
 }
 
-/// Reasoning effort level. `None`/`Minimal` are omitted on the Anthropic Messages API.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// `None`/`Minimal` are omitted on the Anthropic Messages API.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    strum::AsRefStr,
+    strum::IntoStaticStr,
+)]
 #[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "snake_case")]
 pub enum ReasoningEffort {
     None,
     Minimal,
@@ -791,8 +780,7 @@ impl ReasoningEffort {
         }
     }
 
-    /// Inverse of [`to_responses_api`](Self::to_responses_api): the effort the
-    /// Responses API echoes back on `response.reasoning.effort`.
+    /// Inverse of [`to_responses_api`](Self::to_responses_api): the effort the Responses API echoes back on `response.reasoning.effort`.
     pub fn from_responses_api(effort: crate::rs::ReasoningEffort) -> Self {
         match effort {
             crate::rs::ReasoningEffort::None => Self::None,
@@ -805,29 +793,17 @@ impl ReasoningEffort {
         }
     }
 
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::Minimal => "minimal",
-            Self::Low => "low",
-            Self::Medium => "medium",
-            Self::High => "high",
-            Self::Xhigh => "xhigh",
-            Self::Max => "max",
-        }
-    }
-
     pub fn to_messages_api(self) -> Option<&'static str> {
         match self {
             Self::None | Self::Minimal => None,
-            _ => Some(self.as_str()),
+            _ => Some(self.into()),
         }
     }
 }
 
 impl std::fmt::Display for ReasoningEffort {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
+        f.write_str(self.as_ref())
     }
 }
 
@@ -850,8 +826,53 @@ impl std::str::FromStr for ReasoningEffort {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for ReasoningEffort {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        raw.parse().map_err(serde::de::Error::custom)
+    }
+}
+
 pub fn parse_canonical_effort_token(token: &str) -> Option<ReasoningEffort> {
     token.parse().ok()
+}
+
+/// The `reasoning.summary` requested on the Responses API.
+/// `None` omits the field, for gateways that reject it (AWS Bedrock Mantle returns 400 for it as of 2026-09).
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    strum::AsRefStr,
+    strum::IntoStaticStr,
+)]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "snake_case")]
+pub enum ReasoningSummary {
+    None,
+    Auto,
+    #[default]
+    Concise,
+    Detailed,
+}
+
+impl ReasoningSummary {
+    pub fn to_responses_api(self) -> Option<crate::rs::ReasoningSummary> {
+        match self {
+            Self::None => None,
+            Self::Auto => Some(crate::rs::ReasoningSummary::Auto),
+            Self::Concise => Some(crate::rs::ReasoningSummary::Concise),
+            Self::Detailed => Some(crate::rs::ReasoningSummary::Detailed),
+        }
+    }
 }
 
 pub const REASONING_EFFORT_META_KEY: &str = "reasoningEffort";
@@ -865,8 +886,7 @@ pub fn supports_reasoning_effort_meta(
         .unwrap_or(false)
 }
 
-/// Returns `None` on type-mismatch or unknown variant (logs a warn so we don't
-/// overwrite the user's persisted pref on the next save).
+/// Returns `None` on type-mismatch or unknown variant (logs a warn so we don't overwrite the user's persisted pref on the next save).
 pub fn parse_reasoning_effort_meta(
     meta: Option<&serde_json::Map<String, serde_json::Value>>,
 ) -> Option<ReasoningEffort> {
@@ -888,13 +908,13 @@ pub fn parse_reasoning_effort_meta(
 }
 
 pub fn reasoning_effort_meta_value(effort: ReasoningEffort) -> serde_json::Value {
-    serde_json::Value::String(effort.as_str().to_string())
+    serde_json::Value::String(effort.as_ref().to_string())
 }
 
 pub const REASONING_EFFORTS_META_KEY: &str = "reasoningEfforts";
 
-/// A single selectable reasoning-effort option for a model. `id`/`label` are
-/// presentation and input; `value` is the canonical value sent on the wire.
+/// A single selectable reasoning-effort option for a model.
+/// `id`/`label` are presentation and input; `value` is the canonical value sent on the wire.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct ReasoningEffortOption {
     pub id: String,
@@ -904,8 +924,7 @@ pub struct ReasoningEffortOption {
     pub default: bool,
 }
 
-/// Deserialization shape accepting either a bare canonical value string
-/// (`"xhigh"`) or a table with `value` required and everything else optional.
+/// Deserialization shape accepting either a bare canonical value string (`"xhigh"`) or a table with `value` required and everything else optional.
 #[derive(serde::Deserialize)]
 #[serde(untagged)]
 enum RawReasoningEffortOption {
@@ -920,8 +939,21 @@ enum RawReasoningEffortOption {
     },
 }
 
-/// Uppercase the first character of an id for a default label; `"xhigh"` becomes
-/// `"Xhigh"`, `"deep"` becomes `"Deep"`.
+/// Display label for a known level; the bare-string menu shorthand and the shell's built-in effort picker share it.
+pub fn effort_label(effort: ReasoningEffort) -> String {
+    match effort {
+        ReasoningEffort::None => "None",
+        ReasoningEffort::Minimal => "Minimal",
+        ReasoningEffort::Low => "Low",
+        ReasoningEffort::Medium => "Medium",
+        ReasoningEffort::High => "High",
+        ReasoningEffort::Xhigh => "X-High",
+        ReasoningEffort::Max => "Max",
+    }
+    .to_string()
+}
+
+/// Uppercase the first character of a custom id for a default label; `"deep"` becomes `"Deep"`.
 fn humanize_effort_id(id: &str) -> String {
     let mut chars = id.chars();
     match chars.next() {
@@ -940,12 +972,10 @@ impl<'de> serde::Deserialize<'de> for ReasoningEffortOption {
                 let value = s
                     .parse::<ReasoningEffort>()
                     .map_err(serde::de::Error::custom)?;
-                let id = value.as_str().to_string();
-                let label = humanize_effort_id(&id);
                 ReasoningEffortOption {
-                    id,
+                    id: value.as_ref().to_string(),
                     value,
-                    label,
+                    label: effort_label(value),
                     description: None,
                     default: false,
                 }
@@ -957,8 +987,11 @@ impl<'de> serde::Deserialize<'de> for ReasoningEffortOption {
                 description,
                 default,
             } => {
-                let id = id.unwrap_or_else(|| value.as_str().to_string());
-                let label = label.unwrap_or_else(|| humanize_effort_id(&id));
+                let label = label.unwrap_or_else(|| match &id {
+                    Some(id) => humanize_effort_id(id),
+                    None => effort_label(value),
+                });
+                let id = id.unwrap_or_else(|| value.as_ref().to_string());
                 ReasoningEffortOption {
                     id,
                     value,
@@ -971,17 +1004,19 @@ impl<'de> serde::Deserialize<'de> for ReasoningEffortOption {
     }
 }
 
-/// Parse a JSON array of reasoning-effort options element-by-element, skipping
-/// (and warning on) any entry whose `value` fails to parse (forward-compat for
-/// tiers a newer server introduces). The single home for the skip-invalid rule,
-/// shared by the meta reader and the remote `/models` parser.
-pub fn parse_reasoning_effort_options(arr: &[serde_json::Value]) -> Vec<ReasoningEffortOption> {
+/// Parse a JSON array of reasoning-effort options element-by-element, skipping and warning on any entry whose `value` fails to parse.
+/// That keeps tiers a newer server introduces from breaking the whole list.
+/// The meta reader and the remote `/models` parser both call this, so the skip rule lives in one place; `field` names the source key in the warn.
+pub fn parse_reasoning_effort_options(
+    arr: &[serde_json::Value],
+    field: &str,
+) -> Vec<ReasoningEffortOption> {
     arr.iter()
         .filter_map(
             |el| match serde_json::from_value::<ReasoningEffortOption>(el.clone()) {
                 Ok(opt) => Some(opt),
                 Err(err) => {
-                    tracing::warn!(value = %el, error = %err, "reasoningEfforts: skipping invalid entry");
+                    tracing::warn!(value = %el, error = %err, "{field}: skipping invalid entry");
                     None
                 }
             },
@@ -989,10 +1024,9 @@ pub fn parse_reasoning_effort_options(arr: &[serde_json::Value]) -> Vec<Reasonin
         .collect()
 }
 
-/// Parse the per-model reasoning-effort menu from a model's ACP `meta`. Returns
-/// `None` when the key is absent, is not an array, or yields no usable options
-/// after skip-invalid — so "absent" and "present-but-unusable" collapse to the
-/// same fallback path in every consumer.
+/// Parse the per-model reasoning-effort menu from a model's ACP `meta`.
+/// Returns `None` when the key is absent, is not an array, or yields no usable options.
+/// An absent key and an unusable one therefore collapse to the same fallback path in every consumer.
 pub fn parse_reasoning_efforts_meta(
     meta: Option<&serde_json::Map<String, serde_json::Value>>,
 ) -> Option<Vec<ReasoningEffortOption>> {
@@ -1004,7 +1038,7 @@ pub fn parse_reasoning_efforts_meta(
             return None;
         }
     };
-    let options = parse_reasoning_effort_options(arr);
+    let options = parse_reasoning_effort_options(arr, REASONING_EFFORTS_META_KEY);
     (!options.is_empty()).then_some(options)
 }
 
@@ -1012,7 +1046,6 @@ pub fn reasoning_efforts_meta_value(opts: &[ReasoningEffortOption]) -> serde_jso
     serde_json::to_value(opts).unwrap_or_else(|_| serde_json::Value::Array(Vec::new()))
 }
 
-/// Which API backend to use for model inference.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApiBackend {
@@ -1026,16 +1059,10 @@ pub enum ApiBackend {
 }
 
 impl ApiBackend {
-    /// Whether the backend enforces a response JSON schema natively alongside
-    /// tool calls. The Messages API does not (a schema there blocks tool use),
-    /// so structured output there goes through the StructuredOutput tool.
+    /// Whether the backend enforces a response JSON schema natively alongside tool calls.
+    /// The Messages API does not (a schema there blocks tool use), so structured output there goes through the StructuredOutput tool.
     pub fn supports_native_schema(&self) -> bool {
         matches!(self, Self::ChatCompletions | Self::Responses)
-    }
-
-    /// Whether replayed reasoning must be stripped. Only the Messages API rejects thinking blocks sent without a top-level `thinking` config.
-    pub fn requires_reasoning_strip(&self) -> bool {
-        matches!(self, Self::Messages)
     }
 
     /// Whether [`ConversationRequest::prompt_cache_key`] reaches the wire. Only the Responses mapping sends it, so a key set elsewhere is inert.
@@ -1044,45 +1071,125 @@ impl ApiBackend {
     pub fn forwards_prompt_cache_key(&self) -> bool {
         matches!(self, Self::Responses)
     }
+
+    /// Request-body cap the hosts speaking this protocol enforce; the budget when a model sets no `max_request_bytes`.
+    /// The xAI inference proxy rejects bodies over 50 MiB (nginx `proxy-body-size`); Messages API hosts reject bodies over 30 MB.
+    pub const fn default_max_request_bytes(&self) -> NonZeroU64 {
+        match self {
+            Self::ChatCompletions | Self::Responses => NonZeroU64::new(50 * 1024 * 1024).unwrap(),
+            Self::Messages => NonZeroU64::new(30_000_000).unwrap(),
+        }
+    }
 }
 
-/// Sampling client configuration (API key excluded — that stays in the client).
+/// Stable identifier shared by every model request in one root conversation tree.
+#[derive(Clone, Debug, Hash, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ConversationGroupId(String);
+
+impl AsRef<str> for ConversationGroupId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for ConversationGroupId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<String> for ConversationGroupId {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for ConversationGroupId {
+    fn from(value: &str) -> Self {
+        Self(value.to_owned())
+    }
+}
+
+/// Sampling client configuration (API key excluded; that stays in the client).
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SamplingConfig {
     pub base_url: String,
+    /// Local directory containing the mTLS client identity for this model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mtls_cert_dir: Option<std::path::PathBuf>,
     pub model: String,
     pub max_completion_tokens: Option<u32>,
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
+    /// Model-resolved general retry budget paired with the rate-limit ceiling below.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_retries: Option<u32>,
+    /// Model-resolved total-attempt ceiling for rate-limited requests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit_retry_threshold: Option<u32>,
     /// Which API backend to use for this model
     #[serde(default)]
     pub api_backend: ApiBackend,
-    /// Extra headers to send with requests (e.g., for BYOK scenarios).
+    /// Extra headers to send with requests (e.g., for bring-your-own-key (BYOK) scenarios).
     #[serde(default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
     pub extra_headers: indexmap::IndexMap<String, String>,
+    /// Root conversation group propagated across model changes and child sessions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_group_id: Option<ConversationGroupId>,
     /// Query parameters folded into every request URL (percent-encoded).
     #[serde(default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
     pub query_params: indexmap::IndexMap<String, String>,
-    /// Header name to environment variable; only the mapping persists, not the
-    /// resolved secret.
+    /// Header name to environment variable; only the mapping persists, not the resolved secret.
     #[serde(default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
     pub env_http_headers: indexmap::IndexMap<String, String>,
-    /// Total context window size in tokens. Used for auto-compact thresholds.
+    /// Total context window size in tokens; auto-compact thresholds derive from it.
     pub context_window: NonZeroU64,
+    /// Provider request-body cap, already defaulted from `api_backend` by model resolution; `None` budgets to 50 MiB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_request_bytes: Option<NonZeroU64>,
     /// Reasoning effort level for reasoning models.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<ReasoningEffort>,
-    /// When true, inject `stream_tool_calls: true` into the Responses
-    /// API request body so the upstream emits per-chunk argument deltas.
+    /// Responses API `reasoning.summary`; `None` keeps the request builder's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_summary: Option<ReasoningSummary>,
+    /// When true, inject `stream_tool_calls: true` into the Responses API request body so the upstream emits per-chunk argument deltas.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream_tool_calls: Option<bool>,
 }
 
+impl Default for SamplingConfig {
+    /// Empty defaults so construction sites (tests especially) can use `..Default::default()` and new fields don't ripple through every literal.
+    /// `context_window` defaults to the inert minimum; real configs must set it.
+    fn default() -> Self {
+        Self {
+            base_url: String::new(),
+            mtls_cert_dir: None,
+            model: String::new(),
+            max_completion_tokens: None,
+            temperature: None,
+            top_p: None,
+            max_retries: None,
+            rate_limit_retry_threshold: None,
+            api_backend: ApiBackend::default(),
+            extra_headers: indexmap::IndexMap::new(),
+            conversation_group_id: None,
+            query_params: indexmap::IndexMap::new(),
+            env_http_headers: indexmap::IndexMap::new(),
+            context_window: NonZeroU64::MIN,
+            max_request_bytes: None,
+            reasoning_effort: None,
+            reasoning_summary: None,
+            stream_tool_calls: None,
+        }
+    }
+}
+
 // ============ Responses API wrapper ============
 
-/// Wrapper around `async_openai::types::responses::CreateResponse` that adds
-/// custom header fields for xAI request tracking, similar to
-/// `ChatCompletionRequest`.
+/// Wrapper around `async_openai::types::responses::CreateResponse` that adds custom header fields for xAI request tracking.
+/// It mirrors the header fields on `ChatCompletionRequest`.
 #[derive(Debug, Clone, Default)]
 pub struct CreateResponseWrapper {
     /// The inner Responses API request.
@@ -1096,21 +1203,22 @@ pub struct CreateResponseWrapper {
 
     pub x_grok_session_id: Option<String>,
     pub x_grok_turn_idx: Option<String>,
+    pub x_grok_transient_retry: Option<String>,
     pub x_grok_agent_id: Option<String>,
     pub x_grok_deployment_id: Option<String>,
     pub x_grok_user_id: Option<String>,
 
     /// Optional tracing context (e.g., where to persist the finalized request payload).
     pub trace: Option<Box<dyn TraceContext>>,
+    /// Caller span's W3C `traceparent`; see [`crate::ConversationRequest::traceparent`].
+    pub traceparent: Option<String>,
 
-    /// xAI-specific tool definitions that can't be expressed via
-    /// `async_openai`'s `rs::Tool` enum (e.g., `x_search`). Injected
-    /// as raw JSON into the serialized request body's `tools` array.
+    /// xAI-specific tool definitions that can't be expressed via `async_openai`'s `rs::Tool` enum (e.g., `x_search`).
+    /// They are injected as raw JSON into the serialized request body's `tools` array.
     pub extra_tool_entries: Vec<serde_json::Value>,
 }
 
 impl CreateResponseWrapper {
-    /// Create a new wrapper from an existing `CreateResponse`.
     pub fn new(inner: crate::rs::CreateResponse) -> Self {
         Self {
             inner,
@@ -1118,27 +1226,26 @@ impl CreateResponseWrapper {
             x_grok_req_id: None,
             x_grok_session_id: None,
             x_grok_turn_idx: None,
+            x_grok_transient_retry: None,
             x_grok_agent_id: None,
             x_grok_deployment_id: None,
             x_grok_user_id: None,
             trace: None,
+            traceparent: None,
             extra_tool_entries: vec![],
         }
     }
 
-    /// Set the conversation ID header.
     pub fn with_conv_id(mut self, conv_id: impl Into<String>) -> Self {
         self.x_grok_conv_id = Some(conv_id.into());
         self
     }
 
-    /// Set the request ID header.
     pub fn with_req_id(mut self, req_id: impl Into<String>) -> Self {
         self.x_grok_req_id = Some(req_id.into());
         self
     }
 
-    /// Set the trace context for request logging.
     pub fn with_trace(mut self, trace: impl TraceContext + 'static) -> Self {
         self.trace = Some(Box::new(trace));
         self
@@ -1153,8 +1260,7 @@ impl From<crate::rs::CreateResponse> for CreateResponseWrapper {
 
 // ============ Messages API wrapper ============
 
-/// Wrapper around `MessagesRequest` that adds custom header fields for xAI
-/// request tracking, analogous to `CreateResponseWrapper`.
+/// Wrapper around `MessagesRequest` that adds custom header fields for xAI request tracking, analogous to `CreateResponseWrapper`.
 #[derive(Debug, Clone, Default)]
 pub struct MessagesRequestWrapper {
     /// The inner Messages API request.
@@ -1168,16 +1274,18 @@ pub struct MessagesRequestWrapper {
 
     pub x_grok_session_id: Option<String>,
     pub x_grok_turn_idx: Option<String>,
+    pub x_grok_transient_retry: Option<String>,
     pub x_grok_agent_id: Option<String>,
     pub x_grok_deployment_id: Option<String>,
     pub x_grok_user_id: Option<String>,
 
     /// Optional tracing context (e.g., where to persist the finalized request payload).
     pub trace: Option<Box<dyn TraceContext>>,
+    /// Caller span's W3C `traceparent`; see [`crate::ConversationRequest::traceparent`].
+    pub traceparent: Option<String>,
 }
 
 impl MessagesRequestWrapper {
-    /// Create a new wrapper from an existing `MessagesRequest`.
     pub fn new(inner: crate::messages::MessagesRequest) -> Self {
         Self {
             inner,
@@ -1185,26 +1293,25 @@ impl MessagesRequestWrapper {
             x_grok_req_id: None,
             x_grok_session_id: None,
             x_grok_turn_idx: None,
+            x_grok_transient_retry: None,
             x_grok_agent_id: None,
             x_grok_deployment_id: None,
             x_grok_user_id: None,
             trace: None,
+            traceparent: None,
         }
     }
 
-    /// Set the conversation ID header.
     pub fn with_conv_id(mut self, conv_id: impl Into<String>) -> Self {
         self.x_grok_conv_id = Some(conv_id.into());
         self
     }
 
-    /// Set the request ID header.
     pub fn with_req_id(mut self, req_id: impl Into<String>) -> Self {
         self.x_grok_req_id = Some(req_id.into());
         self
     }
 
-    /// Set the trace context for request logging.
     pub fn with_trace(mut self, trace: impl TraceContext + 'static) -> Self {
         self.trace = Some(Box::new(trace));
         self
@@ -1234,7 +1341,7 @@ mod tests {
             ReasoningEffort::Max,
         ] {
             let json = serde_json::to_string(&v).unwrap();
-            assert_eq!(json, format!("\"{}\"", v.as_str()), "serialize {v:?}");
+            assert_eq!(json, format!("\"{}\"", v.as_ref()), "serialize {v:?}");
             let back: ReasoningEffort = serde_json::from_str(&json).unwrap();
             assert_eq!(back, v, "round-trip {v:?}");
         }
@@ -1275,7 +1382,7 @@ mod tests {
             ReasoningEffortOption {
                 id: "xhigh".to_string(),
                 value: ReasoningEffort::Xhigh,
-                label: "Xhigh".to_string(),
+                label: "X-High".to_string(),
                 description: None,
                 default: false,
             }
@@ -1331,15 +1438,17 @@ mod tests {
         .cloned()
         .unwrap();
         let parsed = parse_reasoning_efforts_meta(Some(&meta)).unwrap();
-        assert_eq!(parsed.len(), 2);
-        assert_eq!(parsed[0].value, ReasoningEffort::High);
-        assert_eq!(parsed[1].value, ReasoningEffort::Low);
+        let [high, low] = parsed.as_slice() else {
+            panic!("expected two efforts: {parsed:?}");
+        };
+        assert_eq!(high.value, ReasoningEffort::High);
+        assert_eq!(low.value, ReasoningEffort::Low);
     }
 
     #[test]
     fn parse_reasoning_efforts_meta_present_but_unusable_is_none() {
-        // Explicit empty, non-array, and all-entries-skip-invalidated all collapse
-        // to `None` so consumers fall back exactly as they do for an absent key.
+        // An empty array, a non-array, and an array whose every entry fails to parse all collapse to `None`
+        // Consumers then fall back exactly as they do for an absent key
         for meta in [
             json!({ REASONING_EFFORTS_META_KEY: [] }),
             json!({ REASONING_EFFORTS_META_KEY: "nope" }),
@@ -1463,9 +1572,9 @@ mod tests {
 
             let blocks = msg.content.blocks();
             assert_eq!(blocks.len(), 1);
-            match &blocks[0] {
-                ChatContentBlock::Text { text } => assert_eq!(text, expected_content),
-                _ => panic!("Expected empty Text block"),
+            match blocks.first() {
+                Some(ChatContentBlock::Text { text }) => assert_eq!(text, expected_content),
+                other => panic!("Expected empty Text block, got {other:?}"),
             }
         }
     }
@@ -1491,13 +1600,9 @@ mod tests {
         assert!(delta.tool_calls.is_empty());
     }
 
-    /// Regression test: cloning `Box<dyn TraceContext>` must not infinitely recurse.
-    ///
-    /// The blanket `impl<T: Clone + ...> TraceContext for T` applies to
-    /// `Box<dyn TraceContext>` itself. Without the explicit dereference in
-    /// `Clone for Box<dyn TraceContext>`, `self.clone_box()` resolves to the
-    /// blanket impl's method (via auto-deref) instead of dispatching through
-    /// the vtable, causing `clone()` → `clone_box()` → `clone()` → stack overflow.
+    /// Regression test: cloning `Box<dyn TraceContext>` must not infinitely recurse. Without the dereference in `Clone for
+    /// Box<dyn TraceContext>`, `self.clone_box()` resolves to the blanket impl's method via auto-deref. That skips vtable
+    /// dispatch, so `clone()` calls `clone_box()` calls `clone()` until the stack overflows.
     #[test]
     fn clone_box_dyn_trace_context_does_not_recurse() {
         #[derive(Debug, Clone)]
@@ -1507,8 +1612,7 @@ mod tests {
         let cloned = trace.clone();
 
         // Verify the clone produced a valid TraceContext with the same data.
-        // Note: `as_any()` must be called through `&dyn TraceContext` (not on the Box
-        // directly) to use vtable dispatch rather than the blanket impl.
+        // `as_any()` must be called through `&dyn TraceContext` (not on the Box directly) to use vtable dispatch rather than the blanket impl
         let inner: &dyn TraceContext = &*trace;
         let original = inner.as_any().downcast_ref::<TestTrace>().unwrap();
 

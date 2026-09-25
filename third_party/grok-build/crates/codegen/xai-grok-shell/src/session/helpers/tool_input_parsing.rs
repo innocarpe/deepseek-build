@@ -1,7 +1,6 @@
 pub fn try_extract_concatenated_json_objects(arguments: &str) -> Option<Vec<serde_json::Value>> {
     let trimmed = arguments.trim();
 
-    // Quick check: must start with '{'.
     if !trimmed.starts_with('{') {
         return None;
     }
@@ -11,8 +10,7 @@ pub fn try_extract_concatenated_json_objects(arguments: &str) -> Option<Vec<serd
         return None;
     }
 
-    // Use serde_json::StreamDeserializer to parse concatenated JSON objects.
-    // This handles nested braces correctly (unlike naive string splitting on "}{").
+    // The stream deserializer handles nested braces correctly (unlike naive string splitting on "}{")
     let stream = serde_json::Deserializer::from_str(trimmed).into_iter::<serde_json::Value>();
 
     let mut objects = Vec::new();
@@ -23,7 +21,7 @@ pub fn try_extract_concatenated_json_objects(arguments: &str) -> Option<Vec<serd
         }
     }
 
-    // Need at least 2 objects for this to be concatenated JSON.
+    // At least 2 objects are needed for this to be concatenated JSON
     if objects.len() >= 2 {
         Some(objects)
     } else {
@@ -31,11 +29,7 @@ pub fn try_extract_concatenated_json_objects(arguments: &str) -> Option<Vec<serd
     }
 }
 
-/// Normalize empty tool call arguments to `"{}"`.
-///
-/// Zero-arg MCP tools (e.g. `get_me`) sometimes receive `""` from the model
-/// instead of `"{}"`, which fails JSON parsing. This normalizes empty/whitespace
-/// strings to `"{}"` so downstream parsing succeeds.
+/// Zero-arg MCP tools (e.g. `get_me`) sometimes receive `""` from the model instead of `"{}"`, which fails JSON parsing.
 pub fn normalize_empty_arguments(arguments: &str) -> &str {
     if arguments.trim().is_empty() {
         "{}"
@@ -227,7 +221,10 @@ mod tests {
         let args = r#"{"target_file": "a.java"}{"target_file": "b.java"}{"target_file": "c.java"}"#;
         let objects = try_extract_concatenated_json_objects(args).unwrap();
         assert_eq!(objects.len(), 3);
-        assert_eq!(objects[0]["target_file"], "a.java");
+        assert_eq!(
+            objects.first().and_then(|o| o.get("target_file")),
+            Some(&serde_json::json!("a.java"))
+        );
     }
 
     #[test]
@@ -265,7 +262,13 @@ mod tests {
         let args = r#"{"file": "a.rs", "opts": {"line": 1}}{"file": "b.rs", "opts": {"line": 2}}"#;
         let objects = try_extract_concatenated_json_objects(args).unwrap();
         assert_eq!(objects.len(), 2);
-        assert_eq!(objects[0]["opts"]["line"], 1);
+        assert_eq!(
+            objects
+                .first()
+                .and_then(|o| o.get("opts"))
+                .and_then(|o| o.get("line")),
+            Some(&serde_json::json!(1))
+        );
     }
 
     #[test]
@@ -289,7 +292,7 @@ mod tests {
         assert!(try_extract_concatenated_json_objects(r#"{"a": 1} garbage"#).is_none());
     }
 
-    /// Parse after normalizing — mirrors the production pattern in handle_tool_call.
+    /// Parse after normalizing; mirrors the production pattern in handle_tool_call.
     fn normalize_and_parse(arguments: &str) -> serde_json::Value {
         let normalized = normalize_empty_arguments(arguments);
         serde_json::from_str(normalized).unwrap_or_else(|_| serde_json::json!({"raw": arguments}))
@@ -322,15 +325,15 @@ mod tests {
     #[test]
     fn invalid_json_falls_back_to_raw() {
         let result = normalize_and_parse("not json");
-        assert_eq!(result["raw"], "not json");
+        assert_eq!(result.get("raw"), Some(&serde_json::json!("not json")));
     }
 
     #[test]
     fn complex_args_with_arrays_unchanged() {
         let args = r#"{"pages": [{"title": "Test"}], "limit": 10}"#;
         let result = normalize_and_parse(args);
-        assert!(result["pages"].is_array());
-        assert_eq!(result["limit"], 10);
+        assert!(result.get("pages").is_some_and(|p| p.is_array()));
+        assert_eq!(result.get("limit"), Some(&serde_json::json!(10)));
     }
 
     #[test]

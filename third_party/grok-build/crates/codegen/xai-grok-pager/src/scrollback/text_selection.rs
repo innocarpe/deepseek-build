@@ -9,13 +9,10 @@ use regex::Regex;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::scrollback::table_geometry::{CellRef, TableGeometry};
+use crate::scrollback::table_geometry::{CellRef, TableGeometry, WrappedCellJoiner};
 use crate::scrollback::types::SelectionBoundary;
 use crate::theme::Theme;
-
-// ---------------------------------------------------------------------------
-// Auto-scroll types
-// ---------------------------------------------------------------------------
+use xai_grok_markdown::{CellJoin, TableCopyMeta};
 
 /// Direction for drag auto-scroll.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,12 +21,9 @@ pub enum AutoScrollDirection {
     Down,
 }
 
-/// State for timer-driven drag auto-scroll.
-///
-/// While active, `tick_drag_autoscroll` scrolls by `speed` rows per tick
-/// in the given direction. The direction and speed are recomputed from the
-/// mouse position each time the pointer moves, and the state is cleared
-/// when the pointer returns inside the content area or the drag ends.
+/// State for timer-driven drag auto-scroll. While active, `tick_drag_autoscroll` scrolls by `speed` rows per tick
+/// in the given direction. The direction and speed are recomputed from the mouse position each time the pointer
+/// moves. The state is cleared when the pointer returns inside the content area or the drag ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DragAutoScrollState {
     pub direction: AutoScrollDirection,
@@ -40,12 +34,9 @@ pub struct DragAutoScrollState {
 /// Rows of near-edge interior zone that still trigger autoscroll.
 const EDGE_THRESHOLD: u16 = 2;
 
-/// Compute autoscroll direction and speed from mouse position relative to
-/// the scrollback content area.
-///
-/// Returns `Some(state)` when the pointer is above, below, or within
-/// [`EDGE_THRESHOLD`] rows of the content boundary. Returns `None` when
-/// the pointer is comfortably inside the viewport.
+/// Compute autoscroll direction and speed from mouse position relative to the scrollback content area.
+/// Returns `Some(state)` when the pointer is above, below, or within [`EDGE_THRESHOLD`] rows of the content boundary.
+/// Returns `None` when the pointer is comfortably inside the viewport.
 pub fn compute_autoscroll(mouse_row: u16, content_area: Rect) -> Option<DragAutoScrollState> {
     let top = content_area.y;
     let bottom = content_area.y.saturating_add(content_area.height);
@@ -151,26 +142,26 @@ pub struct ResolvedSelectableRange {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedSelectableLine {
     pub entry_idx: usize,
-    /// Block `selection_range` ids count up from 0; `u16::MAX` is reserved
-    /// for the labeled group header's synthetic row
-    /// (`render::GROUP_HEADER_RANGE_ID`).
+    /// Block `selection_range` ids count up from 0.
+    /// `u16::MAX` is reserved for the labeled group header's synthetic row (`render::GROUP_HEADER_RANGE_ID`).
     pub range_id: u16,
     pub block_line_idx: usize,
     pub screen_y: u16,
     pub screen_x: u16,
     pub selectable_cols: Range<u16>,
+    /// Logical copy text: trailing-trimmed for `Selectable::All`, a span subset for `Selectable::Spans`, or the stored override for tool headers.
     pub text: String,
+    /// Exact text painted in the selectable columns (logical order, untrimmed), or `None` for synthetic rows whose painted cells equal `text`.
+    /// Selection snaps and slices against this so drag columns line up with drawn cells even when `text` diverges from what was painted.
+    /// See [`crate::scrollback::types::painted_selectable_region`].
+    pub painted_region: Option<String>,
     pub joiner_to_previous: Option<String>,
 }
 
 impl ResolvedSelectableLine {
-    /// `(col distance, clamped col-within-range)` for a pointer at screen
-    /// `col` on this line: distance 0 with the exact offset inside the
-    /// selectable span, otherwise the gap to the nearer edge with the offset
-    /// clamped to that edge. `None` when the line has no selectable width.
-    ///
-    /// The single source of column semantics for every hit test, so their
-    /// same-row behavior cannot diverge.
+    /// `(col distance, clamped col-within-range)` for a pointer at screen `col` on this line. Distance is 0 with the
+    /// exact offset inside the selectable span, otherwise the gap to the nearer edge with the offset clamped to that
+    /// edge. Every hit test resolves columns through this, so their same-row behavior cannot diverge.
     fn col_metrics(&self, col: u16) -> Option<(u16, u16)> {
         let start = self.screen_x.saturating_add(self.selectable_cols.start);
         let end = self.screen_x.saturating_add(self.selectable_cols.end);
@@ -209,8 +200,7 @@ pub struct RangeHit {
     pub entry_idx: usize,
     pub range_id: u16,
     /// Stable line identifier: the line's index within the block's full output.
-    /// Unlike the position in the visible `range.lines[]` array, this does not
-    /// change when the viewport scrolls.
+    /// Unlike the position in the visible `range.lines[]` array, this does not change when the viewport scrolls.
     pub block_line_idx: usize,
     pub col_within_range: u16,
 }
@@ -220,10 +210,8 @@ pub struct PendingTextDrag {
     pub anchor: RangeHit,
     pub start_col: u16,
     pub start_row: u16,
-    /// The anchor block's `VisibleBlockGeometry.content_width` at mouse-down
-    /// (`None` when the block had no geometry then). Copy needs the width the
-    /// drag's `block_line_idx` values were captured against even after the
-    /// block scrolls fully out of `visible_blocks`.
+    /// The anchor block's `VisibleBlockGeometry.content_width` at mouse-down (`None` when the block had no geometry then).
+    /// Copy needs the width the drag's `block_line_idx` values were captured against even after the block scrolls fully out of `visible_blocks`.
     pub anchor_content_width: Option<u16>,
 }
 
@@ -249,25 +237,21 @@ pub enum SelectionOrigin {
     TripleClick,
 }
 
-/// Shape of a text selection: `Linear` sweeps whole lines between the
-/// endpoints; drags anchored inside a detected table cell are table-shaped
-/// (see [`crate::scrollback::table_geometry`]).
+/// Shape of a text selection: `Linear` sweeps whole lines between the endpoints.
+/// Drags anchored inside a detected table cell are table-shaped (see [`crate::scrollback::table_geometry`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SelectionKind {
     #[default]
     Linear,
-    /// Head latched to the anchor cell: text selection clamped to the cell's
-    /// column band, spanning its wrapped fragment lines.
+    /// Head latched to the anchor cell: text selection clamped to the cell's column band, spanning its wrapped fragment lines.
     TableCell,
-    /// A rectangular range of whole cells (`anchor` to `head`), copied as
-    /// TSV. Cells are carried, not re-derived: endpoints can sit on columns
-    /// that resolve to no cell, and paint/copy must match resolution.
+    /// A rectangular range of whole cells (`anchor` to `head`), copied as TSV.
+    /// Cells are carried, not re-derived: endpoints can sit on columns that resolve to no cell, and paint/copy must match resolution.
     TableGrid { anchor: CellRef, head: CellRef },
 }
 
 /// Side-car [`TableGeometry`] keyed to the selection it was resolved for.
-/// Consumers check the key; a stale side-car is ignored (table kinds paint
-/// nothing without geometry).
+/// Consumers check the key; a stale side-car is ignored (table kinds paint nothing without geometry).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableSelectionGeometry {
     pub entry_idx: usize,
@@ -345,20 +329,9 @@ impl ResolvedSelectionModel {
         best.map(|(_, hit)| hit)
     }
 
-    /// Nearest line of the anchor's `(entry_idx, range_id)` to `(col, row)`,
-    /// by `(|screen_y - row|, then col distance)` — the drag-head resolver.
-    ///
-    /// Unlike [`Self::hit_test_selectable_range`] this never lands on another
-    /// range and never misses while the anchor's range has visible lines, so
-    /// the head tracks the pointer across gap/vpad/chrome rows and past the
-    /// range's last line (native drag semantics). Same-row behavior is
-    /// identical to `hit_test_selectable_range` restricted to that range.
-    /// Full ties (a pointer row equidistant between two lines) resolve to the
-    /// line farther from the anchor, so a drag over a dead row keeps
-    /// extending the selection instead of retreating.
-    ///
-    /// `None` only when the range has no selectable lines in this model
-    /// (scrolled fully out) — callers keep the previous head then.
+    /// Unlike [`Self::hit_test_selectable_range`] this never lands on another range and never misses while the anchor's
+    /// range has visible lines. That way a drag over a dead row keeps extending the selection instead of retreating.
+    /// `None` only when the range has no selectable lines in this model (scrolled fully out).
     pub fn hit_test_nearest_in_range(
         &self,
         anchor: RangeHit,
@@ -397,8 +370,7 @@ impl ResolvedSelectionModel {
             .find(|block| rect_contains(block.area, col, row))
     }
 
-    /// The content width `entry_idx`'s block was rendered at this frame, or
-    /// `None` when the block is not in the viewport.
+    /// The content width `entry_idx`'s block was rendered at this frame, or `None` when the block is not in the viewport.
     pub fn visible_block_content_width(&self, entry_idx: usize) -> Option<u16> {
         self.visible_blocks
             .iter()
@@ -412,11 +384,9 @@ impl ResolvedSelectionModel {
             .find(|range| range.entry_idx == entry_idx && range.range_id == range_id)
     }
 
-    /// Hit-test for text selection: only return a hit when the click is
-    /// directly on selectable columns (distance == 0).
+    /// Hit-test for text selection: only return a hit when the click is directly on selectable columns (distance == 0).
     ///
-    /// This ensures clicks on accent bars, borders, and padding fall through
-    /// to block-level handling (fold toggle).
+    /// Clicks on accent bars, borders, and padding fall through to block-level handling (fold toggle).
     pub fn hit_test_text_exact(&self, col: u16, row: u16) -> Option<RangeHit> {
         for range in &self.ranges {
             for line in &range.lines {
@@ -441,7 +411,7 @@ impl ResolvedSelectionModel {
 
     /// Look up the selectable line matching a [`RangeHit`].
     ///
-    /// Convenience shorthand for `model.range(hit) → find(block_line_idx)`.
+    /// Shorthand for `model.range(hit)` then `find(block_line_idx)`.
     pub fn line_for_hit(&self, hit: &RangeHit) -> Option<&ResolvedSelectableLine> {
         self.range(hit.entry_idx, hit.range_id)?
             .lines
@@ -565,11 +535,8 @@ pub fn render_active_selection_overlay(
 }
 
 /// Render a persistent text selection overlay (after mouse-up).
-///
-/// Unlike [`render_active_selection_overlay`] (which reads from [`ActiveTextDrag`]),
-/// this reads from [`PersistentTextSelection`] and maps stable `block_line_idx`
-/// coordinates back to screen positions using the current frame's
-/// [`ResolvedSelectionModel`].
+/// Unlike [`render_active_selection_overlay`], which reads from [`ActiveTextDrag`], this reads from [`PersistentTextSelection`].
+/// It maps stable `block_line_idx` coordinates back to screen positions using the current frame's [`ResolvedSelectionModel`].
 pub fn render_persistent_selection_overlay(
     model: &ResolvedSelectionModel,
     selection: &PersistentTextSelection,
@@ -602,8 +569,7 @@ fn render_selection_overlay_impl(
     let Some(range) = model.range(entry_idx, range_id) else {
         return;
     };
-    // Table kinds need their geometry; without it (btw overlay, stale
-    // side-car) paint nothing rather than a misleading linear sweep.
+    // Table kinds need their geometry; without it (stale side-car) paint nothing rather than a misleading linear sweep
     let table = match kind {
         SelectionKind::Linear => None,
         SelectionKind::TableCell | SelectionKind::TableGrid { .. } => match table {
@@ -622,9 +588,10 @@ fn render_selection_overlay_impl(
             table_selected_cols_for_line(geom, kind, anchor, head, line.block_line_idx)
                 .into_iter()
                 .map(|cols| {
-                    let snapped = endpoint_start_col(&line.text, cols.start)
-                        ..endpoint_end_col(&line.text, cols.end.saturating_sub(1));
-                    clip_cols_to_content(&line.text, snapped)
+                    let display = display_text_for_cols(&line.text);
+                    let snapped = endpoint_start_col(display.as_ref(), cols.start)
+                        ..endpoint_end_col(display.as_ref(), cols.end.saturating_sub(1));
+                    clip_cols_to_content(display.as_ref(), snapped)
                 })
                 .collect()
         } else {
@@ -656,9 +623,8 @@ fn render_selection_overlay_impl(
     }
 }
 
-/// A table-cell selection's endpoints clamped into the cell's box (fragment
-/// lines x column band), normalized so start <= end. The head can sit
-/// outside the cell whenever the latch kept the selection there.
+/// A table-cell selection's endpoints clamped into the cell's box (fragment lines x column band), normalized so start <= end.
+/// The head can sit outside the cell whenever the latch kept the selection there.
 fn table_cell_span(
     geom: &TableGeometry,
     cell: crate::scrollback::table_geometry::CellRef,
@@ -670,9 +636,9 @@ fn table_cell_span(
     let clamp = |ep: SelectionEndpoint| {
         (
             ep.block_line_idx
-                .clamp(lines.start, lines.end.saturating_sub(1)),
+                .clamp(lines.start, lines.end.saturating_sub(1).max(lines.start)),
             ep.col_within_range
-                .clamp(band.start, band.end.saturating_sub(1)),
+                .clamp(band.start, band.end.saturating_sub(1).max(band.start)),
         )
     };
     let a = clamp(anchor);
@@ -680,8 +646,7 @@ fn table_cell_span(
     if a <= h { (a, h) } else { (h, a) }
 }
 
-/// Clip a painted column range to the non-whitespace content it covers,
-/// mirroring the copy (which trims fragments and skips blank ones).
+/// Clip a painted column range to the non-whitespace content it covers, mirroring the copy (which trims fragments and skips blank ones).
 /// Whitespace between content columns stays inside the range.
 fn clip_cols_to_content(text: &str, cols: Range<u16>) -> Range<u16> {
     let mut start: Option<u16> = None;
@@ -708,9 +673,9 @@ fn clip_cols_to_content(text: &str, cols: Range<u16>) -> Range<u16> {
     }
 }
 
-/// Selected column ranges on one line of a table-shaped selection:
-/// `TableCell` at most one band-clamped range, `TableGrid` one band per
-/// selected column. Border glyphs are never included.
+/// Selected column ranges on one line of a table-shaped selection.
+/// `TableCell` yields at most one band-clamped range, `TableGrid` one band per selected column.
+/// Border glyphs are never included.
 fn table_selected_cols_for_line(
     geom: &TableGeometry,
     kind: SelectionKind,
@@ -755,14 +720,17 @@ fn table_selected_cols_for_line(
             if row < r0 || row > r1 {
                 return Vec::new();
             }
-            (c0..=c1).map(|c| geom.band(c)).collect()
+            (c0..=c1)
+                .filter(|&c| c < geom.n_cols())
+                .map(|c| geom.band(c))
+                .collect()
         }
     }
 }
 
-/// Resolve a drag's [`SelectionKind`], with hysteresis: the head is
-/// latched from the cell the drag already holds, so only another cell's
-/// content changes the mode. Grid-line anchors stay `Linear`.
+/// Resolve a drag's [`SelectionKind`], with hysteresis.
+/// The head is latched from the cell the drag already holds, so only another cell's content changes the mode.
+/// Grid-line anchors stay `Linear`.
 pub fn resolve_table_drag_kind(
     geom: Option<&TableGeometry>,
     anchor: &RangeHit,
@@ -787,13 +755,21 @@ pub fn resolve_table_drag_kind(
     }
 }
 
-/// Copied text for a table-shaped selection: the band-clamped span for
-/// `TableCell`, whole cells as TSV for `TableGrid`. `None` (= fall back to
-/// linear) for `Linear` drags or an anchor that no longer resolves.
+/// Copied text for a table-shaped selection: the band-clamped span for `TableCell`, whole cells as TSV for `TableGrid`.
+/// `None` (meaning fall back to linear) for `Linear` drags or an anchor that no longer resolves.
 pub fn reconstruct_table_selection_text(
     geom: &TableGeometry,
     drag: &ActiveTextDrag,
     text_at: impl Fn(usize) -> Option<String>,
+) -> Option<String> {
+    reconstruct_table_selection_text_with_meta(geom, drag, text_at, None)
+}
+
+pub fn reconstruct_table_selection_text_with_meta(
+    geom: &TableGeometry,
+    drag: &ActiveTextDrag,
+    text_at: impl Fn(usize) -> Option<String>,
+    meta: Option<&TableCopyMeta>,
 ) -> Option<String> {
     let anchor = SelectionEndpoint {
         block_line_idx: drag.anchor.block_line_idx,
@@ -807,11 +783,24 @@ pub fn reconstruct_table_selection_text(
         SelectionKind::Linear => None,
         SelectionKind::TableCell => {
             let cell = geom.cell_at(anchor.block_line_idx, anchor.col_within_range)?;
+            let Some(n_cols) = geom.checked_n_cols() else {
+                return Some(String::new());
+            };
+            if cell.row >= geom.n_rows() || cell.col >= n_cols {
+                return Some(String::new());
+            }
             let band = geom.band(cell.col);
             let ((l0, c0), (l1, c1)) = table_cell_span(geom, cell, anchor, head);
-            let mut out = String::new();
+            if l0 > l1 {
+                return Some(String::new());
+            }
+            let row_start = geom.row_lines(cell.row).start;
+            let mut joined = String::new();
+            let mut prev_vis = None;
+            let mut joiner = WrappedCellJoiner::new(band.end.saturating_sub(band.start));
+            let copy = geom.cell_copy(cell, meta);
             for line in l0..=l1 {
-                let text = text_at(line)?;
+                let Some(text) = text_at(line) else { continue };
                 let start = if line == l0 {
                     endpoint_start_col(&text, c0).max(band.start)
                 } else {
@@ -822,25 +811,42 @@ pub fn reconstruct_table_selection_text(
                 } else {
                     band.end
                 };
-                let slice = crate::scrollback::types::slice_display_cols(&text, start, end);
-                let fragment = slice.trim();
-                if fragment.is_empty() {
-                    continue;
+                let copied = crate::scrollback::types::slice_display_cols(&text, start, end);
+                if let Some(copy) = copy {
+                    let fragment = copied.trim();
+                    if fragment.is_empty() {
+                        continue;
+                    }
+                    let vis = line.saturating_sub(row_start);
+                    if let Some(prev) = prev_vis {
+                        for i in prev..vis {
+                            if let Some(CellJoin::Gap(s)) = copy.joins.get(i) {
+                                joined.push_str(s);
+                            }
+                        }
+                    }
+                    joined.push_str(fragment);
+                    prev_vis = Some(vis);
+                } else {
+                    let full_band =
+                        crate::scrollback::types::slice_display_cols(&text, band.start, band.end);
+                    joiner.push(&full_band, copied.trim());
                 }
-                if !out.is_empty() {
-                    out.push(' ');
-                }
-                out.push_str(fragment);
             }
-            Some(out)
+            if copy.is_some() {
+                Some(joined)
+            } else {
+                Some(joiner.into_string())
+            }
         }
-        SelectionKind::TableGrid { anchor, head } => Some(geom.grid_tsv(anchor, head, text_at)),
+        SelectionKind::TableGrid { anchor, head } => {
+            Some(geom.grid_tsv_with_meta(anchor, head, text_at, meta))
+        }
     }
 }
 
-/// Uniform selection band in the classic inverted colors (`bg_base` on
-/// `text_primary`): styled spans (inline code, links, syntax highlighting)
-/// join the band instead of inverting to their own colors.
+/// Uniform selection band in the classic inverted colors (`bg_base` on `text_primary`).
+/// Styled spans (inline code, links, syntax highlighting) join the band instead of inverting to their own colors.
 /// Terminal-native / colorless themes fall back to reverse video.
 pub(crate) fn apply_selection_highlight(theme: &Theme, cell: &mut ratatui::buffer::Cell) {
     let band = theme.text_primary;
@@ -848,8 +854,7 @@ pub(crate) fn apply_selection_highlight(theme: &Theme, cell: &mut ratatui::buffe
         cell.modifier.insert(Modifier::REVERSED);
         return;
     }
-    // A search-match highlight painted earlier in the frame sets REVERSED;
-    // left in place it would swap the band right back out.
+    // A search-match highlight painted earlier in the frame sets REVERSED; left in place it would swap the band right back out
     cell.modifier.remove(Modifier::REVERSED);
     cell.set_fg(theme.bg_base);
     cell.set_bg(band);
@@ -865,7 +870,29 @@ fn selection_slice_for_line_by_block_idx(
         .selectable_cols
         .end
         .saturating_sub(line.selectable_cols.start);
-    let selected = slice_text_cols(&line.text, cols.clone());
+    // Columns are visual cells of the painted row. Otherwise a trailing-trimmed or overridden `text` could drift from
+    // the cells the user dragged.
+    let selected = if crate::render::bidi::is_enabled() {
+        match line.painted_region.as_deref() {
+            // Override rows (tool headers) paint a display that differs from the stored copy text
+            // Its columns can't index the painted cells, so copy the whole override on overlap
+            Some(region) if line.text.trim_end() != region.trim_end() => line.text.clone(),
+            Some(region) => {
+                let sliced = slice_text_cols(region, cols.clone());
+                // Strip render-only trailing padding once the selection reaches the row end, matching the multi-row path
+                // Only a row whose copy `text` is the trimmed form of the painted region (a `Selectable::All` row) qualifies
+                // A `Selectable::Spans` row with legitimate trailing spaces keeps them
+                if cols.end == visible_width && line.text == region.trim_end() {
+                    sliced.trim_end().to_string()
+                } else {
+                    sliced
+                }
+            }
+            None => slice_text_cols(&line.text, cols.clone()),
+        }
+    } else {
+        slice_text_cols(&line.text, cols.clone())
+    };
     Some(apply_selection_boundary(
         selected,
         boundary,
@@ -886,16 +913,9 @@ pub(crate) fn apply_selection_boundary(
     boundary.apply(selected, include_prefix, include_suffix)
 }
 
-/// Compute the selected column range for a given line based on anchor/head endpoints.
-///
-/// Shared implementation used by both active drag and persistent selection overlays. Endpoints snap to grapheme
-/// boundaries: starts floor onto the grapheme under the anchor, ends advance past the grapheme under the head.
-/// - Single-line: `floor(min(anchor_col, head_col))..past(max(anchor_col, head_col))`
-/// - Multi-line first: `floor(start_col)..width`
-/// - Multi-line last: `0..past(end_col)`
-/// - Multi-line middle: `0..width` (full line)
-///
-/// Returns `None` if the line falls outside the anchor/head range.
+/// Compute the selected column range for a given line based on anchor/head endpoints. Single-line:
+/// `floor(min(anchor_col, head_col)).past(max(anchor_col, head_col))`. Multi-line first: `floor(start_col).width`.
+/// Multi-line last: `0.past(end_col)`. Multi-line middle: `0.width` (full line).
 fn selected_cols_for_endpoints(
     anchor_block_line: usize,
     anchor_col: u16,
@@ -916,10 +936,20 @@ fn selected_cols_for_endpoints(
         return None;
     }
 
+    // Snap on the painted row so ranges line up with the drawn cells
+    // Prefer the painted region (untrimmed, exact painted cells) over the trailing-trimmed `text`
+    // On an RTL row the trimmed spaces paint at the opposite edge, so a narrower `text` would snap the highlight band off the drawn cells
+    let snap_src = if crate::render::bidi::is_enabled() {
+        line.painted_region.as_deref().unwrap_or(line.text.as_str())
+    } else {
+        line.text.as_str()
+    };
+    let display = display_text_for_cols(snap_src);
     if start_bl == end_bl {
-        let start = endpoint_start_col(&line.text, min(anchor_col, head_col));
+        let start = endpoint_start_col(display.as_ref(), min(anchor_col, head_col));
         return Some(
-            start.min(width)..endpoint_end_col(&line.text, max(anchor_col, head_col)).min(width),
+            start.min(width)
+                ..endpoint_end_col(display.as_ref(), max(anchor_col, head_col)).min(width),
         );
     }
 
@@ -929,7 +959,7 @@ fn selected_cols_for_endpoints(
         } else {
             head_col
         };
-        return Some(endpoint_start_col(&line.text, start).min(width)..width);
+        return Some(endpoint_start_col(display.as_ref(), start).min(width)..width);
     }
 
     if bl == end_bl {
@@ -938,7 +968,7 @@ fn selected_cols_for_endpoints(
         } else {
             anchor_col
         };
-        return Some(0..endpoint_end_col(&line.text, end).min(width));
+        return Some(0..endpoint_end_col(display.as_ref(), end).min(width));
     }
 
     Some(0..width)
@@ -970,11 +1000,8 @@ fn selected_cols_for_line_by_block_idx(
 }
 
 /// Reconstruct the full selected text from the block's complete output lines.
-///
-/// Unlike [`reconstruct_selection_text`], which only has access to lines
-/// currently visible on screen, this function reads from the block's full
-/// output. This ensures copy produces the complete selection even when the
-/// anchor or head has scrolled off-screen.
+/// Unlike [`reconstruct_selection_text`], which only sees lines currently visible on screen, this reads the block's full output.
+/// Copy produces the complete selection even when the anchor or head has scrolled off-screen.
 pub fn reconstruct_full_selection_text(
     block_lines: &[crate::scrollback::types::BlockLine],
     drag: &ActiveTextDrag,
@@ -991,7 +1018,9 @@ pub(crate) fn reconstruct_full_selection_text_with_boundaries(
     boundaries: &crate::scrollback::types::SelectionBoundaries,
     drag: &ActiveTextDrag,
 ) -> Option<String> {
-    use crate::scrollback::types::{derive_selection_text, selectable_cols};
+    use crate::scrollback::types::{
+        Selectable, painted_selectable_region, selectable_cols, slice_display_cols,
+    };
 
     let start_bl = min(drag.anchor.block_line_idx, drag.head.block_line_idx);
     let end_bl = max(drag.anchor.block_line_idx, drag.head.block_line_idx);
@@ -1004,37 +1033,56 @@ pub(crate) fn reconstruct_full_selection_text_with_boundaries(
         if idx < start_bl || idx > end_bl {
             continue;
         }
-        // Only include lines that belong to the same selection range.
         if line.selection_range != Some(drag.anchor.range_id) {
             continue;
         }
 
-        let text = derive_selection_text(line);
         let Some(cols) = selectable_cols(&line.content, &line.selectable) else {
             continue;
         };
-        let width = cols.end.saturating_sub(cols.start);
+        let boundary = boundaries.get(idx).map(Arc::as_ref);
+        let width = boundary
+            .map_or(cols.clone(), |boundary| {
+                boundary.anchored_cols(cols.clone())
+            })
+            .end
+            .saturating_sub(cols.start);
 
-        // Snap endpoints exactly like selected_cols_for_endpoints: `col_range.end == width` decides suffix re-attachment below,
-        // so an unsnapped end stopping mid-character would drop a suffix that the highlight includes.
+        // Map against the exact text painted in the selectable columns, in logical order
+        // This is the string `set_line_safe_bidi` reorders, so the visual drag columns line up 1:1 with the drawn cells
+        // The resolved-model overlay path shares this via `painted_region`
+        let region = painted_selectable_region(line);
+
+        // Tool-header rows paint a truncated/reworded display but copy a stored string
+        // When that override diverges from what is painted (ignoring render-only trailing padding), its columns can't be reorder-mapped onto it
+        // This is the same trim-tolerant predicate the overlay path uses
+        let override_text = line
+            .selection_text
+            .as_deref()
+            .filter(|ov| ov.trim_end() != region.trim_end());
+
+        // Snap endpoints on the painted region (matches drawn cells).
+        // `col_range.end == width` decides suffix re-attachment below.
+        let display = display_text_for_cols(&region);
         let col_range = if start_bl == end_bl {
             let s = min(drag.anchor.col_within_range, drag.head.col_within_range);
             let e = max(drag.anchor.col_within_range, drag.head.col_within_range);
-            endpoint_start_col(&text, s).min(width)..endpoint_end_col(&text, e).min(width)
+            endpoint_start_col(display.as_ref(), s).min(width)
+                ..endpoint_end_col(display.as_ref(), e).min(width)
         } else if idx == start_bl {
             let s = if anchor_is_start {
                 drag.anchor.col_within_range
             } else {
                 drag.head.col_within_range
             };
-            endpoint_start_col(&text, s).min(width)..width
+            endpoint_start_col(display.as_ref(), s).min(width)..width
         } else if idx == end_bl {
             let e = if anchor_is_start {
                 drag.head.col_within_range
             } else {
                 drag.anchor.col_within_range
             };
-            0..endpoint_end_col(&text, e).min(width)
+            0..endpoint_end_col(display.as_ref(), e).min(width)
         } else {
             0..width
         };
@@ -1043,10 +1091,24 @@ pub(crate) fn reconstruct_full_selection_text_with_boundaries(
             out.push_str(line.joiner.as_deref().unwrap_or("\n"));
         }
         first = false;
-        let selected = slice_text_cols(&text, col_range.clone());
+        let selected = match override_text {
+            // Painted display is reordered and differs from the stored copy text, so visual columns don't index it: copy it whole on overlap
+            Some(ov) if crate::render::bidi::is_enabled() => ov.to_string(),
+            // LTR: column-precise partial copy of the stored string.
+            Some(ov) => slice_display_cols(ov, col_range.start, col_range.end),
+            None => {
+                let sliced = slice_text_cols(&region, col_range.clone());
+                // Strip render-only trailing padding once the selection reaches the row end (matches `derive_selection_text` for `All` rows)
+                if matches!(line.selectable, Selectable::All) && col_range.end == width {
+                    sliced.trim_end().to_string()
+                } else {
+                    sliced
+                }
+            }
+        };
         out.push_str(&apply_selection_boundary(
             selected,
-            boundaries.get(idx).map(Arc::as_ref),
+            boundary,
             col_range.start == 0,
             col_range.end == width,
         ));
@@ -1058,7 +1120,20 @@ pub(crate) fn reconstruct_full_selection_text_with_boundaries(
     Some(out)
 }
 
+/// Visual display order for column snap when rtl_bidi paints visual cells.
+fn display_text_for_cols(text: &str) -> std::borrow::Cow<'_, str> {
+    crate::render::bidi::visual_text(text)
+}
+
+/// Slice by visual columns; returns logical-order text for the clipboard.
 fn slice_text_cols(text: &str, cols: Range<u16>) -> String {
+    if crate::render::bidi::is_enabled() && crate::render::bidi::needs_bidi(text) {
+        return crate::render::bidi::logical_slice_for_visual_cols(
+            text,
+            cols.start as usize,
+            cols.end as usize,
+        );
+    }
     crate::scrollback::types::slice_display_cols(text, cols.start, cols.end)
 }
 
@@ -1069,12 +1144,9 @@ fn rect_contains(rect: Rect, col: u16, row: u16) -> bool {
         && row < rect.y.saturating_add(rect.height)
 }
 
-// ---------------------------------------------------------------------------
 // Word / URL boundary detection (for double-click selection)
-// ---------------------------------------------------------------------------
 
-/// All printable ASCII punctuation except underscore, matching tmux's
-/// `word-separators` default from `options-table.c`.
+/// All printable ASCII punctuation except underscore, matching tmux's `word-separators` default from `options-table.c`.
 pub const DEFAULT_WORD_SEPARATORS: &str = "!\"#$%&'()*+,-./:;<=>?@[\\]^`{|}~";
 
 /// Load `[ui] word_separators` from config, falling back to [`DEFAULT_WORD_SEPARATORS`].
@@ -1109,8 +1181,8 @@ fn classify_grapheme(grapheme: &str, separators: &str) -> CharClass {
     }
 }
 
-/// Find word boundaries around a display column using tmux-style three-class
-/// grouping. Returns the range in display columns.
+/// Find word boundaries around a display column using tmux-style three-class grouping.
+/// Returns the range in display columns.
 pub fn word_boundaries_at_col(text: &str, col: u16, separators: &str) -> Range<u16> {
     let mut segments: Vec<(u16, u16, CharClass)> = Vec::new();
     let mut current_col: u16 = 0;
@@ -1139,19 +1211,33 @@ pub fn word_boundaries_at_col(text: &str, col: u16, separators: &str) -> Range<u
         .position(|(start, end, _)| col >= *start && col < *end)
         .unwrap_or(segments.len() - 1);
 
-    let target_class = segments[target_idx].2;
+    let Some(&(_, _, target_class)) = segments.get(target_idx) else {
+        return 0..0;
+    };
 
     let mut left = target_idx;
-    while left > 0 && segments[left - 1].2 == target_class {
+    while left > 0
+        && left
+            .checked_sub(1)
+            .and_then(|j| segments.get(j))
+            .is_some_and(|seg| seg.2 == target_class)
+    {
         left -= 1;
     }
 
     let mut right = target_idx;
-    while right + 1 < segments.len() && segments[right + 1].2 == target_class {
+    while right + 1 < segments.len()
+        && segments
+            .get(right + 1)
+            .is_some_and(|seg| seg.2 == target_class)
+    {
         right += 1;
     }
 
-    segments[left].0..segments[right].1
+    match (segments.get(left), segments.get(right)) {
+        (Some(&(start, _, _)), Some(&(_, end, _))) => start..end,
+        _ => 0..0,
+    }
 }
 
 /// Pre-compiled regex for URL detection, cached for the process lifetime.
@@ -1164,13 +1250,15 @@ const TRAILING_URL_PUNCT: &[char] = &['.', ',', ':', ';', '!', '?', ')', ']', '}
 
 /// Strip trailing punctuation from a URL match, respecting balanced brackets.
 ///
-/// Closing brackets are only stripped when unbalanced (no matching opener
-/// inside the URL body), handling prose like `(see https://example.com)`.
+/// Closing brackets are only stripped when unbalanced (no matching opener inside the URL body), handling prose like `(see https://example.com)`.
 fn strip_trailing_url_punctuation(url: &str) -> &str {
     let mut end = url.len();
 
     loop {
-        let last = match url[..end].chars().next_back() {
+        let Some(prefix) = url.get(..end) else {
+            break;
+        };
+        let last = match prefix.chars().next_back() {
             Some(c) if TRAILING_URL_PUNCT.contains(&c) => c,
             _ => break,
         };
@@ -1182,8 +1270,8 @@ fn strip_trailing_url_punctuation(url: &str) -> &str {
             '>' => Some('<'),
             _ => None,
         } {
-            let opens = url[..end].chars().filter(|&c| c == open).count();
-            let closes = url[..end].chars().filter(|&c| c == last).count();
+            let opens = prefix.chars().filter(|&c| c == open).count();
+            let closes = prefix.chars().filter(|&c| c == last).count();
             if opens >= closes {
                 break;
             }
@@ -1192,7 +1280,7 @@ fn strip_trailing_url_punctuation(url: &str) -> &str {
         end -= last.len_utf8();
     }
 
-    &url[..end]
+    url.get(..end).unwrap_or("")
 }
 
 /// Compute the display-column width of a string via grapheme clusters.
@@ -1202,21 +1290,23 @@ fn display_width(text: &str) -> u16 {
     })
 }
 
-/// Try to find a URL that spans the given display column in `text`.
-///
-/// Scans `text` for URLs matching common schemes (`https?://`, `ftp://`,
-/// `file://`) and returns the display-column range of the URL containing
-/// `col`, or `None` if `col` is not within any URL.
-///
-/// Trailing punctuation (`.`, `,`, `)`, etc.) is stripped when unbalanced,
+/// Try to find a URL that spans the given display column in `text`. Scans `text` for URLs matching common schemes
+/// (`https?://`, `ftp://`, `file://`). Trailing punctuation (`.`, `,`, `)`, etc.) is stripped when unbalanced,
 /// handling prose contexts like `"see https://example.com."`.
 pub fn url_range_at_col(text: &str, col: u16) -> Option<Range<u16>> {
     for m in URL_RE.find_iter(text) {
-        let col_start = display_width(&text[..m.start()]);
+        let Some(prefix) = text.get(..m.start()) else {
+            continue;
+        };
+        let col_start = display_width(prefix);
         let url = strip_trailing_url_punctuation(m.as_str());
 
         // Skip degenerate URLs reduced to just the scheme (e.g. "https://").
-        if url.find("://").is_some_and(|i| url[i + 3..].is_empty()) {
+        if url
+            .find("://")
+            .and_then(|i| url.get(i + 3..))
+            .is_some_and(str::is_empty)
+        {
             continue;
         }
 
@@ -1230,9 +1320,233 @@ pub fn url_range_at_col(text: &str, col: u16) -> Option<Range<u16>> {
     None
 }
 
+/// Wrap-aware word or URL selection.
+/// `head` is inclusive; `text` is the joined fragment text and is never empty.
+/// `None` means nothing selectable.
+#[derive(Debug, PartialEq, Eq)]
+pub struct SemanticSelection {
+    pub anchor: SelectionEndpoint,
+    pub head: SelectionEndpoint,
+    pub text: String,
+}
+
+struct ConcatFragment {
+    block_line_idx: usize,
+    text_start: u16,
+    text_end: u16,
+}
+
+/// Snap when an inclusive concat column lands inside a joiner.
+/// `Forward` snaps to the next fragment's col 0, `Backward` to the previous fragment's last col.
+#[derive(Clone, Copy)]
+enum JoinerColSnap {
+    Forward,
+    Backward,
+}
+
+/// Select the wrap-group word or URL at `hit`. `head` is inclusive; `text` is the joined fragment text and is never
+/// empty.
+#[must_use]
+pub fn semantic_selection_at(
+    model: &ResolvedSelectionModel,
+    hit: &RangeHit,
+    separators: &str,
+) -> Option<SemanticSelection> {
+    let range = model.range(hit.entry_idx, hit.range_id)?;
+    let lines = &range.lines;
+    let hit_pos = lines
+        .iter()
+        .position(|line| line.block_line_idx == hit.block_line_idx)?;
+
+    let mut lo = hit_pos;
+    while lo > 0
+        && lines
+            .get(lo)
+            .is_some_and(|line| line.joiner_to_previous.is_some())
+    {
+        lo -= 1;
+    }
+    let mut hi = hit_pos;
+    while hi + 1 < lines.len()
+        && lines
+            .get(hi + 1)
+            .is_some_and(|line| line.joiner_to_previous.is_some())
+    {
+        hi += 1;
+    }
+
+    // Single-row case (and, under reordering, the wrap-group case too; see below)
+    // The hit column is a visual cell of the painted row and `word_or_url_slice` maps it against that same row
+    if lo == hi || (crate::render::bidi::is_enabled() && wrap_group_needs_bidi(lines, lo, hi)) {
+        let line_idx = if lo == hi { lo } else { hit_pos };
+        let line = lines.get(line_idx)?;
+        // The hit column is a visual cell of the painted row, so resolve the word against the painted region (identity/`text` when reordering off)
+        let src = if crate::render::bidi::is_enabled() {
+            line.painted_region.as_deref().unwrap_or(line.text.as_str())
+        } else {
+            line.text.as_str()
+        };
+        let (sel, text) = word_or_url_slice(src, hit.col_within_range, separators)?;
+        return Some(SemanticSelection {
+            anchor: SelectionEndpoint {
+                block_line_idx: line.block_line_idx,
+                col_within_range: sel.start,
+            },
+            head: SelectionEndpoint {
+                block_line_idx: line.block_line_idx,
+                col_within_range: sel.end.saturating_sub(1),
+            },
+            text,
+        });
+    }
+
+    let mut concat = String::new();
+    let mut text_byte_ranges = Vec::with_capacity(hi - lo + 1);
+    let group = lines.get(lo..=hi)?;
+    for (offset, line) in group.iter().enumerate() {
+        if offset > 0
+            && let Some(joiner) = line.joiner_to_previous.as_deref()
+        {
+            concat.push_str(joiner);
+        }
+        let text_byte_start = concat.len();
+        concat.push_str(&line.text);
+        text_byte_ranges.push((line.block_line_idx, text_byte_start, concat.len()));
+    }
+
+    // Measure fragment columns on the finished concat so a grapheme split across a wrap boundary is not counted twice
+    let mut fragments = Vec::with_capacity(text_byte_ranges.len());
+    let mut hit_concat_col = None;
+    for (block_line_idx, text_byte_start, text_byte_end) in text_byte_ranges {
+        let Some(start_prefix) = concat.get(..text_byte_start) else {
+            continue;
+        };
+        let Some(end_prefix) = concat.get(..text_byte_end) else {
+            continue;
+        };
+        let text_start = display_width(start_prefix);
+        let text_end = display_width(end_prefix);
+        fragments.push(ConcatFragment {
+            block_line_idx,
+            text_start,
+            text_end,
+        });
+        if block_line_idx == hit.block_line_idx {
+            let Some(local_text) = concat.get(text_byte_start..text_byte_end) else {
+                continue;
+            };
+            hit_concat_col = Some(map_local_hit_to_concat_col(
+                local_text,
+                text_start,
+                text_end,
+                hit.col_within_range,
+            ));
+        }
+    }
+
+    let (sel, text) = word_or_url_slice(&concat, hit_concat_col?, separators)?;
+    let last_col = sel.end.saturating_sub(1);
+    let anchor = map_inclusive_concat_col(&fragments, sel.start, JoinerColSnap::Forward)?;
+    let head = map_inclusive_concat_col(&fragments, last_col, JoinerColSnap::Backward)?;
+    if (anchor.block_line_idx, anchor.col_within_range)
+        > (head.block_line_idx, head.col_within_range)
+    {
+        return None;
+    }
+
+    Some(SemanticSelection { anchor, head, text })
+}
+
+/// Map a fragment-local click column into concat display columns.
+/// When a wrap splits a grapheme, the continuation still has local width but adds little or none in concat.
+/// Those absorbed columns snap to the last concat column of the split cluster instead of drifting into later text.
+fn map_local_hit_to_concat_col(
+    local_text: &str,
+    text_start: u16,
+    text_end: u16,
+    col_within_range: u16,
+) -> u16 {
+    let local_width = display_width(local_text);
+    let concat_width = text_end.saturating_sub(text_start);
+    let absorbed = local_width.saturating_sub(concat_width);
+    if col_within_range < absorbed {
+        text_start.saturating_sub(1)
+    } else {
+        text_start.saturating_add(col_within_range - absorbed)
+    }
+}
+
+/// Whether any row in the wrap group `[lo, hi]` needs bidi reordering.
+/// Rows are painted per row, so a whole-group concat would reorder differently than the screen.
+/// When reordering applies we resolve the word on the hit row alone.
+fn wrap_group_needs_bidi(lines: &[ResolvedSelectableLine], lo: usize, hi: usize) -> bool {
+    lines
+        .get(lo..=hi)
+        .into_iter()
+        .flatten()
+        .any(|l| crate::render::bidi::needs_bidi(&l.text))
+}
+
+fn word_or_url_slice(text: &str, col: u16, separators: &str) -> Option<(Range<u16>, String)> {
+    // Word boundaries follow visual cells when RTL is present; clipboard is logical.
+    let display = display_text_for_cols(text);
+    let range = url_range_at_col(display.as_ref(), col)
+        .unwrap_or_else(|| word_boundaries_at_col(display.as_ref(), col, separators));
+    if range.is_empty() {
+        return None;
+    }
+    let sliced = if crate::render::bidi::needs_bidi(text) {
+        slice_text_cols(text, range.clone())
+    } else {
+        crate::scrollback::types::slice_display_cols(text, range.start, range.end)
+    };
+    if sliced.is_empty() {
+        return None;
+    }
+    Some((range, sliced))
+}
+
+fn fragment_last_col(frag: &ConcatFragment) -> Option<SelectionEndpoint> {
+    let width = frag.text_end.saturating_sub(frag.text_start);
+    (width > 0).then_some(SelectionEndpoint {
+        block_line_idx: frag.block_line_idx,
+        col_within_range: width.saturating_sub(1),
+    })
+}
+
+fn map_inclusive_concat_col(
+    fragments: &[ConcatFragment],
+    col: u16,
+    snap: JoinerColSnap,
+) -> Option<SelectionEndpoint> {
+    for (i, frag) in fragments.iter().enumerate() {
+        if col < frag.text_start {
+            return match snap {
+                JoinerColSnap::Forward => Some(SelectionEndpoint {
+                    block_line_idx: frag.block_line_idx,
+                    col_within_range: 0,
+                }),
+                JoinerColSnap::Backward => fragment_last_col(fragments.get(i.checked_sub(1)?)?),
+            };
+        }
+        if col < frag.text_end {
+            return Some(SelectionEndpoint {
+                block_line_idx: frag.block_line_idx,
+                col_within_range: col.saturating_sub(frag.text_start),
+            });
+        }
+    }
+
+    match snap {
+        JoinerColSnap::Forward => None,
+        JoinerColSnap::Backward => fragment_last_col(fragments.last()?),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xai_grok_markdown::TableCellCopy;
 
     fn single_line_drag(block_line_idx: usize, width: u16) -> ActiveTextDrag {
         ActiveTextDrag {
@@ -1269,6 +1583,7 @@ mod tests {
                 screen_x: 0,
                 selectable_cols: 0..5,
                 text: text.to_string(),
+                painted_region: None,
                 joiner_to_previous: joiner.clone(),
             });
             assert!(boundaries.is_empty());
@@ -1297,6 +1612,275 @@ mod tests {
         }
     }
 
+    // Serialize the process-global bidi latch. Restore it on scope exit even if `f` panics, so a failed assertion
+    // can't leak `rtl_bidi = true` into other tests in the process. LTR cases need no reorder so only these RTL cases
+    // need the guard.
+    static BIDI_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    struct BidiLatchGuard(bool);
+    impl Drop for BidiLatchGuard {
+        fn drop(&mut self) {
+            crate::render::bidi::set_enabled(self.0);
+        }
+    }
+    fn with_rtl_bidi<R>(f: impl FnOnce() -> R) -> R {
+        let _g = BIDI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _latch = BidiLatchGuard(crate::render::bidi::is_enabled());
+        crate::render::bidi::set_enabled(true);
+        f()
+    }
+
+    /// A drag over painted (visual) RTL cells copies the logical text, not a mismapped substring of the trailing-trimmed derived text.
+    #[test]
+    fn rtl_drag_copies_logical_text_from_painted_cells() {
+        use crate::scrollback::types::{BlockLine, Selectable};
+        with_rtl_bidi(|| {
+            let make = |s: &str| BlockLine {
+                content: ratatui::text::Line::from(s.to_string()),
+                selectable: Selectable::All,
+                selection_range: Some(0),
+                ..Default::default()
+            };
+            let drag_cols = |a: u16, h: u16| ActiveTextDrag {
+                anchor: RangeHit {
+                    entry_idx: 0,
+                    range_id: 0,
+                    block_line_idx: 0,
+                    col_within_range: a,
+                },
+                head: RangeHit {
+                    entry_idx: 0,
+                    range_id: 0,
+                    block_line_idx: 0,
+                    col_within_range: h,
+                },
+                kind: SelectionKind::Linear,
+                anchor_content_width: None,
+            };
+
+            // "Hi خوب" paints "Hi بوخ"; dragging the Persian cells (visual 3..=5) copies logical "خوب"
+            assert_eq!(
+                reconstruct_full_selection_text(&[make("Hi خوب")], &drag_cols(3, 5)),
+                Some("خوب".to_string()),
+            );
+            // A trailing-padded pure-RTL row copies logical order with the pad trimmed
+            assert_eq!(
+                reconstruct_full_selection_text(&[make("خوب  ")], &drag_cols(0, 4)),
+                Some("خوب".to_string()),
+            );
+        });
+    }
+
+    /// A truncated RTL row paints `content + "…"` where the ellipsis is not selectable.
+    /// Under an RTL base the ellipsis reorders to the visual left, shifting the selectable region right.
+    /// So the stored hit box must be the region's visual span (past the ellipsis), not its logical columns.
+    #[test]
+    fn visual_selectable_cols_shifts_region_past_rtl_ellipsis() {
+        use crate::scrollback::types::{
+            BlockLine, Selectable, selectable_cols, visual_selectable_cols,
+        };
+        let line = BlockLine {
+            content: ratatui::text::Line::from(vec![
+                ratatui::text::Span::raw("خوب"),
+                ratatui::text::Span::raw("…"),
+            ]),
+            selectable: Selectable::Spans(0..1),
+            selection_range: Some(0),
+            ..Default::default()
+        };
+        // Region is logical columns 0..3 (the "…" span is excluded).
+        assert_eq!(selectable_cols(&line.content, &line.selectable), Some(0..3));
+        // Reordering off: identity.
+        assert_eq!(visual_selectable_cols(&line), Some(0..3));
+        with_rtl_bidi(|| {
+            // Painted "خوب…" reorders to "…بوخ"; the word occupies visual cells 1..4
+            assert_eq!(visual_selectable_cols(&line), Some(1..4));
+        });
+    }
+
+    /// The overlay copy path (single-line, resolved-model) maps drag columns against the painted region, not the trailing-trimmed `text`.
+    /// On a padded RTL row the pad paints at the left, so dragging the visible letters must copy the word.
+    /// Slicing the narrower `text` dropped letters.
+    #[test]
+    fn rtl_overlay_slice_maps_painted_region_not_trimmed_text() {
+        with_rtl_bidi(|| {
+            let mut model = ResolvedSelectionModel::default();
+            model.push_line(ResolvedSelectableLine {
+                entry_idx: 0,
+                range_id: 0,
+                block_line_idx: 0,
+                screen_y: 0,
+                screen_x: 0,
+                selectable_cols: 0..5,
+                text: "خوب".to_string(),
+                painted_region: Some("خوب  ".to_string()),
+                joiner_to_previous: None,
+            });
+            // Painted "خوب  " reorders to "  بوخ"; the Persian letters occupy visual cells 2..5
+            // Dragging them copies the logical word
+            let drag = ActiveTextDrag {
+                anchor: RangeHit {
+                    entry_idx: 0,
+                    range_id: 0,
+                    block_line_idx: 0,
+                    col_within_range: 2,
+                },
+                head: RangeHit {
+                    entry_idx: 0,
+                    range_id: 0,
+                    block_line_idx: 0,
+                    col_within_range: 4,
+                },
+                kind: SelectionKind::Linear,
+                anchor_content_width: None,
+            };
+            assert_eq!(
+                reconstruct_selection_text(&model, &drag),
+                Some("خوب".to_string()),
+            );
+        });
+    }
+
+    /// The overlay copy path honors the tool-header override the same way the multi-row path does.
+    /// A divergent stored string is copied whole under RTL.
+    #[test]
+    fn rtl_overlay_override_row_copies_whole_stored_text() {
+        with_rtl_bidi(|| {
+            let mut model = ResolvedSelectionModel::default();
+            model.push_line(ResolvedSelectableLine {
+                entry_idx: 0,
+                range_id: 0,
+                block_line_idx: 0,
+                screen_y: 0,
+                screen_x: 0,
+                selectable_cols: 0..3,
+                text: "/path/خوب/file".to_string(),
+                painted_region: Some("خوب".to_string()),
+                joiner_to_previous: None,
+            });
+            let drag = ActiveTextDrag {
+                anchor: RangeHit {
+                    entry_idx: 0,
+                    range_id: 0,
+                    block_line_idx: 0,
+                    col_within_range: 0,
+                },
+                head: RangeHit {
+                    entry_idx: 0,
+                    range_id: 0,
+                    block_line_idx: 0,
+                    col_within_range: 1,
+                },
+                kind: SelectionKind::Linear,
+                anchor_content_width: None,
+            };
+            assert_eq!(
+                reconstruct_selection_text(&model, &drag),
+                Some("/path/خوب/file".to_string()),
+            );
+        });
+    }
+
+    /// An override row (tool header) paints a display that differs from its stored copy text.
+    /// With `rtl_bidi` on, the visual drag columns index the painted display, not the override.
+    /// So a partial drag copies the whole override rather than a mismapped, reversed substring of it.
+    #[test]
+    fn rtl_override_row_copies_whole_stored_text() {
+        use crate::scrollback::types::{BlockLine, Selectable};
+        with_rtl_bidi(|| {
+            let line = BlockLine {
+                content: ratatui::text::Line::from("خوب".to_string()),
+                selectable: Selectable::All,
+                selection_range: Some(0),
+                selection_text: Some("/path/خوب/file".to_string()),
+                ..Default::default()
+            };
+            let drag = ActiveTextDrag {
+                anchor: RangeHit {
+                    entry_idx: 0,
+                    range_id: 0,
+                    block_line_idx: 0,
+                    col_within_range: 0,
+                },
+                head: RangeHit {
+                    entry_idx: 0,
+                    range_id: 0,
+                    block_line_idx: 0,
+                    col_within_range: 1,
+                },
+                kind: SelectionKind::Linear,
+                anchor_content_width: None,
+            };
+            assert_eq!(
+                reconstruct_full_selection_text(&[line], &drag),
+                Some("/path/خوب/file".to_string()),
+            );
+        });
+    }
+
+    /// A line containing a ligature (lam-alef `لا`) still selects its last cell.
+    /// `UnicodeWidthStr` reports `سلام` as 3 wide but ratatui paints 4 cells.
+    /// The selectable width must count painted cells or the last cell is dropped.
+    #[test]
+    fn ligature_line_selects_last_cell() {
+        use crate::scrollback::types::{BlockLine, Selectable};
+        let line = BlockLine {
+            content: ratatui::text::Line::from("Hello سلام world".to_string()),
+            selectable: Selectable::All,
+            selection_range: Some(0),
+            ..Default::default()
+        };
+        // 16 painted cells (one per grapheme); drag the whole row (0..=15).
+        let drag = ActiveTextDrag {
+            anchor: RangeHit {
+                entry_idx: 0,
+                range_id: 0,
+                block_line_idx: 0,
+                col_within_range: 0,
+            },
+            head: RangeHit {
+                entry_idx: 0,
+                range_id: 0,
+                block_line_idx: 0,
+                col_within_range: 15,
+            },
+            kind: SelectionKind::Linear,
+            anchor_content_width: None,
+        };
+        assert_eq!(
+            reconstruct_full_selection_text(&[line], &drag),
+            Some("Hello سلام world".to_string()),
+        );
+    }
+
+    /// Double-click on a painted RTL word copies it in logical order.
+    /// The click lands on a visual cell ("خوب" paints as "بوخ") and the word maps back.
+    #[test]
+    fn rtl_double_click_selects_logical_word_from_painted_cells() {
+        with_rtl_bidi(|| {
+            let mut model = ResolvedSelectionModel::default();
+            model.push_line(ResolvedSelectableLine {
+                entry_idx: 0,
+                range_id: 0,
+                block_line_idx: 0,
+                screen_y: 0,
+                screen_x: 0,
+                selectable_cols: 0..3,
+                text: "خوب".to_string(),
+                painted_region: None,
+                joiner_to_previous: None,
+            });
+            let hit = RangeHit {
+                entry_idx: 0,
+                range_id: 0,
+                block_line_idx: 0,
+                col_within_range: 1,
+            };
+            let sel = semantic_selection_at(&model, &hit, DEFAULT_WORD_SEPARATORS)
+                .expect("word selection");
+            assert_eq!(sel.text, "خوب");
+        });
+    }
+
     #[test]
     fn edit_boundaries_apply_only_at_selected_path_edges() {
         use crate::scrollback::types::{
@@ -1317,6 +1901,7 @@ mod tests {
                 screen_x: 0,
                 selectable_cols: 0..3,
                 text: text.to_string(),
+                painted_region: None,
                 joiner_to_previous: joiner,
             };
             resolved_boundaries.push(
@@ -1392,6 +1977,7 @@ mod tests {
             screen_x: 10,
             selectable_cols: 2..6,
             text: "body".to_string(),
+            painted_region: None,
             joiner_to_previous: None,
         });
 
@@ -1413,6 +1999,7 @@ mod tests {
             screen_x: 10,
             selectable_cols: 2..6,
             text: "body".to_string(),
+            painted_region: None,
             joiner_to_previous: None,
         });
 
@@ -1422,10 +2009,6 @@ mod tests {
         let right = model.hit_test_selectable_range(16, 3).unwrap();
         assert_eq!(right.col_within_range, 3);
     }
-
-    // -----------------------------------------------------------------------
-    // hit_test_nearest_in_range tests
-    // -----------------------------------------------------------------------
 
     /// One selectable line for the nearest-in-range fixtures.
     fn nearest_line(
@@ -1442,6 +2025,7 @@ mod tests {
             screen_x: 4,
             selectable_cols,
             text: "text".to_string(),
+            painted_region: None,
             joiner_to_previous: None,
         }
     }
@@ -1455,9 +2039,7 @@ mod tests {
         }
     }
 
-    /// Rows with a line of the anchor's range behave exactly like the
-    /// range-restricted `hit_test_selectable_range`: exact col, and clamping
-    /// to both ends.
+    /// Rows with a line of the anchor's range behave exactly like the range-restricted `hit_test_selectable_range`: exact col, and clamping to both ends.
     #[test]
     fn nearest_in_range_same_row_parity_with_selectable_range_hit() {
         let mut model = ResolvedSelectionModel::default();
@@ -1471,8 +2053,7 @@ mod tests {
         }
     }
 
-    /// A pointer on a dead row (no line of the range) snaps to the nearest
-    /// row of the range instead of missing.
+    /// A pointer on a dead row (no line of the range) snaps to the nearest row of the range instead of missing.
     #[test]
     fn nearest_in_range_snaps_across_gap_rows() {
         let mut model = ResolvedSelectionModel::default();
@@ -1490,8 +2071,7 @@ mod tests {
         assert_eq!(hit.block_line_idx, 2);
     }
 
-    /// A pointer below the range's last line selects toward its end
-    /// (native semantics) instead of freezing.
+    /// A pointer below the range's last line selects toward its end (as a native drag does) instead of freezing.
     #[test]
     fn nearest_in_range_snaps_from_below_last_line() {
         let mut model = ResolvedSelectionModel::default();
@@ -1510,8 +2090,7 @@ mod tests {
         assert_eq!(hit.col_within_range, 0);
     }
 
-    /// Lines of other ranges are never candidates, even on nearer rows —
-    /// the head stays pinned to the anchor's range.
+    /// Lines of other ranges are never candidates, even on nearer rows; the head stays pinned to the anchor's range.
     #[test]
     fn nearest_in_range_ignores_other_ranges_on_nearer_rows() {
         let mut model = ResolvedSelectionModel::default();
@@ -1525,8 +2104,7 @@ mod tests {
         assert_eq!(hit.block_line_idx, 0);
     }
 
-    /// A full (row, col) tie resolves to the line farther from the anchor,
-    /// so a drag paused on a dead row keeps the selection extended across it.
+    /// A full (row, col) tie resolves to the line farther from the anchor, so a drag paused on a dead row keeps the selection extended across it.
     #[test]
     fn nearest_in_range_tie_prefers_line_farther_from_anchor() {
         let mut model = ResolvedSelectionModel::default();
@@ -1546,8 +2124,7 @@ mod tests {
         assert_eq!(hit.block_line_idx, 0);
     }
 
-    /// The range scrolled fully out of the model → no candidate; callers
-    /// keep the previous head.
+    /// The range scrolled fully out of the model leaves no candidate; callers keep the previous head.
     #[test]
     fn nearest_in_range_misses_when_range_absent() {
         let mut model = ResolvedSelectionModel::default();
@@ -1625,8 +2202,7 @@ mod tests {
         let mut buf = Buffer::empty(Rect::new(0, 0, 5, 3));
         render_block_drag_overlay(&model, &drag, &mut buf);
         // Blocks 0 and 1 should be inverted, block 2 should not.
-        // Just verify it runs without panic — visual correctness
-        // is validated by manual testing.
+        // This only verifies it runs without panic; visual correctness is validated by manual testing
         assert_eq!(buf.area.height, 3);
     }
 
@@ -1676,7 +2252,7 @@ mod tests {
 
     #[test]
     fn autoscroll_speed_ramp() {
-        // Farther from edge → faster speed
+        // Farther from the edge means faster speed
         assert!(speed_for_distance(1) < speed_for_distance(5));
         assert!(speed_for_distance(5) <= speed_for_distance(15));
     }
@@ -1693,9 +2269,8 @@ mod tests {
         assert!(block_drag_threshold_exceeded(&pending, 5, 6));
     }
 
-    /// Simulate selecting from the last line, then scrolling so the anchor
-    /// scrolls off-screen. The overlay and copy should still work for all
-    /// visible lines in the selection range.
+    /// Simulate selecting from the last line, then scrolling so the anchor scrolls off-screen.
+    /// The overlay and copy should still work for all visible lines in the selection range.
     #[test]
     fn selection_survives_anchor_scrolling_off_screen() {
         // 10 lines, block_line_idx 0..9. Initially all visible.
@@ -1723,6 +2298,7 @@ mod tests {
                 screen_x: 0,
                 selectable_cols: 0..(text.len() as u16),
                 text: text.to_string(),
+                painted_region: None,
                 joiner_to_previous: if i > 0 { Some("\n".to_string()) } else { None },
             });
         }
@@ -1743,9 +2319,8 @@ mod tests {
         };
 
         // Selection overlay and copy work normally.
-        // Both anchor (line 9) and head (line 5) are at col 0, so
-        // the start line gets partial selection (from col 0 to end)
-        // and the end line gets partial selection (from 0 to col 0+1).
+        // Both anchor (line 9) and head (line 5) are at col 0
+        // The start line gets partial selection (from col 0 to end) and the end line gets partial selection (from 0 to col 0+1)
         let text = reconstruct_selection_text(&model, &drag).unwrap();
         assert!(
             text.contains("line five"),
@@ -1768,13 +2343,13 @@ mod tests {
                 screen_x: 0,
                 selectable_cols: 0..(line_text.len() as u16),
                 text: line_text.to_string(),
+                painted_region: None,
                 joiner_to_previous: if i > 0 { Some("\n".to_string()) } else { None },
             });
         }
 
-        // The anchor (block_line_idx=9) is now off-screen. During autoscroll
-        // the resolver misses there and the caller keeps the previous head
-        // (pinned by active_drag_motion_miss_keeps_previous_head).
+        // The anchor (block_line_idx=9) is now off-screen
+        // During autoscroll the resolver misses there and the caller keeps the previous head (pinned by active_drag_motion_miss_keeps_previous_head)
         let new_head = head; // head was at block_line_idx=5
 
         let scrolled_drag = ActiveTextDrag {
@@ -1784,8 +2359,7 @@ mod tests {
             anchor_content_width: None,
         };
 
-        // Overlay should highlight visible lines 5-6 (head=5, anchor=9 off-screen,
-        // so range is 5..=9, visible portion is lines 5 and 6).
+        // Overlay should highlight visible lines 5-6 (head=5, anchor=9 off-screen, so range is 5..=9, visible portion is lines 5 and 6)
         let mut buf = Buffer::empty(Rect::new(0, 0, 30, 7));
         render_active_selection_overlay(&scrolled_model, &scrolled_drag, None, &mut buf);
 
@@ -1804,10 +2378,6 @@ mod tests {
         assert!(!text.contains("line nine"), "off-screen line not in model");
     }
 
-    // -----------------------------------------------------------------------
-    // word_boundaries_at_col tests
-    // -----------------------------------------------------------------------
-
     /// Shorthand for tests using the default tmux separator set.
     fn wb(text: &str, col: u16) -> Range<u16> {
         word_boundaries_at_col(text, col, DEFAULT_WORD_SEPARATORS)
@@ -1820,7 +2390,7 @@ mod tests {
 
     #[test]
     fn word_boundaries_single_word() {
-        // "hello" → all Word class, col anywhere → 0..5
+        // "hello" is all Word class, so any col gives 0..5
         assert_eq!(wb("hello", 0), 0..5);
         assert_eq!(wb("hello", 2), 0..5);
         assert_eq!(wb("hello", 4), 0..5);
@@ -1828,7 +2398,7 @@ mod tests {
 
     #[test]
     fn word_boundaries_two_words() {
-        // "hello world" → Word(0..5), Whitespace(5..6), Word(6..11)
+        // "hello world" segments as Word(0..5), Whitespace(5..6), Word(6..11)
         assert_eq!(wb("hello world", 0), 0..5);
         assert_eq!(wb("hello world", 4), 0..5);
         assert_eq!(wb("hello world", 5), 5..6);
@@ -1838,7 +2408,7 @@ mod tests {
 
     #[test]
     fn word_boundaries_underscore_joins_words() {
-        // "foo_bar" → all Word class
+        // "foo_bar" is all Word class
         assert_eq!(wb("foo_bar", 0), 0..7);
         assert_eq!(wb("foo_bar", 3), 0..7); // on '_'
         assert_eq!(wb("foo_bar", 6), 0..7);
@@ -1846,7 +2416,7 @@ mod tests {
 
     #[test]
     fn word_boundaries_punctuation_run() {
-        // "a---b" → Word(0..1), Separator(1..4), Word(4..5)
+        // "a---b" segments as Word(0..1), Separator(1..4), Word(4..5)
         assert_eq!(wb("a---b", 0), 0..1);
         assert_eq!(wb("a---b", 1), 1..4);
         assert_eq!(wb("a---b", 3), 1..4);
@@ -1855,14 +2425,14 @@ mod tests {
 
     #[test]
     fn word_boundaries_whitespace_run() {
-        // "a   b" → Word(0..1), Whitespace(1..4), Word(4..5)
+        // "a   b" segments as Word(0..1), Whitespace(1..4), Word(4..5)
         assert_eq!(wb("a   b", 1), 1..4);
         assert_eq!(wb("a   b", 3), 1..4);
     }
 
     #[test]
     fn word_boundaries_mixed_punct_and_word() {
-        // "hello.world" → Word(0..5), Separator(5..6), Word(6..11)
+        // "hello.world" segments as Word(0..5), Separator(5..6), Word(6..11)
         assert_eq!(wb("hello.world", 4), 0..5);
         assert_eq!(wb("hello.world", 5), 5..6);
         assert_eq!(wb("hello.world", 6), 6..11);
@@ -1870,7 +2440,7 @@ mod tests {
 
     #[test]
     fn word_boundaries_line_start_and_end() {
-        // " hello " → Whitespace(0..1), Word(1..6), Whitespace(6..7)
+        // " hello " segments as Whitespace(0..1), Word(1..6), Whitespace(6..7)
         assert_eq!(wb(" hello ", 0), 0..1);
         assert_eq!(wb(" hello ", 1), 1..6);
         assert_eq!(wb(" hello ", 6), 6..7);
@@ -1892,9 +2462,8 @@ mod tests {
 
     #[test]
     fn word_boundaries_wide_char_cjk() {
-        // CJK characters are not in DEFAULT_WORD_SEPARATORS and not whitespace,
-        // so they are Word class (matching tmux). Each occupies 2 display cols.
-        // "a\u{754c}b" → all Word class → 0..4
+        // CJK characters are not in DEFAULT_WORD_SEPARATORS and not whitespace, so they are Word class (matching tmux)
+        // Each occupies 2 display cols, so "a\u{754c}b" is all Word class, giving 0..4
         assert_eq!(wb("a\u{754c}b", 0), 0..4);
         assert_eq!(wb("a\u{754c}b", 1), 0..4); // first col of wide char
         assert_eq!(wb("a\u{754c}b", 2), 0..4); // second col of wide char
@@ -1903,14 +2472,14 @@ mod tests {
 
     #[test]
     fn word_boundaries_consecutive_wide_chars() {
-        // Two CJK chars → both Word class, grouped: Word(0..4)
+        // Two CJK chars are both Word class, grouped: Word(0..4)
         assert_eq!(wb("\u{754c}\u{4e16}", 0), 0..4);
         assert_eq!(wb("\u{754c}\u{4e16}", 2), 0..4);
     }
 
     #[test]
     fn word_boundaries_combining_mark() {
-        // "e\u{0301}f" → graphemes: "e\u{0301}" (width 1) + "f" (width 1)
+        // "e\u{0301}f" has graphemes "e\u{0301}" (width 1) and "f" (width 1)
         // Both are Word class (not separators, not whitespace).
         assert_eq!(wb("e\u{0301}f", 0), 0..2);
         assert_eq!(wb("e\u{0301}f", 1), 0..2);
@@ -1918,23 +2487,22 @@ mod tests {
 
     #[test]
     fn word_boundaries_digits_are_word_chars() {
-        // "x86_64" → all Word
+        // "x86_64" is all Word
         assert_eq!(wb("x86_64", 0), 0..6);
         assert_eq!(wb("x86_64", 5), 0..6);
     }
 
     #[test]
     fn word_boundaries_mixed_separators_same_class_grouped() {
-        // "-=" → both Separator, grouped as consecutive same-class
+        // Both chars of "-=" are Separator, grouped as consecutive same-class
         assert_eq!(wb("-=", 0), 0..2);
         assert_eq!(wb("-=", 1), 0..2);
     }
 
     #[test]
     fn word_boundaries_tab_is_whitespace() {
-        // Tab has width 1 via UnicodeWidthStr 0.2 and is classified as
-        // Whitespace, so it separates adjacent Word segments:
-        // Word(0..1), Whitespace(1..2), Word(2..3).
+        // Tab has width 1 via UnicodeWidthStr 0.2 and is classified as Whitespace
+        // It separates adjacent Word segments: Word(0..1), Whitespace(1..2), Word(2..3)
         assert_eq!(wb("a\tb", 0), 0..1);
         assert_eq!(wb("a\tb", 1), 1..2);
         assert_eq!(wb("a\tb", 2), 2..3);
@@ -1942,9 +2510,8 @@ mod tests {
 
     #[test]
     fn word_boundaries_non_ascii_letters_are_word_chars() {
-        // Non-ASCII letters group with adjacent ASCII word chars,
-        // matching tmux behaviour where only ASCII punctuation is a separator.
-        // "caf\u{e9}" → all Word class → 0..4
+        // Non-ASCII letters group with adjacent ASCII word chars, matching tmux behaviour where only ASCII punctuation is a separator
+        // "caf\u{e9}" is all Word class, giving 0..4
         assert_eq!(wb("caf\u{e9}", 0), 0..4);
         assert_eq!(wb("caf\u{e9}", 3), 0..4);
     }
@@ -1952,7 +2519,7 @@ mod tests {
     #[test]
     fn word_boundaries_cjk_between_separators() {
         // Separator, CJK (Word), Separator:
-        // ".\u{754c}." → Separator(0..1), Word(1..3), Separator(3..4)
+        // ".\u{754c}." segments as Separator(0..1), Word(1..3), Separator(3..4)
         assert_eq!(wb(".\u{754c}.", 0), 0..1);
         assert_eq!(wb(".\u{754c}.", 1), 1..3);
         assert_eq!(wb(".\u{754c}.", 3), 3..4);
@@ -1988,7 +2555,7 @@ mod tests {
     #[test]
     fn word_boundaries_underscore_is_not_a_separator() {
         // Underscore is NOT in DEFAULT_WORD_SEPARATORS (matches tmux).
-        // "a_b" → all Word → 0..3
+        // "a_b" is all Word, giving 0..3
         assert_eq!(wb("a_b", 0), 0..3);
         assert_eq!(wb("a_b", 1), 0..3);
         assert_eq!(wb("a_b", 2), 0..3);
@@ -1996,18 +2563,18 @@ mod tests {
 
     #[test]
     fn word_boundaries_custom_separators_empty() {
-        // Empty separators string → only whitespace breaks words.
-        // "hello-world" with no separators → all Word → 0..11
+        // With an empty separators string only whitespace breaks words
+        // "hello-world" with no separators is all Word, giving 0..11
         assert_eq!(word_boundaries_at_col("hello-world", 0, ""), 0..11);
         assert_eq!(word_boundaries_at_col("hello-world", 5, ""), 0..11);
         assert_eq!(word_boundaries_at_col("hello-world", 6, ""), 0..11);
-        // "a.b@c" → all Word → 0..5
+        // "a.b@c" is all Word, giving 0..5
         assert_eq!(word_boundaries_at_col("a.b@c", 2, ""), 0..5);
     }
 
     #[test]
     fn word_boundaries_custom_separators_subset() {
-        // Only "." and "/" are separators — hyphen and @ are word chars.
+        // Only "." and "/" are separators; hyphen and @ are word chars
         let seps = "./";
         assert_eq!(word_boundaries_at_col("hello-world", 0, seps), 0..11);
         assert_eq!(word_boundaries_at_col("hello.world", 0, seps), 0..5);
@@ -2015,10 +2582,6 @@ mod tests {
         assert_eq!(word_boundaries_at_col("a/b", 0, seps), 0..1);
         assert_eq!(word_boundaries_at_col("user@host", 0, seps), 0..9);
     }
-
-    // -----------------------------------------------------------------------
-    // strip_trailing_url_punctuation tests
-    // -----------------------------------------------------------------------
 
     #[test]
     fn strip_trailing_no_punctuation() {
@@ -2064,7 +2627,7 @@ mod tests {
 
     #[test]
     fn strip_trailing_unbalanced_close_paren() {
-        // "(see https://example.com)" → regex captures "https://example.com)"
+        // In "(see https://example.com)" the regex captures "https://example.com)"
         assert_eq!(
             strip_trailing_url_punctuation("https://example.com)"),
             "https://example.com"
@@ -2104,14 +2667,10 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------------
-    // url_range_at_col tests
-    // -----------------------------------------------------------------------
-
     #[test]
     fn url_range_simple_https() {
         let text = "see https://example.com here";
-        // "see " = 4 cols, URL = 19 cols → 4..23
+        // "see " is 4 cols and the URL is 19, so the range is 4..23
         assert_eq!(url_range_at_col(text, 4), Some(4..23));
         assert_eq!(url_range_at_col(text, 10), Some(4..23));
         assert_eq!(url_range_at_col(text, 22), Some(4..23));
@@ -2144,10 +2703,10 @@ mod tests {
     #[test]
     fn url_range_trailing_period_stripped() {
         let text = "see https://example.com.";
-        // URL match = "https://example.com." → stripped to "https://example.com"
+        // URL match "https://example.com." is stripped to "https://example.com"
         assert_eq!(url_range_at_col(text, 4), Some(4..23));
         assert_eq!(url_range_at_col(text, 22), Some(4..23));
-        // Click ON the trailing period → past the stripped range → None
+        // Col 23 is the trailing period, past the stripped range
         assert_eq!(url_range_at_col(text, 23), None);
     }
 
@@ -2155,7 +2714,7 @@ mod tests {
     fn url_range_trailing_comma_stripped() {
         let text = "see https://example.com, more";
         assert_eq!(url_range_at_col(text, 4), Some(4..23));
-        // Click on comma → None
+        // Col 23 is the comma, past the stripped URL
         assert_eq!(url_range_at_col(text, 23), None);
     }
 
@@ -2170,9 +2729,9 @@ mod tests {
     #[test]
     fn url_range_unbalanced_paren_in_prose() {
         let text = "(see https://example.com)";
-        // Match: "https://example.com)" → stripped to "https://example.com"
+        // Match "https://example.com)" is stripped to "https://example.com"
         assert_eq!(url_range_at_col(text, 5), Some(5..24));
-        // Click on the trailing ')' → None
+        // Col 24 is the trailing ')', outside the stripped URL
         assert_eq!(url_range_at_col(text, 24), None);
     }
 
@@ -2225,7 +2784,6 @@ mod tests {
 
     #[test]
     fn url_range_not_a_url_scheme() {
-        // "notascheme://foo" should not match
         assert_eq!(url_range_at_col("notascheme://foo", 0), None);
     }
 
@@ -2237,27 +2795,483 @@ mod tests {
 
     #[test]
     fn url_range_degenerate_scheme_only_skipped() {
-        // "https://." → regex matches "https://." → strip produces "https://"
-        // which is scheme-only and should be skipped.
+        // The regex matches "https://." and strip produces "https://", which is scheme-only and skipped
         assert_eq!(url_range_at_col("see https://.", 4), None);
     }
 
     #[test]
     fn url_range_combined_with_word_boundaries() {
-        // Simulates the double-click fallback: url_range_at_col → word_boundaries_at_col
+        // Simulates the double-click fallback: url_range_at_col, then word_boundaries_at_col
         let text = "click https://example.com/path or this_word";
-        // On URL → url_range returns the range
+        // On the URL, url_range returns the range
         let url = url_range_at_col(text, 6);
         assert!(url.is_some());
-        // On plain word → url_range returns None, word_boundaries takes over
+        // On a plain word url_range returns None and word_boundaries takes over
         let non_url_col = 36; // inside "this_word"
         assert_eq!(url_range_at_col(text, non_url_col), None);
         assert_eq!(wb(text, non_url_col), 34..43);
     }
 
-    // -----------------------------------------------------------------------
-    // selected_cols_for_endpoints tests
-    // -----------------------------------------------------------------------
+    fn wrap_model(fragments: &[(&str, Option<&str>)]) -> ResolvedSelectionModel {
+        let mut model = ResolvedSelectionModel::default();
+        for (i, (text, joiner)) in fragments.iter().enumerate() {
+            model.push_line(ResolvedSelectableLine {
+                entry_idx: 0,
+                range_id: 0,
+                block_line_idx: i,
+                screen_y: i as u16,
+                screen_x: 0,
+                selectable_cols: 0..display_width(text),
+                text: (*text).to_string(),
+                painted_region: None,
+                joiner_to_previous: joiner.map(str::to_string),
+            });
+        }
+        model
+    }
+
+    fn wrap_hit(block_line_idx: usize, col_within_range: u16) -> RangeHit {
+        RangeHit {
+            entry_idx: 0,
+            range_id: 0,
+            block_line_idx,
+            col_within_range,
+        }
+    }
+
+    fn semantic(model: &ResolvedSelectionModel, line: usize, col: u16) -> SemanticSelection {
+        semantic_selection_at(model, &wrap_hit(line, col), DEFAULT_WORD_SEPARATORS)
+            .expect("semantic selection")
+    }
+
+    fn ep(block_line_idx: usize, col_within_range: u16) -> SelectionEndpoint {
+        SelectionEndpoint {
+            block_line_idx,
+            col_within_range,
+        }
+    }
+
+    #[test]
+    fn semantic_selection_mid_word_wrap_selects_full_identifier() {
+        let model = wrap_model(&[("hello_world_", None), ("identifier", Some(""))]);
+        let expected = SemanticSelection {
+            anchor: ep(0, 0),
+            head: ep(1, 9),
+            text: "hello_world_identifier".to_string(),
+        };
+        assert_eq!(semantic(&model, 0, 0), expected);
+        assert_eq!(semantic(&model, 0, 11), expected);
+        assert_eq!(semantic(&model, 1, 0), expected);
+        assert_eq!(semantic(&model, 1, 5), expected);
+    }
+
+    #[test]
+    fn semantic_selection_space_wrap_does_not_cross() {
+        let model = wrap_model(&[("hello", None), ("world", Some(" "))]);
+        assert_eq!(
+            semantic(&model, 0, 1),
+            SemanticSelection {
+                anchor: ep(0, 0),
+                head: ep(0, 4),
+                text: "hello".to_string(),
+            }
+        );
+        assert_eq!(
+            semantic(&model, 1, 0),
+            SemanticSelection {
+                anchor: ep(1, 0),
+                head: ep(1, 4),
+                text: "world".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn semantic_selection_hard_break_does_not_cross() {
+        let model = wrap_model(&[("hello", None), ("hello", None)]);
+        let first = SemanticSelection {
+            anchor: ep(0, 0),
+            head: ep(0, 4),
+            text: "hello".to_string(),
+        };
+        let second = SemanticSelection {
+            anchor: ep(1, 0),
+            head: ep(1, 4),
+            text: "hello".to_string(),
+        };
+        assert_eq!(semantic(&model, 0, 2), first);
+        assert_eq!(semantic(&model, 1, 2), second);
+    }
+
+    #[test]
+    fn semantic_selection_wrapped_url_spans_fragments() {
+        let model = wrap_model(&[
+            ("https://example.", None),
+            ("com/very/long/", Some("")),
+            ("path", Some("")),
+        ]);
+        let expected = SemanticSelection {
+            anchor: ep(0, 0),
+            head: ep(2, 3),
+            text: "https://example.com/very/long/path".to_string(),
+        };
+        assert_eq!(semantic(&model, 0, 2), expected);
+        assert_eq!(semantic(&model, 1, 3), expected);
+        assert_eq!(semantic(&model, 2, 0), expected);
+    }
+
+    #[test]
+    fn semantic_selection_custom_separators_across_wrap() {
+        let model = wrap_model(&[("hello-", None), ("world", Some(""))]);
+        let grouped = semantic_selection_at(&model, &wrap_hit(0, 1), "").expect("grouped");
+        assert_eq!(
+            grouped,
+            SemanticSelection {
+                anchor: ep(0, 0),
+                head: ep(1, 4),
+                text: "hello-world".to_string(),
+            }
+        );
+        assert_eq!(
+            semantic_selection_at(&model, &wrap_hit(1, 0), "").expect("grouped from row 1"),
+            grouped
+        );
+
+        let split = semantic_selection_at(&model, &wrap_hit(0, 1), "-").expect("split");
+        assert_eq!(
+            split,
+            SemanticSelection {
+                anchor: ep(0, 0),
+                head: ep(0, 4),
+                text: "hello".to_string(),
+            }
+        );
+        assert_eq!(
+            semantic_selection_at(&model, &wrap_hit(1, 2), "-").expect("world side"),
+            SemanticSelection {
+                anchor: ep(1, 0),
+                head: ep(1, 4),
+                text: "world".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn semantic_selection_single_row_word_and_url() {
+        let words = wrap_model(&[("hello world", None)]);
+        assert_eq!(
+            semantic(&words, 0, 1),
+            SemanticSelection {
+                anchor: ep(0, 0),
+                head: ep(0, 4),
+                text: "hello".to_string(),
+            }
+        );
+        assert_eq!(
+            semantic(&words, 0, 7),
+            SemanticSelection {
+                anchor: ep(0, 6),
+                head: ep(0, 10),
+                text: "world".to_string(),
+            }
+        );
+
+        let urls = wrap_model(&[("see https://x.ai now", None)]);
+        assert_eq!(
+            semantic(&urls, 0, 6),
+            SemanticSelection {
+                anchor: ep(0, 4),
+                head: ep(0, 15),
+                text: "https://x.ai".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn semantic_selection_three_fragment_mid_word_click_middle() {
+        let model = wrap_model(&[
+            ("hello_", None),
+            ("world_", Some("")),
+            ("identifier", Some("")),
+        ]);
+        let expected = SemanticSelection {
+            anchor: ep(0, 0),
+            head: ep(2, 9),
+            text: "hello_world_identifier".to_string(),
+        };
+        assert_eq!(semantic(&model, 1, 0), expected);
+        assert_eq!(semantic(&model, 1, 5), expected);
+    }
+
+    #[test]
+    fn semantic_selection_partial_first_row_then_wrap() {
+        let model = wrap_model(&[("foo bar_very", None), ("long", Some(""))]);
+        let wrapped = SemanticSelection {
+            anchor: ep(0, 4),
+            head: ep(1, 3),
+            text: "bar_verylong".to_string(),
+        };
+        assert_eq!(semantic(&model, 0, 4), wrapped);
+        assert_eq!(semantic(&model, 0, 11), wrapped);
+        assert_eq!(semantic(&model, 1, 1), wrapped);
+        assert_eq!(
+            semantic(&model, 0, 1),
+            SemanticSelection {
+                anchor: ep(0, 0),
+                head: ep(0, 2),
+                text: "foo".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn semantic_selection_head_stops_mid_continuation_row() {
+        let model = wrap_model(&[("foo bar_very", None), ("long baz", Some(""))]);
+        let wrapped = SemanticSelection {
+            anchor: ep(0, 4),
+            head: ep(1, 3),
+            text: "bar_verylong".to_string(),
+        };
+        assert_eq!(semantic(&model, 0, 4), wrapped);
+        assert_eq!(semantic(&model, 1, 0), wrapped);
+        assert_eq!(
+            semantic(&model, 1, 5),
+            SemanticSelection {
+                anchor: ep(1, 5),
+                head: ep(1, 7),
+                text: "baz".to_string(),
+            }
+        );
+
+        let one_char = wrap_model(&[("hello_", None), ("x", Some(""))]);
+        assert_eq!(
+            semantic(&one_char, 0, 0),
+            SemanticSelection {
+                anchor: ep(0, 0),
+                head: ep(1, 0),
+                text: "hello_x".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn semantic_selection_mid_word_wrap_wide_glyphs() {
+        let cjk = wrap_model(&[("你", None), ("好世界", Some(""))]);
+        let expected = SemanticSelection {
+            anchor: ep(0, 0),
+            head: ep(1, 5),
+            text: "你好世界".to_string(),
+        };
+        assert_eq!(semantic(&cjk, 0, 0), expected);
+        assert_eq!(semantic(&cjk, 0, 1), expected);
+        assert_eq!(semantic(&cjk, 1, 0), expected);
+        assert_eq!(semantic(&cjk, 1, 4), expected);
+
+        let mixed = wrap_model(&[("hello_", None), ("世界", Some(""))]);
+        let expected = SemanticSelection {
+            anchor: ep(0, 0),
+            head: ep(1, 3),
+            text: "hello_世界".to_string(),
+        };
+        assert_eq!(semantic(&mixed, 0, 3), expected);
+        assert_eq!(semantic(&mixed, 1, 1), expected);
+    }
+
+    #[test]
+    fn semantic_selection_wrap_split_cluster_uses_concat_width() {
+        // Per-fragment widths are 2+2; concatenated ZWJ pair is width 2.
+        let model = wrap_model(&[("👨", None), ("\u{200d}👩", Some(""))]);
+        let from_first = semantic(&model, 0, 0);
+        assert_eq!(from_first.text, "👨‍👩");
+        assert_eq!(from_first.anchor, ep(0, 0));
+        // Finished-concat widths assign both columns to the first fragment.
+        assert_eq!(from_first.head, ep(0, 1));
+        assert_eq!(semantic(&model, 1, 0), from_first);
+
+        // Local col 1 on the continuation is still the cluster, not `tail`.
+        let with_tail = wrap_model(&[("👨", None), ("\u{200d}👩 tail", Some(""))]);
+        assert_eq!(semantic(&with_tail, 1, 1).text, "👨‍👩");
+        assert_eq!(semantic(&with_tail, 1, 3).text, "tail");
+    }
+
+    #[test]
+    fn semantic_selection_joiner_only_range_returns_none() {
+        let model = wrap_model(&[("ab", None), ("cd", Some(" "))]);
+        // Past-end col is not hit-testable when selectable_cols matches text width.
+        assert_eq!(
+            semantic_selection_at(&model, &wrap_hit(0, 2), DEFAULT_WORD_SEPARATORS),
+            None
+        );
+
+        let mut padded = ResolvedSelectionModel::default();
+        padded.push_line(ResolvedSelectableLine {
+            entry_idx: 0,
+            range_id: 0,
+            block_line_idx: 0,
+            screen_y: 0,
+            screen_x: 0,
+            selectable_cols: 0..5,
+            text: "ab".to_string(),
+            painted_region: None,
+            joiner_to_previous: None,
+        });
+        padded.push_line(ResolvedSelectableLine {
+            entry_idx: 0,
+            range_id: 0,
+            block_line_idx: 1,
+            screen_y: 1,
+            screen_x: 0,
+            selectable_cols: 0..2,
+            text: "cd".to_string(),
+            painted_region: None,
+            joiner_to_previous: Some(" ".to_string()),
+        });
+        assert_eq!(
+            semantic_selection_at(&padded, &wrap_hit(0, 2), DEFAULT_WORD_SEPARATORS),
+            None
+        );
+
+        assert_eq!(
+            semantic_selection_at(
+                &wrap_model(&[("", None), ("", Some(" "))]),
+                &wrap_hit(0, 0),
+                DEFAULT_WORD_SEPARATORS,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn semantic_selection_multi_space_and_newline_joiners_do_not_merge() {
+        let spaces = wrap_model(&[("hello", None), ("world", Some("   "))]);
+        assert_eq!(
+            semantic(&spaces, 0, 1),
+            SemanticSelection {
+                anchor: ep(0, 0),
+                head: ep(0, 4),
+                text: "hello".to_string(),
+            }
+        );
+        assert_eq!(
+            semantic(&spaces, 1, 0),
+            SemanticSelection {
+                anchor: ep(1, 0),
+                head: ep(1, 4),
+                text: "world".to_string(),
+            }
+        );
+
+        let newline = wrap_model(&[("https://ex", None), ("ample.com", Some("\n"))]);
+        assert_eq!(
+            semantic(&newline, 0, 0),
+            SemanticSelection {
+                anchor: ep(0, 0),
+                head: ep(0, 9),
+                text: "https://ex".to_string(),
+            }
+        );
+        assert_eq!(
+            semantic(&newline, 1, 0),
+            SemanticSelection {
+                anchor: ep(1, 0),
+                head: ep(1, 4),
+                text: "ample".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn semantic_selection_empty_wrap_fragments() {
+        let trailing = wrap_model(&[("hello_world", None), ("", Some(""))]);
+        let expected = SemanticSelection {
+            anchor: ep(0, 0),
+            head: ep(0, 10),
+            text: "hello_world".to_string(),
+        };
+        assert_eq!(semantic(&trailing, 0, 0), expected);
+        assert_eq!(semantic(&trailing, 1, 0), expected);
+
+        let middle = wrap_model(&[("hello_", None), ("", Some("")), ("world", Some(""))]);
+        let expected = SemanticSelection {
+            anchor: ep(0, 0),
+            head: ep(2, 4),
+            text: "hello_world".to_string(),
+        };
+        assert_eq!(semantic(&middle, 0, 0), expected);
+        assert_eq!(semantic(&middle, 1, 0), expected);
+        assert_eq!(semantic(&middle, 2, 0), expected);
+    }
+
+    #[test]
+    fn semantic_selection_wrapped_url_among_words() {
+        let model = wrap_model(&[("see https://ex", None), ("ample.com please", Some(""))]);
+        assert_eq!(
+            semantic(&model, 0, 0),
+            SemanticSelection {
+                anchor: ep(0, 0),
+                head: ep(0, 2),
+                text: "see".to_string(),
+            }
+        );
+        let url = SemanticSelection {
+            anchor: ep(0, 4),
+            head: ep(1, 8),
+            text: "https://example.com".to_string(),
+        };
+        assert_eq!(semantic(&model, 0, 12), url);
+        assert_eq!(semantic(&model, 1, 0), url);
+        assert_eq!(
+            semantic(&model, 1, 10),
+            SemanticSelection {
+                anchor: ep(1, 10),
+                head: ep(1, 15),
+                text: "please".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn semantic_selection_from_word_wrap_joiners() {
+        let source = ratatui::text::Line::from("hello_world_identifier");
+        let (wrapped, joiners) = crate::render::wrapping::word_wrap_line_with_joiners(&source, 12);
+        let mut model = ResolvedSelectionModel::default();
+        let mut last_width = 0u16;
+        for (i, (line, joiner)) in wrapped.iter().zip(joiners).enumerate() {
+            let text = crate::scrollback::types::line_plain_text(line);
+            last_width = display_width(&text);
+            model.push_line(ResolvedSelectableLine {
+                entry_idx: 0,
+                range_id: 0,
+                block_line_idx: i,
+                screen_y: i as u16,
+                screen_x: 0,
+                selectable_cols: 0..last_width,
+                text,
+                painted_region: None,
+                joiner_to_previous: joiner,
+            });
+        }
+        let expected = SemanticSelection {
+            anchor: ep(0, 0),
+            head: ep(
+                model
+                    .ranges
+                    .first()
+                    .map(|r| r.lines.len() - 1)
+                    .unwrap_or_else(|| panic!("expected a selection range")),
+                last_width.saturating_sub(1),
+            ),
+            text: "hello_world_identifier".to_string(),
+        };
+        let Some(range) = model.ranges.first() else {
+            panic!("expected a selection range: {model:?}");
+        };
+        for line in &range.lines {
+            if !line.text.is_empty() {
+                assert_eq!(semantic(&model, line.block_line_idx, 0), expected);
+            }
+        }
+    }
 
     fn make_test_line(
         block_line_idx: usize,
@@ -2271,6 +3285,7 @@ mod tests {
             screen_x: 0,
             selectable_cols,
             text: String::new(),
+            painted_region: None,
             joiner_to_previous: None,
         }
     }
@@ -2375,35 +3390,34 @@ mod tests {
     #[test]
     fn endpoints_width_clamping_both_cols_beyond() {
         let line = make_test_line(5, 0..5);
-        // Both cols 15 and 20 exceed width 5 -> clamped to 5..5 (empty range)
+        // Both cols 15 and 20 exceed width 5, clamped to 5..5 (empty range)
         assert_eq!(selected_cols_for_endpoints(5, 15, 5, 20, &line), Some(5..5));
     }
 
     #[test]
     fn endpoints_width_clamping_first_line() {
         let line = make_test_line(2, 0..8);
-        // anchor=2 (first line), col=12 exceeds width=8 -> 8..8
+        // anchor=2 (first line), col=12 exceeds width=8, giving 8..8
         assert_eq!(selected_cols_for_endpoints(2, 12, 5, 3, &line), Some(8..8));
     }
 
     #[test]
     fn endpoints_width_clamping_last_line() {
         let line = make_test_line(5, 0..8);
-        // head=5 (last line), col=20 exceeds width=8 -> 0..8
+        // head=5 (last line), col=20 exceeds width=8, giving 0..8
         assert_eq!(selected_cols_for_endpoints(2, 3, 5, 20, &line), Some(0..8));
     }
 
     #[test]
     fn endpoints_nonzero_selectable_start() {
-        // selectable_cols 5..15 means width = 10
+        // selectable_cols 5..15 means the width is 10
         let line = make_test_line(3, 5..15);
         assert_eq!(selected_cols_for_endpoints(3, 2, 3, 7, &line), Some(2..8));
     }
 
     #[test]
     fn endpoints_wrapper_matches_direct_call() {
-        // Verify selected_cols_for_line_by_block_idx produces the same result
-        // as a direct call to selected_cols_for_endpoints with the drag fields.
+        // Verify selected_cols_for_line_by_block_idx produces the same result as a direct call to selected_cols_for_endpoints with the drag fields
         let line = make_test_line(3, 0..20);
         let drag = ActiveTextDrag {
             anchor: RangeHit {
@@ -2427,12 +3441,7 @@ mod tests {
         assert_eq!(via_wrapper, Some(0..20));
     }
 
-    // -----------------------------------------------------------------------
-    // render_persistent_selection_overlay tests
-    // -----------------------------------------------------------------------
-
-    /// Marker foreground: test themes quantize to no color, so the
-    /// highlight takes its reverse-video path (a modifier change).
+    /// Marker foreground: test themes quantize to no color, so the highlight takes its reverse-video path (a modifier change).
     fn paint_marker(buf: &mut Buffer) {
         for y in buf.area.y..buf.area.y.saturating_add(buf.area.height) {
             for x in buf.area.x..buf.area.x.saturating_add(buf.area.width) {
@@ -2443,8 +3452,7 @@ mod tests {
         }
     }
 
-    /// Returns true if the cell at `(x, y)` was modified by the overlay
-    /// relative to the baseline buffer.
+    /// Returns true if the cell at `(x, y)` was modified by the overlay relative to the baseline buffer.
     fn cell_was_modified(buf: &Buffer, baseline: &Buffer, x: u16, y: u16) -> bool {
         let cell = buf.cell((x, y)).unwrap();
         let orig = baseline.cell((x, y)).unwrap();
@@ -2463,6 +3471,7 @@ mod tests {
                 screen_x: 2,
                 selectable_cols: 0..10,
                 text: format!("line {i}"),
+                painted_region: None,
                 joiner_to_previous: if i > 0 { Some("\n".into()) } else { None },
             });
         }
@@ -2486,7 +3495,7 @@ mod tests {
         let baseline = buf.clone();
         render_persistent_selection_overlay(&model, &sel, None, &mut buf);
 
-        // Line 0 (first): cols 3..10 → screen_x 2+3=5 through 2+9=11
+        // Line 0 (first): cols 3..10 paint at screen_x 2+3=5 through 2+9=11
         assert!(!cell_was_modified(&buf, &baseline, 4, 0));
         for x in 5..12 {
             assert!(
@@ -2496,7 +3505,7 @@ mod tests {
         }
         assert!(!cell_was_modified(&buf, &baseline, 12, 0));
 
-        // Line 1 (middle): cols 0..10 → screen_x 2..12
+        // Line 1 (middle): cols 0..10 paint at screen_x 2..12
         assert!(!cell_was_modified(&buf, &baseline, 1, 1));
         for x in 2..12 {
             assert!(
@@ -2506,7 +3515,7 @@ mod tests {
         }
         assert!(!cell_was_modified(&buf, &baseline, 12, 1));
 
-        // Line 2 (last): cols 0..6 → screen_x 2..8
+        // Line 2 (last): cols 0..6 paint at screen_x 2..8
         assert!(!cell_was_modified(&buf, &baseline, 1, 2));
         for x in 2..8 {
             assert!(
@@ -2552,6 +3561,7 @@ mod tests {
             screen_x: 5,
             selectable_cols: 0..20,
             text: "hello world foo bar".into(),
+            painted_region: None,
             joiner_to_previous: None,
         });
         // Selecting cols 6..11 ("world") on a line at screen_x=5.
@@ -2574,7 +3584,7 @@ mod tests {
         let baseline = buf.clone();
         render_persistent_selection_overlay(&model, &sel, None, &mut buf);
 
-        // screen cols: 5+0+6=11 through 5+0+10=15 (cols 6..11 = values 6,7,8,9,10)
+        // screen cols: 5+0+6=11 through 5+0+10=15 (cols 6..11 are values 6,7,8,9,10)
         assert!(!cell_was_modified(&buf, &baseline, 10, 0));
         for x in 11..16 {
             assert!(
@@ -2599,6 +3609,7 @@ mod tests {
                 screen_x: 0,
                 selectable_cols: 0..15,
                 text: format!("line {i} content"),
+                painted_region: None,
                 joiner_to_previous: if i > 0 { Some("\n".into()) } else { None },
             });
         }
@@ -2660,17 +3671,18 @@ mod tests {
             screen_x: 4,
             selectable_cols: 2..10,
             text: "hello wo".to_string(),
+            painted_region: None,
             joiner_to_previous: None,
         });
 
-        // Column 6 = screen_x(4) + selectable_cols.start(2) = within range.
+        // Column 6 = screen_x(4) + selectable_cols.start(2), so it is within range
         let hit = model.hit_test_text_exact(6, 5).unwrap();
         assert_eq!(hit.entry_idx, 0);
         assert_eq!(hit.range_id, 0);
         assert_eq!(hit.block_line_idx, 0);
         assert_eq!(hit.col_within_range, 0);
 
-        // Column 10 = screen_x(4) + 6 → col_within_range = 4.
+        // Column 10 = screen_x(4) + 6, so col_within_range is 4
         let hit = model.hit_test_text_exact(10, 5).unwrap();
         assert_eq!(hit.col_within_range, 4);
     }
@@ -2686,6 +3698,7 @@ mod tests {
             screen_x: 4,
             selectable_cols: 2..6,
             text: "body".to_string(),
+            painted_region: None,
             joiner_to_previous: None,
         });
 
@@ -2711,6 +3724,7 @@ mod tests {
             screen_x: 10,
             selectable_cols: 2..6,
             text: "body".to_string(),
+            painted_region: None,
             joiner_to_previous: None,
         });
 
@@ -2736,6 +3750,7 @@ mod tests {
             screen_x: 0,
             selectable_cols: 0..5,
             text: "hello".to_string(),
+            painted_region: None,
             joiner_to_previous: None,
         });
         model.push_line(ResolvedSelectableLine {
@@ -2746,6 +3761,7 @@ mod tests {
             screen_x: 10,
             selectable_cols: 0..5,
             text: "world".to_string(),
+            painted_region: None,
             joiner_to_previous: None,
         });
 
@@ -2754,7 +3770,7 @@ mod tests {
         assert_eq!(hit.entry_idx, 0);
         assert_eq!(hit.col_within_range, 2);
 
-        // Gap between ranges — no exact hit.
+        // Gap between ranges, no exact hit
         assert!(model.hit_test_text_exact(7, 2).is_none());
 
         // Hit on second range.
@@ -2762,8 +3778,6 @@ mod tests {
         assert_eq!(hit.entry_idx, 1);
         assert_eq!(hit.col_within_range, 2);
     }
-
-    // ── Table-aware selection ────────────────────────────────────────────
 
     const TABLE_LINES: &[&str] = &[
         "┌─────────┬────────┐",
@@ -2795,6 +3809,7 @@ mod tests {
                 screen_x: 0,
                 selectable_cols: 0..(text.chars().count() as u16),
                 text: text.to_string(),
+                painted_region: None,
                 joiner_to_previous: None,
             });
         }
@@ -2823,12 +3838,12 @@ mod tests {
     fn resolve_kind_same_cell_vs_grid_vs_border() {
         let geom = table_geometry();
         let linear = SelectionKind::Linear;
-        // Same cell (Name/Alice) → TableCell, even across its wrapped line.
+        // Same cell (Name/Alice) resolves to TableCell, even across its wrapped line
         assert_eq!(
             resolve_table_drag_kind(Some(&geom), &table_hit(3, 3), &table_hit(4, 6), linear),
             SelectionKind::TableCell
         );
-        // Reaching the Role column's content → TableGrid carrying that cell.
+        // Reaching the Role column's content escalates to TableGrid carrying that cell
         assert_eq!(
             resolve_table_drag_kind(Some(&geom), &table_hit(3, 3), &table_hit(3, 14), linear),
             SelectionKind::TableGrid {
@@ -2841,9 +3856,8 @@ mod tests {
             resolve_table_drag_kind(Some(&geom), &table_hit(6, 3), &table_hit(7, 3), linear),
             SelectionKind::TableCell
         );
-        // Grid-line anchors stay Linear (the line-by-line escape hatch for
-        // selecting the rendered table text); whole-table TSV is the
-        // triple-click gesture instead.
+        // Grid-line anchors stay Linear (the line-by-line fallback for selecting the rendered table text)
+        // Whole-table TSV is the triple-click gesture instead
         for anchor_line in [0, 2, 5, 7] {
             assert_eq!(
                 resolve_table_drag_kind(
@@ -2856,7 +3870,7 @@ mod tests {
                 "border anchor line {anchor_line}"
             );
         }
-        // No geometry → Linear.
+        // No geometry stays Linear
         assert_eq!(
             resolve_table_drag_kind(None, &table_hit(3, 3), &table_hit(4, 3), linear),
             SelectionKind::Linear
@@ -2868,8 +3882,7 @@ mod tests {
         let geom = table_geometry();
         let anchor = table_hit(3, 3); // Name/Alice cell
         let cell = SelectionKind::TableCell;
-        // Junction column (10), own padding (9), and the neighbor's padding
-        // (11) keep the cell selection — no escalation on a small overshoot.
+        // Junction column (10), own padding (9), and the neighbor's padding (11) keep the cell selection; no escalation on a small overshoot
         for col in [9, 10, 11] {
             assert_eq!(
                 resolve_table_drag_kind(Some(&geom), &anchor, &table_hit(3, col), cell),
@@ -2882,8 +3895,7 @@ mod tests {
             resolve_table_drag_kind(Some(&geom), &anchor, &table_hit(5, 3), cell),
             SelectionKind::TableCell
         );
-        // Neighbor content escalates; boundary touches then keep the grid
-        // (and its head cell) instead of flickering back.
+        // Neighbor content escalates; boundary touches then keep the grid (and its head cell) instead of flickering back
         let grid = resolve_table_drag_kind(Some(&geom), &anchor, &table_hit(3, 14), cell);
         let anchor_cell = CellRef { row: 1, col: 0 };
         let head = CellRef { row: 1, col: 1 };
@@ -2923,12 +3935,55 @@ mod tests {
             reconstruct_table_selection_text(&geom, &drag, table_text_at),
             Some("Alice Smith".to_string())
         );
-        // Partial selection within the cell respects the columns
-        // (cols 2..=4 of "│ Alice" are "Ali").
+        // Partial selection within the cell respects the columns (cols 2..=4 of "│ Alice" are "Ali")
         let drag = table_drag((3, 2), (3, 4), SelectionKind::TableCell);
         assert_eq!(
             reconstruct_table_selection_text(&geom, &drag, table_text_at),
             Some("Ali".to_string())
+        );
+    }
+
+    #[test]
+    fn reconstruct_out_of_bounds_grid_does_not_panic() {
+        let geom = table_geometry();
+        let drag = table_drag(
+            (1, 3),
+            (1, 3),
+            SelectionKind::TableGrid {
+                anchor: CellRef { row: 99, col: 99 },
+                head: CellRef { row: 99, col: 99 },
+            },
+        );
+        assert_eq!(
+            reconstruct_table_selection_text(&geom, &drag, table_text_at),
+            Some(String::new())
+        );
+    }
+
+    #[test]
+    fn reconstruct_cell_selection_keeps_joins_across_skipped_blanks() {
+        const LINES: &[&str] = &[
+            "┌────────┐",
+            "│ foo    │",
+            "│        │",
+            "│ bar    │",
+            "└────────┘",
+        ];
+        let text_at = |i: usize| LINES.get(i).map(|s| s.to_string());
+        let geom = TableGeometry::detect(text_at, 1).expect("grid");
+        let meta = TableCopyMeta {
+            line_index: 0,
+            line_count: LINES.len(),
+            n_cols: 1,
+            cells: vec![TableCellCopy {
+                text: "foo\n\nbar".into(),
+                joins: vec![CellJoin::Tight, CellJoin::Gap("\n\n".into())],
+            }],
+        };
+        let drag = table_drag((1, 2), (3, 5), SelectionKind::TableCell);
+        assert_eq!(
+            reconstruct_table_selection_text_with_meta(&geom, &drag, text_at, Some(&meta)),
+            Some("foo\n\nbar".to_string())
         );
     }
 
@@ -2974,8 +4029,7 @@ mod tests {
             reconstruct_table_selection_text(&geom, &drag, table_text_at),
             Some("Name\tRole\nAlice Smith\tEng\nBob\tDesign".to_string())
         );
-        // Empty cell lands as an empty TSV field (constructed grid state;
-        // resolution itself would keep this same-cell drag a TableCell).
+        // Empty cell lands as an empty TSV field (constructed grid state; resolution itself would keep this same-cell drag a TableCell)
         let drag = table_drag(
             (3, 12),
             (4, 12),
@@ -3040,7 +4094,7 @@ mod tests {
         let model = table_model();
         let area = Rect::new(0, 0, 25, 8);
 
-        // Grid selection over both columns of the wrapped row + Bob row.
+        // Grid selection over both columns of the wrapped row and the Bob row
         let drag = table_drag(
             (3, 3),
             (6, 14),
@@ -3160,8 +4214,7 @@ mod tests {
             !cell_was_modified(&buf, &baseline, 2, 6),
             "other row untouched"
         );
-        // Content clipping: the drag endpoints sit in the padding (cols 1
-        // and 9) but only "Alice" / "Smith" glyph columns paint.
+        // Content clipping: the drag endpoints sit in the padding (cols 1 and 9) but only "Alice" / "Smith" glyph columns paint
         assert!(
             !cell_was_modified(&buf, &baseline, 1, 3),
             "leading padding untouched"

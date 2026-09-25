@@ -12,7 +12,7 @@ fn fork_filter_removes_synthetic_user_messages() {
             content: vec![ContentPart::Text {
                 text: "doom loop".into(),
             }],
-            synthetic_reason: Some(SyntheticReason::SystemReminder),
+            synthetic_reason: SyntheticReason::SystemReminder,
             ..Default::default()
         }),
         ConversationItem::assistant("response"),
@@ -20,7 +20,7 @@ fn fork_filter_removes_synthetic_user_messages() {
     fork_filter_chat(&mut items);
     assert!(
         !items.iter().any(|i| match i {
-            ConversationItem::User(u) => u.synthetic_reason.is_some(),
+            ConversationItem::User(u) => !u.synthetic_reason.is_human(),
             _ => false,
         }),
         "synthetic messages should be stripped"
@@ -35,8 +35,10 @@ fn fork_filter_truncates_at_complete_turn() {
         ConversationItem::user("q2"),
     ];
     fork_filter_chat(&mut items);
-    assert_eq!(items.len(), 3, "should truncate after last complete turn");
-    assert!(matches!(items[2], ConversationItem::Assistant(_)));
+    let [_, _, asst] = items.as_slice() else {
+        panic!("should truncate after last complete turn: {items:?}");
+    };
+    assert!(matches!(asst, ConversationItem::Assistant(_)));
 }
 #[test]
 fn fork_filter_consecutive_users_with_tool_calls() {
@@ -115,15 +117,17 @@ fn fork_filter_strips_incomplete_tool_turn() {
         2,
         "should truncate before incomplete tool turn (trailing user(q2) also dropped)"
     );
-    assert!(matches!(items[0], ConversationItem::User(_)));
-    assert!(matches!(items[1], ConversationItem::Assistant(_)));
+    let [user, asst] = items.as_slice() else {
+        panic!("expected user + assistant: {items:?}");
+    };
+    assert!(matches!(user, ConversationItem::User(_)));
+    assert!(matches!(asst, ConversationItem::Assistant(_)));
 }
 #[test]
 fn fork_filter_keeps_turn_with_reasoning_between_user_and_assistant() {
     use xai_grok_sampling_types::conversation::*;
 
-    // Reasoning between the user query and the assistant must not end the
-    // turn scan.
+    // Reasoning between the user query and the assistant must not end the turn scan
     let mut items = vec![
         ConversationItem::system("sys"),
         ConversationItem::user("q"),
@@ -138,14 +142,13 @@ fn fork_filter_keeps_turn_with_reasoning_between_user_and_assistant() {
         4,
         "reasoning between user and assistant must not truncate the turn: got {items:?}"
     );
-    assert!(matches!(items[3], ConversationItem::Assistant(_)));
+    assert!(matches!(items.get(3), Some(ConversationItem::Assistant(_))));
 }
 #[test]
 fn fork_filter_keeps_multi_tool_turn_with_reasoning_between_results() {
     use xai_grok_sampling_types::conversation::*;
 
-    // Reasoning between the tool results must not hide the second result
-    // from the completeness scan.
+    // Reasoning between the tool results must not hide the second result from the completeness scan
     let mut items = vec![
         ConversationItem::system("sys"),
         ConversationItem::user("q"),
@@ -191,9 +194,8 @@ fn fork_filter_keeps_multi_tool_turn_with_reasoning_between_results() {
 fn fork_filter_drops_trailing_incomplete_goal_turn_after_reasoning() {
     use xai_grok_sampling_types::conversation::*;
 
-    // The in-flight /goal turn is a trailing bare user with no assistant; it
-    // must be dropped even though a Reasoning sibling precedes the prior
-    // assistant.
+    // The /goal turn is still running: a trailing user message with no assistant reply
+    // It must be dropped even though a Reasoning item sits before the prior assistant
     let mut items = vec![
         ConversationItem::system("sys"),
         ConversationItem::user("q"),

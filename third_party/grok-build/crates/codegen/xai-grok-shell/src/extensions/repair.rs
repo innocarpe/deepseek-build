@@ -1,16 +1,12 @@
-//! `x.ai/session/repair` — out-of-band recovery for sessions bricked by
-//! corrupted tool-pairing history.
+//! `x.ai/session/repair`: out-of-band recovery for sessions whose corrupted tool-call history 400s every request.
 //!
-//! A `ToolResult` whose owning assistant `tool_call` is missing (e.g. a
-//! torn/merged `chat_history.jsonl` line skipped on load) makes every request
-//! 400 with "unexpected `tool_use_id` found in `tool_result` blocks". No
-//! in-band path can recover — compaction's sanitizer needs a model call that
-//! itself 400s — so the client invokes this method against the session.
+//! A `ToolResult` whose owning `tool_call` is missing makes every request 400 with "unexpected `tool_use_id` found in `tool_result` blocks".
+//! The usual cause is a torn or merged `chat_history.jsonl` line skipped on load.
+//! No in-band path can recover (compaction's sanitizer needs a model call that itself 400s), so the client invokes this method against the session.
 //!
-//! Repairs via [`xai_chat_state::compaction_utils::repair_history`]. Resident
-//! sessions go through `SessionCommand::RepairHistory` (serialized with
-//! session activity, rejected mid-turn); non-resident sessions are repaired
-//! on disk via the atomic `replace_chat_history`.
+//! Repairs via [`xai_chat_state::compaction_utils::repair_history`].
+//! Resident sessions go through `SessionCommand::RepairHistory` (serialized with session activity, rejected mid-turn).
+//! Non-resident sessions are repaired on disk via the atomic `replace_chat_history`.
 
 use agent_client_protocol as acp;
 use serde::{Deserialize, Serialize};
@@ -40,12 +36,11 @@ pub(crate) struct RepairSessionResponse {
     pub repaired: bool,
     /// Echo of the request's `dryRun` flag.
     pub dry_run: bool,
-    /// Whether the session was resident (repaired via the live actor) or
-    /// repaired directly on disk.
+    /// Whether the session was resident (repaired via the live actor) or repaired directly on disk.
     pub resident: bool,
     /// Duplicate `ToolResult` entries removed.
     pub duplicates_removed: usize,
-    /// `tool_call_id`s of orphaned/displaced `ToolResult`s stripped.
+    /// `tool_call_id`s of the orphaned or displaced `ToolResult`s that were stripped.
     pub stripped_tool_result_ids: Vec<String>,
     /// Synthetic `ToolResult`s inserted for unanswered tool calls.
     pub synthetic_results_inserted: usize,
@@ -76,8 +71,8 @@ async fn handle_session_repair(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtR
     let req: RepairSessionRequest = parse_params(args)?;
     let session_id = acp::SessionId::new(req.session_id.as_str());
 
-    // Resident rail. The load-waiting lookup keeps a repair racing a
-    // reconnect replay from falling through to the disk rail.
+    // Resident path
+    // The lookup waits for an in-progress load, so a repair racing a reconnect replay does not fall through to the on-disk repair below
     if let Some(handle) = agent.session_handle_waiting_for_load(&session_id).await {
         let (tx, rx) = oneshot::channel();
         handle
@@ -94,7 +89,7 @@ async fn handle_session_repair(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtR
         return to_raw_response(&RepairSessionResponse::new(report, req.dry_run, true));
     }
 
-    // Disk rail: session not resident — repair `chat_history.jsonl` in place.
+    // The session is not resident, so repair `chat_history.jsonl` in place on disk
     repair_on_disk(
         &crate::util::grok_home::grok_home(),
         &req.session_id,
@@ -103,9 +98,9 @@ async fn handle_session_repair(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtR
     .await
 }
 
-/// Repair a non-resident session's history on disk: load via the resume
-/// path's corruption-tolerant reader (legacy upgrades apply), repair, write
-/// back atomically. `grok_root` is injectable for tests.
+/// Repair a non-resident session's history on disk.
+/// Loads via the resume path's corruption-tolerant reader (legacy upgrades apply), repairs, and writes back atomically.
+/// `grok_root` is injectable for tests.
 async fn repair_on_disk(grok_root: &std::path::Path, session_id: &str, dry_run: bool) -> ExtResult {
     let summary = crate::session::persistence::find_summary_by_session_id_in_root(
         session_id,
@@ -157,8 +152,7 @@ mod tests {
 
     const SESSION_ID: &str = "019f3df7-3d70-7f60-8ca0-a38d2d005670";
 
-    /// Seed `{root}/sessions/{cwd}/{id}/` with a summary and the given chat
-    /// history, returning the adapter + info for follow-up reads.
+    /// Seed `{root}/sessions/{cwd}/{id}/` with a summary and the given chat history, returning the adapter and info for follow-up reads.
     async fn seed_session(
         root: &std::path::Path,
         items: &[ConversationItem],
@@ -181,9 +175,8 @@ mod tests {
         (adapter, info)
     }
 
-    /// The bricked-session shape: the assistant line owning `call_LOST` is
-    /// gone (torn/merged JSONL line skipped on load), leaving an orphaned
-    /// tool result that 400s on every request.
+    /// The assistant line owning `call_LOST` is gone (a torn or merged JSONL line skipped on load).
+    /// The orphaned tool result it leaves behind 400s every request.
     fn corrupted_history() -> Vec<ConversationItem> {
         vec![
             ConversationItem::system("sys"),
@@ -211,15 +204,20 @@ mod tests {
             .await
             .expect("repair ok");
         let v = parse(&resp);
-        assert_eq!(v["repaired"], true);
-        assert_eq!(v["resident"], false);
-        assert_eq!(v["dryRun"], false);
-        assert_eq!(v["strippedToolResultIds"], serde_json::json!(["call_LOST"]));
-        assert_eq!(v["duplicatesRemoved"], 0);
-        assert_eq!(v["syntheticResultsInserted"], 0);
+        assert_eq!(v.get("repaired"), Some(&serde_json::json!(true)));
+        assert_eq!(v.get("resident"), Some(&serde_json::json!(false)));
+        assert_eq!(v.get("dryRun"), Some(&serde_json::json!(false)));
+        assert_eq!(
+            v.get("strippedToolResultIds"),
+            Some(&serde_json::json!(["call_LOST"]))
+        );
+        assert_eq!(v.get("duplicatesRemoved"), Some(&serde_json::json!(0)));
+        assert_eq!(
+            v.get("syntheticResultsInserted"),
+            Some(&serde_json::json!(0))
+        );
 
-        // The rewritten file must reload as a valid conversation with the
-        // orphan gone and the intact pair preserved.
+        // The rewritten file must reload as a valid conversation with the orphan gone and the intact pair preserved
         let reloaded = adapter
             .load_session_without_updates(&info)
             .await
@@ -237,7 +235,7 @@ mod tests {
                 .await
                 .expect("second repair ok"),
         );
-        assert_eq!(v2["repaired"], false);
+        assert_eq!(v2.get("repaired"), Some(&serde_json::json!(false)));
     }
 
     #[tokio::test]
@@ -250,9 +248,12 @@ mod tests {
                 .await
                 .expect("dry run ok"),
         );
-        assert_eq!(v["repaired"], true);
-        assert_eq!(v["dryRun"], true);
-        assert_eq!(v["strippedToolResultIds"], serde_json::json!(["call_LOST"]));
+        assert_eq!(v.get("repaired"), Some(&serde_json::json!(true)));
+        assert_eq!(v.get("dryRun"), Some(&serde_json::json!(true)));
+        assert_eq!(
+            v.get("strippedToolResultIds"),
+            Some(&serde_json::json!(["call_LOST"]))
+        );
 
         // Disk untouched: the orphan is still there.
         let reloaded = adapter
@@ -278,7 +279,7 @@ mod tests {
                 .await
                 .expect("repair ok"),
         );
-        assert_eq!(v["repaired"], false);
+        assert_eq!(v.get("repaired"), Some(&serde_json::json!(false)));
     }
 
     #[tokio::test]

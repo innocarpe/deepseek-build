@@ -1,14 +1,11 @@
-//! Filesystem completion for the shell token under the cursor: any
-//! command's file arguments (plus path-like first tokens and redirection
-//! targets), with fuzzy matching, shell quoting, and `~`/`$VAR` awareness.
+//! Filesystem completion for the shell token under the cursor.
+//! Any command's file arguments complete, plus path-like first tokens and redirection targets.
+//! Matching is fuzzy, and completions respect shell quoting, `~`, and `$VAR`.
 //!
-//! Token *syntax* — the minimal tokenizer and the re-quoting rules, with
-//! their documented limits — lives in [`super::shell_token`]. This module
-//! owns the completion *policy*: which tokens complete, directory
-//! listing/ranking, and `~`/`$VAR` expansion. Expansion only picks the
-//! directory to LIST (quotes do not suppress it: `'$HOME'/x` lists like
-//! `$HOME/x`); the inserted completion always preserves the user's typed
-//! prefix verbatim.
+//! Token *syntax* (the minimal tokenizer and the re-quoting rules, with their documented limits) lives in [`super::shell_token`].
+//! This module owns the completion *policy*: which tokens complete, directory listing and ranking, and `~` and `$VAR` expansion.
+//! Expansion only picks the directory to LIST; quotes do not suppress it, so `'$HOME'/x` lists like `$HOME/x`.
+//! The inserted completion always preserves the user's typed prefix verbatim.
 
 use std::path::{Path, PathBuf};
 
@@ -17,48 +14,36 @@ use nucleo::pattern::{Atom, AtomKind, CaseMatching, Normalization};
 use super::shell_token::{CurrentToken, build_insert_token, parse_current_token};
 use super::{RankedSuggestion, SuggestContext, SuggestionSource, splice_token_into_line};
 
-/// Ranked results returned per request. The dropdown renders 6 rows and
-/// scrolls; ranking happens BEFORE this cap so directories and the best
-/// fuzzy matches survive it.
+/// Ranked results returned per request.
+/// The dropdown renders 6 rows and scrolls; ranking happens BEFORE this cap so directories and the best fuzzy matches survive it.
 const MAX_RESULTS: usize = 50;
 
-/// Directory-scan cap guarding pathological directories (the same guard the
-/// `/export` path completer uses).
+/// Directory-scan cap guarding pathological directories (the same guard the `/export` path completer uses).
 const SCAN_CAP: usize = 1000;
 
-/// Symlink-classification stat budget per scan: a directory of up to
-/// [`SCAN_CAP`] symlinks would otherwise serialize that many `stat`s
-/// (hundreds of ms locally, worse on network filesystems). Past the budget
-/// a symlink classifies as a file — worst case a symlinked directory loses
-/// its trailing `/` and dirs-first ranking.
+/// Max `stat` calls spent per scan classifying symlinks.
+/// A directory of up to [`SCAN_CAP`] symlinks would otherwise serialize that many `stat`s (hundreds of ms locally, worse on network filesystems).
+/// Past the budget a symlink classifies as a file; worst case a symlinked directory loses its trailing `/` and dirs-first ranking.
 const SYMLINK_STAT_BUDGET: usize = 64;
 
-/// Commands whose file arguments get a small ranking BOOST — not a gate:
-/// any command's arguments file-complete. Must stay sorted (binary_search).
+/// Commands whose file arguments get a small ranking BOOST; the list is not a gate, since any command's arguments file-complete.
+/// Must stay sorted (binary_search).
 const FILE_COMMANDS: &[&str] = &[
     "awk", "bat", "cat", "cd", "chmod", "chown", "code", "cp", "diff", "file", "find", "grep",
     "head", "less", "ln", "ls", "mkdir", "mv", "nano", "nvim", "rm", "sed", "sort", "source",
     "stat", "tail", "touch", "vi", "vim", "wc",
 ];
 
-/// Priority bump for candidates when the segment's command is a known file
-/// consumer: above $PATH rows (priority 0) AND above the history tail
-/// (history base decays to 1 by list position — boosted file rows
-/// deliberately displace the weakest history matches); below mid/top
-/// history rows (base up to 10, +30 exact).
-///
-/// Every candidate in one response carries the SAME priority: ordering
-/// within the response is provider-internal (tier → score → dirs-first →
-/// name) and survives to the wire only because `aggregate`'s sort is
-/// STABLE (see `mod.rs`).
+/// Priority bump for candidates when the segment's command is a known file consumer.
+/// The bump puts them above $PATH rows (priority 0) and above the history tail, but below mid and top history rows (base up to 10, +30 exact).
+/// History base decays to 1 by list position, so boosted file rows deliberately displace the weakest history matches. Every candidate in one response carries the SAME priority. Ordering within the response is provider-internal (tier, then score, then dirs-first, then name). It survives to the wire only because `aggregate`'s sort is STABLE (see `mod.rs`).
 const FILE_CMD_BOOST: i32 = 2;
 
 pub(crate) struct FilePathProvider;
 
 impl FilePathProvider {
     pub(crate) async fn suggest(&self, ctx: &SuggestContext) -> Vec<RankedSuggestion> {
-        // shell_token quoting is POSIX-only: cmd/pwsh would misparse the
-        // escaped line, so Windows serves no deterministic completions.
+        // shell_token quoting is POSIX-only: cmd and pwsh would misparse the escaped line, so Windows serves no deterministic completions
         if cfg!(windows) {
             return Vec::new();
         }
@@ -66,13 +51,13 @@ impl FilePathProvider {
             Some(t) => t,
             None => return Vec::new(),
         };
-        // Completions replace the whole quoted/escaped token up to the cursor.
+        // Completions replace the whole quoted or escaped token up to the cursor
         let arg_range = (tok.start, ctx.prefix().len());
         let split = split_token(
             &tok,
             &ctx.text,
             &ctx.cwd,
-            dirs::home_dir().as_deref(),
+            xai_dirs::home_dir().as_deref(),
             |name| std::env::var(name).ok(),
         );
         let (entries, truncated) = list_ranked_entries(&split.list_dir, split.match_prefix).await;
@@ -81,8 +66,7 @@ impl FilePathProvider {
         let mut results: Vec<RankedSuggestion> = entries
             .into_iter()
             .map(|e| RankedSuggestion {
-                // Token replacement for the arg range: the completed path,
-                // re-quoted to match how the user opened the token.
+                // Token replacement for the arg range: the completed path, re-quoted to match how the user opened the token
                 insert_text: build_insert_token(&tok, &split.raw_dir, &e.name, e.is_dir),
                 display: if e.is_dir {
                     format!("{}/", e.name)
@@ -107,11 +91,7 @@ impl FilePathProvider {
     }
 }
 
-/// Decide whether the token under the cursor file-completes:
-/// - flag-looking tokens (`-x`, `--foo`) never do;
-/// - any command's arguments (non-first tokens) and redirection targets do;
-/// - a first token only when path-like (`./script.sh`, `/bin/…`, `~`) —
-///   plain first words are the $PATH provider's turf.
+/// Decide whether the token under the cursor file-completes: flag-looking tokens (`-x`, `--foo`) never do; any command's arguments (non-first tokens) and redirection targets do; a first token only when path-like (`./script.sh`, `/bin/…`, `~`); plain first words belong to the $PATH provider.
 fn extract_file_context(prefix: &str) -> Option<CurrentToken> {
     let tok = parse_current_token(prefix);
     if tok.value.starts_with('-') {
@@ -132,10 +112,9 @@ fn is_path_like(s: &str) -> bool {
 struct SplitToken<'a> {
     /// Expanded directory to list (absolute, or joined onto the cwd).
     list_dir: PathBuf,
-    /// Final path component typed so far (unquoted) — the match needle.
+    /// Final path component typed so far (unquoted): the match needle.
     match_prefix: &'a str,
-    /// Verbatim request-text slice kept in front of every completion, so
-    /// the user's own quoting/escapes/`~`/`$VAR` spellings survive.
+    /// Verbatim request-text slice kept in front of every completion, so the user's own quoting, escapes, `~`, and `$VAR` spellings survive.
     raw_dir: String,
 }
 
@@ -146,13 +125,8 @@ fn split_token<'a>(
     home: Option<&Path>,
     lookup: impl Fn(&str) -> Option<String>,
 ) -> SplitToken<'a> {
-    // Bare `~` completes as `~/…`: list the home directory. With NO
-    // resolvable home, `~` stays literal — exactly what the shell's own
-    // failed tilde expansion does — so list `cwd/~` (usually nothing) like
-    // the `~/x` arm below. Falling back to listing the cwd itself would
-    // show files the accepted `~/…` insert can never name. A quoted or
-    // escaped `~` is shell-literal — the general path matches it against
-    // cwd entries instead.
+    // Bare `~` completes as `~/…`: list the home directory With NO resolvable home, `~` stays literal, exactly what the shell's own failed tilde expansion does So list `cwd/~` (usually nothing) like the `~/x` arm below
+    // Falling back to listing the cwd itself would show files the accepted `~/…` insert can never name A quoted or escaped `~` is shell-literal; the general path matches it against cwd entries instead
     if tok.value == "~" && tok.dir_value_len.is_none() && tok.plain_mask.first() == Some(&true) {
         return SplitToken {
             list_dir: home.map_or_else(|| Path::new(cwd).join("~"), Path::to_path_buf),
@@ -161,12 +135,9 @@ fn split_token<'a>(
         };
     }
     let split_at = tok.dir_value_len.unwrap_or(0);
-    let expanded = expand_for_listing(
-        &tok.value[..split_at],
-        &tok.plain_mask[..split_at],
-        home,
-        lookup,
-    );
+    let dir_value = tok.value.get(..split_at).unwrap_or("");
+    let plain = tok.plain_mask.get(..split_at).unwrap_or(&[]);
+    let expanded = expand_for_listing(dir_value, plain, home, lookup);
     let list_dir = if expanded.as_os_str().is_empty() {
         PathBuf::from(cwd)
     } else if expanded.is_absolute() {
@@ -176,64 +147,68 @@ fn split_token<'a>(
     };
     SplitToken {
         list_dir,
-        match_prefix: &tok.value[split_at..],
-        raw_dir: text[tok.start..tok.dir_raw_end].to_owned(),
+        match_prefix: tok.value.get(split_at..).unwrap_or(""),
+        raw_dir: text
+            .get(tok.start..tok.dir_raw_end)
+            .unwrap_or("")
+            .to_owned(),
     }
 }
 
-/// Expand `~/` and `$VAR`/`${VAR}` in the directory part, for LISTING only
-/// and only where the shell itself would: `plain` (byte-aligned with
-/// `dir_value`) marks chars typed unquoted and unescaped, so `'$HOME'/x`,
-/// `\$HOME/x`, and `"~/x` stay literal. Deliberately conservative:
-/// double-quoted `$VAR`, which bash would expand, stays literal too.
-/// Unset variables and `~user` forms stay literal (the listing just comes
-/// up empty); the inserted text never contains the expansion.
+/// Expand `~/` and `$VAR` or `${VAR}` in the directory part, for LISTING only and only where the shell itself would.
+/// `plain` (byte-aligned with `dir_value`) marks chars typed unquoted and unescaped, so `'$HOME'/x`, `\$HOME/x`, and `"~/x` stay literal.
+/// Deliberately conservative: double-quoted `$VAR`, which bash would expand, stays literal too. Unset variables and `~user` forms stay literal (the listing just comes up empty); the inserted text never contains the expansion.
 fn expand_for_listing(
     dir_value: &str,
     plain: &[bool],
     home: Option<&Path>,
     lookup: impl Fn(&str) -> Option<String>,
 ) -> PathBuf {
-    // Tilde first (always at the word start), vars on the remainder — with
-    // its own mask slice, so provenance stays byte-aligned after the home
-    // prefix replaces `~`.
+    // Tilde first (always at the word start), then vars on the remainder
+    // The remainder gets its own mask slice, so the mask stays byte-aligned after the home prefix replaces `~`
     if let (Some(rest), Some(h)) = (dir_value.strip_prefix("~/"), home)
         && plain.first() == Some(&true)
     {
         return PathBuf::from(format!(
             "{}/{}",
             h.to_string_lossy(),
-            expand_vars(rest, &plain[2..], lookup)
+            expand_vars(rest, plain.get(2..).unwrap_or(&[]), lookup)
         ));
     }
     PathBuf::from(expand_vars(dir_value, plain, lookup))
 }
 
-/// Replace `$NAME` / `${NAME}` with `lookup(NAME)` when set; anything else
-/// (unset vars, a lone `$`, `$1`-style digits, or a `$` the user quoted or
-/// escaped — `plain` is byte-aligned with `s`) stays literal.
+/// Replace `$NAME` or `${NAME}` with `lookup(NAME)` when set.
+/// Anything else stays literal: unset vars, a lone `$`, `$1`-style digits, or a `$` the user quoted or escaped (`plain` is byte-aligned with `s`).
 fn expand_vars(s: &str, plain: &[bool], lookup: impl Fn(&str) -> Option<String>) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
     while let Some(pos) = rest.find('$') {
-        out.push_str(&rest[..pos]);
+        let Some(prefix) = rest.get(..pos) else {
+            break;
+        };
+        out.push_str(prefix);
         if plain.get(s.len() - rest.len() + pos) != Some(&true) {
             out.push('$');
-            rest = &rest[pos + 1..];
+            rest = rest.get(pos + 1..).unwrap_or("");
             continue;
         }
-        let after = &rest[pos + 1..];
+        let Some(after) = rest.get(pos + 1..) else {
+            out.push('$');
+            rest = "";
+            break;
+        };
         // `(name, token_len)`: bytes consumed starting at the `$`.
         let (name, token_len) = match after.strip_prefix('{') {
             Some(inner) => match inner.find('}') {
-                Some(end) => (&inner[..end], 2 + end + 1),
+                Some(end) => (inner.get(..end).unwrap_or(""), 2 + end + 1),
                 None => ("", 1),
             },
             None => {
                 let end = after
                     .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
                     .unwrap_or(after.len());
-                (&after[..end], 1 + end)
+                (after.get(..end).unwrap_or(""), 1 + end)
             }
         };
         let valid = !name.is_empty()
@@ -241,14 +216,14 @@ fn expand_vars(s: &str, plain: &[bool], lookup: impl Fn(&str) -> Option<String>)
             && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
         if !valid {
             out.push('$');
-            rest = &rest[pos + 1..];
+            rest = rest.get(pos + 1..).unwrap_or("");
             continue;
         }
         match lookup(name) {
             Some(v) => out.push_str(&v),
-            None => out.push_str(&rest[pos..pos + token_len]),
+            None => out.push_str(rest.get(pos..pos + token_len).unwrap_or("")),
         }
-        rest = &rest[pos + token_len..];
+        rest = rest.get(pos + token_len..).unwrap_or("");
     }
     out.push_str(rest);
     out
@@ -259,21 +234,14 @@ fn expand_vars(s: &str, plain: &[bool], lookup: impl Fn(&str) -> Option<String>)
 struct ScoredEntry {
     name: String,
     is_dir: bool,
-    /// 0 = exact prefix, 1 = case-insensitive prefix, 2 = fuzzy.
+    /// 0 is exact prefix, 1 is case-insensitive prefix, 2 is fuzzy.
     tier: u8,
     score: u32,
 }
 
-/// List `dir` and rank matches: exact-prefix, then case-insensitive prefix,
-/// then nucleo fuzzy — score descending, directories first, name ascending
-/// within ties. Ranking happens BEFORE the [`MAX_RESULTS`] cap so an
-/// alphabetical scan order can never crowd directories or better matches
-/// out. Hidden entries only list when the typed prefix starts with `.`.
-///
-/// The second return is `truncated`: the scan hit [`SCAN_CAP`] or the
-/// ranked matches exceeded [`MAX_RESULTS`] — the returned set may be
-/// incomplete, so the pager must not conclude from it (no insta-accept or
-/// LCP fill over rows a hidden entry could disprove).
+/// List `dir` and rank matches: exact prefix, then case-insensitive prefix, then nucleo fuzzy. Ties break by score descending, then directories first, then name ascending.
+/// Ranking happens BEFORE the [`MAX_RESULTS`] cap so an alphabetical scan order can never crowd directories or better matches out. Hidden entries only list when the typed prefix starts with `.`.
+/// The returned set may then be incomplete, so the pager must not conclude from it. It must not auto-accept a single row or fill the longest common prefix; an entry the scan missed could disprove either.
 async fn list_ranked_entries(dir: &Path, match_prefix: &str) -> (Vec<ScoredEntry>, bool) {
     let mut read_dir = match tokio::fs::read_dir(dir).await {
         Ok(rd) => rd,
@@ -340,10 +308,8 @@ async fn list_ranked_entries(dir: &Path, match_prefix: &str) -> (Vec<ScoredEntry
             }
         };
 
-        // `file_type()` is free on most Unix (it comes from the dirent);
-        // only symlinks need the full `stat` — following them keeps the
-        // trailing `/` on symlinked directories — and those stats are
-        // budgeted (see [`SYMLINK_STAT_BUDGET`]).
+        // `file_type()` is free on most Unix (it comes from the dirent); only symlinks need the full `stat`
+        // Following them keeps the trailing `/` on symlinked directories, and those stats are budgeted (see [`SYMLINK_STAT_BUDGET`])
         let is_dir = match entry.file_type().await {
             Ok(ft) if ft.is_symlink() && symlink_stats < SYMLINK_STAT_BUDGET => {
                 symlink_stats += 1;
@@ -386,9 +352,8 @@ fn file_command_boost(command: Option<&str>) -> i32 {
     }
 }
 
-/// Case-insensitive prefix test without a per-entry `to_lowercase`
-/// allocation (`prefix_lower` is lowered once per request). Char-fold
-/// equivalent of `name.to_lowercase().starts_with(prefix_lower)`.
+/// Case-insensitive prefix test without a per-entry `to_lowercase` allocation (`prefix_lower` is lowered once per request).
+/// Char-fold equivalent of `name.to_lowercase().starts_with(prefix_lower)`.
 fn ci_starts_with(name: &str, prefix_lower: &str) -> bool {
     let mut folded = name.chars().flat_map(char::to_lowercase);
     prefix_lower.chars().all(|p| folded.next() == Some(p))
@@ -409,8 +374,7 @@ mod tests {
         assert_eq!(tok.command.as_deref(), Some("cat"));
     }
 
-    /// ANY command's argument file-completes — FILE_COMMANDS is only a
-    /// ranking boost, never a gate.
+    /// ANY command's argument file-completes; FILE_COMMANDS is only a ranking boost, never a gate.
     #[test]
     fn context_unknown_cmd_plain_arg_completes() {
         let tok = extract_file_context("git status").unwrap();
@@ -455,8 +419,7 @@ mod tests {
         assert!(extract_file_context("~").is_some());
     }
 
-    /// Redirection targets are file arguments even at command position
-    /// (the parse mechanics live in shell_token's redirect test).
+    /// Redirection targets are file arguments even at command position (the parse mechanics live in shell_token's redirect test).
     #[test]
     fn context_redirect_target_completes() {
         assert!(extract_file_context("echo hi > lo").is_some());
@@ -556,11 +519,9 @@ mod tests {
         assert_eq!(s.raw_dir, "~/");
     }
 
-    /// With NO resolvable home, bare `~` stays literal — the shell's own
-    /// failed tilde expansion leaves the word unchanged — so the listing is
-    /// `cwd/~` (usually empty), NEVER the cwd itself: cwd entries would be
-    /// unreachable through the `~/…` insert. Degrades identically to the
-    /// `~/x` arm, whose listing is pinned alongside.
+    /// With NO resolvable home, bare `~` stays literal (the shell's own failed tilde expansion leaves the word unchanged).
+    /// So the listing is `cwd/~` (usually empty), NEVER the cwd itself: cwd entries would be unreachable through the `~/…` insert.
+    /// Degrades identically to the `~/x` arm, whose listing is pinned alongside.
     #[test]
     fn split_bare_tilde_without_home_stays_literal() {
         let tok = token_for("cat ~");
@@ -595,10 +556,8 @@ mod tests {
         assert_eq!(s.raw_dir, "\"My Dir\"/");
     }
 
-    /// Quoted/escaped `$VAR` spellings are shell-literal: the listing must
-    /// target the literal path (never the expansion) — otherwise the
-    /// accepted raw-spelling insert names a different file than the one
-    /// shown.
+    /// Quoted or escaped `$VAR` spellings are shell-literal: the listing must target the literal path, never the expansion.
+    /// Otherwise the accepted raw-spelling insert names a different file than the one shown.
     #[test]
     fn split_quoted_and_escaped_var_stay_literal() {
         let lookup = |name: &str| (name == "HOME").then(|| "/home/me".to_owned());
@@ -615,9 +574,8 @@ mod tests {
         assert_eq!(s.raw_dir, "\\$HOME/");
     }
 
-    /// Quoted `~` is shell-literal: no home listing — the same literal
-    /// `cwd/~` degradation as the no-home case; a bare quoted `~` skips the
-    /// home fast path and matches cwd entries literally.
+    /// Quoted `~` is shell-literal: no home listing, just the same literal `cwd/~` degradation as the no-home case.
+    /// A bare quoted `~` skips the home fast path and matches cwd entries literally.
     #[test]
     fn split_quoted_tilde_stays_literal() {
         let home = Some(Path::new("/home/me"));
@@ -658,14 +616,16 @@ mod tests {
         assert_eq!(ev("${/x"), "${/x");
     }
 
-    /// A `$` whose byte is not plain (quoted/escaped provenance) stays
-    /// literal even when the variable is set.
+    /// A `$` whose byte is not plain (it was quoted or escaped) stays literal even when the variable is set.
     #[test]
     fn expand_vars_skips_non_plain_dollar() {
         let lookup = |name: &str| (name == "HOME").then(|| "/home/me".to_owned());
         let s = "$HOME/$HOME";
         let mut plain = all_plain(s);
-        plain[0] = false;
+        let Some(slot) = plain.first_mut() else {
+            panic!("expected non-empty plain mask");
+        };
+        *slot = false;
         assert_eq!(expand_vars(s, &plain, lookup), "$HOME//home/me");
     }
 
@@ -679,8 +639,7 @@ mod tests {
         assert_eq!(file_command_boost(None), 0);
     }
 
-    /// `file_command_boost` binary-searches: a misplaced insert would
-    /// silently drop boosts for everything after it.
+    /// `file_command_boost` binary-searches: a misplaced insert would silently drop boosts for everything after it.
     #[test]
     fn file_commands_is_sorted() {
         assert!(FILE_COMMANDS.is_sorted());
@@ -721,8 +680,11 @@ mod tests {
 
         let (entries, _) = list_ranked_entries(tmp.path(), "no").await;
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].name, "Notes Archive");
-        assert_eq!(entries[0].tier, 1);
+        let Some(entry) = entries.first() else {
+            panic!("expected one entry");
+        };
+        assert_eq!(entry.name, "Notes Archive");
+        assert_eq!(entry.tier, 1);
     }
 
     #[tokio::test]
@@ -733,8 +695,11 @@ mod tests {
 
         let (entries, _) = list_ranked_entries(tmp.path(), "nts").await;
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].name, "notes.md");
-        assert_eq!(entries[0].tier, 2);
+        let Some(entry) = entries.first() else {
+            panic!("expected one entry");
+        };
+        assert_eq!(entry.name, "notes.md");
+        assert_eq!(entry.tier, 2);
     }
 
     #[tokio::test]
@@ -744,8 +709,7 @@ mod tests {
         assert!(list_ranked_entries(tmp.path(), "qqq").await.0.is_empty());
     }
 
-    /// Directories survive the result cap even when the scan yields them
-    /// after `MAX_RESULTS` files (ranking happens before truncation).
+    /// Directories survive the result cap even when the scan yields them after `MAX_RESULTS` files (ranking happens before truncation).
     #[tokio::test]
     async fn rank_dirs_first_before_cap() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -759,10 +723,13 @@ mod tests {
         let (entries, truncated) = list_ranked_entries(tmp.path(), "").await;
         assert_eq!(entries.len(), MAX_RESULTS);
         assert!(truncated, "result-capped scans are not exhaustive");
-        assert!(entries[0].is_dir && entries[1].is_dir);
-        assert_eq!(entries[0].name, "zdir_a");
-        assert_eq!(entries[1].name, "zdir_b");
-        assert!(entries[2..].iter().all(|e| !e.is_dir));
+        let [a, b, rest @ ..] = entries.as_slice() else {
+            panic!("expected dirs then files");
+        };
+        assert!(a.is_dir && b.is_dir);
+        assert_eq!(a.name, "zdir_a");
+        assert_eq!(b.name, "zdir_b");
+        assert!(rest.iter().all(|e| !e.is_dir));
     }
 
     #[tokio::test]
@@ -790,7 +757,10 @@ mod tests {
         let (entries, truncated) = list_ranked_entries(tmp.path(), "").await;
         assert_eq!(entries.len(), 1);
         assert!(!truncated, "an exhaustively scanned dir is not truncated");
-        assert_eq!(entries[0].name, "visible");
+        let Some(entry) = entries.first() else {
+            panic!("expected one entry");
+        };
+        assert_eq!(entry.name, "visible");
     }
 
     #[tokio::test]
@@ -827,12 +797,14 @@ mod tests {
 
         let (entries, _) = list_ranked_entries(tmp.path(), "li").await;
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].name, "link");
-        assert!(entries[0].is_dir);
+        let Some(entry) = entries.first() else {
+            panic!("expected one entry");
+        };
+        assert_eq!(entry.name, "link");
+        assert!(entry.is_dir);
     }
 
-    /// A self-referential symlink makes the follow-up `metadata()` fail
-    /// (ELOOP) — the entry still lists, as a non-directory.
+    /// A self-referential symlink makes the follow-up `metadata()` fail (ELOOP); the entry still lists, as a non-directory.
     #[cfg(unix)]
     #[tokio::test]
     async fn rank_self_symlink_falls_back_to_file_type() {
@@ -841,12 +813,14 @@ mod tests {
 
         let (entries, _) = list_ranked_entries(tmp.path(), "se").await;
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].name, "selfie");
-        assert!(!entries[0].is_dir);
+        let Some(entry) = entries.first() else {
+            panic!("expected one entry");
+        };
+        assert_eq!(entry.name, "selfie");
+        assert!(!entry.is_dir);
     }
 
-    /// A scan that hits [`SCAN_CAP`] reports truncation: entries may remain
-    /// unread, so the returned rows must not be treated as exhaustive.
+    /// A scan that hits [`SCAN_CAP`] reports truncation: entries may remain unread, so the returned rows must not be treated as exhaustive.
     #[tokio::test]
     async fn rank_scan_cap_marks_truncated() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -877,18 +851,20 @@ mod tests {
 
         let results = FilePathProvider.suggest(&ctx("cat hel", tmp.path())).await;
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].display, "hello.txt");
-        assert_eq!(results[0].insert_text, "cat hello.txt");
-        assert_eq!(results[0].token_text.as_deref(), Some("hello.txt"));
-        assert_eq!(results[0].replace_range, Some((4, 7)));
-        assert_eq!(results[0].source, SuggestionSource::File);
-        assert!(!results[0].is_ghost_candidate);
-        assert!(!results[0].truncated);
-        assert_eq!(results[0].priority, FILE_CMD_BOOST);
+        let Some(r) = results.first() else {
+            panic!("expected one result: {results:?}");
+        };
+        assert_eq!(r.display, "hello.txt");
+        assert_eq!(r.insert_text, "cat hello.txt");
+        assert_eq!(r.token_text.as_deref(), Some("hello.txt"));
+        assert_eq!(r.replace_range, Some((4, 7)));
+        assert_eq!(r.source, SuggestionSource::File);
+        assert!(!r.is_ghost_candidate);
+        assert!(!r.truncated);
+        assert_eq!(r.priority, FILE_CMD_BOOST);
     }
 
-    /// A capped scan stamps `truncated` on every row — the pager must not
-    /// insta-accept a "sole" match a hidden entry could disprove.
+    /// A capped scan stamps `truncated` on every row; the pager must not auto-accept a "sole" match a hidden entry could disprove.
     #[tokio::test]
     async fn suggest_capped_scan_stamps_truncated_rows() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -901,8 +877,7 @@ mod tests {
         assert!(results.iter().all(|s| s.truncated));
     }
 
-    /// THE closed-quote round trip (cursor right after the closer): the
-    /// completed insert keeps the closing quote instead of dropping it.
+    /// THE closed-quote round trip (cursor right after the closer): the completed insert keeps the closing quote instead of dropping it.
     #[tokio::test]
     async fn suggest_quote_closed_at_cursor_keeps_closer() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -913,15 +888,15 @@ mod tests {
         let text = "cat \"My Dir/fi\"";
         let results = FilePathProvider.suggest(&ctx(text, tmp.path())).await;
         assert_eq!(results.len(), 1);
-        assert_eq!(
-            results[0].token_text.as_deref(),
-            Some("\"My Dir/file.txt\"")
-        );
-        assert_eq!(results[0].insert_text, "cat \"My Dir/file.txt\"");
-        assert_eq!(results[0].replace_range, Some((4, text.len())));
+        let Some(r) = results.first() else {
+            panic!("expected one result: {results:?}");
+        };
+        assert_eq!(r.token_text.as_deref(), Some("\"My Dir/file.txt\""));
+        assert_eq!(r.insert_text, "cat \"My Dir/file.txt\"");
+        assert_eq!(r.replace_range, Some((4, text.len())));
     }
 
-    /// Unknown commands complete their args too — at priority 0, no boost.
+    /// Unknown commands complete their args too, at priority 0 with no boost.
     #[tokio::test]
     async fn suggest_end_to_end_any_command() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -931,8 +906,11 @@ mod tests {
             .suggest(&ctx("foobar no", tmp.path()))
             .await;
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].insert_text, "foobar notes.md");
-        assert_eq!(results[0].priority, 0);
+        let Some(r) = results.first() else {
+            panic!("expected one result: {results:?}");
+        };
+        assert_eq!(r.insert_text, "foobar notes.md");
+        assert_eq!(r.priority, 0);
     }
 
     #[tokio::test]
@@ -947,9 +925,8 @@ mod tests {
         );
     }
 
-    /// Arg-token range with text after the cursor: the range ends at the
-    /// cursor so the tail (`| wc -l`) is out of the replaced span, and the
-    /// compat whole-line `insert_text` keeps that tail too.
+    /// Arg-token range with text after the cursor: the range ends at the cursor so the tail (`| wc -l`) is out of the replaced span.
+    /// The compat whole-line `insert_text` keeps that tail too.
     #[tokio::test]
     async fn suggest_arg_range_ends_at_cursor_mid_text() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -959,13 +936,15 @@ mod tests {
         let ctx = SuggestContext::new(text.into(), 7, tmp.path().to_string_lossy().into_owned());
         let results = FilePathProvider.suggest(&ctx).await;
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].insert_text, "cat hello.txt | wc -l");
-        assert_eq!(results[0].token_text.as_deref(), Some("hello.txt"));
-        assert_eq!(results[0].replace_range, Some((4, 7)));
+        let Some(r) = results.first() else {
+            panic!("expected one result: {results:?}");
+        };
+        assert_eq!(r.insert_text, "cat hello.txt | wc -l");
+        assert_eq!(r.token_text.as_deref(), Some("hello.txt"));
+        assert_eq!(r.replace_range, Some((4, 7)));
     }
 
-    /// THE quoting round-trip: `cat "My Fi` completes `My File.txt` with the
-    /// token extent covering the opening quote and the insert closing it.
+    /// THE quoting round-trip: `cat "My Fi` completes `My File.txt` with the token extent covering the opening quote and the insert closing it.
     #[tokio::test]
     async fn suggest_open_quote_completes_spaced_file() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -974,13 +953,15 @@ mod tests {
         let text = "cat \"My Fi";
         let results = FilePathProvider.suggest(&ctx(text, tmp.path())).await;
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].token_text.as_deref(), Some("\"My File.txt\""));
-        assert_eq!(results[0].replace_range, Some((4, text.len())));
-        assert_eq!(results[0].insert_text, "cat \"My File.txt\"");
+        let Some(r) = results.first() else {
+            panic!("expected one result: {results:?}");
+        };
+        assert_eq!(r.token_text.as_deref(), Some("\"My File.txt\""));
+        assert_eq!(r.replace_range, Some((4, text.len())));
+        assert_eq!(r.insert_text, "cat \"My File.txt\"");
     }
 
-    /// Unquoted completion of a spaced name backslash-escapes it; the next
-    /// request tokenizes that insert back to the same directory (round-trip).
+    /// Unquoted completion of a spaced name backslash-escapes it; the next request tokenizes that insert back to the same directory (round-trip).
     #[tokio::test]
     async fn suggest_unquoted_spaced_dir_escapes_and_drills_down() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -990,24 +971,26 @@ mod tests {
 
         let results = FilePathProvider.suggest(&ctx("cat No", tmp.path())).await;
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].token_text.as_deref(), Some("Notes\\ Archive/"));
-        assert_eq!(results[0].insert_text, "cat Notes\\ Archive/");
-        assert_eq!(results[0].description, "directory");
+        let Some(r) = results.first() else {
+            panic!("expected one result: {results:?}");
+        };
+        assert_eq!(r.token_text.as_deref(), Some("Notes\\ Archive/"));
+        assert_eq!(r.insert_text, "cat Notes\\ Archive/");
+        assert_eq!(r.description, "directory");
 
         // Drill-down: the accepted text re-completes inside the directory.
         let text = "cat Notes\\ Archive/";
         let results = FilePathProvider.suggest(&ctx(text, tmp.path())).await;
         assert_eq!(results.len(), 1);
-        assert_eq!(
-            results[0].token_text.as_deref(),
-            Some("Notes\\ Archive/inner.txt")
-        );
-        assert_eq!(results[0].replace_range, Some((4, text.len())));
-        assert_eq!(results[0].insert_text, "cat Notes\\ Archive/inner.txt");
+        let Some(r) = results.first() else {
+            panic!("expected one result: {results:?}");
+        };
+        assert_eq!(r.token_text.as_deref(), Some("Notes\\ Archive/inner.txt"));
+        assert_eq!(r.replace_range, Some((4, text.len())));
+        assert_eq!(r.insert_text, "cat Notes\\ Archive/inner.txt");
     }
 
-    /// Same drill-down through an open double quote: the dir insert keeps
-    /// the quote open; the file completion inside closes it.
+    /// Same drill-down through an open double quote: the dir insert keeps the quote open; the file completion inside closes it.
     #[tokio::test]
     async fn suggest_quoted_dir_drill_down_closes_quote_on_file() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -1017,16 +1000,19 @@ mod tests {
 
         let results = FilePathProvider.suggest(&ctx("cat \"No", tmp.path())).await;
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].token_text.as_deref(), Some("\"Notes Archive/"));
+        let Some(r) = results.first() else {
+            panic!("expected one result: {results:?}");
+        };
+        assert_eq!(r.token_text.as_deref(), Some("\"Notes Archive/"));
 
         let text = "cat \"Notes Archive/";
         let results = FilePathProvider.suggest(&ctx(text, tmp.path())).await;
         assert_eq!(results.len(), 1);
-        assert_eq!(
-            results[0].token_text.as_deref(),
-            Some("\"Notes Archive/inner.txt\"")
-        );
-        assert_eq!(results[0].replace_range, Some((4, text.len())));
+        let Some(r) = results.first() else {
+            panic!("expected one result: {results:?}");
+        };
+        assert_eq!(r.token_text.as_deref(), Some("\"Notes Archive/inner.txt\""));
+        assert_eq!(r.replace_range, Some((4, text.len())));
     }
 
     #[tokio::test]
@@ -1040,8 +1026,11 @@ mod tests {
             .suggest(&ctx("cat src/m", tmp.path()))
             .await;
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].token_text.as_deref(), Some("src/main.rs"));
-        assert_eq!(results[0].replace_range, Some((4, 9)));
+        let Some(r) = results.first() else {
+            panic!("expected one result: {results:?}");
+        };
+        assert_eq!(r.token_text.as_deref(), Some("src/main.rs"));
+        assert_eq!(r.replace_range, Some((4, 9)));
     }
 
     #[tokio::test]
@@ -1056,14 +1045,15 @@ mod tests {
         let ctx = SuggestContext::new(text, cursor, "/ignored".into());
         let results = FilePathProvider.suggest(&ctx).await;
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].display, "main.rs");
-        assert_eq!(results[0].replace_range, Some((0, cursor)));
+        let Some(r) = results.first() else {
+            panic!("expected one result: {results:?}");
+        };
+        assert_eq!(r.display, "main.rs");
+        assert_eq!(r.replace_range, Some((0, cursor)));
         assert!(
-            results[0]
-                .token_text
+            r.token_text
                 .as_deref()
-                .unwrap()
-                .ends_with("main.rs")
+                .is_some_and(|t| t.ends_with("main.rs"))
         );
     }
 
@@ -1075,8 +1065,11 @@ mod tests {
 
         let results = FilePathProvider.suggest(&ctx("cat no", tmp.path())).await;
         assert_eq!(results.len(), 2);
-        assert_eq!(results[0].display, "notes.md");
-        assert_eq!(results[1].display, "Notes Archive/");
+        let [a, b] = results.as_slice() else {
+            panic!("expected two results: {results:?}");
+        };
+        assert_eq!(a.display, "notes.md");
+        assert_eq!(b.display, "Notes Archive/");
     }
 
     #[tokio::test]
@@ -1093,16 +1086,17 @@ mod tests {
         );
         let results = FilePathProvider.suggest(&ctx).await;
         assert_eq!(results.len(), 1);
+        let Some(r) = results.first() else {
+            panic!("expected one result: {results:?}");
+        };
         assert_eq!(
-            results[0].token_text.as_deref(),
+            r.token_text.as_deref(),
             Some("$GROK_SUGGEST_TEST_DIR/notes.md")
         );
     }
 
-    /// THE provenance case: a quoted `$VAR` is literal to the shell, so the
-    /// listing targets a directory literally named `$HOME` — the accepted
-    /// candidate names exactly the file shown (no env expansion, whatever
-    /// the real `$HOME` is).
+    /// THE provenance case: a quoted `$VAR` is literal to the shell, so the listing targets a directory literally named `$HOME`.
+    /// The accepted candidate names exactly the file shown (no env expansion, whatever the real `$HOME` is).
     #[tokio::test]
     async fn suggest_quoted_var_lists_literal_dir() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -1114,13 +1108,15 @@ mod tests {
             .suggest(&ctx("cat '$HOME'/fi", tmp.path()))
             .await;
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].token_text.as_deref(), Some("'$HOME'/file.txt"));
-        assert_eq!(results[0].insert_text, "cat '$HOME'/file.txt");
+        let Some(r) = results.first() else {
+            panic!("expected one result: {results:?}");
+        };
+        assert_eq!(r.token_text.as_deref(), Some("'$HOME'/file.txt"));
+        assert_eq!(r.insert_text, "cat '$HOME'/file.txt");
     }
 
-    /// A dash-leading candidate inserts `./`-anchored, so single-candidate
-    /// insta-accept can never silently write a flag (`rm ` + Tab must not
-    /// become `rm -rf`).
+    /// A dash-leading candidate inserts `./`-anchored, so auto-accepting a single candidate can never silently write a flag.
+    /// Tab after `rm ` must not become `rm -rf`.
     #[tokio::test]
     async fn suggest_dash_leading_candidate_anchored_as_path() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -1128,9 +1124,12 @@ mod tests {
 
         let results = FilePathProvider.suggest(&ctx("rm ", tmp.path())).await;
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].display, "-rf");
-        assert_eq!(results[0].token_text.as_deref(), Some("./-rf"));
-        assert_eq!(results[0].insert_text, "rm ./-rf");
+        let Some(r) = results.first() else {
+            panic!("expected one result: {results:?}");
+        };
+        assert_eq!(r.display, "-rf");
+        assert_eq!(r.token_text.as_deref(), Some("./-rf"));
+        assert_eq!(r.insert_text, "rm ./-rf");
     }
 
     #[tokio::test]

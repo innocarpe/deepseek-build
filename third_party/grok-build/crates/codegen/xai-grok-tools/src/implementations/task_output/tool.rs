@@ -30,10 +30,8 @@ pub(crate) fn snapshot_to_result(
             )),
         )
     } else {
-        // Soft-wrap long lines for model comprehension.
-        // Output is already size-bounded (30KB via bash backend,
-        // 400KB safety net for ACP). Wrapping adds structure
-        // without losing content.
+        // Soft-wrap long lines for model comprehension. Output is already size-bounded (30KB via
+        // bash backend, 400KB safety net for ACP). Wrapping adds structure without losing content.
         (
             soft_wrap_lines(&s.output, DEFAULT_SOFT_WRAP_WIDTH),
             s.truncated,
@@ -111,6 +109,7 @@ mod tests {
             kind: Default::default(),
             block_waited: false,
             explicitly_killed: false,
+            kill_result_delivered: false,
             owner_session_id: None,
             description: None,
             is_backgrounded: false,

@@ -15,14 +15,40 @@ Without memory, each Grok session starts fresh: the model knows nothing about pr
 
 Memory is experimental and disabled by default.
 
+### How memory is organized
+
+Memory has two scopes. Global memory holds facts that apply across all your
+projects; workspace memory holds facts about one repository. Clones and
+worktrees of the same repository share one workspace scope.
+
+Each scope keeps its knowledge as ordinary Markdown files. `topics/` holds
+curated notes, one file per subject, and is what Grok reads at the start of a
+session. New facts captured after each turn, including a turn you stop before it
+finishes, land as small observations that a later consolidation pass (`/dream`)
+folds into topics. A bounded generated
+index of both scopes is injected into the model's context once per session so
+it can decide which topics to open.
+
+Notes you recorded with earlier versions of Grok Build are carried over
+automatically the first time a workspace is opened after updating: each section
+of the earlier notes becomes a topic, and sections whose name already matches a
+topic are appended to it under a "From earlier sessions" heading. The earlier
+files are left in place unchanged.
+
+Memory product telemetry contains only fixed enums, booleans, counts, and
+durations. It never includes prompts, statements, topic names, keywords,
+paths, model output, or free-form errors.
+
 ---
 
 ## Enabling Memory
 
-### Per-Session Flag
+### Config (Persistent)
 
-```bash
-grok --experimental-memory
+```toml
+# ~/.grok/config.toml
+[memory]
+enabled = true
 ```
 
 ### Environment Variable
@@ -32,68 +58,41 @@ export GROK_MEMORY=1
 grok
 ```
 
-### Config File (Persistent)
-
-```toml
-# ~/.grok/config.toml
-[memory]
-enabled = true
-```
-
 ### Force-Disable
 
-To disable memory even when other settings enable it:
-
-```bash
-grok --no-memory
-```
-
-Or:
+To disable memory for the process even when TOML or remote settings enable it:
 
 ```bash
 export GROK_MEMORY=0
 ```
 
-The `--no-memory` flag has absolute highest priority and always disables memory.
-
 ### Mid-Session Toggle
 
-Toggle memory on or off during a session without restarting:
+Toggle memory on or off during a session without restarting: open `/memory`
+and press `t`.
 
-```
-/memory on
-/memory off
-```
+The toggle is session-scoped -- it does not persist to `config.toml`, and it works in both directions: a session that started with `[memory] enabled = true` can turn memory off, and a session that started with `[memory] enabled = false` can turn it on. New sessions follow `config.toml` again. Toggling off removes access to memory tools and the memory instructions in the system prompt but keeps existing files on disk. Toggling on re-initializes memory storage, registers the memory tools, restores the memory instructions, and injects the memory index on the next turn. Turning memory on waits for any turn in progress to finish.
 
-The toggle is session-scoped -- it does not persist to `config.toml`. Toggling off removes access to memory tools but keeps existing files on disk. Toggling on re-initializes memory storage and registers the memory tools.
-
-You can also toggle from inside the `/memory` modal by pressing `t`.
+The toggle cannot override the process-wide force-disable (`--no-memory` or `GROK_MEMORY=0`); those hide `/memory` for the whole session.
 
 ### Priority Order
 
-1. `--no-memory` CLI flag (always disables)
-2. `--experimental-memory` CLI flag (enables)
-3. `GROK_MEMORY` env var: `1`/`true` enables, `0`/`false` disables
-4. `[memory]` section in config.toml
-5. Default: disabled
+1. A process-wide force-disable (`--no-memory` compatibility flag or
+   `GROK_MEMORY=0`) turns memory off.
+2. An explicit `[memory] enabled = false` in effective TOML turns memory off,
+   including anything enabled by managed remote settings. The `/memory` `t`
+   toggle can still turn it on for the current session.
+3. Otherwise memory is enabled by `GROK_MEMORY=1`, `[memory] enabled = true`,
+   or a managed remote setting.
+
+Staged-rollout and kill-switch controls for operators are documented in the
+internal hardening notes, not here.
 
 ---
 
 ## How Memory Is Stored
 
-Memory is stored as Markdown files under `~/.grok/memory/`:
-
-| Location | Scope | Description |
-|----------|-------|-------------|
-| `~/.grok/memory/MEMORY.md` | Global | Facts that apply across all your projects |
-| `~/.grok/memory/<project-slug>-<hash8>/MEMORY.md` | Workspace | Project-specific conventions and context |
-| `~/.grok/memory/<project-slug>-<hash8>/sessions/` | Sessions | Per-session summaries and logs |
-
-Grok suffixes each workspace directory with a short hash of the repository's identity. The identity is the `origin` remote in `org/repo` form when the directory is a Git repository with an `origin` remote, or the directory path otherwise. Because clones and worktrees of the same repository share an `origin` remote, they also share one memory directory.
-
-An SQLite index supports hybrid search across all memory files:
-- **FTS5** provides full-text search for keyword matching.
-- **vec0** provides vector search for semantic similarity. Vector search is optional and requires an embedding.
+When v2 is on (`[memory_v2] enabled`), each scope stores Markdown under `~/.grok/memory-v2/`: `topics/` for curated notes and `observations/_inbox/` for new facts. When v2 is off and legacy memory is on, files live under `~/.grok/memory/` (`MEMORY.md` plus hashed workspace directories). `[memory] enabled` and `[memory_v2] enabled` both default off.
 
 ---
 
@@ -196,15 +195,18 @@ The modal uses a split-pane layout: the file list on the left, a read-only conte
 | `↑`/`↓` or `j`/`k` | Move through the file list |
 | `PgUp`/`PgDn` | Jump 10 entries |
 | `/` | Filter the file list |
+| `Enter` | Read the selected note: the preview takes keyboard focus (arrows, `PgUp`/`PgDn`, `Home`/`End` scroll it) |
 | `y` | Copy the selected file's path to the clipboard |
-| `x` | Delete the selected session file (press `x` again to confirm) |
+| `x` | Delete the selected note (press `x` again to confirm) |
 | `t` | Toggle memory on or off |
 | `Ctrl+F` | Toggle fullscreen |
-| `Esc` | Close the modal, or exit filter mode |
+| `Esc` | Close the modal, or leave filter or preview focus |
 
-The preview pane is read-only. Scroll it with the mouse wheel or by dragging its scrollbar. You can delete only session files, not the global or workspace `MEMORY.md`.
+The filter matches note names and note contents; separate words all have to match. When you filter, the preview scrolls to the first match. If nothing matches, the list says so; `Backspace` clears the filter.
 
-When the memory modal's content area is under 80 columns, the modal hides the preview pane and shows the file list only.
+The preview pane is read-only. Scroll it with the mouse wheel, by dragging its scrollbar, or with the keyboard after `Enter`. Drag across the preview text to copy that text to the clipboard; a brief message under the file list confirms every copy. Generated `MEMORY.md` indexes cannot be deleted.
+
+When the memory modal's content area is under 64 columns, the modal shows the file list only and hides the size column; press `Enter` to read the selected note full-width and `Esc` to return to the list.
 
 You can also open `/memory` from the command palette.
 
@@ -218,7 +220,7 @@ When you save a note with `/remember`, Grok confirms in the scrollback:
 Memory saved to ~/.grok/memory/MEMORY.md
 ```
 
-Background saves — flush, dream, and session-end — run silently and do not post a scrollback message. Use `/memory` at any time to browse what Grok has stored.
+Background saves — automatic flush, automatic Dream, and session-end — run silently and do not post a scrollback message. `/flush` and `/dream` report their outcome in scrollback when you run them yourself. Use `/memory` at any time to browse what Grok has stored.
 
 ---
 
@@ -234,15 +236,14 @@ Dream reorganizes individual session logs and memory entries into a coherent, de
 
 ### Auto-Dream
 
-Dream also runs automatically. By default, Grok checks the consolidation gates when a session ends and runs Dream once enough time has passed and enough sessions have accumulated:
+Dream also runs automatically. By default, Grok checks the consolidation gates at launch and periodically during a session, and runs Dream once enough time has passed and enough sessions have accumulated:
 
 ```toml
 [memory.dream]
 enabled = true     # Run automatic consolidation (default: true)
-min_hours = 4      # Minimum hours between consolidations
-min_sessions = 3   # Minimum sessions since the last consolidation
-# check_interval_secs is unset by default, so Dream runs only at session end.
-# Set it to a positive number of seconds to also check on a periodic interval.
+min_hours = 24     # Minimum hours between consolidations
+min_sessions = 5   # Minimum sessions since the last consolidation
+check_interval_secs = 3600 # Also check the gates hourly
 ```
 
 ---
@@ -258,7 +259,7 @@ First-turn injection can be configured:
 ```toml
 [memory.initial_injection]
 enabled = true     # Enable or disable first-turn injection
-min_score = 0.0    # Optional score threshold; unset by default, which applies no filtering
+min_score = 0.9    # Score threshold for first-turn injection
 ```
 
 ### After Compaction
@@ -277,16 +278,12 @@ Read my workspace MEMORY.md
 ```
 
 The model has access to two memory tools:
-- `memory_search` -- Hybrid search across all memory (vector + full-text)
+- `memory_search` -- Search across all memory
 - `memory_get` -- Read a specific memory file by path
 
-### Hybrid Scoring
+### Search Scoring
 
-Memory search uses a weighted combination of:
-- **Vector similarity** (semantic) -- weight: 0.7
-- **BM25 text similarity** (keyword) -- weight: 0.3
-
-Results are filtered by a minimum score threshold (default: 0.35).
+The default embedding model is unset, so memory starts in full-text-only mode. If you configure an embedding model, search combines vector similarity (weight `0.7`) with BM25 text similarity (weight `0.3`). Results are filtered by a minimum score threshold (default: `0.7`).
 
 ### Source Weights
 
@@ -305,7 +302,7 @@ Session memories decay over time so recent sessions are prioritized:
 ```toml
 [memory.search.temporal_decay]
 enabled = true           # Enable time-based decay
-half_life_days = 7.0     # Score halves after this many days
+half_life_days = 30.0    # Score halves after this many days
 ```
 
 Only session chunks decay. Global and workspace memories are exempt since they contain curated long-term knowledge.
@@ -316,7 +313,7 @@ MMR re-ranking penalizes redundant results to improve diversity:
 
 ```toml
 [memory.search.mmr]
-enabled = false          # Opt-in diversity re-ranking
+enabled = true           # Enable diversity re-ranking
 lambda = 0.7             # 0.0 = max diversity, 1.0 = pure relevance
 ```
 
@@ -369,7 +366,7 @@ To edit memory from the shell, open the files in your editor directly -- for exa
 | Key | Default | Description |
 |-----|---------|-------------|
 | `provider` | `"api"` | Embedding provider (currently `"api"`) |
-| `model` | *(provider default)* | Embedding model name |
+| `model` | unset | Embedding model name. Unset or `""` uses full-text-only retrieval. |
 | `dimensions` | `1024` | Embedding vector dimensions |
 
 ### Search Settings (`[memory.search]`)
@@ -377,7 +374,7 @@ To edit memory from the shell, open the files in your editor directly -- for exa
 | Key | Default | Description |
 |-----|---------|-------------|
 | `max_results` | `6` | Maximum search results |
-| `min_score` | `0.35` | Minimum relevance score |
+| `min_score` | `0.7` | Minimum relevance score |
 | `vector_weight` | `0.7` | Weight for vector similarity |
 | `text_weight` | `0.3` | Weight for BM25 text similarity |
 
@@ -386,17 +383,17 @@ To edit memory from the shell, open the files in your editor directly -- for exa
 | Key | Default | Description |
 |-----|---------|-------------|
 | `enabled` | `true` | Enable first-turn memory injection |
-| `min_score` | unset | Score threshold for first-turn results. When unset, Grok applies no threshold, which is equivalent to `0.0`. |
+| `min_score` | `0.9` | Score threshold for first-turn results |
 
 ### Dream Settings (`[memory.dream]`)
 
 | Key | Default | Description |
 |-----|---------|-------------|
 | `enabled` | `true` | Enable automatic Dream consolidation |
-| `min_hours` | `4` | Minimum hours between consolidations |
-| `min_sessions` | `3` | Minimum sessions since the last consolidation |
+| `min_hours` | `24` | Minimum hours between consolidations |
+| `min_sessions` | `5` | Minimum sessions since the last consolidation |
 | `stale_lock_secs` | `3600` | Seconds before a stale consolidation lock is reclaimed |
-| `check_interval_secs` | unset | Periodic check interval in seconds. When unset, Dream runs only at session end. |
+| `check_interval_secs` | `3600` | Periodic Dream-gate check interval in seconds. Set `0` to disable periodic checks. |
 
 ### Flush Settings (`[compaction.memory_flush]`)
 
@@ -407,8 +404,8 @@ You configure flush under `[compaction]`, not `[memory]`, because it is a compac
 | `enabled` | `true` | Enable the pre-compaction memory flush |
 | `soft_threshold_tokens` | `4000` | Token headroom before the compact threshold that triggers a flush |
 | `max_flush_write_chars` | `8000` | Maximum characters the flush may write to memory |
-| `flush_model` | unset | Model for the flush turn. When unset, Grok uses the session's primary model. |
-| `idle_timeout_secs` | unset | Idle seconds before a background flush. When unset, flush runs only before compaction. |
+| `flush_model` | unset | Model for the flush turn. When unset or `""`, Grok uses the session's primary model. |
+| `idle_timeout_secs` | `300` | Idle seconds before a background flush. Set `0` to disable idle flushes. |
 | `semantic_dedup_threshold` | unset | Cosine-similarity threshold for de-duplicating flushed content. When unset, defaults to `0.92`. |
 
 ### Pruning Settings (`[compaction.pruning]`)
@@ -451,8 +448,8 @@ enabled = true    # default
 ### Memory Not Working
 
 1. Verify memory is enabled: check `grok inspect` output.
-2. Check the flag: `grok --experimental-memory` or `GROK_MEMORY=1`.
-3. Check for `--no-memory` or `GROK_MEMORY=0` overriding your config.
+2. Check `GROK_MEMORY` or `[memory] enabled` in effective TOML.
+3. Check for `GROK_MEMORY=0` or a deprecated compatibility flag overriding config.
 
 ### Memory Not Appearing in Sessions
 

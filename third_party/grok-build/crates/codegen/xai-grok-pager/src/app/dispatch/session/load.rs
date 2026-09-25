@@ -1,10 +1,13 @@
 //! Session loading, session pickers, and deep-search dispatchers.
-use super::foreign::{dispatch_fetch_session_list, invalidate_foreign_picker};
+use super::foreign::{
+    dispatch_fetch_session_list, invalidate_foreign_picker, next_picker_list_generation,
+};
 use super::fork::build_child_fork_marker;
 use super::lifecycle::{
-    clear_startup_actions, dispatch_new_session_inner, dispatch_new_worktree_session,
-    refuse_chat_mode_build_agent,
+    abandon_unused_empty_for_load, clear_startup_actions, dispatch_new_session_inner,
+    dispatch_new_worktree_session, refuse_chat_mode_build_agent,
 };
+use super::picker_routing::{PickerRequest, PickerSeqKind, accept_picker_result};
 use crate::acp::tracker::AcpUpdateTracker;
 use crate::app::actions::{Action, Effect};
 use crate::app::agent::{AgentCommand, AgentId, AgentSession, AgentState};
@@ -12,6 +15,7 @@ use crate::app::agent_view::AgentView;
 #[cfg(feature = "local-workspace")]
 use crate::app::app_view::ActiveView;
 use crate::app::app_view::AppView;
+use crate::app::cancel_latency::TurnEnd;
 use crate::app::dispatch::ctx::{
     SwitchCause, get_active_agent, get_active_agent_mut, switch_to_agent, with_active_agent,
 };
@@ -24,11 +28,11 @@ use crate::app::dispatch::transcript::extensions_modal_tab_fetches;
 use crate::scrollback::block::RenderBlock;
 use crate::scrollback::blocks::SessionEvent;
 use crate::scrollback::state::ScrollbackState;
+use crate::views::session_picker_surface::SessionPickerHost;
 use agent_client_protocol as acp;
 /// Create a placeholder agent and load an existing session by ID.
-///
-/// `session_cwd` overrides the CWD in the `LoadSessionRequest`. This is needed
-/// when resuming a session that was created in a different CWD (e.g., a worktree).
+/// `session_cwd` overrides the CWD in the `LoadSessionRequest`.
+/// This is needed when resuming a session that was created in a different CWD (e.g., a worktree).
 pub(in crate::app::dispatch) fn dispatch_load_session(
     app: &mut AppView,
     session_id: String,
@@ -51,17 +55,23 @@ pub(in crate::app::dispatch) fn dispatch_load_session(
     }
     dispatch_load_session_ungated(app, session_id, session_cwd, chat_kind)
 }
-/// Clear `session_id` from any existing agent that already owns the given
-/// session, then return a freshly constructed [`acp::SessionId`].
-///
-/// Without this, `find_session_match` finds the stale agent first (IndexMap
-/// insertion order) and routes all ACP notifications to it instead of the
-/// new agent.
+/// Clear `session_id` from any existing agent that already owns the given session, then return a freshly constructed [`acp::SessionId`].
+/// Without this, `find_session_match` finds the stale agent first (IndexMap insertion order) and routes ACP notifications to it, not the new agent.
 pub(in crate::app::dispatch) fn clear_stale_session_id(
     app: &mut AppView,
     session_id: &str,
 ) -> acp::SessionId {
     let sid = acp::SessionId::new(session_id);
+    let replaced_agents = app
+        .agents
+        .iter()
+        .filter_map(|(agent_id, agent)| {
+            (agent.session.session_id.as_ref() == Some(&sid)).then_some(*agent_id)
+        })
+        .collect::<std::collections::HashSet<_>>();
+    if let Some(dashboard) = app.dashboard.as_mut() {
+        dashboard.prepare_agent_unbind(&replaced_agents, &mut app.agents);
+    }
     for agent in app.agents.values_mut() {
         if agent.session.session_id.as_ref() == Some(&sid) {
             agent.unbind_session_id();
@@ -69,16 +79,6 @@ pub(in crate::app::dispatch) fn clear_stale_session_id(
     }
     sid
 }
-/// If a local agent already owns this id **and** matches kind, focus it.
-///
-/// - Kind: compare against the stamped form `chat_kind || app.chat_mode` (agents
-///   store that; the LoadSession arg is conversation-entry only). Conversation
-///   vs Build still differs when sticky `--chat` is off.
-/// - Eager `session_id` + leftover load placeholder after `SessionLoadFailed`
-///   is not "open" — reissue load instead of focusing.
-/// - Overlay: retarget when on the dashboard list, already in overlay (attached
-///   matches visible), or attached already points at the agent we will show
-///   (so switch activates overlay with the correct `focus_row`).
 pub(in crate::app::dispatch) fn focus_if_session_already_open(
     app: &mut AppView,
     session_id: &str,
@@ -86,14 +86,14 @@ pub(in crate::app::dispatch) fn focus_if_session_already_open(
 ) -> Option<AgentId> {
     use crate::app::app_view::ActiveView;
     use crate::views::dashboard::DashboardRowId;
-    let expected_kind = chat_kind || app.chat_mode;
+    let expected_conversation_entry = session_opens_as_chat(app, chat_kind);
     let existing_id = app.agents.iter().find_map(|(id, a)| {
         let sid_ok = a
             .session
             .session_id
             .as_ref()
             .is_some_and(|sid| &*sid.0 == session_id);
-        if !sid_ok || a.chat_kind != expected_kind {
+        if !sid_ok || a.conversation_entry != expected_conversation_entry {
             return None;
         }
         if a.loading_placeholder_id.is_some() && !a.session.loading_replay {
@@ -102,7 +102,7 @@ pub(in crate::app::dispatch) fn focus_if_session_already_open(
         Some(*id)
     })?;
     if let Some(agent) = app.agents.get_mut(&existing_id) {
-        agent.active_subagent = None;
+        agent.close_subagent_fullscreen();
     }
     let retarget_overlay = match app.active_view {
         ActiveView::AgentDashboard => true,
@@ -117,6 +117,19 @@ pub(in crate::app::dispatch) fn focus_if_session_already_open(
     }
     switch_to_agent(app, existing_id, SwitchCause::Load);
     Some(existing_id)
+}
+/// Matches the effects layer's `is_chat_path` after history-bypass clearing of `SessionFlags.chat_mode`.
+/// True for a conversation-entry row, or under sticky `--chat` without the local-disk history bypass.
+/// Gateway resumes (no bypass) are Chat; history-bypass local-disk rows stay Build.
+pub(in crate::app::dispatch) fn session_opens_as_chat(app: &AppView, chat_kind: bool) -> bool {
+    if chat_kind {
+        return true;
+    }
+    #[cfg(feature = "local-workspace")]
+    if app.welcome_history_load_as_build {
+        return false;
+    }
+    app.chat_mode
 }
 fn dispatch_load_session_ungated(
     app: &mut AppView,
@@ -151,6 +164,8 @@ fn dispatch_load_session_ungated(
         }
         return vec![];
     }
+    let mut effects = abandon_unused_empty_for_load(app, &session_id);
+    let identity_rebind = super::super::dashboard::WorkspaceIdentityRebind::capture(app);
     let acp_session_id = clear_stale_session_id(app, &session_id);
     let agent_id = AgentId(app.next_agent_id);
     app.next_agent_id += 1;
@@ -162,7 +177,8 @@ fn dispatch_load_session_ungated(
         format!("Loading session {}...", &session_id)
     };
     let loading_placeholder_id = scrollback.push_block(RenderBlock::system(loading_msg));
-    let agent = AgentView::new(
+    let agent = AgentView::from_app(
+        app,
         AgentSession {
             id: agent_id,
             acp_tx: app.acp_tx.clone(),
@@ -192,6 +208,8 @@ fn dispatch_load_session_ungated(
             available_commands_generation: 1,
             available_tools: None,
             model_switch_pending: false,
+            hook_block_hold: false,
+            blocked_prompt: None,
             user_model_preference: None,
             deferred_model_switch: app.deferred_model_switch_from_cli(),
             bg_tasks: std::collections::BTreeMap::new(),
@@ -205,6 +223,8 @@ fn dispatch_load_session_ungated(
         scrollback,
     );
     app.agents.insert(agent_id, agent);
+    identity_rebind.apply(app);
+    let conversation_entry = session_opens_as_chat(app, chat_kind);
     let agent_mut = app.agents.get_mut(&agent_id).unwrap();
     agent_mut.attached_as_viewer = true;
     agent_mut.begin_replay_window();
@@ -234,6 +254,7 @@ fn dispatch_load_session_ungated(
         &app.tier_restricted_commands,
     );
     agent_mut.chat_kind = chat_kind || app.chat_mode;
+    agent_mut.conversation_entry = conversation_entry;
     #[cfg(feature = "local-workspace")]
     {
         let history_build = app.welcome_history_load_as_build;
@@ -268,13 +289,13 @@ fn dispatch_load_session_ungated(
         .registry_mut()
         .set_plugins_visible(!app.appearance.disable_plugins);
     switch_to_agent(app, agent_id, SwitchCause::Load);
-    vec![Effect::LoadSession {
+    effects.push(Effect::LoadSession {
         agent_id,
         session_id,
         session_cwd,
-        // Conversation-entry bit; effects OR SessionFlags.chat_mode for meta.
         chat_kind,
-    }]
+    });
+    effects
 }
 /// Load the session selected in the session picker.
 pub(in crate::app::dispatch) fn dispatch_pick_session(
@@ -386,6 +407,9 @@ pub(in crate::app::dispatch) fn dispatch_pick_session(
             app.welcome_history_load_as_build = true;
         }
     }
+    if crate::app::is_daemon_or_remote_control_row(&source) {
+        return dispatch_daemon_session_pick(app, session_id, cwd);
+    }
     if chat_kind {
         return dispatch_load_session(app, session_id, None, true);
     }
@@ -420,6 +444,14 @@ pub(in crate::app::dispatch) fn dispatch_pick_session(
         app.show_toast("Session not found locally");
         vec![]
     }
+}
+fn dispatch_daemon_session_pick(app: &mut AppView, session_id: String, cwd: String) -> Vec<Effect> {
+    #[cfg(feature = "local-workspace")]
+    {
+        app.welcome_history_load_as_build = true;
+    }
+    let session_cwd = (!cwd.is_empty()).then(|| std::path::PathBuf::from(cwd));
+    dispatch_load_session(app, session_id, session_cwd, false)
 }
 /// Pick a session from the picker and resume it in a new git worktree.
 pub(in crate::app::dispatch) fn dispatch_pick_session_in_worktree(
@@ -493,6 +525,10 @@ pub(in crate::app::dispatch) fn dispatch_pick_session_in_worktree(
         app.show_toast("Chat conversations can't be resumed in a worktree");
         return vec![];
     }
+    if crate::app::is_daemon_or_remote_control_row(&source) {
+        app.show_toast("Daemon sessions can't be resumed in a worktree");
+        return vec![];
+    }
     #[cfg(feature = "local-workspace")]
     if app.chat_mode && matches!(app.active_view, ActiveView::Welcome) {
         if app.local_workspace_startup_locked {
@@ -525,11 +561,9 @@ fn keep_picker_entry(
         entry.source != source || entry.id != session_id
     }
 }
-/// Remove a deleted session identity from the modal session picker and the
-/// welcome-screen picker, then re-anchor the selection on a real row.
+/// Remove a deleted session identity from the modal session picker and the welcome-screen picker, then re-anchor the selection on a real row.
 ///
-/// Called after [`crate::app::actions::TaskResult::DeleteSessionComplete`] so
-/// the just-deleted entry vanishes from the open list without a full refetch.
+/// Called after [`crate::app::actions::TaskResult::DeleteSessionComplete`] so the just-deleted entry vanishes without a full refetch.
 pub(in crate::app::dispatch) fn remove_session_from_pickers(
     app: &mut AppView,
     source: &str,
@@ -538,7 +572,6 @@ pub(in crate::app::dispatch) fn remove_session_from_pickers(
 ) {
     use crate::views::modal::ActiveModal;
     use crate::views::session_picker::build_entry_map;
-    app.session_picker_detail_generation += 1;
     if let Some(agent) = get_active_agent_mut(app)
         && let Some(ActiveModal::SessionPicker {
             entries,
@@ -548,9 +581,11 @@ pub(in crate::app::dispatch) fn remove_session_from_pickers(
             content_loading,
             entries_query,
             pending_delete,
+            detail_seq,
             ..
         }) = agent.active_modal.as_mut()
     {
+        *detail_seq += 1;
         if pending_delete
             .as_ref()
             .is_some_and(|pd| pd.source == source && pd.session_id == session_id)
@@ -579,6 +614,7 @@ pub(in crate::app::dispatch) fn remove_session_from_pickers(
         );
         reanchor_grouped_selection(state, &map);
     }
+    app.session_picker_detail_seq += 1;
     if app
         .session_picker_pending_delete
         .as_ref()
@@ -608,8 +644,7 @@ pub(in crate::app::dispatch) fn remove_session_from_pickers(
     );
     reanchor_grouped_selection(&mut app.session_picker_state, &welcome_map);
 }
-/// Clamp `state.selected` to a selectable slot in a grouped picker `map`
-/// (`Some` = selectable row, `None` = non-selectable header).
+/// Clamp `state.selected` to a selectable slot in a grouped picker `map`, where `Some` is a selectable row and `None` a non-selectable header.
 pub(in crate::app::dispatch) fn reanchor_grouped_selection<T>(
     state: &mut crate::views::picker::PickerState,
     map: &[Option<T>],
@@ -620,62 +655,144 @@ pub(in crate::app::dispatch) fn reanchor_grouped_selection<T>(
         return;
     }
     let mut sel = state.selected.min(map.len() - 1);
-    while sel > 0 && map[sel].is_none() {
+    while sel > 0 && map.get(sel).is_none_or(Option::is_none) {
         sel -= 1;
     }
-    if map[sel].is_none() {
+    if map.get(sel).is_none_or(Option::is_none) {
         sel = map.iter().position(|e| e.is_some()).unwrap_or(0);
     }
     state.selected = sel;
 }
-/// Trigger a deep content search when the session picker query changes.
-///
-/// Any query of 2+ chars searches content — title matches never suppress
-/// it. Forced (Ctrl+/) searches fire immediately; keystrokes otherwise
-/// coalesce through [`Effect::DebounceSessionSearch`], whose expiry runs
-/// the search only if its seq is still current. Shorter queries clear the
-/// content results.
-///
-/// Checks the active agent's modal first; if no modal session picker
-/// exists, falls back to the welcome-screen picker state.
+fn advance_session_source_filter(
+    state: &mut crate::views::picker::PickerState,
+    source_filter: &mut crate::views::session_picker::SourceFilter,
+    pending_delete: &mut Option<crate::views::session_picker::PendingDelete>,
+) -> bool {
+    use crate::views::session_picker::SourceFilter;
+    let previous = *source_filter;
+    *source_filter = source_filter.next();
+    state.selected = 0;
+    state.scroll_offset = None;
+    *pending_delete = None;
+    previous == SourceFilter::Headless || *source_filter == SourceFilter::Headless
+}
+/// Drop natives cached under the previous Headless policy.
+/// Keep `Some([])` on an active filter so `show_picker` stays up while the refetch loads.
+fn drop_stale_natives_for_headless_cross(
+    entries: &mut Option<Vec<crate::app::app_view::SessionPickerEntry>>,
+    source_filter: crate::views::session_picker::SourceFilter,
+) {
+    crate::app::foreign_sessions::replace_native_entries(entries, Vec::new());
+    if source_filter.is_active() && entries.is_none() {
+        *entries = Some(Vec::new());
+    }
+}
 pub(in crate::app::dispatch) fn dispatch_cycle_session_source_filter(
     app: &mut AppView,
 ) -> Vec<Effect> {
     use crate::views::modal::ActiveModal;
-    app.session_picker_detail_generation += 1;
+    let chat_mode = app.chat_mode;
+    let mut has_crossed_headless = false;
+    let mut is_handled_by_modal = false;
+    let mut request_identity = (SessionPickerHost::Welcome, app.session_picker_generation);
+    let mut restart_search = None;
     if let Some(agent) = get_active_agent_mut(app)
         && let Some(ActiveModal::SessionPicker {
             state,
+            entries,
+            loading,
             content_results,
             content_loading,
             deep_search_seq,
+            generation,
             source_filter,
             pending_delete,
+            detail_seq,
             ..
         }) = agent.active_modal.as_mut()
     {
-        *source_filter = source_filter.next();
-        state.selected = 0;
-        state.scroll_offset = None;
-        if *source_filter == crate::views::session_picker::SourceFilter::External {
+        *detail_seq += 1;
+        has_crossed_headless = advance_session_source_filter(state, source_filter, pending_delete);
+        request_identity = (SessionPickerHost::AgentModal, *generation);
+        if source_filter.is_content_search_disabled() || has_crossed_headless {
             *content_results = None;
             *content_loading = false;
             *deep_search_seq += 1;
             state.expanded.clear();
-            *pending_delete = None;
         }
+        if has_crossed_headless {
+            drop_stale_natives_for_headless_cross(entries, *source_filter);
+            *loading = true;
+            let query = state.query().trim().to_string();
+            if !chat_mode && !source_filter.is_content_search_disabled() && query.len() >= 2 {
+                *content_loading = true;
+                restart_search = Some(Effect::DeepSearchSessions {
+                    host: request_identity.0,
+                    generation: request_identity.1,
+                    query,
+                    seq: *deep_search_seq,
+                    headless_policy: source_filter.headless_policy(),
+                });
+            }
+        }
+        is_handled_by_modal = true;
+    }
+    if !is_handled_by_modal {
+        app.session_picker_detail_seq += 1;
+        has_crossed_headless = advance_session_source_filter(
+            &mut app.session_picker_state,
+            &mut app.session_picker_source_filter,
+            &mut app.session_picker_pending_delete,
+        );
+        if app
+            .session_picker_source_filter
+            .is_content_search_disabled()
+            || has_crossed_headless
+        {
+            app.session_picker_content_results = None;
+            app.session_picker_content_loading = false;
+            app.session_picker_deep_search_seq += 1;
+            app.session_picker_state.expanded.clear();
+        }
+        if has_crossed_headless {
+            drop_stale_natives_for_headless_cross(
+                &mut app.session_picker_entries,
+                app.session_picker_source_filter,
+            );
+            app.session_picker_loading = true;
+            let query = app.session_picker_state.query().trim().to_string();
+            if !chat_mode
+                && !app
+                    .session_picker_source_filter
+                    .is_content_search_disabled()
+                && query.len() >= 2
+            {
+                app.session_picker_content_loading = true;
+                restart_search = Some(Effect::DeepSearchSessions {
+                    host: request_identity.0,
+                    generation: request_identity.1,
+                    query,
+                    seq: app.session_picker_deep_search_seq,
+                    headless_policy: app.session_picker_source_filter.headless_policy(),
+                });
+            }
+        }
+    }
+    if !has_crossed_headless {
         return vec![];
     }
-    app.session_picker_source_filter = app.session_picker_source_filter.next();
-    app.session_picker_state.selected = 0;
-    app.session_picker_state.scroll_offset = None;
-    if app.session_picker_source_filter == crate::views::session_picker::SourceFilter::External {
-        app.session_picker_content_results = None;
-        app.session_picker_content_loading = false;
-        app.session_picker_deep_search_seq += 1;
-        app.session_picker_state.expanded.clear();
-    }
-    vec![]
+    let seq = next_picker_list_generation(app);
+    let mut effects = vec![Effect::FetchSessionList {
+        host: request_identity.0,
+        cwd_override: None,
+        generation: request_identity.1,
+        query: None,
+        seq,
+        kind_filter: super::foreign::welcome_history_kind_filter(app),
+        headless_policy: super::foreign::active_picker_headless_policy(app),
+    }];
+    effects.extend(restart_search);
+    effects
 }
 pub(in crate::app::dispatch) fn dispatch_trigger_deep_search(
     app: &mut AppView,
@@ -691,11 +808,12 @@ pub(in crate::app::dispatch) fn dispatch_trigger_deep_search(
             content_results,
             content_loading,
             deep_search_seq,
+            generation,
             source_filter,
             ..
         }) = agent.active_modal.as_mut()
     {
-        if *source_filter == crate::views::session_picker::SourceFilter::External {
+        if source_filter.is_content_search_disabled() {
             *deep_search_seq += 1;
             *content_results = None;
             *content_loading = false;
@@ -711,12 +829,28 @@ pub(in crate::app::dispatch) fn dispatch_trigger_deep_search(
             return vec![];
         }
         *content_loading = true;
+        let host = SessionPickerHost::AgentModal;
+        let generation = *generation;
         if force {
-            return vec![Effect::DeepSearchSessions { query, seq }];
+            return vec![Effect::DeepSearchSessions {
+                host,
+                generation,
+                query,
+                seq,
+                headless_policy: source_filter.headless_policy(),
+            }];
         }
-        return vec![Effect::DebounceSessionSearch { query, seq }];
+        return vec![Effect::DebounceSessionSearch {
+            host,
+            generation,
+            query,
+            seq,
+        }];
     }
-    if app.session_picker_source_filter == crate::views::session_picker::SourceFilter::External {
+    if app
+        .session_picker_source_filter
+        .is_content_search_disabled()
+    {
         app.session_picker_deep_search_seq += 1;
         app.session_picker_content_results = None;
         app.session_picker_content_loading = false;
@@ -732,62 +866,100 @@ pub(in crate::app::dispatch) fn dispatch_trigger_deep_search(
         return vec![];
     }
     app.session_picker_content_loading = true;
+    let host = SessionPickerHost::Welcome;
+    let generation = app.session_picker_generation;
     if force {
-        vec![Effect::DeepSearchSessions { query, seq }]
+        vec![Effect::DeepSearchSessions {
+            host,
+            generation,
+            query,
+            seq,
+            headless_policy: app.session_picker_source_filter.headless_policy(),
+        }]
     } else {
-        vec![Effect::DebounceSessionSearch { query, seq }]
+        vec![Effect::DebounceSessionSearch {
+            host,
+            generation,
+            query,
+            seq,
+        }]
     }
 }
-/// Chat-mode replacement for local deep search: refetch the session list
-/// with the picker query pushed down as `x.ai/session/list` `query`.
-/// Keystrokes are coalesced through [`Effect::DebounceSessionSearch`]; a
-/// forced search (Ctrl+/) or a cleared query fetches immediately. Every
-/// trigger bumps `session_picker_list_seq`, so stale in-flight debounces
-/// and fetches are dropped when they complete.
+/// Chat-mode replacement for local deep search: refetch the session list with the picker query pushed down as `x.ai/session/list` `query`.
+/// Keystrokes are coalesced through [`Effect::DebounceSessionSearch`]; a forced search (Ctrl+/) or a cleared query fetches immediately.
+/// Every trigger bumps `session_picker_list_seq`, so stale in-flight debounces and fetches are dropped when they complete.
 fn dispatch_chat_search_refetch(app: &mut AppView, force: bool) -> Vec<Effect> {
     use crate::views::modal::ActiveModal;
-    let query = if let Some(agent) = get_active_agent(app)
-        && let Some(ActiveModal::SessionPicker { state, .. }) = agent.active_modal.as_ref()
+    let (host, generation, query) = if let Some(agent) = get_active_agent(app)
+        && let Some(ActiveModal::SessionPicker {
+            state, generation, ..
+        }) = agent.active_modal.as_ref()
     {
-        state.query().trim().to_string()
+        (
+            SessionPickerHost::AgentModal,
+            *generation,
+            state.query().trim().to_string(),
+        )
     } else {
-        app.session_picker_state.query().trim().to_string()
+        (
+            SessionPickerHost::Welcome,
+            app.session_picker_generation,
+            app.session_picker_state.query().trim().to_string(),
+        )
     };
-    app.session_picker_list_seq += 1;
-    let seq = app.session_picker_list_seq;
+    let seq = next_picker_list_generation(app);
     if query.is_empty() {
-        set_chat_search_loading(app, false);
+        set_chat_search_loading(app, host, false);
         return vec![Effect::FetchSessionList {
+            host,
+            cwd_override: None,
+            generation,
             query: None,
             seq,
             kind_filter: super::foreign::welcome_history_kind_filter(app),
+            headless_policy: super::foreign::active_picker_headless_policy(app),
         }];
     }
-    set_chat_search_loading(app, true);
+    set_chat_search_loading(app, host, true);
     if force {
         vec![Effect::FetchSessionList {
+            host,
+            cwd_override: None,
+            generation,
             query: Some(query),
             seq,
             kind_filter: super::foreign::welcome_history_kind_filter(app),
+            headless_policy: super::foreign::active_picker_headless_policy(app),
         }]
     } else {
-        vec![Effect::DebounceSessionSearch { query, seq }]
+        vec![Effect::DebounceSessionSearch {
+            host,
+            generation,
+            query,
+            seq,
+        }]
     }
 }
-/// Flip the search in-flight flag on the active picker surface (modal first,
-/// welcome fallback — same order as `dispatch_chat_search_refetch`'s query
-/// read).
-fn set_chat_search_loading(app: &mut AppView, loading: bool) {
+/// Flip the search in-flight flag on the picker host the caller already resolved as the search's requester.
+fn set_chat_search_loading(app: &mut AppView, host: SessionPickerHost, loading: bool) {
     use crate::views::modal::ActiveModal;
-    if let Some(agent) = get_active_agent_mut(app)
-        && let Some(ActiveModal::SessionPicker {
-            content_loading, ..
-        }) = agent.active_modal.as_mut()
-    {
-        *content_loading = loading;
-        return;
+    match host {
+        SessionPickerHost::AgentModal => {
+            if let Some(agent) = get_active_agent_mut(app)
+                && let Some(ActiveModal::SessionPicker {
+                    content_loading, ..
+                }) = agent.active_modal.as_mut()
+            {
+                *content_loading = loading;
+            }
+        }
+        SessionPickerHost::Welcome => app.session_picker_content_loading = loading,
+        SessionPickerHost::Dashboard => {
+            if let Some(surface) = app.dashboard_session_picker.as_mut() {
+                surface.content_loading = loading;
+            }
+        }
     }
-    app.session_picker_content_loading = loading;
 }
 fn session_picker_entry_source<'a>(app: &'a AppView, session_id: &str) -> Option<&'a str> {
     use crate::views::modal::ActiveModal;
@@ -892,7 +1064,7 @@ pub(in crate::app::dispatch) fn dispatch_pick_content_session(
     dispatch_load_session_with_restore(app, session_id, cwd)
 }
 /// Create a placeholder agent and restore a remote session before loading.
-/// Build rows only — conversation rows never reach the restore path.
+/// Build rows only; conversation rows never reach the restore path.
 pub(in crate::app::dispatch) fn dispatch_load_session_with_restore(
     app: &mut AppView,
     session_id: String,
@@ -931,7 +1103,8 @@ pub(in crate::app::dispatch) fn dispatch_load_session_with_restore(
     scrollback.push_block(RenderBlock::system(format!(
         "Restoring session {session_id} from remote..."
     )));
-    let agent = AgentView::new(
+    let agent = AgentView::from_app(
+        app,
         AgentSession {
             id: agent_id,
             acp_tx: app.acp_tx.clone(),
@@ -961,6 +1134,8 @@ pub(in crate::app::dispatch) fn dispatch_load_session_with_restore(
             available_commands_generation: 1,
             available_tools: None,
             model_switch_pending: false,
+            hook_block_hold: false,
+            blocked_prompt: None,
             user_model_preference: None,
             deferred_model_switch: app.deferred_model_switch_from_cli(),
             bg_tasks: std::collections::BTreeMap::new(),
@@ -974,6 +1149,7 @@ pub(in crate::app::dispatch) fn dispatch_load_session_with_restore(
         scrollback,
     );
     app.agents.insert(agent_id, agent);
+    let conversation_entry = session_opens_as_chat(app, false);
     {
         let agent = app.agents.get_mut(&agent_id).unwrap();
         agent.attached_as_viewer = true;
@@ -996,6 +1172,7 @@ pub(in crate::app::dispatch) fn dispatch_load_session_with_restore(
             &app.tier_restricted_commands,
         );
         agent.chat_kind = app.chat_mode;
+        agent.conversation_entry = conversation_entry;
         #[cfg(feature = "local-workspace")]
         {
             let history_build = app.welcome_history_load_as_build;
@@ -1037,30 +1214,35 @@ pub(in crate::app::dispatch) fn handle_session_loaded(
     agent_id: AgentId,
     session_id: acp::SessionId,
     new_models: Option<acp::SessionModelState>,
+    modes: Option<acp::SessionModeState>,
     code_restored: bool,
     restore_summary: Option<String>,
     restore_degree: Option<xai_grok_workspace::session::git::RestoreDegree>,
     running_prompt_id: Option<String>,
-    scheduler_background_loops: Option<bool>,
 ) -> Vec<Effect> {
     tracing::info!(
         "Session loaded for agent {:?} session {:?}",
         agent_id,
         session_id,
     );
+    if app
+        .agents
+        .get_mut(&agent_id)
+        .is_some_and(|agent| defer_to_open_reload_window(agent, agent_id, "SessionLoaded"))
+    {
+        return vec![];
+    }
+    let identity_rebind = super::super::dashboard::WorkspaceIdentityRebind::capture(app);
+    crate::app::workspace_sync::allow_loaded_session(app, session_id.0.as_ref());
     if let Some(agent) = app.agents.get_mut(&agent_id) {
-        if defer_to_open_reload_window(agent, agent_id, "SessionLoaded") {
-            return vec![];
-        }
         let hydrate_sid = session_id.clone();
         agent.bind_session_id(session_id);
-        agent.scheduler_background_loops = scheduler_background_loops;
         agent.scrollback.end_batch();
         agent.session.loading_replay = false;
         agent.arm_late_replay_grace();
         agent.session.restore_degree = restore_degree;
         agent.session.finish_turn(&mut agent.scrollback);
-        agent.mark_turn_finished();
+        agent.mark_turn_finished(TurnEnd::Aborted);
         if let Some(placeholder_id) = agent.loading_placeholder_id.take() {
             agent.scrollback.remove_entry(placeholder_id);
         }
@@ -1068,6 +1250,11 @@ pub(in crate::app::dispatch) fn handle_session_loaded(
             app.models = Some(m).into();
             agent.session.models = app.models.clone();
         }
+        crate::app::dispatch::session::lifecycle::apply_session_modes_dropping_auto(
+            agent,
+            modes,
+            &mut app.current_ui.permission_mode,
+        );
         let deferred = crate::app::dispatch::session::lifecycle::apply_deferred_model_switch(
             agent,
             app.cli_effort_token.as_deref(),
@@ -1117,7 +1304,7 @@ pub(in crate::app::dispatch) fn handle_session_loaded(
         if let Some(directive) = agent.pending_first_prompt.take() {
             agent.session.enqueue_prompt_front(directive);
         }
-        let drain = maybe_drain_queue(agent);
+        let drain = maybe_drain_queue(agent, &mut app.pending_image_notices);
         let page_flip_entry = drain.page_flip_entry;
         effects.extend(drain.effects);
         let cwd = agent.session.cwd.clone();
@@ -1127,6 +1314,7 @@ pub(in crate::app::dispatch) fn handle_session_loaded(
             cwd: cwd.clone(),
             last_turn_summary_gen: agent.last_turn_summary_gen,
         });
+        agent.seed_prompt_history_from_scrollback();
         agent.session.prompt_history_loading = true;
         effects.push(Effect::FetchPromptHistory {
             agent_id,
@@ -1146,7 +1334,7 @@ pub(in crate::app::dispatch) fn handle_session_loaded(
         effects.push(Effect::FetchBilling {
             agent_id,
             silent: true,
-            nonce: 0,
+            nonce: Default::default(),
         });
         effects.push(Effect::FetchDeepSeekStatus {
             agent_id,
@@ -1176,8 +1364,9 @@ pub(in crate::app::dispatch) fn handle_session_loaded(
             cwd: agent.session.cwd.display().to_string(),
         });
         notify_session_ready(&app.notification_service, agent);
-        crate::memory_release::release_retained_memory_with("session-load-replay");
+        crate::memory_release::release_retained_memory("session-load-replay");
         note_peek_page_flip(app, agent_id, page_flip_entry);
+        identity_rebind.apply(app);
         return effects;
     }
     vec![]
@@ -1196,7 +1385,7 @@ pub(in crate::app::dispatch) fn handle_session_load_failed(
         agent.pending_extensions_fetch = false;
         agent.session.prompt_history_loading = false;
         agent.session.finish_command();
-        agent.mark_turn_finished();
+        agent.mark_turn_finished(TurnEnd::Aborted);
         agent.scrollback.end_batch();
         agent.session.loading_replay = false;
         agent.pending_first_prompt = None;
@@ -1212,76 +1401,70 @@ pub(in crate::app::dispatch) fn handle_session_load_failed(
 }
 pub(in crate::app::dispatch) fn handle_session_search_debounce_expired(
     app: &mut AppView,
+    request: PickerRequest,
     query: String,
-    seq: u64,
 ) -> Vec<Effect> {
-    if app.chat_mode {
-        if seq != app.session_picker_list_seq {
-            return vec![];
-        }
-        return vec![Effect::FetchSessionList {
-            query: (!query.is_empty()).then_some(query),
-            seq,
-            kind_filter: super::foreign::welcome_history_kind_filter(app),
-        }];
-    }
-    if live_deep_search_seq(app) != Some(seq) {
+    let chat_mode = app.chat_mode;
+    let welcome_view_live = matches!(app.active_view, crate::app::app_view::ActiveView::Welcome);
+    let seq_kind = if chat_mode {
+        PickerSeqKind::List
+    } else {
+        PickerSeqKind::DeepSearch
+    };
+    let Some(target) = accept_picker_result(app, request, seq_kind, "debounce expiry") else {
+        return vec![];
+    };
+    let headless_policy = target.source_filter.headless_policy();
+    if !chat_mode && request.host == SessionPickerHost::Welcome && !welcome_view_live {
+        tracing::debug!(
+            host = ?request.host,
+            generation = request.generation,
+            seq = request.seq,
+            "debounce expiry for hidden welcome picker dropped"
+        );
         return vec![];
     }
-    vec![Effect::DeepSearchSessions { query, seq }]
-}
-/// The deep-search seq of the surface that can still consume results: an
-/// open modal SessionPicker (its own counter), else the welcome-screen
-/// picker only while the welcome view is showing. `None` when neither
-/// surface is live — dismissing a modal bumps the WELCOME counter, which
-/// can collide with (not invalidate) a modal-armed seq, so those expiries
-/// are dropped by liveness rather than counter arithmetic.
-fn live_deep_search_seq(app: &AppView) -> Option<u64> {
-    use crate::views::modal::ActiveModal;
-    if let Some(agent) = get_active_agent(app)
-        && let Some(ActiveModal::SessionPicker {
-            deep_search_seq, ..
-        }) = agent.active_modal.as_ref()
-    {
-        return Some(*deep_search_seq);
+    if chat_mode {
+        vec![Effect::FetchSessionList {
+            host: request.host,
+            cwd_override: None,
+            generation: request.generation,
+            query: (!query.is_empty()).then_some(query),
+            seq: request.seq,
+            kind_filter: super::foreign::welcome_history_kind_filter(app),
+            headless_policy,
+        }]
+    } else {
+        vec![Effect::DeepSearchSessions {
+            host: request.host,
+            generation: request.generation,
+            query,
+            seq: request.seq,
+            headless_policy,
+        }]
     }
-    matches!(app.active_view, crate::app::app_view::ActiveView::Welcome)
-        .then_some(app.session_picker_deep_search_seq)
 }
 pub(in crate::app::dispatch) fn handle_card_detail_loaded(
     app: &mut AppView,
+    request: PickerRequest,
     source: String,
     session_id: String,
-    generation: u64,
     detail: crate::app::app_view::CardDetail,
 ) -> Vec<Effect> {
-    use crate::views::modal::ActiveModal;
-    if generation != app.session_picker_detail_generation
-        || crate::app::foreign_sessions::is_foreign_picker_source(&source)
-    {
+    if crate::app::foreign_sessions::is_foreign_picker_source(&source) {
         return vec![];
     }
-    if let Some(agent) = get_active_agent_mut(app)
-        && let Some(ActiveModal::SessionPicker { entries, .. }) = agent.active_modal.as_mut()
-    {
-        if let Some(entry) = entries.as_mut().and_then(|sessions| {
-            sessions.iter_mut().find(|entry| {
-                entry.source == source
-                    && entry.id == session_id
-                    && !crate::app::foreign_sessions::is_foreign_picker_source(&entry.source)
-            })
-        }) {
-            entry.card_detail = Some(detail);
-        }
+    let Some(target) = accept_picker_result(app, request, PickerSeqKind::Detail, "card detail")
+    else {
         return vec![];
-    }
-    if let Some(ref mut sessions) = app.session_picker_entries
-        && let Some(entry) = sessions.iter_mut().find(|entry| {
+    };
+    if let Some(entry) = target.entries.as_mut().and_then(|sessions| {
+        sessions.iter_mut().find(|entry| {
             entry.source == source
                 && entry.id == session_id
                 && !crate::app::foreign_sessions::is_foreign_picker_source(&entry.source)
         })
-    {
+    }) {
         entry.card_detail = Some(detail);
     }
     vec![]
@@ -1310,11 +1493,14 @@ pub(in crate::app::dispatch) fn handle_session_restored(
         refuse_chat_mode_build_agent(app, agent_id);
         return vec![];
     }
+    let identity_rebind = super::super::dashboard::WorkspaceIdentityRebind::capture(app);
     let sid = clear_stale_session_id(app, &local_session_id);
+    let conversation_entry = session_opens_as_chat(app, false);
     if let Some(agent) = app.agents.get_mut(&agent_id) {
         supersede_open_reload_window(agent, agent_id, "SessionRestored");
         agent.bind_session_id(sid);
         agent.chat_kind = app.chat_mode;
+        agent.conversation_entry = conversation_entry;
         #[cfg(feature = "local-workspace")]
         {
             let history_build = app.welcome_history_load_as_build;
@@ -1341,6 +1527,7 @@ pub(in crate::app::dispatch) fn handle_session_restored(
             "Session restored. Loading {local_session_id}..."
         )));
     }
+    identity_rebind.apply(app);
     let cwd = app.cwd.clone();
     vec![Effect::LoadSession {
         agent_id,
@@ -1378,81 +1565,52 @@ pub(in crate::app::dispatch) fn handle_session_restore_failed(
 }
 pub(in crate::app::dispatch) fn handle_deep_search_results(
     app: &mut AppView,
+    request: PickerRequest,
     results: Vec<xai_grok_shell::extensions::session_search::SearchSessionHit>,
-    seq: u64,
 ) -> Vec<Effect> {
-    use crate::views::modal::ActiveModal;
-    if let Some(agent) = get_active_agent_mut(app)
-        && let Some(ActiveModal::SessionPicker {
-            content_results,
-            content_loading,
-            deep_search_seq,
-            source_filter,
-            ..
-        }) = agent.active_modal.as_mut()
-    {
-        if seq == *deep_search_seq
-            && *source_filter != crate::views::session_picker::SourceFilter::External
-        {
-            *content_results = Some(results);
-            *content_loading = false;
-        }
+    let Some(target) = accept_picker_result(
+        app,
+        request,
+        PickerSeqKind::DeepSearch,
+        "deep search results",
+    ) else {
+        return vec![];
+    };
+    if target.source_filter.is_content_search_disabled() {
+        tracing::debug!(
+            host = ?request.host,
+            generation = request.generation,
+            seq = request.seq,
+            "deep search results suppressed by the source filter"
+        );
         return vec![];
     }
-    if seq == app.session_picker_deep_search_seq
-        && app.session_picker_source_filter != crate::views::session_picker::SourceFilter::External
-    {
-        app.session_picker_content_results = Some(results);
-        app.session_picker_content_loading = false;
-    }
+    *target.content_results = Some(results);
+    *target.content_loading = false;
     vec![]
 }
 pub(in crate::app::dispatch) fn dispatch_show_session_picker(app: &mut AppView) -> Vec<Effect> {
-    use crate::views::modal::ActiveModal;
     with_active_agent(app, |agent| {
-        agent.active_modal = Some(ActiveModal::SessionPicker {
-            state: crate::views::picker::PickerState::default(),
-            entries: None,
-            loading: true,
-            lanes: Default::default(),
-            previous_palette: None,
-            window: crate::views::modal_window::ModalWindowState::new(),
-            content_results: None,
-            content_loading: false,
-            deep_search_seq: 0,
-            entries_query: None,
-            source_filter: crate::views::session_picker::SourceFilter::default(),
-            pending_delete: None,
-        });
+        agent.active_modal = Some(crate::views::modal::session_picker_modal(None));
     });
     dispatch_fetch_session_list(app)
 }
-/// The picker (modal `/resume` or welcome screen) was dismissed without a
-/// pick. Its own fields die with it, but a still-current in-flight
-/// list/search fetch would fall through to the welcome picker fields in
-/// `handle_session_list_loaded`, stamping them with a query the welcome
-/// search box never had — or repopulating a picker the user just closed.
-/// Invalidate it (same seq idiom as `dispatch_fetch_session_list`).
+/// The picker (modal `/resume` or welcome screen) was dismissed without a pick.
+/// A modal's fields (and generation) die with it, so its in-flight fetches are dropped by host liveness.
+/// The welcome fields survive the close, so their in-flight fetches must be invalidated here.
 pub(in crate::app::dispatch) fn dispatch_session_picker_closed(app: &mut AppView) -> Vec<Effect> {
     invalidate_picker_fetch_on_dismiss(app);
     vec![]
 }
-/// Fetch invalidation shared by EVERY picker-dismissal path:
-/// modal Esc/mouse close, modal and welcome picks (all variants), and the
-/// welcome-screen Esc. Only chat mode can have a query-stamped search in
-/// flight; a Build-mode MODAL close must NOT bump — only the plain list
-/// fetch exists there and its response lands on the hidden welcome fields
-/// (pre-existing last-write-wins behavior). A WELCOME dismissal must bump
-/// and drop the loading flag: the welcome view survives the close, so a
-/// still-loading flag holds `show_picker` in a spinner limbo that ignores
-/// input until the late response lands and resurrects the picker.
+/// Fetch invalidation shared by every picker-dismissal path.
+/// The welcome generation and shared list seq jointly orphan requests from the old host, incarnation, or Headless policy.
+/// Welcome also drops the loading flag because the view survives dismissal.
 fn invalidate_picker_fetch_on_dismiss(app: &mut AppView) {
     invalidate_foreign_picker(app);
-    let welcome_dismissal = matches!(app.active_view, crate::app::app_view::ActiveView::Welcome);
-    if app.chat_mode || welcome_dismissal {
-        app.session_picker_list_seq += 1;
-    }
-    if welcome_dismissal {
+    app.session_picker_generation = app.alloc_picker_generation();
+    next_picker_list_generation(app);
+    let is_welcome_dismissal = matches!(app.active_view, crate::app::app_view::ActiveView::Welcome);
+    if is_welcome_dismissal {
         app.session_picker_loading = false;
     }
     app.session_picker_deep_search_seq += 1;

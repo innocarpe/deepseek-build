@@ -42,7 +42,6 @@ impl ProviderError {
         .find(|s| is_slug_shaped(s))
     }
 
-    /// Whether the message is markup rather than prose.
     pub fn message_is_markup(&self) -> bool {
         let m = self.message.trim();
         let lower = m.to_ascii_lowercase();
@@ -52,7 +51,6 @@ impl ProviderError {
             || lower.contains("</")
     }
 
-    /// One-line display text.
     pub fn display_message(&self) -> String {
         match self.slug() {
             Some(slug)
@@ -96,15 +94,26 @@ fn split_wke(message: String) -> (String, Option<String>) {
     let Some(start) = message.find(PREFIX) else {
         return (message, None);
     };
-    let rest = &message[start + PREFIX.len()..];
+    let Some(rest) = message.get(start + PREFIX.len()..) else {
+        return (message, None);
+    };
     let Some(end) = rest.find(']') else {
         return (message, None);
     };
-    let code = rest[..end].trim().to_owned();
+    let Some(code) = rest.get(..end) else {
+        return (message, None);
+    };
+    let code = code.trim().to_owned();
     if code.is_empty() {
         return (message, None);
     }
-    let cleaned = format!("{}{}", &message[..start], &rest[end + 1..]);
+    let Some(head) = message.get(..start) else {
+        return (message, None);
+    };
+    let Some(tail) = rest.get(end + 1..) else {
+        return (message, None);
+    };
+    let cleaned = format!("{head}{tail}");
     let cleaned = cleaned.trim().trim_end_matches('.').trim().to_owned();
     let cleaned = if cleaned.is_empty() {
         code.clone()
@@ -133,8 +142,7 @@ fn first_str<'a>(obj: &Value, keys: impl IntoIterator<Item = &'a str>) -> Option
     keys.into_iter().find_map(|k| nonempty_str(obj.get(k)))
 }
 
-/// Parse an upstream error body into a [`ProviderError`]. Returns `None` when
-/// the body carries nothing a human could read.
+/// Returns `None` when the body carries nothing a human could read.
 pub fn parse_provider_error(bytes: &[u8]) -> Option<ProviderError> {
     let text = std::str::from_utf8(bytes).ok()?.trim();
     parse_provider_error_str(text)

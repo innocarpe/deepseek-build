@@ -13,8 +13,11 @@
 //!   and retried until `max_attempts` is hit;
 //! - a sampler error is **deterministic** (no retry) when
 //!   [`CompactionSampleError::is_deterministic`](crate::CompactionSampleError::is_deterministic)
-//!   or a context-length overflow ([`is_context_length_error`]); otherwise it is
-//!   transient and retried.
+//!   or a context-length overflow (structured
+//!   [`ContextOverflow`](crate::CompactionSampleError::ContextOverflow) or a
+//!   size-worded message per [`is_context_length_error`], except a rendered
+//!   HTTP 429 — those stay transient so a TPM Retry-After is not re-flagged);
+//!   otherwise it is transient and retried.
 //!
 //! The loop is *content-neutral*: callers build the prompt, map the structured
 //! [`SampleRetryError`] onto their own error type, and decide whether to clean
@@ -68,6 +71,11 @@ pub enum SampleRetryError {
         /// Total attempts made.
         attempts: u32,
     },
+}
+
+fn is_rendered_http_429(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    m.contains("status 429") || m.contains("429 too many requests")
 }
 
 /// Call `sampler.sample_compaction` up to `max_attempts` times, retrying
@@ -140,7 +148,10 @@ where
             }
             Err(e) => {
                 let message = e.to_string();
-                let context_overflow = is_context_length_error(&message);
+                // Retry-After is not in Display, so a rendered 429 must not let
+                // size wording re-flag overflow.
+                let context_overflow = e.is_context_overflow()
+                    || (is_context_length_error(&message) && !is_rendered_http_429(&message));
                 // A context overflow is deterministic for *this* input — retrying
                 // the same payload cannot help.
                 let deterministic = e.is_deterministic() || context_overflow;
@@ -163,6 +174,8 @@ where
                     });
                 }
                 if !will_retry {
+                    // Overflow implies deterministic, which returned above.
+                    debug_assert!(!context_overflow);
                     return Err(SampleRetryError::Failure {
                         message,
                         deterministic: false,
@@ -302,11 +315,86 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tpm_429_size_wording_on_other_is_retried_not_overflow() {
+        // Host Transient 429+Retry-After is Other with this Display.
+        let sampler = MockSampler::scripted(vec![
+            Err(CompactionSampleError::Other(anyhow::anyhow!(
+                "compact failed: API error (status 429 Too Many Requests): \
+                     Request too large for model: Limit 30000, Requested 50000 \
+                     tokens per min"
+            ))),
+            Ok(healthy()),
+        ]);
+        let out = run(&sampler, 3)
+            .await
+            .expect("TPM 429 must back off instead of burning the input ladder");
+        assert_eq!(out.attempts, 2);
+        assert_eq!(sampler.call_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn structured_overflow_is_not_undone_by_429_wording() {
+        // A structured size code on a 429 is a per-request cap; the host maps
+        // it to ContextOverflow even when Retry-After is present.
+        let sampler = MockSampler::scripted(vec![Err(CompactionSampleError::ContextOverflow(
+            "compact failed: API error (status 429 Too Many Requests): \
+             request_too_large: cap"
+                .into(),
+        ))]);
+        let err = run(&sampler, 3).await.expect_err("should fail");
+        assert!(matches!(
+            err,
+            SampleRetryError::Failure {
+                deterministic: true,
+                context_overflow: true,
+                attempts: 1,
+                ..
+            }
+        ));
+        assert_eq!(sampler.call_count(), 1);
+    }
+
+    #[tokio::test]
     async fn context_overflow_is_deterministic_and_flagged() {
         let sampler =
             MockSampler::scripted(vec![Err(CompactionSampleError::Other(anyhow::anyhow!(
                 "API error (status 400): prompt is too long for this model's context window"
             )))]);
+        let err = run(&sampler, 3).await.expect_err("should fail");
+        assert!(matches!(
+            err,
+            SampleRetryError::Failure {
+                deterministic: true,
+                context_overflow: true,
+                ..
+            }
+        ));
+        assert_eq!(sampler.call_count(), 1, "overflow must not retry");
+    }
+
+    #[tokio::test]
+    async fn structured_context_overflow_flags_without_text_match() {
+        // Must flag overflow even when the text matches no size wording.
+        let sampler = MockSampler::scripted(vec![Err(CompactionSampleError::ContextOverflow(
+            "opaque upstream rejection".into(),
+        ))]);
+        let err = run(&sampler, 3).await.expect_err("should fail");
+        assert!(matches!(
+            err,
+            SampleRetryError::Failure {
+                deterministic: true,
+                context_overflow: true,
+                ..
+            }
+        ));
+        assert_eq!(sampler.call_count(), 1, "overflow must not retry");
+    }
+
+    #[tokio::test]
+    async fn rendered_413_message_is_context_overflow() {
+        let sampler = MockSampler::scripted(vec![Err(CompactionSampleError::Other(
+            anyhow::anyhow!("API error (status 413 Payload Too Large): Request failed (HTTP 413)."),
+        ))]);
         let err = run(&sampler, 3).await.expect_err("should fail");
         assert!(matches!(
             err,

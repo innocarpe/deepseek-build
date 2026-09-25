@@ -1,22 +1,31 @@
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use tokio::fs;
 
 use crate::file_system::{AsyncFileSystem, FsError};
 
 pub struct LocalFs {
     root: PathBuf,
+    remount: OnceLock<PathBuf>,
 }
 
 impl LocalFs {
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            root,
+            remount: OnceLock::new(),
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl AsyncFileSystem for LocalFs {
     fn root(&self) -> &Path {
-        &self.root
+        self.remount.get().unwrap_or(&self.root)
+    }
+
+    fn remount_root(&self, root: PathBuf) {
+        let _ = self.remount.set(root);
     }
 
     async fn exists(&self, path: &Path) -> Result<bool, FsError> {
@@ -24,11 +33,20 @@ impl AsyncFileSystem for LocalFs {
     }
 
     async fn read_file(&self, path: &Path) -> Result<Vec<u8>, FsError> {
-        Ok(fs::read(path).await?)
+        Ok(xai_grok_tools::util::file_reader::read_file(
+            path,
+            xai_grok_tools::util::file_reader::FileReadOptions::default(),
+        )
+        .await?)
     }
 
     async fn try_read_file(&self, path: &Path) -> Result<Option<Vec<u8>>, FsError> {
-        match fs::read(path).await {
+        match xai_grok_tools::util::file_reader::read_file(
+            path,
+            xai_grok_tools::util::file_reader::FileReadOptions::default(),
+        )
+        .await
+        {
             Ok(bytes) => Ok(Some(bytes)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e.into()),

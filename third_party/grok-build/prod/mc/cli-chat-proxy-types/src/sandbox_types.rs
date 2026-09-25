@@ -71,16 +71,8 @@ mod tests {
     #[test]
     fn test_sandbox_mode_serializes_as_proto3_string() {
         assert_eq!(
-            serde_json::to_string(&SandboxMode::Agent).unwrap(),
-            r#""SANDBOX_MODE_AGENT""#
-        );
-        assert_eq!(
             serde_json::to_string(&SandboxMode::WorkspaceServer).unwrap(),
             r#""SANDBOX_MODE_WORKSPACE_SERVER""#
-        );
-        assert_eq!(
-            serde_json::to_string(&SandboxMode::Bare).unwrap(),
-            r#""SANDBOX_MODE_BARE""#
         );
         assert_eq!(
             serde_json::to_string(&SandboxMode::Invalid).unwrap(),
@@ -90,12 +82,7 @@ mod tests {
 
     #[test]
     fn test_sandbox_mode_roundtrip() {
-        for mode in [
-            SandboxMode::Invalid,
-            SandboxMode::Agent,
-            SandboxMode::WorkspaceServer,
-            SandboxMode::Bare,
-        ] {
+        for mode in [SandboxMode::Invalid, SandboxMode::WorkspaceServer] {
             let json = serde_json::to_string(&mode).unwrap();
             let back: SandboxMode = serde_json::from_str(&json).unwrap();
             assert_eq!(back, mode);
@@ -137,14 +124,14 @@ mod tests {
             },
             "directUrls": {"6013": "http://direct.example.com:6013"},
             "cloudflareUrls": {"443": "https://cf.example.com"},
-            "mode": "SANDBOX_MODE_AGENT"
+            "mode": "SANDBOX_MODE_WORKSPACE_SERVER"
         }"#;
 
         let resp: SandboxStartResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.sandbox_id, "sb-abc123");
         assert_eq!(resp.session_id, "sess-xyz789");
         assert_eq!(resp.websocket_url, "wss://sandbox.example.com/ws");
-        assert_eq!(resp.mode, Some(SandboxMode::Agent));
+        assert_eq!(resp.mode, Some(SandboxMode::WorkspaceServer));
 
         // Verify direct_urls / cloudflare_urls maps
         assert_eq!(
@@ -277,18 +264,14 @@ pub struct SandboxTerminateRequest {
 /// Sandbox operating mode.
 ///
 /// Proto3 enum serialized as its string name on the wire
-/// (e.g. `"SANDBOX_MODE_AGENT"`).
+/// (e.g. `"SANDBOX_MODE_WORKSPACE_SERVER"`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SandboxMode {
     #[default]
     #[serde(rename = "SANDBOX_MODE_INVALID")]
     Invalid,
-    #[serde(rename = "SANDBOX_MODE_AGENT")]
-    Agent,
     #[serde(rename = "SANDBOX_MODE_WORKSPACE_SERVER")]
     WorkspaceServer,
-    #[serde(rename = "SANDBOX_MODE_BARE")]
-    Bare,
 }
 
 /// Request body for starting a sandbox session (non-TUI).

@@ -2,22 +2,29 @@ pub mod base64_images;
 pub mod binary;
 pub mod command_display;
 pub mod env;
+pub mod file_reader;
 pub mod fs;
 pub mod git_detect;
 pub mod grok_home;
 pub mod hash;
 pub mod image_compress;
-pub mod image_validate;
+pub use xai_grok_image as image_validate;
+pub mod mcp_structured_content;
 pub mod mcp_truncate;
 pub mod path_suggestions;
 pub(crate) mod query_tools;
+pub mod read_policy;
 pub mod remap;
 pub mod serde_base64;
+pub(crate) mod shared_http;
 pub mod shell_env_policy;
 pub mod spawn;
 pub mod truncate;
 pub mod unicode_confusables;
+#[cfg(any(bundle_rg, bundle_fd, bundle_bfs, bundle_ugrep, test))]
+pub(crate) mod vendor;
 
+pub use crate::implementations::grok_build::grep::ripgrep::rg_path;
 pub use command_display::strip_redundant_session_cd;
 #[cfg(unix)]
 pub use env::detach_from_tty;
@@ -32,7 +39,8 @@ pub use shell_env_policy::{
     apply_shell_environment_policy,
 };
 pub use spawn::{
-    ProcessGroup, ProcessScope, detach_command, global_process_scope, new_process_group,
+    ProcessGroup, ProcessScope, detach_command, detach_search_command, global_process_scope,
+    new_process_group, reap_killed_search_child,
 };
 pub use truncate::{
     DEFAULT_SOFT_WRAP_WIDTH, ceil_char_boundary, estimate_tokens, floor_char_boundary,

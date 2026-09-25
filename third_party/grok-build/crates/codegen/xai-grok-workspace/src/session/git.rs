@@ -2,7 +2,7 @@
 #![allow(dead_code)]
 pub use crate::restore_fetch::git_object_exists;
 use anyhow::Result;
-use git2::{DiffOptions, Repository, StatusOptions};
+use git2::{DiffOptions, Reference, Repository, StatusOptions};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -11,8 +11,9 @@ use tokio::sync::Mutex;
 use url::Url;
 pub use xai_grok_workspace_types::rpc::git::{
     ChangeType, CheckoutCommitResponse, CommitData, CommitOutcome, CommitResult, DiscardScope,
-    GitBranchEntry, GitBranchListData, GitCommitReq, GitDiffsData, GitError, GitFileChange,
-    GitInfoData, GitReadFile, GitReadFilesData, GitStatusData, GitSyncBaseOutcome,
+    GitBranchEntry, GitBranchListData, GitCommitReq, GitDiffsData, GitEnsureBindingResult,
+    GitError, GitFileChange, GitInfoData, GitMergeToMainOutcome, GitMergeToMainResult,
+    GitPushResult, GitReadFile, GitReadFilesData, GitStatusData, GitSyncBaseOutcome,
     GitSyncBaseResult, PushStatus, StageData, VcsKind,
 };
 pub const ERROR_CODE_DIFF_SIZE_EXCEEDED: &str = "DIFF_SIZE_EXCEEDED";
@@ -55,15 +56,168 @@ pub struct DiffSizeExceededFile {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit_lines: Option<u64>,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GitCliFilterPinPlan {
+    NeedPins,
+    NoPins,
+    Refuse,
+}
+/// Verb index after known globals. Unknown dashed tokens → `None` (never skip past a hidden status/diff).
+fn git_cli_verb_index(args: &[&str]) -> Option<usize> {
+    let mut i = 0;
+    while i < args.len() {
+        let Some(tok) = args.get(i).copied() else {
+            break;
+        };
+        if tok == "-" || tok == "--" {
+            return None;
+        }
+        if !tok.starts_with('-') {
+            return Some(i);
+        }
+        if tok.starts_with("-C") && tok.len() > 2 && !tok.starts_with("--") {
+            i += 1;
+            continue;
+        }
+        if tok.starts_with("-c") && tok.len() > 2 && !tok.starts_with("--") {
+            i += 1;
+            continue;
+        }
+        if let Some(rest) = tok.strip_prefix("--")
+            && rest.contains('=')
+        {
+            i += 1;
+            continue;
+        }
+        if matches!(
+            tok,
+            "-C" | "-c"
+                | "--git-dir"
+                | "--work-tree"
+                | "--namespace"
+                | "--super-prefix"
+                | "--exec-path"
+                | "--list-cmds"
+                | "--attr-source"
+                | "--config-env"
+        ) {
+            i += 1;
+            args.get(i)?;
+            i += 1;
+            continue;
+        }
+        if matches!(
+            tok,
+            "-P" | "--no-pager"
+                | "--no-optional-locks"
+                | "--bare"
+                | "--no-replace-objects"
+                | "--literal-pathspecs"
+                | "--glob-pathspecs"
+                | "--noglob-pathspecs"
+                | "--icase-pathspecs"
+        ) {
+            i += 1;
+            continue;
+        }
+        return None;
+    }
+    None
+}
+/// Directory whose local config `status`/`diff` will load. Last `-C` wins.
+/// `--git-dir` / `--work-tree` are refused: they can point at a different repo than `-C`.
+fn git_cli_pin_scan_cwd(base: &Path, args: &[&str]) -> Result<PathBuf> {
+    let verb_idx =
+        git_cli_verb_index(args).ok_or_else(|| anyhow::anyhow!("unresolved git argv"))?;
+    let mut cwd = base.to_path_buf();
+    let mut i = 0;
+    while i < verb_idx {
+        let Some(tok) = args.get(i).copied() else {
+            break;
+        };
+        if matches!(tok, "--git-dir" | "--work-tree")
+            || tok.starts_with("--git-dir=")
+            || tok.starts_with("--work-tree=")
+        {
+            return Err(anyhow::anyhow!("unresolved git argv"));
+        }
+        let attached = tok
+            .strip_prefix("-C")
+            .filter(|rest| !rest.is_empty() && !tok.starts_with("--"));
+        if tok == "-C" || attached.is_some() {
+            let dir = if let Some(rest) = attached {
+                rest
+            } else {
+                i += 1;
+                args.get(i)
+                    .copied()
+                    .ok_or_else(|| anyhow::anyhow!("unresolved git argv"))?
+            };
+            let path = Path::new(dir);
+            cwd = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                cwd.join(path)
+            };
+        }
+        i += 1;
+    }
+    Ok(cwd)
+}
+fn git_cli_filter_pin_plan(args: &[&str]) -> GitCliFilterPinPlan {
+    let Some(verb_idx) = git_cli_verb_index(args) else {
+        return GitCliFilterPinPlan::Refuse;
+    };
+    match args.get(verb_idx).copied() {
+        Some("status" | "diff") => GitCliFilterPinPlan::NeedPins,
+        Some(_) => GitCliFilterPinPlan::NoPins,
+        None => GitCliFilterPinPlan::Refuse,
+    }
+}
+async fn git_cli_content_filter_pins(cwd: &Path, args: &[&str]) -> Result<Option<Vec<String>>> {
+    match git_cli_filter_pin_plan(args) {
+        GitCliFilterPinPlan::NoPins => Ok(None),
+        GitCliFilterPinPlan::Refuse => Err(anyhow::anyhow!("unresolved git argv")),
+        GitCliFilterPinPlan::NeedPins => {
+            let cwd = git_cli_pin_scan_cwd(cwd, args)?;
+            let pins = tokio::task::spawn_blocking(move || {
+                crate::git_content_filters::content_filter_config_pins(&cwd)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("git config pin task failed: {e}"))?
+            .ok_or_else(|| anyhow::anyhow!("unreadable git config"))?;
+            Ok(Some(pins))
+        }
+    }
+}
+/// Insert filter `-c` pins as the last globals before the verb so a caller `-c filter…` cannot win.
+fn git_cli_args_with_filter_pins(cmd: &mut Command, args: &[&str], pins: Option<&[String]>) {
+    match (pins, git_cli_verb_index(args)) {
+        (Some(pins), Some(verb_idx)) => {
+            let Some(globals) = args.get(..verb_idx) else {
+                cmd.args(args);
+                return;
+            };
+            let Some(rest) = args.get(verb_idx..) else {
+                cmd.args(args);
+                return;
+            };
+            cmd.args(globals);
+            for pin in pins {
+                cmd.args(["-c", pin.as_str()]);
+            }
+            cmd.args(rest);
+        }
+        _ => {
+            cmd.args(args);
+        }
+    }
+}
 /// Run a git CLI command and return stdout on success, or error with stderr.
-///
-/// All invocations use `--no-optional-locks` to prevent background stat-cache
-/// refreshes from creating `index.lock`.  This flag only suppresses *optional*
-/// sub-operations (e.g. refreshing stat info after `status`); locks that are
-/// *required* for the requested operation (e.g. `git add`, `git commit`) are
-/// unaffected.  See `git(1)` and `GIT_OPTIONAL_LOCKS`.
+/// `--no-optional-locks` blocks optional stat-cache refreshes from creating `index.lock`; locks required by the operation itself are unaffected.
 pub async fn git_cli(cwd: &Path, args: &[&str]) -> Result<String> {
     tracing::debug!(cwd = %cwd.display(), args = ?args, "git_cli");
+    let filter_pins = git_cli_content_filter_pins(cwd, args).await?;
     let mut cmd = Command::new("git");
     cmd.current_dir(cwd).arg("--no-optional-locks");
     for &(key, val) in xai_tty_utils::GIT_AUTH_SUPPRESSION_ENVS.iter() {
@@ -72,7 +226,8 @@ pub async fn git_cli(cwd: &Path, args: &[&str]) -> Result<String> {
     cmd.stdin(std::process::Stdio::null());
     xai_grok_tools::util::detach_command(&mut cmd);
     cmd.envs(xai_grok_tools::util::pager_env());
-    let output = match cmd.args(args).output().await {
+    git_cli_args_with_filter_pins(&mut cmd, args, filter_pins.as_deref());
+    let output = match cmd.output().await {
         Ok(o) => o,
         Err(e) => {
             tracing::error!(
@@ -89,7 +244,9 @@ pub async fn git_cli(cwd: &Path, args: &[&str]) -> Result<String> {
         tracing::debug!(exit_code = 0, stdout_len = stdout.len(), "git_cli success");
         Ok(stdout)
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stderr = scrub_git_output(&String::from_utf8_lossy(&output.stderr))
+            .trim()
+            .to_string();
         let code = output.status.code();
         tracing::debug!(exit_code = ?code, stderr = %stderr, "git_cli failed");
         Err(anyhow::anyhow!(
@@ -102,27 +259,20 @@ pub async fn git_cli(cwd: &Path, args: &[&str]) -> Result<String> {
         ))
     }
 }
-/// Mutating [`git_cli`]: bump the gate epoch after the attempt. Failed
-/// commands can still change the repo (`pull --rebase` conflicts, partial
-/// checkout); skipping invalidate would keep pre-mutation snapshots.
+/// Mutating [`git_cli`]: bump the gate epoch after the attempt.
+/// Failed commands can still change the repo (`pull --rebase` conflicts, partial checkout); skipping invalidate would keep pre-mutation snapshots.
 async fn git_cli_mut(cwd: &Path, args: &[&str]) -> Result<String> {
     let result = git_cli(cwd, args).await;
     super::git_gate::invalidate(cwd);
     result
 }
-/// Run a jj CLI command and return stdout on success, or error with stderr.
-///
-/// Passes `--ignore-working-copy` to skip the automatic working-copy snapshot
-/// that jj performs at the start of every command. This is safe for read-only
-/// queries and avoids unnecessary I/O. For mutating commands (`describe`,
-/// `new`, `restore`, `workspace add`) use [`jj_cli_mut`] instead.
+/// Run a jj CLI command and return stdout on success, or error with stderr. This is safe for read-only queries and avoids unnecessary I/O.
+/// For mutating commands (`describe`, `new`, `restore`, `workspace add`) use [`jj_cli_mut`] instead.
 pub async fn jj_cli(cwd: &Path, args: &[&str]) -> Result<String> {
     jj_cli_inner(cwd, args, true).await
 }
-/// Run a mutating jj CLI command (no `--ignore-working-copy`).
-///
-/// Use this for commands that modify state: `describe`, `new`, `restore`,
-/// `workspace add/forget`. The working copy will be snapshotted and updated.
+/// Run a mutating jj CLI command (no `--ignore-working-copy`). Use this for commands that modify state: `describe`, `new`, `restore`, `workspace add/forget`.
+/// The working copy will be snapshotted and updated.
 pub async fn jj_cli_mut(cwd: &Path, args: &[&str]) -> Result<String> {
     jj_cli_inner(cwd, args, false).await
 }
@@ -193,18 +343,11 @@ pub enum GitDiscoveryResult {
     Found(PathBuf),
     /// The path is definitively not inside a git repository.
     NotARepo,
-    /// libgit2 failed for a reason other than "not found" (e.g. permissions,
-    /// unsupported extensions, corrupt repo). The user may or may not be in a
-    /// git repo — we can't tell.
+    /// libgit2 failed for a reason other than "not found" (e.g. permissions, unsupported extensions, corrupt repo).
+    /// The user may or may not be in a git repo; we can't tell.
     DiscoveryFailed(anyhow::Error),
 }
-/// Discover whether `path` is inside a git repository.
-///
-/// Returns [`GitDiscoveryResult::Found`] with the worktree root on success,
-/// [`GitDiscoveryResult::NotARepo`] when the path is definitively outside any
-/// repo, or [`GitDiscoveryResult::DiscoveryFailed`] when libgit2 errors for
-/// an unexpected reason (so callers can avoid false-positive "not a repo"
-/// decisions).
+/// Discover whether `path` is inside a git repository. [`GitDiscoveryResult::DiscoveryFailed`] means libgit2 errored unexpectedly, so callers can avoid false-positive "not a repo" decisions.
 pub fn discover_git_root(path: &Path) -> GitDiscoveryResult {
     match Repository::discover(path) {
         Ok(repo) => match repo.workdir() {
@@ -237,30 +380,43 @@ pub(crate) fn strip_url_credentials(url_str: &str) -> String {
     }
     url_str.to_string()
 }
-/// Normalize a git remote URL to a transport-agnostic canonical form.
-///
-/// Produces `host/path` (lowercase host, no scheme, no `.git` suffix,
-/// no credentials, no port). Both SSH and HTTPS URLs for the same repo
-/// produce identical output.
-///
-/// Returns `None` for URLs that cannot be meaningfully normalized
-/// (e.g. `file://` paths, empty strings).
-///
-/// # Examples
-///
-/// ```
-/// use xai_grok_workspace::session::git::normalize_repo_url;
-///
-/// assert_eq!(
-///     normalize_repo_url("git@github.com:org/repo.git"),
-///     Some("github.com/org/repo".into()),
-/// );
-/// assert_eq!(
-///     normalize_repo_url("https://github.com/org/repo.git"),
-///     Some("github.com/org/repo".into()),
-/// );
-/// assert_eq!(normalize_repo_url("file:///tmp/repo"), None);
-/// ```
+/// Scrub credentials from any URL embedded in free-form git output before it is returned to a caller or logged. The token would otherwise leak to the FE and logs.
+pub fn scrub_git_output(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut remaining = text;
+    while let Some(pos) = remaining.find("://") {
+        let after = pos + "://".len();
+        let Some(after_scheme) = remaining.get(after..) else {
+            break;
+        };
+        let auth_end = after_scheme
+            .find(|c: char| {
+                c == '/' || c == '?' || c == '#' || c == '\'' || c == '"' || c.is_whitespace()
+            })
+            .map(|e| after + e)
+            .unwrap_or(remaining.len());
+        let Some(authority) = remaining.get(after..auth_end) else {
+            break;
+        };
+        let Some(prefix) = remaining.get(..after) else {
+            break;
+        };
+        result.push_str(prefix);
+        match authority.rfind('@') {
+            Some(at) => {
+                if let Some(host) = authority.get(at + 1..) {
+                    result.push_str(host);
+                }
+            }
+            None => result.push_str(authority),
+        }
+        remaining = remaining.get(auth_end..).unwrap_or("");
+    }
+    result.push_str(remaining);
+    result
+}
+/// Normalize a git remote URL to `host/path` so SSH and HTTPS for the same repo match.
+/// Returns `None` for URLs that cannot be meaningfully normalized, such as `file://` paths and empty strings.
 pub fn normalize_repo_url(url: &str) -> Option<String> {
     let url = url.trim();
     if url.is_empty() {
@@ -274,15 +430,15 @@ pub fn normalize_repo_url(url: &str) -> Option<String> {
     }
     None
 }
-/// `git@host:path` or `host:path` → `host/path`
+/// Turns `git@host:path` or `host:path` into `host/path`
 fn normalize_scp_url(url: &str) -> Option<String> {
     let after_user = match url.find('@') {
-        Some(pos) => &url[pos + 1..],
+        Some(pos) => url.get(pos + 1..)?,
         None => url,
     };
     let colon = after_user.find(':')?;
-    let host = &after_user[..colon];
-    let path = &after_user[colon + 1..];
+    let host = after_user.get(..colon)?;
+    let path = after_user.get(colon + 1..)?;
     if host.is_empty() || path.is_empty() {
         return None;
     }
@@ -293,7 +449,7 @@ fn normalize_scp_url(url: &str) -> Option<String> {
     }
     Some(format!("{}/{}", host.to_ascii_lowercase(), path))
 }
-/// Standard URL (`https://`, `ssh://`, `git://`, `http://`) → `host/path`
+/// Turns a standard URL (`https://`, `ssh://`, `git://`, `http://`) into `host/path`
 fn normalize_parsed_url(parsed: &Url) -> Option<String> {
     if parsed.scheme() == "file" {
         return None;
@@ -333,15 +489,12 @@ pub fn resolve_normalized_remote_urls(cwd: &Path) -> Vec<String> {
 pub struct PersistedGitMetadata {
     pub git_root_dir: Option<String>,
     pub git_remotes: Vec<String>,
+    /// HEAD's OID as `git rev-parse HEAD` reports it (not verified to exist).
     pub head_commit: Option<String>,
     pub head_branch: Option<String>,
 }
-/// Resolve git metadata for session persistence: worktree root and
-/// deduplicated, credential-stripped remote URLs.
-///
-/// Reuses [`discover_git_root`] (libgit2) for repo discovery and
-/// `repo.remotes()` / `repo.find_remote()` for remote enumeration,
-/// which correctly handles worktrees via the shared commondir.
+/// Resolve session-persistence git metadata: worktree root, HEAD, and deduplicated, credential-stripped remotes.
+/// Reads refs and config only, via the repo's commondir so linked worktrees resolve like the main repo.
 pub fn resolve_persisted_session_git_metadata_sync(cwd: &Path) -> PersistedGitMetadata {
     let git_root = match discover_git_root(cwd) {
         GitDiscoveryResult::Found(root) => root,
@@ -368,16 +521,14 @@ pub fn resolve_persisted_session_git_metadata_sync(cwd: &Path) -> PersistedGitMe
             }
         }
     }
-    let head_ref = repo.head().ok();
+    let head_ref = head_reference(&repo);
     let head_commit = head_ref
         .as_ref()
-        .and_then(|h| h.peel_to_commit().ok())
-        .map(|c| c.id().to_string());
-    let head_branch = head_ref.as_ref().and_then(|h| {
-        h.shorthand()
-            .filter(|s| *s != "HEAD")
-            .map(|s| s.to_string())
-    });
+        .and_then(|h| h.target())
+        .map(|oid| oid.to_string());
+    let head_branch = head_ref
+        .as_ref()
+        .and_then(|h| h.shorthand().filter(|s| *s != "HEAD").map(str::to_owned));
     PersistedGitMetadata {
         git_root_dir: Some(git_root.to_string_lossy().to_string()),
         git_remotes: remotes.into_iter().collect(),
@@ -394,10 +545,8 @@ pub fn find_git_root_from_path(path: &Path) -> Result<PathBuf> {
         GitDiscoveryResult::DiscoveryFailed(e) => Err(e),
     }
 }
-/// Find the main repo root (not the worktree working directory).
-/// For regular repos this is the same as find_git_root_from_path.
+/// Find the main repo root (not the worktree working directory). For regular repos this is the same as find_git_root_from_path.
 /// For worktrees, this returns the parent repo's root.
-/// Use this for worktree management operations (create/remove/apply).
 pub fn find_main_repo_root_from_path(path: &Path) -> Result<PathBuf> {
     let repo = Repository::discover(path)?;
     repo.commondir()
@@ -413,6 +562,7 @@ pub fn change_type_from_git2_delta(delta: git2::Delta) -> ChangeType {
         git2::Delta::Renamed => ChangeType::Rename,
         git2::Delta::Copied => ChangeType::Copy,
         git2::Delta::Typechange => ChangeType::Typechange,
+        git2::Delta::Untracked => ChangeType::Untracked,
         other => {
             tracing::warn!(?other, "unexpected git delta type, treating as Edit");
             ChangeType::Edit
@@ -489,8 +639,8 @@ pub async fn get_branch(cwd: &Path) -> Option<String> {
         .ok()
         .filter(|b| !b.is_empty())
 }
-/// Path-component tilde collapse (`~/src/repo`). String prefix matching would
-/// treat `HOME=/Users/u` as a prefix of `/Users/user/xai`.
+/// Path-component tilde collapse (`~/src/repo`).
+/// String prefix matching would treat `HOME=/Users/u` as a prefix of `/Users/user/xai`.
 fn collapse_home_path(path: &Path, home: Option<&Path>) -> String {
     let Some(home) = home else {
         return path.display().to_string();
@@ -505,15 +655,14 @@ fn collapse_home_path(path: &Path, home: Option<&Path>) -> String {
         .unwrap_or_else(|_| path.display().to_string())
 }
 /// Returns (is_worktree, main_repo_display_name) if this is a git checkout.
-/// `None` when `cwd` is not inside a repo. The display name is the main repo
-/// path, preferably relative to $HOME as ~...
+/// `None` when `cwd` is not inside a repo.
+/// The display name is the main repo path, preferably relative to $HOME as ~...
 pub async fn get_worktree_info(cwd: &Path) -> Option<(bool, Option<String>)> {
     let cwd = cwd.to_path_buf();
     tokio::task::spawn_blocking(move || {
         let repo = Repository::discover(&cwd).ok()?;
-        let display = |path: &Path| -> String {
-            collapse_home_path(path, std::env::var("HOME").ok().as_deref().map(Path::new))
-        };
+        let home = xai_dirs::home_dir();
+        let display = |path: &Path| -> String { collapse_home_path(path, home.as_deref()) };
         let mut marker_main = None;
         for ancestor in cwd.ancestors() {
             let git = ancestor.join(".git");
@@ -555,10 +704,7 @@ pub async fn get_worktree_info(cwd: &Path) -> Option<(bool, Option<String>)> {
     .ok()
     .flatten()
 }
-/// Switch the working tree to a different branch, optionally creating it.
-///
-/// Refuses to switch if the working tree is dirty (staged or unstaged changes)
-/// to avoid losing work. The dirty check uses `git2` (no subprocess).
+/// Switch the working tree to a different branch, optionally creating it. Refuses to switch if the working tree is dirty (staged or unstaged changes) to avoid losing work.
 pub async fn checkout_branch(git_root: &Path, branch: &str, create: bool) -> Result<()> {
     let root = git_root.to_path_buf();
     let has_changes = tokio::task::spawn_blocking(move || -> Result<bool> {
@@ -603,6 +749,27 @@ fn compute_ahead_behind(repo: &Repository) -> Option<(usize, usize)> {
     let upstream = local_branch.upstream().ok()?;
     let upstream_oid = upstream.get().target()?;
     repo.graph_ahead_behind(local_oid, upstream_oid).ok()
+}
+/// HEAD resolved from refs only. Never peel to the commit: on a huge or corrupt pack that read can hang, allocating until the process dies.
+fn head_reference(repo: &Repository) -> Option<Reference<'_>> {
+    match repo.head() {
+        Ok(head) => Some(head),
+        Err(e) if e.code() == git2::ErrorCode::UnbornBranch => None,
+        Err(e) => {
+            tracing::debug!(
+                path = %repo.path().display(),
+                code = ?e.code(),
+                error = %e,
+                "git.head: unresolvable",
+            );
+            None
+        }
+    }
+}
+/// The hash stored in HEAD, as `git rev-parse HEAD` prints it.
+/// Never loads the object, so it may name one this repo does not have (see [`head_reference`]).
+fn head_sha(repo: &Repository) -> Option<String> {
+    Some(head_reference(repo)?.target()?.to_string())
 }
 fn read_blob_from_tree(repo: &Repository, tree: &git2::Tree, path: &str) -> Result<Vec<u8>> {
     let entry = tree
@@ -767,15 +934,20 @@ fn collect_diff_stats(
     pathspecs: Option<&[String]>,
     include_patch: bool,
 ) -> DiffStatsResult {
+    let base_ref = GitRef::parse(from);
+    let head_ref = GitRef::parse(to);
     let mut opts = DiffOptions::new();
     opts.ignore_submodules(true);
+    if matches!(head_ref, GitRef::Workdir) {
+        opts.include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .show_untracked_content(true);
+    }
     if let Some(specs) = pathspecs {
         for spec in specs {
             opts.pathspec(spec);
         }
     }
-    let base_ref = GitRef::parse(from);
-    let head_ref = GitRef::parse(to);
     let diff = match create_diff(repo, &base_ref, &head_ref, false, &mut opts) {
         Some(d) => d,
         None => {
@@ -845,7 +1017,7 @@ pub struct GitHeadChanged {
     pub main_repo: Option<String>,
 }
 /// Discover the git root, current branch, and remote URLs.
-/// Uses `git2` — no subprocess.
+/// Uses `git2` (no subprocess).
 pub async fn git_info(cwd: &Path) -> Result<GitInfoData> {
     let cwd = cwd.to_path_buf();
     tokio::task::spawn_blocking(move || {
@@ -878,19 +1050,9 @@ pub async fn git_info(cwd: &Path) -> Result<GitInfoData> {
     })
     .await?
 }
-/// Detect the default branch for this repository.
-///
-/// Priority:
-/// 1. `refs/remotes/origin/HEAD` symbolic ref (set by `git clone` or
-///    `git remote set-head origin --auto`).
-/// 2. A unique remote-tracking `origin/main` or `origin/master`
-///    (hand-added remotes never get `origin/HEAD`).
-/// 3. `init.defaultBranch` git config value (user/system preference).
+/// Detect the default branch for this repository. Priority: 1. `refs/remotes/origin/HEAD` symbolic ref (set by `git clone` or `git remote set-head origin --auto`).
 fn detect_default_branch(repo: &Repository) -> Option<String> {
     if let Some(branch) = detect_remote_default_branch(repo) {
-        return Some(branch);
-    }
-    if let Some(branch) = guess_default_from_remote_tracking(repo) {
         return Some(branch);
     }
     if let Ok(config) = repo.config()
@@ -899,19 +1061,6 @@ fn detect_default_branch(repo: &Repository) -> Option<String> {
         return Some(val);
     }
     None
-}
-/// `None` when both exist — a wrong guess would make clients treat the
-/// real default branch as a feature branch (and poll PR status on it).
-fn guess_default_from_remote_tracking(repo: &Repository) -> Option<String> {
-    let has = |name: &str| {
-        repo.find_branch(&format!("origin/{name}"), git2::BranchType::Remote)
-            .is_ok()
-    };
-    match (has("main"), has("master")) {
-        (true, false) => Some("main".to_string()),
-        (false, true) => Some("master".to_string()),
-        _ => None,
-    }
 }
 /// Resolve `refs/remotes/origin/HEAD` to the remote's default branch name.
 fn detect_remote_default_branch(repo: &Repository) -> Option<String> {
@@ -927,8 +1076,8 @@ fn detect_remote_default_branch(repo: &Repository) -> Option<String> {
         .and_then(|t| t.strip_prefix(prefix))
         .map(|b| b.to_string())
 }
-/// List all local + remote branches.
-/// Uses `git2` — no subprocess, no `git status`.
+/// List all local and remote branches.
+/// Uses `git2` (no subprocess, no `git status`).
 pub async fn list_branches(git_root: &Path) -> Result<GitBranchListData> {
     let root = git_root.to_path_buf();
     tokio::task::spawn_blocking(move || {
@@ -964,15 +1113,13 @@ pub async fn list_branches(git_root: &Path) -> Result<GitBranchListData> {
     })
     .await?
 }
-/// Get the current commit hash for cache validation.
-/// Returns None if not in a git repository or no commits exist.
+/// HEAD's commit hash for cache validation and `--restore-code` (see [`head_sha`]).
+/// `None` outside a git repo or before the first commit.
 pub async fn get_current_commit(git_root: &Path) -> Option<String> {
     let cwd = git_root.to_path_buf();
     tokio::task::spawn_blocking(move || -> Option<String> {
         let repo = Repository::discover(&cwd).ok()?;
-        let head = repo.head().ok()?;
-        let commit = head.peel_to_commit().ok()?;
-        Some(commit.id().to_string())
+        head_sha(&repo)
     })
     .await
     .ok()
@@ -1007,11 +1154,8 @@ fn change_type_from_porcelain(ch: char, staged: bool) -> ChangeType {
         _ => ChangeType::Edit,
     }
 }
-/// Parse `git diff --numstat` output into a map of path → (additions, deletions).
-///
-/// We intentionally omit `-M` from our `git diff --numstat` invocations, so rename
-/// entries won't appear in practice. The format is simply `ADDS\tDELS\tPATH`
-/// (or `-\t-\tPATH` for binary files).
+/// Parse `git diff --numstat` output into a map of path to (additions, deletions). We intentionally omit `-M` from our `git diff --numstat` invocations, so rename entries won't appear in practice.
+/// The format is `ADDS\tDELS\tPATH` (or `-\t-\tPATH` for binary files).
 fn parse_numstat(output: &str) -> HashMap<String, (u64, u64)> {
     let mut map = HashMap::new();
     for line in output.lines() {
@@ -1024,12 +1168,8 @@ fn parse_numstat(output: &str) -> HashMap<String, (u64, u64)> {
     }
     map
 }
-/// Porcelain-v2 entry for ordinary changes:
-///   `1 XY <sub> <mH> <mI> <mW> <hH> <hI> <path>`
-/// Rename/copy:
-///   `2 XY <sub> <mH> <mI> <mW> <hH> <hI> R<score> <path>\t<origPath>`
-/// Untracked:
-///   `? <path>`
+/// Porcelain-v2 entry for ordinary changes: `1 XY <sub> <mH> <mI> <mW> <hH> <hI> <path>` Rename/copy: `2 XY <sub> <mH> <mI> <mW> <hH> <hI> R<score> <path>\t<origPath>` Untracked: `?
+/// <path>`
 fn parse_porcelain_v2(
     output: &str,
     include_untracked: bool,
@@ -1071,13 +1211,22 @@ fn parse_porcelain_v2(
         if !line.starts_with("1 ") && !is_rename && !is_unmerged {
             continue;
         }
-        let after_prefix = &line[2..];
+        let Some(after_prefix) = line.get(2..) else {
+            continue;
+        };
         if after_prefix.len() < 4 {
             continue;
         }
-        let index_status = after_prefix.as_bytes()[0] as char;
-        let worktree_status = after_prefix.as_bytes()[1] as char;
-        if ignore_submodules && !after_prefix[3..].starts_with('N') {
+        let bytes = after_prefix.as_bytes();
+        let Some(&ib) = bytes.first() else {
+            continue;
+        };
+        let Some(&wb) = bytes.get(1) else {
+            continue;
+        };
+        let index_status = ib as char;
+        let worktree_status = wb as char;
+        if ignore_submodules && !after_prefix.get(3..).is_some_and(|s| s.starts_with('N')) {
             continue;
         }
         let fields_to_skip: usize = if is_unmerged {
@@ -1090,7 +1239,7 @@ fn parse_porcelain_v2(
         let mut field_end = 0;
         let mut fields_found = 0;
         for _ in 0..fields_to_skip {
-            if let Some(pos) = after_prefix[field_end..].find(' ') {
+            if let Some(pos) = after_prefix.get(field_end..).and_then(|s| s.find(' ')) {
                 field_end += pos + 1;
                 fields_found += 1;
             } else {
@@ -1101,17 +1250,24 @@ fn parse_porcelain_v2(
             continue;
         }
         let (path, old_path) = if is_rename {
-            let path_part = &after_prefix[field_end..];
+            let Some(path_part) = after_prefix.get(field_end..) else {
+                continue;
+            };
             if let Some(tab) = path_part.find('\t') {
-                (
-                    path_part[..tab].to_string(),
-                    Some(path_part[tab + 1..].to_string()),
-                )
+                let Some(new_p) = path_part.get(..tab) else {
+                    continue;
+                };
+                let Some(old_p) = path_part.get(tab + 1..) else {
+                    continue;
+                };
+                (new_p.to_string(), Some(old_p.to_string()))
             } else {
                 (path_part.to_string(), None)
             }
         } else {
-            let path_str = &after_prefix[field_end..];
+            let Some(path_str) = after_prefix.get(field_end..) else {
+                continue;
+            };
             if path_str.is_empty() {
                 continue;
             }
@@ -1152,13 +1308,7 @@ fn parse_porcelain_v2(
     }
     (staged, unstaged)
 }
-/// Full git-status via CLI only — used as fallback when libgit2 cannot read the
-/// index (e.g. split-index `link` extension).
-///
-/// **Limitation:** patch content (`patch`, `patch_bytes`, `patch_lines`) is not
-/// populated — all entries return `None` for these fields. Currently no caller
-/// passes `include_patches=true` via the extension API. If that changes, add
-/// `git diff --cached -p` / `git diff -p` parsing here.
+/// Full git-status via CLI only, used as fallback when libgit2 cannot read the index (e.g. **Limitation:** patch content (`patch`, `patch_bytes`, `patch_lines`) is not populated; all entries return `None` for these fields.
 async fn status_via_cli(
     git_root: &Path,
     include_untracked: bool,
@@ -1331,6 +1481,10 @@ async fn status_ungated(
     include_patches: bool,
 ) -> Result<GitStatusData> {
     let start = std::time::Instant::now();
+    let region = xai_grok_telemetry::region::Region::from_span(tracing::info_span!(
+        "git.status",
+        elapsed_ms = tracing::field::Empty,
+    ));
     let cwd = git_root.to_path_buf();
     let (branch, upstream, remote_url) =
         tokio::join!(get_branch(&cwd), get_upstream(&cwd), get_remote_url(&cwd));
@@ -1349,11 +1503,7 @@ async fn status_ungated(
             .commondir()
             .parent()
             .map(|p| p.to_string_lossy().trim_end_matches('/').to_string());
-        let commit = repo
-            .head()
-            .ok()
-            .and_then(|h| h.peel_to_commit().ok())
-            .map(|c| c.id().to_string());
+        let commit = head_sha(&repo);
         let (ahead, behind) = compute_ahead_behind(&repo)
             .map(|(a, b)| (Some(a), Some(b)))
             .unwrap_or((None, None));
@@ -1453,6 +1603,9 @@ async fn status_ungated(
     .await?;
     let libgit2_err = match &result {
         Ok(data) => {
+            region
+                .span()
+                .record("elapsed_ms", start.elapsed().as_millis() as i64);
             tracing::debug!(
                 root = ?data.root,
                 branch = ?data.branch,
@@ -1614,6 +1767,10 @@ async fn diffs_ungated(
     merge_base: bool,
 ) -> Result<GitDiffsData> {
     let start = std::time::Instant::now();
+    let region = xai_grok_telemetry::region::Region::from_span(tracing::info_span!(
+        "git.diffs",
+        elapsed_ms = tracing::field::Empty,
+    ));
     let cwd = git_root.to_path_buf();
     let paths = paths.map(|p| p.to_vec());
     let from = from.to_string();
@@ -1711,6 +1868,9 @@ async fn diffs_ungated(
     .await?;
     match &result {
         Ok(data) => {
+            region
+                .span()
+                .record("elapsed_ms", start.elapsed().as_millis() as i64);
             tracing::debug!(files = data.files.len(), elapsed = ?start.elapsed(), "git.diffs")
         }
         Err(e) => {
@@ -1847,13 +2007,11 @@ pub async fn stash(git_root: &Path, include_untracked: bool) -> Result<()> {
     tracing::debug!(include_untracked, elapsed = ?start.elapsed(), "git.stash");
     Ok(())
 }
-/// Tracing target used by all `--restore-code` log lines that are NOT
-/// scoped to a specific worktree subsystem. Operators filter on this to
-/// find restore-code-related warnings.
+/// Tracing target used by all `--restore-code` log lines that are NOT scoped to a specific worktree subsystem.
+/// Operators filter on this to find restore-code-related warnings.
 pub const RESTORE_CODE_LOG: &str = "xai_restore_code";
-/// Emit the "session registry disabled" warning shared by both the
-/// worktree and non-worktree `--restore-code` paths. Centralised so a
-/// future refactor cannot silently downgrade one site to `debug!`.
+/// Emit the "session registry disabled" warning shared by both the worktree and non-worktree `--restore-code` paths.
+/// Centralised so a future refactor cannot silently downgrade one site to `debug!`.
 pub fn warn_registry_disabled_restore(session_id: &str) {
     tracing::warn!(
         target: RESTORE_CODE_LOG,
@@ -1861,32 +2019,27 @@ pub fn warn_registry_disabled_restore(session_id: &str) {
         "session registry disabled — staged/unstaged/untracked will not be restored"
     );
 }
-/// Gate for [`warn_registry_disabled_restore`]: the warn should fire
-/// only when the working tree is a real git repo (jj has its own
-/// changeset model that bypasses the staged/unstaged/untracked concept)
-/// AND the registry is unavailable. Exposed so the production gate and
-/// its regression test share the same predicate.
+/// Gate for [`warn_registry_disabled_restore`]: the warn should fire only when the working tree is a real git repo AND the registry is unavailable.
+/// (jj has its own changeset model that bypasses the staged/unstaged/untracked concept.)
+/// Exposed so the production gate and its regression test share the same predicate.
 pub fn should_warn_registry_disabled(is_jj: bool, registry_present: bool) -> bool {
     !is_jj && !registry_present
 }
-/// Outcome of a [`checkout_session_commit`] call.
-///
-/// `checked_out: true` means HEAD is at the requested commit after this
-/// call returned — including the no-op early-return where HEAD was
-/// already at the target.
+/// Outcome of a [`checkout_session_commit`] call. `checked_out: true` means HEAD is at the requested commit after this call returned.
+/// That includes the no-op early-return where HEAD was already at the target.
 #[derive(Debug, Default, Clone)]
 pub struct CheckoutSessionOutcome {
     pub checked_out: bool,
     pub stash_ref: Option<String>,
-    /// Set when the working tree was dirty but no stash was created (e.g.
-    /// an in-progress merge/rebase/cherry-pick blocked it, or `git stash`
-    /// itself failed). Callers surface this to the user.
+    /// Set when the working tree was dirty but no stash was created.
+    /// Causes: an in-progress merge/rebase/cherry-pick blocked it, or `git stash` itself failed.
+    /// Callers surface this to the user.
     pub stash_skipped_reason: Option<String>,
 }
 /// Result of attempting to stash dirty working-tree state.
 #[derive(Debug, Clone)]
 pub enum StashOutcome {
-    /// Working tree was already clean — no stash needed.
+    /// Working tree was already clean; no stash needed.
     Clean,
     /// Stash created; carries the captured stash ref (commit SHA).
     Stashed(String),
@@ -1912,21 +2065,9 @@ fn in_progress_state_reason(git_root: &Path) -> Option<String> {
     }
     None
 }
-/// Stash dirty working-tree state (including untracked files) before a
-/// destructive operation like `git checkout`.
-///
-/// Best-effort: returns [`StashOutcome::Skipped`] (with a reason) when an
-/// in-progress merge/rebase/cherry-pick/bisect blocks the stash, or when
-/// `git stash` itself fails. Returns [`StashOutcome::Clean`] when the
-/// tree was already clean.
-///
-/// `stash push` + `rev-parse stash@{0}` is mostly atomic in practice (the
-/// only racer is another concurrent stash in the same repo). The truly
-/// atomic `git stash create + stash store` flow is not viable here
-/// because `git stash create` does not support `--include-untracked` —
-/// using it would silently lose untracked files from the snapshot. On
-/// `rev-parse` failure we return `Skipped` rather than a misleading
-/// `stash@{0}` literal.
+/// Stash dirty working-tree state (including untracked files) before a destructive operation like `git checkout`.
+/// `stash push` then `rev-parse stash@{0}` is mostly atomic in practice (the only racer is another concurrent stash in the same repo).
+/// The truly atomic `git stash create` then `stash store` flow is not viable because `git stash create` does not support `--include-untracked`.
 pub async fn stash_before_destructive_op(
     git_root: &Path,
     label: &str,
@@ -1997,18 +2138,7 @@ pub async fn stash_before_destructive_op(
         }
     }
 }
-/// Checkout a specific commit, optionally stashing dirty state first.
-///
-/// Gracefully degrades: logs warnings but never returns an error.
-///
-/// Contract: `outcome.checked_out` is `true` when HEAD is at `target_sha`
-/// after this call returned, including the no-op early-return where HEAD
-/// was already at the target. Callers should rely on this flag when
-/// gating user-visible "restored" banners.
-///
-/// If a fetch is required it runs on `spawn_blocking` and is **not** cancelled
-/// when this future is dropped. The helper still kills the git process group
-/// when [`crate::restore_fetch::RESTORE_FETCH_BUDGET`] elapses.
+/// Checkout a specific commit, optionally stashing dirty state first. Gracefully degrades: logs warnings but never returns an error.
 pub async fn checkout_session_commit(
     git_root: &Path,
     target_sha: &str,
@@ -2173,6 +2303,9 @@ pub(crate) async fn checkout_commit_with_fetch(
 ) -> CheckoutCommitResponse {
     if let Some(current) = get_current_commit(git_root).await
         && current == head_commit
+        && git_cli(git_root, &["cat-file", "-t", head_commit])
+            .await
+            .is_ok()
     {
         return CheckoutCommitResponse {
             checked_out: true,
@@ -2267,8 +2400,7 @@ pub(crate) async fn checkout_commit_with_fetch(
         Err(e) => pop_checkout_auto_stash(git_root, stashed, fetched, e.to_string()).await,
     }
 }
-/// Restore a pre-checkout auto-stash on failure so callers that only inspect
-/// `error` are not left on a clean tree with a hidden stash entry.
+/// Restore a pre-checkout auto-stash on failure so callers that only inspect `error` are not left on a clean tree with a hidden stash entry.
 async fn pop_checkout_auto_stash(
     git_root: &Path,
     stashed: bool,
@@ -2285,25 +2417,8 @@ async fn pop_checkout_auto_stash(
         error: Some(error),
     }
 }
-/// Decide whether a `--restore-code` HEAD checkout is safe to run against
-/// `supplied_cwd`.
-///
-/// The restore-code path may run a targeted
-/// `git fetch --no-tags [--depth=1] origin <sha>` + `git checkout <sha>`,
-/// which *detaches HEAD*. `--depth=1` is only added when the repo is already
-/// shallow. That is only acceptable in two situations:
-///
-/// 1. `supplied_cwd` is a grok-managed worktree (`~/.grok/worktrees/...`).
-///    These are disposable snapshots that exist precisely to carry a
-///    detached session HEAD.
-/// 2. `supplied_cwd` is exactly the cwd the session was persisted with
-///    (`persisted_cwd`) — the original "same-directory restore" intent.
-///
-/// In every other case — notably a forked-worktree session that was
-/// persisted with `git_ref = origin/main` but is later loaded with
-/// `cwd = <source repo>` — running the checkout would silently detach the
-/// user's real repository and leave their active branch behind, so we
-/// refuse.
+/// Decide whether a `--restore-code` HEAD checkout is safe to run against `supplied_cwd`. `--depth=1` is only added when the repo is already shallow.
+/// That is only acceptable in two situations: 1.
 pub fn restore_code_checkout_allowed(supplied_cwd: &Path, persisted_cwd: Option<&str>) -> bool {
     let worktrees_dir = xai_grok_tools::util::grok_home::grok_home().join("worktrees");
     restore_code_checkout_allowed_in(supplied_cwd, persisted_cwd, &worktrees_dir)
@@ -2325,40 +2440,38 @@ fn restore_code_checkout_allowed_in(
 }
 /// Env var backing the `workspace_rewind_git` flag. See [`git_rewind_enabled`].
 const REWIND_GIT_ENV: &str = "GROK_WORKSPACE_REWIND_GIT";
-/// Whether the git rewind domain (capture + soft restore) is enabled. Default
-/// OFF: git is the only domain that moves `HEAD`, so it is gated behind
-/// `workspace_rewind_git`.
+/// Whether the git rewind domain (capture and soft restore) is enabled.
+/// Default OFF: git is the only domain that moves `HEAD`, so it is gated behind `workspace_rewind_git`.
 pub fn git_rewind_enabled() -> bool {
     xai_grok_config::env_bool(REWIND_GIT_ENV).unwrap_or(false)
 }
-/// Lightweight, in-memory git state captured at a turn boundary. `staged` holds
-/// repo-root-relative paths (from `git diff --cached --name-only`), matching what
-/// [`restage_git_paths`] re-stages via root-anchored `git add`.
+/// Lightweight, in-memory git state captured at a turn boundary.
+/// `staged` holds repo-root-relative paths (from `git diff --cached --name-only`).
+/// That matches what [`restage_git_paths`] re-stages via root-anchored `git add`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitStateRef {
     /// HEAD commit SHA at capture time.
     pub head: String,
-    /// Repo-root-relative paths with staged (HEAD→index) changes at capture time.
+    /// Repo-root-relative paths with staged (HEAD to index) changes at capture time.
     pub staged: Vec<PathBuf>,
 }
-/// Per-prompt, in-memory store of captured [`GitStateRef`]s keyed by
-/// `prompt_index`. Capture is first-wins (matching `FileStateTracker::begin_prompt`);
+/// Per-prompt, in-memory store of captured [`GitStateRef`]s keyed by `prompt_index`.
+/// Capture is first-wins (matching `FileStateTracker::begin_prompt`).
 /// [`truncate_from`](Self::truncate_from) drops indices `>= target` after a rewind.
 #[derive(Debug, Default)]
 pub struct GitCheckpointStore {
     by_prompt: Mutex<HashMap<usize, GitStateRef>>,
-    /// Prompt indices whose pre-turn capture was already attempted. A re-delivered
-    /// begin skips capture (even if the first attempt recorded nothing), so it
-    /// can't replace the pre-turn checkpoint with mid-turn state.
+    /// Prompt indices whose pre-turn capture was already attempted.
+    /// A re-delivered begin skips capture (even if the first attempt recorded nothing).
+    /// So it can't replace the pre-turn checkpoint with mid-turn state.
     attempted: Mutex<HashSet<usize>>,
 }
 impl GitCheckpointStore {
     pub fn new() -> Self {
         Self::default()
     }
-    /// Record the git state for `prompt_index`, first-wins: a re-delivered begin
-    /// must not overwrite the pre-turn state with mid-turn state. Mirrors
-    /// `FileStateTracker::begin_prompt`'s `or_insert_with`.
+    /// Record the git state for `prompt_index`, first-wins: a re-delivered begin must not overwrite the pre-turn state with mid-turn state.
+    /// Mirrors `FileStateTracker::begin_prompt`'s `or_insert_with`.
     pub async fn record(&self, prompt_index: usize, state: GitStateRef) {
         self.by_prompt
             .lock()
@@ -2366,9 +2479,9 @@ impl GitCheckpointStore {
             .entry(prompt_index)
             .or_insert(state);
     }
-    /// Claim the one-time pre-turn capture for `prompt_index`, returning `true`
-    /// only for the first caller; later begins get `false` and must skip capture
-    /// (even if the first attempt recorded nothing). Once-per-prompt, like the FS begin.
+    /// Claim the one-time pre-turn capture for `prompt_index`, returning `true` only for the first caller.
+    /// Later begins get `false` and must skip capture (even if the first attempt recorded nothing).
+    /// Once-per-prompt, like the FS begin.
     pub async fn claim_attempt(&self, prompt_index: usize) -> bool {
         self.attempted.lock().await.insert(prompt_index)
     }
@@ -2376,17 +2489,13 @@ impl GitCheckpointStore {
     pub async fn get(&self, prompt_index: usize) -> Option<GitStateRef> {
         self.by_prompt.lock().await.get(&prompt_index).cloned()
     }
-    /// Whether a git state is recorded for `prompt_index`. Cheaper than
-    /// [`get`](Self::get) — no clone of the `GitStateRef`.
+    /// Whether a git state is recorded for `prompt_index`.
+    /// Cheaper than [`get`](Self::get): no clone of the `GitStateRef`.
     pub async fn contains(&self, prompt_index: usize) -> bool {
         self.by_prompt.lock().await.contains_key(&prompt_index)
     }
-    /// Get the checkpoint with the greatest captured index `<= target`, returned
-    /// with that index. An exact match at `target` is returned as-is; otherwise
-    /// the nearest earlier checkpoint is returned so rewind can still land HEAD
-    /// on the closest known-good git state when capture was skipped at the target
-    /// or git-rewind was enabled mid-session. `None` only when no checkpoint at
-    /// or before `target` exists.
+    /// Get the checkpoint with the greatest captured index `<= target`, returned with that index. An exact match at `target` is returned as-is; otherwise the nearest earlier checkpoint is returned.
+    /// `None` only when no checkpoint at or before `target` exists.
     pub async fn get_at_or_before(&self, target: usize) -> Option<(usize, GitStateRef)> {
         self.by_prompt
             .lock()
@@ -2408,28 +2517,121 @@ impl GitCheckpointStore {
             .retain(|&idx| idx < prompt_index);
     }
 }
-/// Capture the current git state (HEAD + staged paths) for a rewind checkpoint.
-/// `cwd` may be a subdirectory; the repo root is resolved so staged paths are
-/// repo-root-relative (matching restore's root-anchored `git add`). Best-effort:
-/// `None` outside a repo or with an unresolvable `HEAD` — capture must never fail a turn.
+/// Capture the current git state (HEAD and staged paths) for a rewind checkpoint.
+/// `cwd` may be a subdirectory; the repo root is resolved so staged paths are repo-root-relative (matching restore's root-anchored `git add`).
+/// Best-effort: `None` outside a repo or with an unresolvable `HEAD`; capture must never fail a turn.
 pub async fn capture_git_state(cwd: &Path) -> Option<GitStateRef> {
     let git_root = resolve_git_root(cwd).await?;
     let head = get_current_commit(&git_root).await?;
     let staged = staged_paths(&git_root).await?;
     Some(GitStateRef { head, staged })
 }
+/// Real git commit at a turn boundary. Best-effort: never fails the turn.
+/// Stages the worktree and commits on the current branch with `turn {n}`.
+pub async fn commit_turn_if_dirty(cwd: &Path, turn_number: u64) -> Option<String> {
+    let git_root = resolve_git_root(cwd).await?;
+    for pending in [
+        "MERGE_HEAD",
+        "REBASE_HEAD",
+        "CHERRY_PICK_HEAD",
+        "REVERT_HEAD",
+    ] {
+        let in_progress = git_cli_raw(&git_root, &["rev-parse", "-q", "--verify", pending])
+            .await
+            .map(|(ok, _)| ok)
+            .unwrap_or(false);
+        if in_progress {
+            tracing::debug!(
+                turn_number,
+                pending,
+                cwd = %git_root.display(),
+                "turn-boundary commit skipped: a git operation is in progress"
+            );
+            return None;
+        }
+    }
+    if let Ok(bisect_path) = git_cli(&git_root, &["rev-parse", "--git-path", "BISECT_LOG"]).await {
+        let bisect_path = bisect_path.trim();
+        if !bisect_path.is_empty() && git_root.join(bisect_path).exists() {
+            tracing::debug!(
+                turn_number,
+                cwd = %git_root.display(),
+                "turn-boundary commit skipped: a bisect is in progress"
+            );
+            return None;
+        }
+    }
+    let status = git_cli(&git_root, &["status", "--porcelain"]).await.ok()?;
+    if status.is_empty() {
+        return None;
+    }
+    let _ = seed_default_excludes(&git_root).await;
+    let index_tree = match git_cli(&git_root, &["write-tree"]).await {
+        Ok(out) if !out.trim().is_empty() => out.trim().to_owned(),
+        Ok(_) => {
+            tracing::warn!(
+                turn_number,
+                cwd = %git_root.display(),
+                "turn-boundary commit skipped: empty write-tree output"
+            );
+            return None;
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                turn_number,
+                cwd = %git_root.display(),
+                "turn-boundary commit skipped: could not snapshot the index"
+            );
+            return None;
+        }
+    };
+    if let Err(e) = git_cli_mut(&git_root, &["add", "-A"]).await {
+        tracing::warn!(
+            error = %e,
+            turn_number,
+            cwd = %git_root.display(),
+            "turn-boundary git add skipped"
+        );
+        let _ = git_cli_mut(&git_root, &["read-tree", &index_tree]).await;
+        return None;
+    }
+    let msg = format!("turn {turn_number}");
+    match git_cli_mut(
+        &git_root,
+        &[
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            &msg,
+            "--no-verify",
+        ],
+    )
+    .await
+    {
+        Ok(_) => get_current_commit(&git_root).await,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                turn_number,
+                cwd = %git_root.display(),
+                "turn-boundary git commit skipped"
+            );
+            let _ = git_cli_mut(&git_root, &["read-tree", &index_tree]).await;
+            None
+        }
+    }
+}
 /// Resolve the worktree root for `cwd` via `git rev-parse --show-toplevel`.
-/// Path-sensitive index ops must run from the root so repo-root-relative paths
-/// are consistent — a session `cwd` may be a subdirectory.
+/// Path-sensitive index ops must run from the root so repo-root-relative paths are consistent; a session `cwd` may be a subdirectory.
 async fn resolve_git_root(cwd: &Path) -> Option<PathBuf> {
     let out = git_cli(cwd, &["rev-parse", "--show-toplevel"]).await.ok()?;
     let root = out.trim();
     (!root.is_empty()).then(|| PathBuf::from(root))
 }
-/// List repo-root-relative paths with staged (HEAD→index) changes via
-/// `git diff --cached --name-only -z`. `Some(empty)` means nothing staged;
-/// `None` means the diff failed, so callers can tell that apart from "nothing
-/// staged" instead of recording a lossy empty set. `git_root` must be the worktree root.
+/// List repo-root-relative paths with staged (HEAD to index) changes via `git diff --cached --name-only -z`. Callers can tell those apart instead of recording a lossy empty set.
+/// `git_root` must be the worktree root.
 async fn staged_paths(git_root: &Path) -> Option<Vec<PathBuf>> {
     let out = match git_cli(git_root, &["diff", "--cached", "--name-only", "-z"]).await {
         Ok(out) => out,
@@ -2450,38 +2652,21 @@ async fn staged_paths(git_root: &Path) -> Option<Vec<PathBuf>> {
             .collect(),
     )
 }
-/// Outcome of [`soft_restore_git_state`]. Mirrors [`CheckoutSessionOutcome`] (a
-/// success flag + optional stash bookkeeping) plus an `aborted_reason` for the
-/// dirty-but-unstashable guard.
+/// Outcome of [`soft_restore_git_state`].
+/// Mirrors [`CheckoutSessionOutcome`] (a success flag and optional stash bookkeeping) plus an `aborted_reason` for the dirty-but-unstashable guard.
 #[derive(Debug, Default, Clone)]
 pub struct GitRestoreOutcome {
     /// `true` when HEAD is at the recorded commit after this call returned.
     pub restored: bool,
-    /// `true` when the index was reset to the new HEAD (`git reset -- .`). The
-    /// caller should drop checkpoints only after HEAD reset + index reset +
-    /// re-stage all succeed, so a partial failure keeps them for retry.
+    /// `true` when the index was reset to the new HEAD (`git reset -- .`).
+    /// The caller should drop checkpoints only after HEAD reset, index reset, and re-stage all succeed, so a partial failure keeps them for retry.
     pub index_reset: bool,
-    /// Set when restore was refused without touching git (e.g. unstashable dirty
-    /// tree, in-progress merge/rebase).
+    /// Set when restore was refused without touching git (e.g. unstashable dirty tree, in-progress merge/rebase).
     pub aborted_reason: Option<String>,
     /// Stash ref holding pre-rewind uncommitted work, when one was created.
     pub stash_ref: Option<String>,
 }
-/// Soft-restore git state to a recorded [`GitStateRef`]. `cwd` may be a
-/// subdirectory; the repo root is resolved so index ops match the recorded
-/// root-relative paths.
-///
-/// SOFT-ONLY and non-destructive to commits:
-/// 1. **Stash-or-abort** uncommitted work via [`stash_before_destructive_op`];
-///    if it can't be stashed (in-progress merge/rebase, stash failure), abort
-///    without touching git.
-/// 2. **`git reset --soft <head>`** moves HEAD back, leaving tree + index intact
-///    so turn-local commits survive (never `--hard`, never drops a commit).
-/// 3. **Unstage to the new HEAD** (`git reset -- .`); the recorded staged *paths*
-///    are re-applied later by [`restage_git_paths`] AFTER the FS revert, so blobs
-///    reflect the reverted tree.
-///
-/// Returns a [`GitRestoreOutcome`]; never errors. Phase 2 re-stage is not done here.
+/// Soft-restore git state to a recorded [`GitStateRef`]. SOFT-ONLY and non-destructive to commits: 1. If it can't be stashed (in-progress merge/rebase, stash failure), abort without touching git.
 pub async fn soft_restore_git_state(
     cwd: &Path,
     git_ref: &GitStateRef,
@@ -2578,11 +2763,8 @@ pub async fn soft_restore_git_state(
         stash_ref,
     }
 }
-/// Re-stage the recorded staged path set — phase 2 of a soft git rewind, run
-/// AFTER the FS revert (phase 1 is [`soft_restore_git_state`]) so blobs reflect
-/// the reverted tree. Per-path best-effort: a path removed during the turn is
-/// skipped, not fatal. Never errors; returns `true` when the full set was
-/// re-applied (nothing-to-do counts as success) so the caller can gate truncate on it.
+/// Re-stage the recorded staged path set, phase 2 of a soft git rewind. Per-path best-effort: a path removed during the turn is skipped, not fatal.
+/// Never errors; returns `true` when the full set was re-applied (nothing-to-do counts as success) so the caller can gate truncate on it.
 pub async fn restage_git_paths(cwd: &Path, git_ref: &GitStateRef, session_id: &str) -> bool {
     if git_ref.staged.is_empty() {
         return true;
@@ -2634,12 +2816,12 @@ pub async fn restage_git_paths(cwd: &Path, git_ref: &GitStateRef, session_id: &s
     }
     failed_adds == 0
 }
-/// Run a git CLI command returning `(success, combined stdout+stderr)` instead
-/// of collapsing failure into an error. `LC_ALL=C` pins git's message locale so
-/// callers can classify output (e.g. non-fast-forward push rejections) by
-/// string-match. Errors only on spawn failure.
+/// Run a git CLI command returning `(success, combined stdout+stderr)` instead of collapsing failure into an error.
+/// `LC_ALL=C` pins git's message locale so callers can classify output (e.g. non-fast-forward push rejections) by string-match.
+/// Errors only on spawn failure.
 async fn git_cli_raw(cwd: &Path, args: &[&str]) -> Result<(bool, String)> {
     tracing::debug!(cwd = %cwd.display(), args = ?args, "git_cli_raw");
+    let filter_pins = git_cli_content_filter_pins(cwd, args).await?;
     let mut cmd = Command::new("git");
     cmd.current_dir(cwd).arg("--no-optional-locks");
     for &(key, val) in xai_tty_utils::GIT_AUTH_SUPPRESSION_ENVS.iter() {
@@ -2649,7 +2831,8 @@ async fn git_cli_raw(cwd: &Path, args: &[&str]) -> Result<(bool, String)> {
     cmd.stdin(std::process::Stdio::null());
     xai_grok_tools::util::detach_command(&mut cmd);
     cmd.envs(xai_grok_tools::util::pager_env());
-    let output = cmd.args(args).output().await?;
+    git_cli_args_with_filter_pins(&mut cmd, args, filter_pins.as_deref());
+    let output = cmd.output().await?;
     let mut combined = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if !stderr.is_empty() {
@@ -2660,6 +2843,31 @@ async fn git_cli_raw(cwd: &Path, args: &[&str]) -> Result<(bool, String)> {
     }
     Ok((output.status.success(), combined))
 }
+/// Like [`git_cli_raw`] but returns the process exit code (`-1` if none).
+async fn git_cli_status(cwd: &Path, args: &[&str]) -> Result<(i32, String)> {
+    tracing::debug!(cwd = %cwd.display(), args = ?args, "git_cli_status");
+    let filter_pins = git_cli_content_filter_pins(cwd, args).await?;
+    let mut cmd = Command::new("git");
+    cmd.current_dir(cwd).arg("--no-optional-locks");
+    for &(key, val) in xai_tty_utils::GIT_AUTH_SUPPRESSION_ENVS.iter() {
+        cmd.env(key, val);
+    }
+    cmd.env("LC_ALL", "C");
+    cmd.stdin(std::process::Stdio::null());
+    xai_grok_tools::util::detach_command(&mut cmd);
+    cmd.envs(xai_grok_tools::util::pager_env());
+    git_cli_args_with_filter_pins(&mut cmd, args, filter_pins.as_deref());
+    let output = cmd.output().await?;
+    let mut combined = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        if !combined.is_empty() {
+            combined.push('\n');
+        }
+        combined.push_str(&stderr);
+    }
+    Ok((output.status.code().unwrap_or(-1), combined))
+}
 async fn git_cli_raw_mut(cwd: &Path, args: &[&str]) -> Result<(bool, String)> {
     let result = git_cli_raw(cwd, args).await;
     if result.is_ok() {
@@ -2667,13 +2875,11 @@ async fn git_cli_raw_mut(cwd: &Path, args: &[&str]) -> Result<(bool, String)> {
     }
     result
 }
-/// Marker line guarding the default-exclude seed. Environments may pre-seed
-/// the same block at provision time under this marker; whichever side seeds
-/// first wins and the other becomes a no-op.
+/// Marker line guarding the default-exclude seed.
+/// Environments may pre-seed the same block at provision time under this marker; whichever side seeds first wins and the other becomes a no-op.
 const DEFAULT_EXCLUDES_MARKER: &str = "grok default excludes";
-/// Local-only default excludes (`.git/info/exclude` — never enters the repo's
-/// history) so `stage_all` can't sweep in dependency trees, build output, or
-/// env files. `git add -f` still overrides.
+/// Local-only default excludes so `stage_all` can't sweep in dependency trees, build output, or env files.
+/// Lives in `.git/info/exclude`, which never enters the repo's history. `git add -f` still overrides.
 const DEFAULT_EXCLUDES_BLOCK: &str = "\
 # grok default excludes (local-only; seeded by the workspace git_commit op)
 .grok/
@@ -2700,10 +2906,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 ";
-/// Seed [`DEFAULT_EXCLUDES_BLOCK`] into the repo's `info/exclude` unless the
-/// marker is already present. Resolves the real file via `--git-path` so
-/// gitfile and linked-worktree checkouts seed the common dir, not a dead
-/// `.git/info` path.
+/// Seed [`DEFAULT_EXCLUDES_BLOCK`] into the repo's `info/exclude` unless the marker is already present.
+/// Resolves the real file via `--git-path` so gitfile and linked-worktree checkouts seed the common dir, not a dead `.git/info` path.
 async fn seed_default_excludes(git_root: &Path) -> Result<()> {
     let exclude_rel = git_cli(git_root, &["rev-parse", "--git-path", "info/exclude"]).await?;
     let exclude_path = {
@@ -2732,8 +2936,8 @@ async fn seed_default_excludes(git_root: &Path) -> Result<()> {
     tracing::debug!(path = %exclude_path.display(), "seeded default git excludes");
     Ok(())
 }
-/// Push HEAD to origin, classifying the failure mode. Never forces. Returns
-/// the combined output alongside the [`PushStatus`].
+/// Push HEAD to origin, classifying the failure mode. Never forces.
+/// Returns the combined output alongside the [`PushStatus`].
 async fn push_classified(git_root: &Path) -> Result<(PushStatus, String)> {
     let (ok, out) = git_cli_raw_mut(git_root, &["push", "-u", "origin", "HEAD"]).await?;
     if ok {
@@ -2747,8 +2951,8 @@ async fn push_classified(git_root: &Path) -> Result<(PushStatus, String)> {
     };
     Ok((status, out))
 }
-/// Refuse unless the workspace is on exactly `expected`. Detached HEAD
-/// reports "HEAD" and so never matches.
+/// Refuse unless the workspace is on exactly `expected`.
+/// Detached HEAD reports "HEAD" and so never matches.
 async fn ensure_on_branch(git_root: &Path, expected: Option<&str>) -> Result<()> {
     let Some(expected) = expected else {
         return Ok(());
@@ -2849,9 +3053,8 @@ pub async fn commit(git_root: &Path, req: &GitCommitReq) -> Result<CommitResult>
     })
 }
 /// Merge the base branch into the current branch (`workspace.git_sync_base`).
-/// Merge, never rebase: conv-branch history must not be rewritten. On
-/// conflicts the merge is left in progress for resolution; `abort` rolls it
-/// back.
+/// Merge, never rebase: conv-branch history must not be rewritten.
+/// On conflicts the merge is left in progress for resolution; `abort` rolls it back.
 pub async fn sync_base(
     git_root: &Path,
     base_ref: Option<&str>,
@@ -2918,6 +3121,277 @@ pub async fn sync_base(
         });
     }
     anyhow::bail!("merge of base ref '{base}' failed: {merge_out}")
+}
+/// Reject a ref/branch value that could be parsed as a git option (leading `-`) or that carries whitespace/control characters or `..`.
+/// A boundary guard for client-influenced refs (notably `base_ref`) so they cannot be smuggled in as flags.
+/// Combined with `--end-of-options` at each call site.
+fn ensure_ref_arg_safe(value: &str, what: &str) -> Result<()> {
+    anyhow::ensure!(!value.is_empty(), "{what} must not be empty");
+    anyhow::ensure!(
+        !value.starts_with('-'),
+        "{what} '{value}' must not start with '-'"
+    );
+    anyhow::ensure!(
+        !value.chars().any(|c| c.is_whitespace() || c.is_control()),
+        "{what} '{value}' contains whitespace or control characters"
+    );
+    anyhow::ensure!(
+        !value.contains(".."),
+        "{what} '{value}' must not contain '..'"
+    );
+    Ok(())
+}
+/// Seed a committed `.gitignore` (secrets never enter git) when a fresh conversation branch is created and the repo has none.
+/// Distinct from [`seed_default_excludes`], which seeds the *local-only* `info/exclude` as a `stage_all` backstop.
+/// Never overwrites an existing `.gitignore`.
+async fn seed_default_gitignore(git_root: &Path) -> Result<()> {
+    let path = git_root.join(".gitignore");
+    if tokio::fs::metadata(&path).await.is_ok() {
+        return Ok(());
+    }
+    tokio::fs::write(&path, xai_grok_workspace_types::binding::DEFAULT_GITIGNORE).await?;
+    git_cli(git_root, &["add", "--end-of-options", ".gitignore"]).await?;
+    git_cli(
+        git_root,
+        &[
+            "commit",
+            "-m",
+            "Seed default .gitignore",
+            "--end-of-options",
+            ".gitignore",
+        ],
+    )
+    .await?;
+    tracing::debug!(path = %path.display(), "seeded and committed default .gitignore");
+    Ok(())
+}
+/// `EnsureBinding` (`workspace.git_ensure_binding`): make the conversation branch exist and be checked out. A remote `conv/<id>` hit is a resume in a fresh sandbox: check it out, do not re-fork.
+/// The base is never written directly.
+pub async fn ensure_binding(
+    git_root: &Path,
+    session_branch: &str,
+    base_ref: &str,
+) -> Result<GitEnsureBindingResult> {
+    ensure_ref_arg_safe(session_branch, "session_branch")?;
+    ensure_ref_arg_safe(base_ref, "base_ref")?;
+    let already_current = git_cli(git_root, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .await
+        .map(|b| b == session_branch)
+        .unwrap_or(false);
+    if already_current {
+        let head_sha = git_cli(git_root, &["rev-parse", "HEAD"]).await.ok();
+        return Ok(GitEnsureBindingResult {
+            branch: session_branch.to_owned(),
+            created: false,
+            head_sha,
+        });
+    }
+    let local_exists = git_cli_raw(
+        git_root,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{session_branch}"),
+        ],
+    )
+    .await?
+    .0;
+    let mut created = false;
+    if local_exists {
+        checkout_branch(git_root, session_branch, false).await?;
+    } else {
+        let (ls_code, ls_out) = git_cli_status(
+            git_root,
+            &[
+                "ls-remote",
+                "--exit-code",
+                "--heads",
+                "origin",
+                session_branch,
+            ],
+        )
+        .await?;
+        let remote_exists = match ls_code {
+            0 => true,
+            2 => false,
+            other => {
+                anyhow::bail!(
+                    "ls-remote origin '{session_branch}' failed (exit {other}); not treating as missing: {}",
+                    scrub_git_output(&ls_out)
+                );
+            }
+        };
+        if remote_exists {
+            let refspec =
+                format!("+refs/heads/{session_branch}:refs/remotes/origin/{session_branch}");
+            git_cli(git_root, &["fetch", "origin", "--end-of-options", &refspec]).await?;
+            git_cli(
+                git_root,
+                &[
+                    "checkout",
+                    "-b",
+                    session_branch,
+                    "--track",
+                    &format!("origin/{session_branch}"),
+                ],
+            )
+            .await?;
+        } else {
+            git_cli(
+                git_root,
+                &[
+                    "checkout",
+                    "-b",
+                    session_branch,
+                    "--end-of-options",
+                    base_ref,
+                ],
+            )
+            .await?;
+            created = true;
+            seed_default_gitignore(git_root).await?;
+        }
+    }
+    super::git_gate::invalidate(git_root);
+    let head_sha = git_cli(git_root, &["rev-parse", "HEAD"]).await.ok();
+    Ok(GitEnsureBindingResult {
+        branch: session_branch.to_owned(),
+        created,
+        head_sha,
+    })
+}
+/// `MergeToMain` (`workspace.git_merge_to_main`): merge the conversation branch into its target. Merge, never rebase; never force.
+/// On conflicts the merge is aborted and HEAD is restored to `conv_branch` (never leave `MERGE_HEAD` on the integration branch).
+pub async fn merge_to_main(
+    git_root: &Path,
+    conv_branch: &str,
+    target_branch: &str,
+    push: bool,
+) -> Result<GitMergeToMainResult> {
+    ensure_ref_arg_safe(conv_branch, "session_branch")?;
+    ensure_ref_arg_safe(target_branch, "target_branch")?;
+    let dirty = git_cli(git_root, &["status", "--porcelain"]).await?;
+    anyhow::ensure!(
+        dirty.is_empty(),
+        "working tree is not clean; commit before merging to '{target_branch}'"
+    );
+    let (fetched, _) = git_cli_raw(
+        git_root,
+        &["fetch", "origin", "--end-of-options", target_branch],
+    )
+    .await?;
+    checkout_branch(git_root, target_branch, false).await?;
+    if fetched
+        && !git_cli_raw(
+            git_root,
+            &["merge-base", "--is-ancestor", "FETCH_HEAD", "HEAD"],
+        )
+        .await?
+        .0
+    {
+        let (ff, ff_out) = git_cli_raw(git_root, &["merge", "--ff-only", "FETCH_HEAD"]).await?;
+        if !ff {
+            let _ = checkout_branch(git_root, conv_branch, false).await;
+            anyhow::bail!(
+                "local '{target_branch}' has diverged from origin; resolve before publishing: {}",
+                scrub_git_output(&ff_out)
+            );
+        }
+    }
+    if git_cli_raw(
+        git_root,
+        &["merge-base", "--is-ancestor", conv_branch, "HEAD"],
+    )
+    .await?
+    .0
+    {
+        let sha = git_cli(git_root, &["rev-parse", "HEAD"]).await?;
+        let push_res = push_merged_target_if_requested(git_root, target_branch, push).await;
+        checkout_branch(git_root, conv_branch, false).await?;
+        push_res?;
+        return Ok(GitMergeToMainResult {
+            outcome: GitMergeToMainOutcome::UpToDate { sha },
+        });
+    }
+    let (merged, merge_out) = git_cli_raw(
+        git_root,
+        &["merge", "--no-edit", "--end-of-options", conv_branch],
+    )
+    .await?;
+    if merged {
+        let sha = git_cli(git_root, &["rev-parse", "HEAD"]).await?;
+        let push_res = push_merged_target_if_requested(git_root, target_branch, push).await;
+        checkout_branch(git_root, conv_branch, false).await?;
+        push_res?;
+        return Ok(GitMergeToMainResult {
+            outcome: GitMergeToMainOutcome::Merged { sha },
+        });
+    }
+    let in_progress = git_cli_raw(git_root, &["rev-parse", "-q", "--verify", "MERGE_HEAD"])
+        .await?
+        .0;
+    if in_progress {
+        let files = git_cli(git_root, &["diff", "--name-only", "--diff-filter=U"])
+            .await?
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        let _ = git_cli_raw(git_root, &["merge", "--abort"]).await;
+        checkout_branch(git_root, conv_branch, false).await?;
+        return Ok(GitMergeToMainResult {
+            outcome: GitMergeToMainOutcome::Conflicts { files },
+        });
+    }
+    let _ = checkout_branch(git_root, conv_branch, false).await;
+    anyhow::bail!(
+        "merge of '{conv_branch}' into '{target_branch}' failed: {}",
+        scrub_git_output(&merge_out)
+    )
+}
+/// Push the merged target to origin when `push` is set, failing loudly (never forcing) so publish never records a deploy against an unpushed target.
+async fn push_merged_target_if_requested(
+    git_root: &Path,
+    target_branch: &str,
+    push: bool,
+) -> Result<()> {
+    if !push {
+        return Ok(());
+    }
+    let (status, out) = push_classified(git_root).await?;
+    anyhow::ensure!(
+        status == PushStatus::Ok,
+        "merge into '{target_branch}' succeeded but push failed ({status:?}): {}",
+        scrub_git_output(&out)
+    );
+    Ok(())
+}
+/// `Push` (`workspace.git_push`): push a branch (or current `HEAD`) to `origin`, classifying the outcome.
+/// Never forces. Output is credential-scrubbed.
+pub async fn push_branch(git_root: &Path, branch: Option<&str>) -> Result<GitPushResult> {
+    let refspec = branch.unwrap_or("HEAD");
+    if let Some(branch) = branch {
+        ensure_ref_arg_safe(branch, "branch")?;
+    }
+    let (ok, out) = git_cli_raw_mut(
+        git_root,
+        &["push", "-u", "origin", "--end-of-options", refspec],
+    )
+    .await?;
+    let status = if ok {
+        PushStatus::Ok
+    } else {
+        let lower = out.to_lowercase();
+        if lower.contains("non-fast-forward") || lower.contains("fetch first") {
+            PushStatus::Conflict
+        } else {
+            PushStatus::Failed
+        }
+    };
+    Ok(GitPushResult {
+        status,
+        output: scrub_git_output(&out),
+    })
 }
 pub async fn stage_content(git_root: &Path, path: &str, content: &str) -> Result<()> {
     let git_root_buf = git_root.to_path_buf();
@@ -2988,10 +3462,7 @@ pub enum GitRepoResponse {
     NotGitRepo,
     GitRepo(GitRepoPathResponse),
 }
-/// Strip `root` from `child`, canonicalizing both sides to handle symlinks
-/// (e.g. `/tmp` → `/private/tmp` on macOS). Falls back through partial and
-/// raw `strip_prefix` when one side can't be resolved (deleted files, etc.).
-///
+/// Strip `root` from `child`, canonicalizing both sides to handle symlinks (e.g. Falls back through partial and raw `strip_prefix` when one side can't be resolved (deleted files, etc.).
 /// Returns `None` when `child` is not under `root` or they are the same path.
 pub fn strip_prefix_canonicalized(child: &Path, root: &Path) -> Option<PathBuf> {
     let child_canonical = dunce::canonicalize(child).ok();
@@ -3013,19 +3484,7 @@ pub fn strip_prefix_canonicalized(child: &Path, root: &Path) -> Option<PathBuf> 
         .or_else(|| child.strip_prefix(root).ok().map(Path::to_path_buf))
         .filter(|p| !p.as_os_str().is_empty())
 }
-/// Compute the subdirectory offset and git root for worktree creation.
-///
-/// When a user's session cwd is a subdirectory of the git root (e.g.
-/// `/repo/packages/foo`), worktrees are always created at the repo root
-/// level.  Forked sessions must have their cwd set to the corresponding
-/// subdirectory inside the new worktree so that tool calls (search, terminal,
-/// file operations) behave the same as in the original session.
-///
-/// Returns `(subdir_offset, git_root)`:
-/// - `subdir_offset`: relative path from the git root to `source_cwd`
-///   (empty when `source_cwd == git_root`).
-/// - `git_root`: the resolved git root directory.
-///
+/// Compute the subdirectory offset and git root for worktree creation. Forked sessions must have their cwd set to the corresponding subdirectory inside the new worktree.
 /// If the git root cannot be resolved, both values fall back to `source_cwd`.
 pub fn compute_subdir_offset(source_cwd: &str) -> (PathBuf, String) {
     match find_git_root_from_path(Path::new(source_cwd)) {
@@ -3037,13 +3496,7 @@ pub fn compute_subdir_offset(source_cwd: &str) -> (PathBuf, String) {
         Err(_) => (PathBuf::new(), source_cwd.to_string()),
     }
 }
-/// Like [`compute_subdir_offset`] + [`effective_worktree_cwd`] combined, but
-/// for callers that already have the source git root (e.g. from an ACP
-/// response) instead of discovering it on disk.
-///
-/// Returns `worktree_root` joined with the subdirectory offset from
-/// `source_git_root` to `source_cwd`, or `worktree_root` unchanged when
-/// there is no offset or `source_git_root` is `None`.
+/// Like [`compute_subdir_offset`] and [`effective_worktree_cwd`] combined. from an ACP response) instead of discovering it on disk.
 pub fn effective_worktree_path(
     worktree_root: &Path,
     source_cwd: &Path,
@@ -3057,12 +3510,8 @@ pub fn effective_worktree_path(
         None => worktree_root.to_path_buf(),
     }
 }
-/// Compute the effective cwd for a forked session by joining a worktree root
-/// with a subdirectory offset.
-///
-/// When `subdir_offset` is empty this returns `worktree_root` unchanged.
-/// When it is non-empty the result is `worktree_root/subdir_offset` (using
-/// native path separators).
+/// Compute the effective cwd for a forked session by joining a worktree root with a subdirectory offset. When `subdir_offset` is empty this returns `worktree_root` unchanged.
+/// When it is non-empty the result is `worktree_root/subdir_offset` (using native path separators).
 pub fn effective_worktree_cwd(worktree_root: &str, subdir_offset: &Path) -> String {
     if subdir_offset.as_os_str().is_empty() {
         worktree_root.to_string()
@@ -3094,10 +3543,7 @@ pub struct HeadDivergence {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_branch: Option<String>,
 }
-/// Compare a session's persisted HEAD commit against the current HEAD.
-///
-/// Returns `Some` only when both commits are known and differ.
-/// Old sessions without `head_commit` or non-git directories yield `None`.
+/// Compare a session's persisted HEAD commit against the current HEAD. Returns `Some` only when both commits are known and differ.
 pub fn detect_head_divergence(
     session_head_commit: Option<&str>,
     session_head_branch: Option<&str>,
@@ -3115,1129 +3561,11 @@ pub fn detect_head_divergence(
     })
 }
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn strip_url_credentials_removes_token() {
-        let url_with_token = "https://x-access-token:secret-token@github.com/xai-org/example.git";
-        assert_eq!(
-            strip_url_credentials(url_with_token),
-            "https://github.com/xai-org/example.git"
-        );
-    }
-    #[test]
-    fn strip_url_credentials_preserves_clean_https_url() {
-        let clean_url = "https://github.com/xai-org/example.git";
-        assert_eq!(strip_url_credentials(clean_url), clean_url);
-    }
-    #[test]
-    fn strip_url_credentials_preserves_ssh_url() {
-        let ssh_url = "git@github.com:xai-org/example.git";
-        assert_eq!(strip_url_credentials(ssh_url), ssh_url);
-    }
-    #[test]
-    fn strip_url_credentials_removes_username_password() {
-        let url_with_creds = "https://alice:secret@github.com/xai-org/example.git";
-        assert_eq!(
-            strip_url_credentials(url_with_creds),
-            "https://github.com/xai-org/example.git"
-        );
-    }
-    #[test]
-    fn detect_default_branch_falls_back_to_unique_remote_tracking_branch() {
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = git2::Repository::init(tmp.path()).unwrap();
-        repo.config()
-            .unwrap()
-            .set_str("init.defaultBranch", "trunk")
-            .unwrap();
-        let sig = git2::Signature::now("test", "test@test.com").unwrap();
-        let tree_id = repo.index().unwrap().write_tree().unwrap();
-        let tree = repo.find_tree(tree_id).unwrap();
-        let oid = repo
-            .commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
-            .unwrap();
-        assert_eq!(detect_default_branch(&repo).as_deref(), Some("trunk"));
-        repo.reference("refs/remotes/origin/main", oid, false, "test")
-            .unwrap();
-        assert_eq!(detect_default_branch(&repo).as_deref(), Some("main"));
-        repo.reference("refs/remotes/origin/master", oid, false, "test")
-            .unwrap();
-        assert_eq!(detect_default_branch(&repo).as_deref(), Some("trunk"));
-    }
-    #[test]
-    fn test_resolve_persisted_session_git_metadata_collects_sorted_unique_remotes() {
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = git2::Repository::init(tmp.path()).unwrap();
-        repo.remote(
-            "origin",
-            "https://x-access-token:secret-token@github.com/xai-org/example.git",
-        )
-        .unwrap();
-        repo.remote("backup", "https://gitlab.com/xai-org/example.git")
-            .unwrap();
-        repo.remote("duplicate", "https://github.com/xai-org/example.git")
-            .unwrap();
-        let metadata = resolve_persisted_session_git_metadata_sync(tmp.path());
-        assert_eq!(
-            dunce::canonicalize(Path::new(metadata.git_root_dir.as_deref().unwrap())).unwrap(),
-            dunce::canonicalize(tmp.path()).unwrap(),
-        );
-        assert_eq!(
-            metadata.git_remotes,
-            vec![
-                "https://github.com/xai-org/example.git".to_string(),
-                "https://gitlab.com/xai-org/example.git".to_string(),
-            ]
-        );
-    }
-    #[test]
-    fn test_resolve_persisted_session_git_metadata_captures_head() {
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = git2::Repository::init(tmp.path()).unwrap();
-        repo.remote("origin", "https://github.com/xai-org/example.git")
-            .unwrap();
-        let metadata = resolve_persisted_session_git_metadata_sync(tmp.path());
-        assert!(metadata.head_commit.is_none());
-        assert!(metadata.head_branch.is_none());
-        let sig = git2::Signature::now("test", "test@test.com").unwrap();
-        let mut index = repo.index().unwrap();
-        let tree_id = index.write_tree().unwrap();
-        let tree = repo.find_tree(tree_id).unwrap();
-        let commit_oid = repo
-            .commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
-            .unwrap();
-        let metadata = resolve_persisted_session_git_metadata_sync(tmp.path());
-        assert_eq!(
-            metadata.head_commit.as_deref(),
-            Some(commit_oid.to_string().as_str())
-        );
-        assert!(metadata.head_branch.is_some());
-        let parent = repo.find_commit(commit_oid).unwrap();
-        let tree2 = repo.find_tree(index.write_tree().unwrap()).unwrap();
-        let commit2 = repo
-            .commit(Some("HEAD"), &sig, &sig, "second", &tree2, &[&parent])
-            .unwrap();
-        let metadata = resolve_persisted_session_git_metadata_sync(tmp.path());
-        assert_eq!(
-            metadata.head_commit.as_deref(),
-            Some(commit2.to_string().as_str())
-        );
-    }
-    #[test]
-    fn test_resolve_persisted_session_git_metadata_detached_head() {
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = git2::Repository::init(tmp.path()).unwrap();
-        let sig = git2::Signature::now("test", "test@test.com").unwrap();
-        let mut index = repo.index().unwrap();
-        let tree_id = index.write_tree().unwrap();
-        let tree = repo.find_tree(tree_id).unwrap();
-        let commit_oid = repo
-            .commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
-            .unwrap();
-        repo.set_head_detached(commit_oid).unwrap();
-        let metadata = resolve_persisted_session_git_metadata_sync(tmp.path());
-        assert_eq!(
-            metadata.head_commit.as_deref(),
-            Some(commit_oid.to_string().as_str()),
-        );
-        assert!(metadata.head_branch.is_none());
-    }
-    #[test]
-    fn test_resolve_persisted_session_git_metadata_worktree_resolves_remotes() {
-        let tmp = tempfile::tempdir().unwrap();
-        let main_path = tmp.path().join("main-repo");
-        std::fs::create_dir_all(&main_path).unwrap();
-        let repo = git2::Repository::init(&main_path).unwrap();
-        repo.remote("origin", "https://github.com/xai-org/example.git")
-            .unwrap();
-        {
-            let mut index = repo.index().unwrap();
-            let tree_id = index.write_tree().unwrap();
-            let tree = repo.find_tree(tree_id).unwrap();
-            let sig = git2::Signature::now("test", "test@test.com").unwrap();
-            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
-                .unwrap();
-        }
-        let head_commit = repo.head().unwrap().peel_to_commit().unwrap();
-        repo.branch("wt-branch", &head_commit, false).unwrap();
-        let wt_path = tmp.path().join("my-worktree");
-        repo.worktree(
-            "my-worktree",
-            &wt_path,
-            Some(
-                git2::WorktreeAddOptions::new().reference(Some(
-                    &repo
-                        .find_branch("wt-branch", git2::BranchType::Local)
-                        .unwrap()
-                        .into_reference(),
-                )),
-            ),
-        )
-        .unwrap();
-        let metadata = resolve_persisted_session_git_metadata_sync(&wt_path);
-        assert_eq!(
-            dunce::canonicalize(Path::new(metadata.git_root_dir.as_deref().unwrap())).unwrap(),
-            dunce::canonicalize(&wt_path).unwrap(),
-        );
-        assert_eq!(
-            metadata.git_remotes,
-            vec!["https://github.com/xai-org/example.git".to_string()],
-        );
-    }
-    fn init_repo_on_branch(path: &Path, branch: &str) {
-        std::fs::create_dir_all(path).unwrap();
-        let repo = git2::Repository::init(path).unwrap();
-        std::fs::write(path.join("README"), "test\n").unwrap();
-        let sig = git2::Signature::now("test", "test@test.com").unwrap();
-        let tree_id = {
-            let mut index = repo.index().unwrap();
-            index.add_path(Path::new("README")).unwrap();
-            index.write().unwrap();
-            index.write_tree().unwrap()
-        };
-        let tree = repo.find_tree(tree_id).unwrap();
-        let oid = repo
-            .commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
-            .unwrap();
-        let commit = repo.find_commit(oid).unwrap();
-        let current = repo
-            .head()
-            .ok()
-            .and_then(|h| h.shorthand().map(str::to_string));
-        if current.as_deref() != Some(branch) {
-            repo.branch(branch, &commit, true).unwrap();
-            repo.set_head(&format!("refs/heads/{branch}")).unwrap();
-            repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
-                .unwrap();
-        }
-    }
-    fn copy_dir_all(src: &Path, dst: &Path) {
-        std::fs::create_dir_all(dst).unwrap();
-        for entry in std::fs::read_dir(src).unwrap() {
-            let entry = entry.unwrap();
-            let to = dst.join(entry.file_name());
-            if entry.file_type().unwrap().is_dir() {
-                copy_dir_all(&entry.path(), &to);
-            } else {
-                std::fs::copy(entry.path(), to).unwrap();
-            }
-        }
-    }
-    fn checkout_named_branch(repo_path: &Path, branch: &str) {
-        let repo = git2::Repository::open(repo_path).unwrap();
-        let commit = repo.head().unwrap().peel_to_commit().unwrap();
-        if repo.find_branch(branch, git2::BranchType::Local).is_err() {
-            repo.branch(branch, &commit, false).unwrap();
-        }
-        repo.set_head(&format!("refs/heads/{branch}")).unwrap();
-        repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
-            .unwrap();
-    }
-    fn collapse_home_for_test(path: &Path) -> String {
-        collapse_home_path(path, std::env::var("HOME").ok().as_deref().map(Path::new))
-    }
-    #[test]
-    fn collapse_home_path_requires_whole_component() {
-        let home = Path::new("/Users/u");
-        assert_eq!(
-            collapse_home_path(Path::new("/Users/user/xai"), Some(home)),
-            "/Users/user/xai"
-        );
-        assert_eq!(
-            collapse_home_path(Path::new("/Users/u/src/repo"), Some(home)),
-            "~/src/repo"
-        );
-    }
-    #[tokio::test]
-    async fn get_worktree_info_standalone_grok_marker() {
-        let tmp = tempfile::tempdir().unwrap();
-        let main = tmp.path().join("main");
-        let clone = tmp.path().join("clone");
-        init_repo_on_branch(&main, "main-only");
-        copy_dir_all(&main, &clone);
-        checkout_named_branch(&clone, "wt-branch");
-        std::fs::write(
-            clone.join(".git").join("grok-worktree-source"),
-            main.display().to_string(),
-        )
-        .unwrap();
-        assert!(clone.join(".git").is_dir());
-        assert!(clone.join(".git").join("grok-worktree-source").is_file());
-        let (is_wt, main_repo) = get_worktree_info(&clone).await.expect("clone is a repo");
-        assert!(is_wt);
-        assert_eq!(
-            main_repo.as_deref(),
-            Some(collapse_home_for_test(&main).as_str())
-        );
-        assert_eq!(get_branch(&clone).await.as_deref(), Some("wt-branch"));
-        let nested = clone.join("sub").join("dir");
-        std::fs::create_dir_all(&nested).unwrap();
-        let (nested_wt, nested_main) = get_worktree_info(&nested)
-            .await
-            .expect("nested path is in the clone");
-        assert!(nested_wt);
-        assert_eq!(
-            nested_main.as_deref(),
-            Some(collapse_home_for_test(&main).as_str())
-        );
-    }
-    #[tokio::test]
-    async fn get_worktree_info_nested_plain_repo_does_not_inherit_marker() {
-        let tmp = tempfile::tempdir().unwrap();
-        let main = tmp.path().join("main");
-        let clone = tmp.path().join("clone");
-        init_repo_on_branch(&main, "main-only");
-        copy_dir_all(&main, &clone);
-        checkout_named_branch(&clone, "wt-branch");
-        std::fs::write(
-            clone.join(".git").join("grok-worktree-source"),
-            main.display().to_string(),
-        )
-        .unwrap();
-        let nested = clone.join("vendor").join("dep");
-        init_repo_on_branch(&nested, "dep-branch");
-        let (is_wt, main_repo) = get_worktree_info(&nested)
-            .await
-            .expect("nested init is a repo");
-        assert!(!is_wt);
-        assert!(main_repo.is_none());
-        assert_eq!(get_branch(&nested).await.as_deref(), Some("dep-branch"));
-    }
-    #[tokio::test]
-    async fn get_worktree_info_tilde_collapses_home_prefix() {
-        let Some(home) = std::env::var("HOME").ok().filter(|h| !h.is_empty()) else {
-            return;
-        };
-        let tmp = tempfile::tempdir().unwrap();
-        let clone = tmp.path().join("clone");
-        init_repo_on_branch(&clone, "wt-branch");
-        let fake_main = PathBuf::from(&home).join("xai-fake-main-repo-for-wt-display");
-        std::fs::write(
-            clone.join(".git").join("grok-worktree-source"),
-            fake_main.display().to_string(),
-        )
-        .unwrap();
-        let (is_wt, main_repo) = get_worktree_info(&clone).await.expect("clone is a repo");
-        assert!(is_wt);
-        assert_eq!(
-            main_repo.as_deref(),
-            Some("~/xai-fake-main-repo-for-wt-display")
-        );
-    }
-    #[tokio::test]
-    async fn get_worktree_info_plain_repo_is_not_worktree() {
-        let tmp = tempfile::tempdir().unwrap();
-        init_repo_on_branch(tmp.path(), "main");
-        assert_eq!(get_worktree_info(tmp.path()).await, Some((false, None)));
-    }
-    fn block_on_worktree_info(cwd: &Path) -> Option<(bool, Option<String>)> {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("test runtime")
-            .block_on(get_worktree_info(cwd))
-    }
-    fn register_db_worktree(home: &Path, wt: &Path, source: &Path, label: &str) {
-        let db = xai_fast_worktree::db::WorktreeDb::open(home).unwrap();
-        db.register(&xai_fast_worktree::db::WorktreeRecord {
-            id: "db-wt".into(),
-            path: dunce::canonicalize(wt).unwrap_or_else(|_| wt.to_path_buf()),
-            source_repo: source.to_path_buf(),
-            repo_name: "main-repo".into(),
-            kind: xai_fast_worktree::db::WorktreeKind::Session,
-            creation_mode: "standalone".into(),
-            git_ref: None,
-            head_commit: None,
-            session_id: None,
-            creator_pid: None,
-            created_at: 1,
-            last_accessed_at: None,
-            status: xai_fast_worktree::db::WorktreeStatus::Alive,
-            metadata: Some(serde_json::json!({ "label": label })),
-        })
-        .unwrap();
-    }
-    #[test]
-    fn get_worktree_info_db_record_without_marker() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = dunce::canonicalize(tmp.path()).unwrap().join("grok-home");
-        std::fs::create_dir_all(&home).unwrap();
-        let _env = crate::LockedTestEnv::lock().set("GROK_HOME", &home);
-        let wt = tmp.path().join("clone");
-        init_repo_on_branch(&wt, "wt-branch");
-        let source = PathBuf::from("/src/main-repo");
-        register_db_worktree(&home, &wt, &source, "db-label");
-        let (is_wt, main_repo) = block_on_worktree_info(&wt).expect("clone is a repo");
-        assert!(is_wt);
-        assert_eq!(
-            main_repo.as_deref(),
-            Some(collapse_home_for_test(&source).as_str())
-        );
-    }
-    #[test]
-    fn get_worktree_info_nested_repo_does_not_inherit_db_record() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = dunce::canonicalize(tmp.path()).unwrap().join("grok-home");
-        std::fs::create_dir_all(&home).unwrap();
-        let _env = crate::LockedTestEnv::lock().set("GROK_HOME", &home);
-        let wt = tmp.path().join("clone");
-        init_repo_on_branch(&wt, "wt-branch");
-        register_db_worktree(&home, &wt, Path::new("/src/main-repo"), "db-label");
-        let nested = wt.join("vendor").join("dep");
-        init_repo_on_branch(&nested, "dep-branch");
-        let (is_wt, main_repo) = block_on_worktree_info(&nested).expect("nested init is a repo");
-        assert!(!is_wt);
-        assert!(main_repo.is_none());
-    }
-    #[tokio::test]
-    async fn get_worktree_info_linked_git_worktree() {
-        let tmp = tempfile::tempdir().unwrap();
-        let main = tmp.path().join("main");
-        init_repo_on_branch(&main, "main-only");
-        let repo = git2::Repository::open(&main).unwrap();
-        let head_commit = repo.head().unwrap().peel_to_commit().unwrap();
-        repo.branch("wt-branch", &head_commit, false).unwrap();
-        let wt_path = tmp.path().join("my-worktree");
-        repo.worktree(
-            "my-worktree",
-            &wt_path,
-            Some(
-                git2::WorktreeAddOptions::new().reference(Some(
-                    &repo
-                        .find_branch("wt-branch", git2::BranchType::Local)
-                        .unwrap()
-                        .into_reference(),
-                )),
-            ),
-        )
-        .unwrap();
-        assert!(wt_path.join(".git").is_file());
-        let (is_wt, main_repo) = get_worktree_info(&wt_path)
-            .await
-            .expect("linked worktree is a repo");
-        assert!(is_wt);
-        let main_repo = main_repo.expect("linked worktree has main_repo");
-        let expected = collapse_home_for_test(&main);
-        let expected_canon = dunce::canonicalize(&main)
-            .map(|p| collapse_home_for_test(&p))
-            .unwrap_or_else(|_| expected.clone());
-        assert!(
-            main_repo == expected || main_repo == expected_canon,
-            "main_repo={main_repo}, expected {expected} or {expected_canon}"
-        );
-    }
-    #[test]
-    fn test_strip_prefix_canonicalized_basic() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        let child = root.join("a").join("b");
-        std::fs::create_dir_all(&child).unwrap();
-        let result = strip_prefix_canonicalized(&child, root);
-        assert_eq!(result.as_deref(), Some(Path::new("a/b")));
-    }
-    #[test]
-    fn test_strip_prefix_canonicalized_same_dir_returns_none() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path();
-        assert!(strip_prefix_canonicalized(dir, dir).is_none());
-    }
-    #[test]
-    fn test_strip_prefix_canonicalized_unrelated_returns_none() {
-        let a = tempfile::tempdir().unwrap();
-        let b = tempfile::tempdir().unwrap();
-        assert!(strip_prefix_canonicalized(a.path(), b.path()).is_none());
-    }
-    #[test]
-    fn test_strip_prefix_canonicalized_nonexistent_child() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        let deleted = root.join("gone").join("file.txt");
-        let result = strip_prefix_canonicalized(&deleted, root);
-        assert_eq!(result.as_deref(), Some(Path::new("gone/file.txt")));
-    }
-    #[test]
-    fn test_effective_worktree_path_no_git_root() {
-        let wt = Path::new("/worktrees/repo/abc");
-        let result = effective_worktree_path(wt, Path::new("/repo/src"), None);
-        assert_eq!(result, wt);
-    }
-    #[test]
-    fn test_effective_worktree_path_at_root() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        let result = effective_worktree_path(Path::new("/wt"), root, Some(root));
-        assert_eq!(result, Path::new("/wt"));
-    }
-    #[test]
-    fn test_effective_worktree_path_subdir() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        let sub = root.join("pkg").join("foo");
-        std::fs::create_dir_all(&sub).unwrap();
-        let wt = Path::new("/worktrees/repo/abc");
-        let result = effective_worktree_path(wt, &sub, Some(root));
-        assert_eq!(result, wt.join("pkg/foo"));
-    }
-    #[test]
-    fn test_effective_worktree_path_non_prefix() {
-        let a = tempfile::tempdir().unwrap();
-        let b = tempfile::tempdir().unwrap();
-        let wt = Path::new("/wt");
-        let result = effective_worktree_path(wt, a.path(), Some(b.path()));
-        assert_eq!(result, wt);
-    }
-    #[test]
-    fn test_effective_worktree_cwd_empty_offset() {
-        let result =
-            effective_worktree_cwd("/home/user/.grok/worktrees/repo/ab-123-a", Path::new(""));
-        assert_eq!(result, "/home/user/.grok/worktrees/repo/ab-123-a");
-    }
-    #[test]
-    fn test_effective_worktree_cwd_single_level_offset() {
-        let result =
-            effective_worktree_cwd("/home/user/.grok/worktrees/repo/ab-123-a", Path::new("src"));
-        assert_eq!(result, "/home/user/.grok/worktrees/repo/ab-123-a/src");
-    }
-    #[test]
-    fn test_effective_worktree_cwd_nested_offset() {
-        let result = effective_worktree_cwd(
-            "/home/user/.grok/worktrees/repo/ab-123-b",
-            Path::new("packages/frontend/src"),
-        );
-        assert_eq!(
-            result,
-            "/home/user/.grok/worktrees/repo/ab-123-b/packages/frontend/src"
-        );
-    }
-    #[test]
-    fn test_effective_worktree_cwd_no_trailing_slash() {
-        let root = "/worktree/path";
-        let result = effective_worktree_cwd(root, Path::new(""));
-        assert!(!result.ends_with('/'));
-    }
-    #[test]
-    fn test_compute_subdir_offset_at_git_root() {
-        let tmp = tempfile::tempdir().unwrap();
-        let repo_root = tmp.path();
-        git2::Repository::init(repo_root).unwrap();
-        let (offset, git_root) = compute_subdir_offset(&repo_root.to_string_lossy());
-        assert!(
-            offset.as_os_str().is_empty(),
-            "offset should be empty at repo root, got {:?}",
-            offset
-        );
-        assert_eq!(
-            dunce::canonicalize(Path::new(&git_root)).unwrap(),
-            dunce::canonicalize(repo_root).unwrap(),
-        );
-    }
-    #[test]
-    fn test_compute_subdir_offset_in_subdirectory() {
-        let tmp = tempfile::tempdir().unwrap();
-        let repo_root = tmp.path();
-        git2::Repository::init(repo_root).unwrap();
-        let sub = repo_root.join("packages").join("frontend");
-        std::fs::create_dir_all(&sub).unwrap();
-        let (offset, git_root) = compute_subdir_offset(&sub.to_string_lossy());
-        assert_eq!(
-            offset,
-            Path::new("packages/frontend"),
-            "offset should be the relative path from git root to the subdir"
-        );
-        assert_eq!(
-            dunce::canonicalize(Path::new(&git_root)).unwrap(),
-            dunce::canonicalize(repo_root).unwrap(),
-        );
-    }
-    #[test]
-    fn test_compute_subdir_offset_deeply_nested() {
-        let tmp = tempfile::tempdir().unwrap();
-        let repo_root = tmp.path();
-        git2::Repository::init(repo_root).unwrap();
-        let deep = repo_root.join("a").join("b").join("c").join("d");
-        std::fs::create_dir_all(&deep).unwrap();
-        let (offset, _git_root) = compute_subdir_offset(&deep.to_string_lossy());
-        assert_eq!(offset, Path::new("a/b/c/d"));
-    }
-    #[test]
-    fn test_compute_subdir_offset_not_a_git_repo() {
-        let tmp = tempfile::tempdir().unwrap();
-        let non_git = tmp.path().join("not-a-repo");
-        std::fs::create_dir_all(&non_git).unwrap();
-        let cwd_str = non_git.to_string_lossy().to_string();
-        let (offset, root) = compute_subdir_offset(&cwd_str);
-        assert!(offset.as_os_str().is_empty());
-        assert_eq!(root, cwd_str);
-    }
-    #[test]
-    fn test_effective_cwd_roundtrip_with_compute_offset() {
-        let tmp = tempfile::tempdir().unwrap();
-        let repo_root = tmp.path();
-        git2::Repository::init(repo_root).unwrap();
-        let sub = repo_root.join("src").join("lib");
-        std::fs::create_dir_all(&sub).unwrap();
-        let (offset, _git_root) = compute_subdir_offset(&sub.to_string_lossy());
-        let worktree_root = "/home/user/.grok/worktrees/myrepo/ab-test-a";
-        let effective = effective_worktree_cwd(worktree_root, &offset);
-        assert_eq!(effective, format!("{}/src/lib", worktree_root));
-    }
-    #[test]
-    fn test_find_git_root_from_repo_root() {
-        let tmp = tempfile::tempdir().unwrap();
-        git2::Repository::init(tmp.path()).unwrap();
-        let root = find_git_root_from_path(tmp.path()).unwrap();
-        assert_eq!(
-            dunce::canonicalize(&root).unwrap(),
-            dunce::canonicalize(tmp.path()).unwrap()
-        );
-    }
-    #[test]
-    fn test_find_git_root_from_subdir_returns_repo_root() {
-        let tmp = tempfile::tempdir().unwrap();
-        git2::Repository::init(tmp.path()).unwrap();
-        let sub = tmp.path().join("a").join("b");
-        std::fs::create_dir_all(&sub).unwrap();
-        let root = find_git_root_from_path(&sub).unwrap();
-        assert_eq!(
-            dunce::canonicalize(&root).unwrap(),
-            dunce::canonicalize(tmp.path()).unwrap()
-        );
-    }
-    #[test]
-    fn test_find_git_root_outside_repo_returns_err() {
-        let tmp = tempfile::tempdir().unwrap();
-        assert!(find_git_root_from_path(tmp.path()).is_err());
-    }
-    #[test]
-    fn test_discover_git_root_found_at_repo_root() {
-        let tmp = tempfile::tempdir().unwrap();
-        git2::Repository::init(tmp.path()).unwrap();
-        match discover_git_root(tmp.path()) {
-            GitDiscoveryResult::Found(root) => {
-                assert_eq!(
-                    dunce::canonicalize(&root).unwrap(),
-                    dunce::canonicalize(tmp.path()).unwrap()
-                );
-            }
-            other => panic!("expected Found, got {:?}", std::mem::discriminant(&other)),
-        }
-    }
-    #[test]
-    fn test_discover_git_root_found_from_subdir() {
-        let tmp = tempfile::tempdir().unwrap();
-        git2::Repository::init(tmp.path()).unwrap();
-        let sub = tmp.path().join("a").join("b");
-        std::fs::create_dir_all(&sub).unwrap();
-        match discover_git_root(&sub) {
-            GitDiscoveryResult::Found(root) => {
-                assert_eq!(
-                    dunce::canonicalize(&root).unwrap(),
-                    dunce::canonicalize(tmp.path()).unwrap()
-                );
-            }
-            other => panic!("expected Found, got {:?}", std::mem::discriminant(&other)),
-        }
-    }
-    #[test]
-    fn test_discover_git_root_not_a_repo() {
-        let tmp = tempfile::tempdir().unwrap();
-        assert!(matches!(
-            discover_git_root(tmp.path()),
-            GitDiscoveryResult::NotARepo
-        ));
-    }
-    #[test]
-    fn test_discover_git_root_bare_repo_returns_discovery_failed() {
-        let tmp = tempfile::tempdir().unwrap();
-        git2::Repository::init_bare(tmp.path()).unwrap();
-        assert!(
-            matches!(
-                discover_git_root(tmp.path()),
-                GitDiscoveryResult::DiscoveryFailed(_)
-            ),
-            "bare repo should return DiscoveryFailed, not NotARepo"
-        );
-    }
-    #[test]
-    fn test_parse_numstat_basic() {
-        let output = "10\t2\tsrc/main.rs\n3\t0\tREADME.md\n";
-        let stats = parse_numstat(output);
-        assert_eq!(stats.get("src/main.rs"), Some(&(10, 2)));
-        assert_eq!(stats.get("README.md"), Some(&(3, 0)));
-    }
-    #[test]
-    fn test_parse_numstat_binary() {
-        let output = "-\t-\timage.png\n";
-        let stats = parse_numstat(output);
-        assert_eq!(stats.get("image.png"), Some(&(0, 0)));
-    }
-    #[test]
-    fn test_parse_numstat_empty() {
-        let stats = parse_numstat("");
-        assert!(stats.is_empty());
-    }
-    #[test]
-    fn test_parse_porcelain_v2_ordinary() {
-        let output = "1 M. N... 100644 100644 100644 abc123 def456 src/lib.rs\n";
-        let (staged, unstaged) = parse_porcelain_v2(
-            output,
-            true,
-            false,
-            Path::new("/repo"),
-            &HashMap::from([("src/lib.rs".to_string(), (10, 2))]),
-            &HashMap::new(),
-        );
-        assert_eq!(staged.len(), 1);
-        assert_eq!(unstaged.len(), 0);
-        assert_eq!(staged[0].path, "src/lib.rs");
-        assert!(matches!(staged[0].change_type, ChangeType::Edit));
-        assert_eq!(staged[0].additions, 10);
-        assert_eq!(staged[0].deletions, 2);
-    }
-    #[test]
-    fn test_parse_porcelain_v2_both_staged_and_unstaged() {
-        let output = "1 MM N... 100644 100644 100644 abc123 def456 src/lib.rs\n";
-        let (staged, unstaged) = parse_porcelain_v2(
-            output,
-            true,
-            false,
-            Path::new("/repo"),
-            &HashMap::new(),
-            &HashMap::new(),
-        );
-        assert_eq!(staged.len(), 1);
-        assert_eq!(unstaged.len(), 1);
-        assert_eq!(staged[0].path, "src/lib.rs");
-        assert_eq!(unstaged[0].path, "src/lib.rs");
-    }
-    #[test]
-    fn test_parse_porcelain_v2_added() {
-        let output = "1 A. N... 000000 100644 100644 0000000 abc123 new_file.rs\n";
-        let (staged, unstaged) = parse_porcelain_v2(
-            output,
-            true,
-            false,
-            Path::new("/repo"),
-            &HashMap::new(),
-            &HashMap::new(),
-        );
-        assert_eq!(staged.len(), 1);
-        assert_eq!(unstaged.len(), 0);
-        assert!(matches!(staged[0].change_type, ChangeType::Create));
-    }
-    #[test]
-    fn test_parse_porcelain_v2_deleted() {
-        let output = "1 D. N... 100644 000000 100644 abc123 0000000 removed.rs\n";
-        let (staged, _unstaged) = parse_porcelain_v2(
-            output,
-            true,
-            false,
-            Path::new("/repo"),
-            &HashMap::new(),
-            &HashMap::new(),
-        );
-        assert_eq!(staged.len(), 1);
-        assert!(matches!(staged[0].change_type, ChangeType::Delete));
-    }
-    #[test]
-    fn test_parse_porcelain_v2_untracked() {
-        let output = "? untracked.txt\n";
-        let (staged, unstaged) = parse_porcelain_v2(
-            output,
-            true,
-            false,
-            Path::new("/repo"),
-            &HashMap::new(),
-            &HashMap::new(),
-        );
-        assert_eq!(staged.len(), 0);
-        assert_eq!(unstaged.len(), 1);
-        assert_eq!(unstaged[0].path, "untracked.txt");
-        assert!(matches!(unstaged[0].change_type, ChangeType::Untracked));
-    }
-    #[test]
-    fn test_parse_porcelain_v2_untracked_excluded() {
-        let output = "? untracked.txt\n";
-        let (staged, unstaged) = parse_porcelain_v2(
-            output,
-            false,
-            false,
-            Path::new("/repo"),
-            &HashMap::new(),
-            &HashMap::new(),
-        );
-        assert_eq!(staged.len(), 0);
-        assert_eq!(unstaged.len(), 0);
-    }
-    #[test]
-    fn test_parse_porcelain_v2_rename() {
-        let output = "2 R. N... 100644 100644 100644 abc123 def456 R100 new_name.rs\told_name.rs\n";
-        let (staged, _unstaged) = parse_porcelain_v2(
-            output,
-            true,
-            false,
-            Path::new("/repo"),
-            &HashMap::new(),
-            &HashMap::new(),
-        );
-        assert_eq!(staged.len(), 1);
-        assert_eq!(staged[0].path, "new_name.rs");
-        assert_eq!(staged[0].old_path.as_deref(), Some("old_name.rs"));
-        assert!(matches!(staged[0].change_type, ChangeType::Rename));
-    }
-    /// Test that `status()` succeeds on a repo with split-index enabled.
-    /// It should fail the libgit2 path and fall back to CLI.
-    ///
-    /// Skipped under Bazel sandbox tests where the `git` CLI is unavailable
-    /// (set `BAZEL_TEST=1` to skip; cargo runs the test normally).
-    #[tokio::test]
-    #[cfg_attr(
-        not(unix),
-        ignore = "test invokes git CLI which is not always available"
-    )]
-    async fn test_status_with_split_index_falls_back_to_cli() {
-        if std::env::var("BAZEL_TEST").is_ok() {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = git2::Repository::init(tmp.path()).unwrap();
-        {
-            let sig = git2::Signature::now("test", "test@test.com").unwrap();
-            let tree_id = repo.index().unwrap().write_tree().unwrap();
-            let tree = repo.find_tree(tree_id).unwrap();
-            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
-                .unwrap();
-        }
-        git_cli(tmp.path(), &["update-index", "--split-index"])
-            .await
-            .expect("failed to enable split index");
-        std::fs::write(tmp.path().join("test.txt"), "hello").unwrap();
-        let result = status(tmp.path(), true, true, false, false).await;
-        assert!(result.is_ok(), "status() failed: {:?}", result.err());
-        let data = result.unwrap();
-        assert!(data.root.is_some());
-        assert!(data.commit.is_some());
-        assert!(
-            data.unstaged.iter().any(|f| f.path == "test.txt"),
-            "expected test.txt in unstaged, got: {:?}",
-            data.unstaged
-        );
-    }
-    #[tokio::test]
-    async fn test_status_via_cli_on_real_repo() {
-        if std::env::var("BAZEL_TEST").is_ok() {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = git2::Repository::init(tmp.path()).unwrap();
-        let sig = git2::Signature::now("test", "test@test.com").unwrap();
-        let tree_id = repo.index().unwrap().write_tree().unwrap();
-        let tree = repo.find_tree(tree_id).unwrap();
-        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
-            .unwrap();
-        std::fs::write(tmp.path().join("hello.txt"), "hello").unwrap();
-        let result = status_via_cli(tmp.path(), true, true, false).await;
-        assert!(result.is_ok(), "status_via_cli failed: {:?}", result.err());
-        let data = result.unwrap();
-        assert!(data.root.is_some());
-        assert!(data.commit.is_some());
-        let untracked: Vec<_> = data
-            .unstaged
-            .iter()
-            .filter(|f| f.path == "hello.txt")
-            .collect();
-        assert_eq!(untracked.len(), 1);
-        assert!(matches!(untracked[0].change_type, ChangeType::Untracked));
-    }
-    #[test]
-    fn test_parse_porcelain_v2_unmerged() {
-        let output = "u UU N... 100644 100644 100644 100644 abc123 def456 789abc conflicted.rs\n";
-        let (staged, unstaged) = parse_porcelain_v2(
-            output,
-            true,
-            false,
-            Path::new("/repo"),
-            &HashMap::new(),
-            &HashMap::new(),
-        );
-        let total = staged.len() + unstaged.len();
-        assert!(
-            total > 0,
-            "unmerged entry (prefix 'u') was silently dropped"
-        );
-    }
-    #[test]
-    fn test_parse_porcelain_v2_truncated_line_skipped() {
-        let output = "1 M. N... 100644 100644 100644 abc123\n";
-        let (staged, unstaged) = parse_porcelain_v2(
-            output,
-            true,
-            false,
-            Path::new("/repo"),
-            &HashMap::new(),
-            &HashMap::new(),
-        );
-        for change in staged.iter().chain(unstaged.iter()) {
-            assert!(
-                !change.path.contains("abc123") && !change.path.contains("100644"),
-                "truncated line produced GitFileChange with hash/mode as path: {:?}",
-                change.path,
-            );
-        }
-    }
-    #[tokio::test]
-    async fn test_status_double_failure_preserves_original_error() {
-        if std::env::var("BAZEL_TEST").is_ok() {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = git2::Repository::init(tmp.path()).unwrap();
-        {
-            let sig = git2::Signature::now("test", "test@test.com").unwrap();
-            let tree_id = repo.index().unwrap().write_tree().unwrap();
-            let tree = repo.find_tree(tree_id).unwrap();
-            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
-                .unwrap();
-        }
-        git_cli(tmp.path(), &["update-index", "--split-index"])
-            .await
-            .expect("failed to enable split index");
-        let git_dir = tmp.path().join(".git");
-        for entry in std::fs::read_dir(&git_dir).unwrap() {
-            let entry = entry.unwrap();
-            if entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("sharedindex.")
-            {
-                std::fs::remove_file(entry.path()).unwrap();
-            }
-        }
-        let result = status(tmp.path(), true, true, false, false).await;
-        assert!(result.is_err(), "expected both libgit2 and CLI to fail");
-        let err_msg = result.unwrap_err().to_string();
-        assert!(
-            err_msg.contains("link")
-                || err_msg.contains("libgit2")
-                || err_msg.contains("extension"),
-            "double-failure error should mention original libgit2 cause, got: {err_msg}"
-        );
-    }
-    #[test]
-    fn normalize_ssh_scp_url() {
-        assert_eq!(
-            normalize_repo_url("git@github.com:xai-org/example.git"),
-            Some("github.com/xai-org/example".into()),
-        );
-    }
-    #[test]
-    fn normalize_https_url() {
-        assert_eq!(
-            normalize_repo_url("https://github.com/xai-org/example.git"),
-            Some("github.com/xai-org/example".into()),
-        );
-    }
-    #[test]
-    fn normalize_ssh_and_https_produce_same_result() {
-        let ssh = normalize_repo_url("git@github.com:xai-org/example.git");
-        let https = normalize_repo_url("https://github.com/xai-org/example.git");
-        assert_eq!(ssh, https);
-    }
-    #[test]
-    fn normalize_https_without_git_suffix() {
-        assert_eq!(
-            normalize_repo_url("https://github.com/xai-org/example"),
-            Some("github.com/xai-org/example".into()),
-        );
-    }
-    #[test]
-    fn normalize_https_with_credentials() {
-        assert_eq!(
-            normalize_repo_url("https://x-access-token:secret@github.com/xai-org/example.git"),
-            Some("github.com/xai-org/example".into()),
-        );
-    }
-    #[test]
-    fn normalize_ssh_scheme_url() {
-        assert_eq!(
-            normalize_repo_url("ssh://git@github.com/xai-org/example.git"),
-            Some("github.com/xai-org/example".into()),
-        );
-    }
-    #[test]
-    fn normalize_ssh_scheme_with_port() {
-        assert_eq!(
-            normalize_repo_url("ssh://git@github.com:22/xai-org/example.git"),
-            Some("github.com/xai-org/example".into()),
-        );
-    }
-    #[test]
-    fn normalize_git_scheme_url() {
-        assert_eq!(
-            normalize_repo_url("git://github.com/xai-org/example.git"),
-            Some("github.com/xai-org/example".into()),
-        );
-    }
-    #[test]
-    fn normalize_http_url() {
-        assert_eq!(
-            normalize_repo_url("http://github.com/xai-org/example.git"),
-            Some("github.com/xai-org/example".into()),
-        );
-    }
-    #[test]
-    fn normalize_strips_trailing_slash() {
-        assert_eq!(
-            normalize_repo_url("https://github.com/xai-org/example/"),
-            Some("github.com/xai-org/example".into()),
-        );
-    }
-    #[test]
-    fn normalize_strips_dot_git_with_trailing_slash() {
-        assert_eq!(
-            normalize_repo_url("https://github.com/xai-org/example.git/"),
-            Some("github.com/xai-org/example".into()),
-        );
-    }
-    #[test]
-    fn normalize_lowercases_host() {
-        assert_eq!(
-            normalize_repo_url("git@GitHub.COM:xai-org/example.git"),
-            Some("github.com/xai-org/example".into()),
-        );
-    }
-    #[test]
-    fn normalize_file_url_returns_none() {
-        assert_eq!(normalize_repo_url("file:///tmp/repo.git"), None);
-    }
-    #[test]
-    fn normalize_empty_returns_none() {
-        assert_eq!(normalize_repo_url(""), None);
-    }
-    #[test]
-    fn normalize_whitespace_only_returns_none() {
-        assert_eq!(normalize_repo_url("   "), None);
-    }
-    #[test]
-    fn normalize_git_plus_ssh_scheme() {
-        assert_eq!(
-            normalize_repo_url("git+ssh://git@github.com/xai-org/example.git"),
-            Some("github.com/xai-org/example".into()),
-        );
-    }
-    #[test]
-    fn normalize_git_plus_https_scheme() {
-        assert_eq!(
-            normalize_repo_url("git+https://github.com/xai-org/example.git"),
-            Some("github.com/xai-org/example".into()),
-        );
-    }
-    #[test]
-    fn normalize_scp_no_user() {
-        assert_eq!(
-            normalize_repo_url("github.com:xai-org/example.git"),
-            Some("github.com/xai-org/example".into()),
-        );
-    }
-    #[test]
-    fn normalize_https_username_password() {
-        assert_eq!(
-            normalize_repo_url("https://alice:pass@gitlab.com/org/project.git"),
-            Some("gitlab.com/org/project".into()),
-        );
-    }
-    #[test]
-    fn normalize_deep_path() {
-        assert_eq!(
-            normalize_repo_url("https://gitlab.com/group/subgroup/project.git"),
-            Some("gitlab.com/group/subgroup/project".into()),
-        );
-    }
-    #[test]
-    fn normalize_scp_with_deep_path() {
-        assert_eq!(
-            normalize_repo_url("git@gitlab.com:group/subgroup/project.git"),
-            Some("gitlab.com/group/subgroup/project".into()),
-        );
-    }
-    #[test]
-    fn normalize_scp_empty_host_returns_none() {
-        assert_eq!(normalize_repo_url("git@:path"), None);
-    }
-    #[test]
-    fn normalize_scp_empty_path_returns_none() {
-        assert_eq!(normalize_repo_url("git@host:"), None);
-    }
-    #[test]
-    fn normalize_scp_leading_slash_in_path() {
-        assert_eq!(
-            normalize_repo_url("git@host:/path.git"),
-            Some("host/path".into()),
-        );
-    }
-    #[test]
-    fn resolve_normalized_remote_urls_deduplicates_across_transports() {
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = git2::Repository::init(tmp.path()).unwrap();
-        repo.remote("origin", "git@github.com:xai-org/example.git")
-            .unwrap();
-        repo.remote("https-mirror", "https://github.com/xai-org/example.git")
-            .unwrap();
-        let urls = resolve_normalized_remote_urls(tmp.path());
-        assert_eq!(urls, vec!["github.com/xai-org/example"]);
-    }
-}
+#[path = "git_head_divergence_tests.rs"]
+mod head_divergence_tests;
 #[cfg(test)]
-mod head_divergence_tests {
-    use super::*;
-    #[test]
-    fn both_none_no_divergence() {
-        assert!(detect_head_divergence(None, None, None).is_none());
-    }
-    #[test]
-    fn session_none_current_some_no_divergence() {
-        assert!(detect_head_divergence(None, Some("main"), Some("abc123")).is_none());
-    }
-    #[test]
-    fn session_some_current_none_no_divergence() {
-        assert!(detect_head_divergence(Some("abc123"), Some("main"), None).is_none());
-    }
-    #[test]
-    fn same_commit_no_divergence() {
-        assert!(detect_head_divergence(Some("abc123"), Some("main"), Some("abc123")).is_none());
-    }
-    #[test]
-    fn different_commits_returns_divergence() {
-        let d = detect_head_divergence(Some("abc123"), Some("feature/foo"), Some("def456"))
-            .expect("should detect divergence");
-        assert_eq!(d.session_commit, "abc123");
-        assert_eq!(d.current_commit, "def456");
-        assert_eq!(d.session_branch.as_deref(), Some("feature/foo"));
-    }
-    #[test]
-    fn different_commits_no_branch_returns_divergence() {
-        let d = detect_head_divergence(Some("abc123"), None, Some("def456"))
-            .expect("should detect divergence");
-        assert_eq!(d.session_commit, "abc123");
-        assert_eq!(d.current_commit, "def456");
-        assert!(d.session_branch.is_none());
-    }
-    #[test]
-    fn serializes_to_camel_case_json() {
-        let d = detect_head_divergence(Some("aaa"), Some("main"), Some("bbb")).unwrap();
-        let json = serde_json::to_value(&d).unwrap();
-        assert_eq!(json["sessionCommit"], "aaa");
-        assert_eq!(json["currentCommit"], "bbb");
-        assert_eq!(json["sessionBranch"], "main");
-    }
-    #[test]
-    fn serializes_without_branch_when_none() {
-        let d = detect_head_divergence(Some("aaa"), None, Some("bbb")).unwrap();
-        let json = serde_json::to_value(&d).unwrap();
-        assert!(json.get("sessionBranch").is_none());
-    }
-}
+#[path = "git_tests.rs"]
+mod tests;
 /// Format a human-readable summary of what was restored from an archive.
 pub fn format_restore_summary(
     sha: Option<&str>,
@@ -4254,84 +3582,67 @@ pub fn format_restore_summary(
         None => format!("staged: {staged}, unstaged: {unstaged}, untracked: {untracked}"),
     }
 }
-/// Append a "; saved your dirty changes to stash <ref>" suffix when a
-/// stash was created. Uses `;` (not parenthesised) so the suffix
-/// composes cleanly with summaries that already end in `)`. No-op when
-/// `stash_ref` is `None`.
+/// Append a "; saved your dirty changes to stash <ref>" suffix when a stash was created.
+/// Uses `;` (not parenthesised) so the suffix composes cleanly with summaries that already end in `)`.
+/// No-op when `stash_ref` is `None`.
 pub fn append_stash_suffix(summary: &mut String, stash_ref: Option<&str>) {
     use std::fmt::Write as _;
     if let Some(r) = stash_ref {
         let _ = write!(summary, "; saved your dirty changes to stash {r}");
     }
 }
-/// Append "; stash skipped: <reason>" when a stash was needed but could
-/// not be created (in-progress merge, `git stash` failure, etc.).
+/// Append "; stash skipped: <reason>" when a stash was needed but could not be created (in-progress merge, `git stash` failure, etc.).
 pub fn append_stash_skipped_suffix(summary: &mut String, reason: Option<&str>) {
     use std::fmt::Write as _;
     if let Some(r) = reason {
         let _ = write!(summary, "; stash skipped: {r}");
     }
 }
-/// Short (8-char) representation of a SHA, returning a placeholder when
-/// the input is empty.
+/// Short (8-char) representation of a SHA, returning a placeholder when the input is empty.
 pub fn short_sha(sha: &str) -> &str {
     if sha.is_empty() {
         "unknown"
     } else {
-        &sha[..sha.len().min(8)]
+        sha.get(..sha.len().min(8)).unwrap_or(sha)
     }
 }
 /// Depth of a `--restore-code` restoration.
 ///
-/// Serialised to `"full"` / `"head_only"` on the wire (camelCase /
-/// snake_case agnostic — the variants are themselves snake_case-style).
+/// Serialised to `"full"` / `"head_only"` on the wire (camelCase / snake_case agnostic; the variants are themselves snake_case-style).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RestoreDegree {
-    /// HEAD checkout + staged/unstaged/untracked applied from GCS archive.
+    /// HEAD checkout plus staged/unstaged/untracked applied from GCS archive.
     Full,
-    /// HEAD checkout only — no archive applied.
+    /// HEAD checkout only; no archive applied.
     HeadOnly,
 }
-/// Why a restore decision is being made — drives the summary string and
-/// degree. Shared by the non-worktree (`mvp_agent.rs`) and worktree
-/// (`session/worktree.rs`) call sites.
+/// Why a restore decision is being made; drives the summary string and degree.
+/// Shared by the non-worktree (`mvp_agent.rs`) and worktree (`session/worktree.rs`) call sites.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RestoreKind {
-    /// Local `git checkout` failed — archive must not be applied; caller
-    /// should pass this variant directly rather than relying on the
-    /// `!outcome.checked_out` short-circuit so the intent is explicit.
+    /// Local `git checkout` failed; the archive must not be applied.
+    /// Callers should pass this variant directly rather than relying on the `!outcome.checked_out` short-circuit, so the intent is explicit.
     CheckoutFailed,
-    /// Session registry disabled — only HEAD was checked out. Also used
-    /// when repository-snapshot restore is unavailable in this build.
+    /// Session registry disabled; only HEAD was checked out.
+    /// Also used when repository-snapshot restore is unavailable in this build.
     RegistryOff,
 }
 /// Neutral restore-outcome description shared by both restore code-paths.
 ///
-/// Each caller wraps it into its own wire shape (JSON meta for the
-/// non-worktree path, struct fields for the worktree path).
+/// Each caller wraps it into its own wire shape (JSON meta for the non-worktree path, struct fields for the worktree path).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RestoreDecision {
-    /// `true` iff the working tree is at the requested commit after the
-    /// restore. `false` when `checkout_session_commit` failed; in that
-    /// case `summary` describes the failure and `degree` is `None`.
+    /// `true` iff the working tree is at the requested commit after the restore.
+    /// `false` when `checkout_session_commit` failed; in that case `summary` describes the failure and `degree` is `None`.
     pub restored: bool,
-    /// Human-readable summary line. Always populated when a restore was
-    /// attempted (even on failure) so the UI can render a banner.
+    /// Human-readable summary line.
+    /// Always populated when a restore was attempted (even on failure) so the UI can render a banner.
     pub summary: Option<String>,
     /// `Some` when `restored == true`; `None` on failure.
     pub degree: Option<RestoreDegree>,
 }
-/// Build a [`RestoreDecision`] from the checkout outcome and the policy
-/// kind. Pure function — no I/O. The single source of truth shared by
-/// the agent (`build_code_restore_meta`) and worktree
-/// (`build_worktree_restore_outcome`) wire-format adapters.
-///
-/// Callers should pass [`RestoreKind::CheckoutFailed`] explicitly when
-/// `!outcome.checked_out`; the `!outcome.checked_out` fast-path is
-/// retained as a defensive fallback so a caller that picks any kind
-/// without checking the outcome still cannot apply the archive on top
-/// of arbitrary state.
+/// Build a [`RestoreDecision`] from the checkout outcome and the policy kind. A caller that picks any kind without checking the outcome still cannot apply the archive on top of arbitrary state.
 pub fn build_restore_decision(
     head_commit: Option<&str>,
     outcome: &CheckoutSessionOutcome,
@@ -4365,1408 +3676,5 @@ pub fn build_restore_decision(
     }
 }
 #[cfg(test)]
-mod restore_code_tests {
-    use super::*;
-    fn bazel_skip(name: &str) -> bool {
-        if std::env::var("BAZEL_TEST").is_ok() {
-            eprintln!("skipping {name} under Bazel sandbox (git CLI unavailable)");
-            true
-        } else {
-            false
-        }
-    }
-    async fn init_repo_with_commit(dir: &Path) -> String {
-        git_cli(dir, &["init", "-q", "-b", "main"]).await.unwrap();
-        git_cli(dir, &["config", "user.email", "t@t.com"])
-            .await
-            .unwrap();
-        git_cli(dir, &["config", "user.name", "t"]).await.unwrap();
-        git_cli(dir, &["config", "commit.gpgsign", "false"])
-            .await
-            .unwrap();
-        std::fs::write(dir.join("README.md"), "hello\n").unwrap();
-        git_cli(dir, &["add", "."]).await.unwrap();
-        git_cli(dir, &["commit", "-q", "-m", "init"]).await.unwrap();
-        git_cli(dir, &["rev-parse", "HEAD"])
-            .await
-            .unwrap()
-            .trim()
-            .to_owned()
-    }
-    #[tokio::test]
-    async fn stash_before_destructive_op_clean_tree_returns_clean() {
-        if bazel_skip("stash_before_destructive_op_clean_tree_returns_clean") {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        init_repo_with_commit(tmp.path()).await;
-        let outcome = stash_before_destructive_op(tmp.path(), "test", "sess-1").await;
-        assert!(matches!(outcome, StashOutcome::Clean));
-    }
-    #[tokio::test]
-    async fn stash_before_destructive_op_dirty_tracked_returns_ref() {
-        if bazel_skip("stash_before_destructive_op_dirty_tracked_returns_ref") {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        init_repo_with_commit(tmp.path()).await;
-        std::fs::write(tmp.path().join("README.md"), "changed\n").unwrap();
-        let outcome = stash_before_destructive_op(tmp.path(), "test", "sess-2").await;
-        let r = match outcome {
-            StashOutcome::Stashed(r) => r,
-            other => panic!("expected Stashed, got {other:?}"),
-        };
-        assert!(!r.is_empty());
-        let porcelain = git_cli(tmp.path(), &["status", "--porcelain"])
-            .await
-            .unwrap();
-        assert!(porcelain.trim().is_empty(), "got: {porcelain:?}");
-        let list = git_cli(tmp.path(), &["stash", "list"]).await.unwrap();
-        assert!(
-            list.contains("grok: pre-test sess-2"),
-            "stash list missing session id: {list}"
-        );
-    }
-    #[tokio::test]
-    async fn stash_before_destructive_op_dirty_untracked_returns_ref() {
-        if bazel_skip("stash_before_destructive_op_dirty_untracked_returns_ref") {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        init_repo_with_commit(tmp.path()).await;
-        std::fs::write(tmp.path().join("new.txt"), "new\n").unwrap();
-        let outcome = stash_before_destructive_op(tmp.path(), "test", "sess-3").await;
-        assert!(matches!(outcome, StashOutcome::Stashed(_)));
-        assert!(!tmp.path().join("new.txt").exists());
-    }
-    #[tokio::test]
-    async fn stash_before_destructive_op_staged_only_returns_ref() {
-        if bazel_skip("stash_before_destructive_op_staged_only_returns_ref") {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        init_repo_with_commit(tmp.path()).await;
-        std::fs::write(tmp.path().join("README.md"), "staged\n").unwrap();
-        git_cli(tmp.path(), &["add", "README.md"]).await.unwrap();
-        let outcome = stash_before_destructive_op(tmp.path(), "test", "sess-staged").await;
-        assert!(matches!(outcome, StashOutcome::Stashed(_)));
-        let porcelain = git_cli(tmp.path(), &["status", "--porcelain"])
-            .await
-            .unwrap();
-        assert!(porcelain.trim().is_empty(), "got: {porcelain:?}");
-    }
-    #[tokio::test]
-    async fn stash_before_destructive_op_skips_during_merge() {
-        if bazel_skip("stash_before_destructive_op_skips_during_merge") {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let head = init_repo_with_commit(tmp.path()).await;
-        std::fs::write(tmp.path().join("README.md"), "dirty\n").unwrap();
-        std::fs::write(tmp.path().join(".git").join("MERGE_HEAD"), head).unwrap();
-        let outcome = stash_before_destructive_op(tmp.path(), "test", "sess-merge").await;
-        let reason = match outcome {
-            StashOutcome::Skipped(r) => r,
-            other => panic!("expected Skipped, got {other:?}"),
-        };
-        assert!(reason.contains("MERGE_HEAD"), "reason: {reason}");
-        let porcelain = git_cli(tmp.path(), &["status", "--porcelain"])
-            .await
-            .unwrap();
-        assert!(
-            !porcelain.trim().is_empty(),
-            "dirty state must be preserved when stash is skipped"
-        );
-    }
-    #[tokio::test]
-    async fn stash_before_destructive_op_detached_head_dirty_returns_ref() {
-        if bazel_skip("stash_before_destructive_op_detached_head_dirty_returns_ref") {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let head = init_repo_with_commit(tmp.path()).await;
-        git_cli(tmp.path(), &["checkout", "-q", "--detach", &head])
-            .await
-            .unwrap();
-        std::fs::write(tmp.path().join("README.md"), "dirty\n").unwrap();
-        let outcome = stash_before_destructive_op(tmp.path(), "test", "sess-detached").await;
-        assert!(matches!(outcome, StashOutcome::Stashed(_)));
-    }
-    #[test]
-    fn restore_code_checkout_allowed_worktree_cwd_is_allowed() {
-        let worktrees = Path::new("/home/u/.grok/worktrees");
-        assert!(restore_code_checkout_allowed_in(
-            Path::new("/home/u/.grok/worktrees/home-u-repo/2026-05-22-9f2e51ce"),
-            Some("/home/u/repo"),
-            worktrees,
-        ));
-    }
-    #[test]
-    fn restore_code_checkout_allowed_same_cwd_is_allowed() {
-        let worktrees = Path::new("/home/u/.grok/worktrees");
-        assert!(restore_code_checkout_allowed_in(
-            Path::new("/home/u/repo"),
-            Some("/home/u/repo"),
-            worktrees,
-        ));
-        assert!(restore_code_checkout_allowed_in(
-            Path::new("/home/u/repo/"),
-            Some("/home/u/repo"),
-            worktrees,
-        ));
-    }
-    #[test]
-    fn restore_code_checkout_allowed_source_repo_with_worktree_session_is_refused() {
-        let worktrees = Path::new("/home/u/.grok/worktrees");
-        assert!(!restore_code_checkout_allowed_in(
-            Path::new("/home/u/repo"),
-            Some("/home/u/.grok/worktrees/home-u-repo/2026-05-22-9f2e51ce"),
-            worktrees,
-        ));
-    }
-    #[test]
-    fn restore_code_checkout_allowed_missing_persisted_cwd_is_refused() {
-        let worktrees = Path::new("/home/u/.grok/worktrees");
-        assert!(!restore_code_checkout_allowed_in(
-            Path::new("/home/u/repo"),
-            None,
-            worktrees,
-        ));
-    }
-    #[tokio::test]
-    async fn checkout_session_commit_clean_tree_no_stash() {
-        if bazel_skip("checkout_session_commit_clean_tree_no_stash") {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let head = init_repo_with_commit(tmp.path()).await;
-        std::fs::write(tmp.path().join("second.txt"), "x\n").unwrap();
-        git_cli(tmp.path(), &["add", "."]).await.unwrap();
-        git_cli(tmp.path(), &["commit", "-q", "-m", "second"])
-            .await
-            .unwrap();
-        let outcome = checkout_session_commit(tmp.path(), &head, true, "sess-clean").await;
-        assert!(outcome.checked_out);
-        assert!(outcome.stash_ref.is_none());
-        assert!(outcome.stash_skipped_reason.is_none());
-    }
-    #[tokio::test]
-    async fn checkout_session_commit_dirty_tree_stashes_and_checks_out() {
-        if bazel_skip("checkout_session_commit_dirty_tree_stashes_and_checks_out") {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let head = init_repo_with_commit(tmp.path()).await;
-        std::fs::write(tmp.path().join("second.txt"), "x\n").unwrap();
-        git_cli(tmp.path(), &["add", "."]).await.unwrap();
-        git_cli(tmp.path(), &["commit", "-q", "-m", "second"])
-            .await
-            .unwrap();
-        std::fs::write(tmp.path().join("README.md"), "dirty\n").unwrap();
-        let outcome = checkout_session_commit(tmp.path(), &head, true, "sess-dirty").await;
-        assert!(outcome.checked_out);
-        assert!(outcome.stash_ref.is_some());
-        assert!(outcome.stash_skipped_reason.is_none());
-        let on_head = git_cli(tmp.path(), &["rev-parse", "HEAD"]).await.unwrap();
-        assert_eq!(on_head.trim(), head);
-    }
-    #[tokio::test]
-    async fn checkout_session_commit_already_at_target_sets_checked_out_true() {
-        if bazel_skip("checkout_session_commit_already_at_target_sets_checked_out_true") {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let head = init_repo_with_commit(tmp.path()).await;
-        let outcome = checkout_session_commit(tmp.path(), &head, true, "sess-noop").await;
-        assert!(
-            outcome.checked_out,
-            "already-at-target must report checked_out=true"
-        );
-        assert!(outcome.stash_ref.is_none());
-        assert!(outcome.stash_skipped_reason.is_none());
-        let stash_list = git_cli(tmp.path(), &["stash", "list"]).await.unwrap();
-        assert!(
-            stash_list.trim().is_empty(),
-            "no stash should be created on no-op early-return"
-        );
-    }
-    #[tokio::test]
-    async fn checkout_session_commit_invalid_sha_returns_not_checked_out() {
-        if bazel_skip("checkout_session_commit_invalid_sha_returns_not_checked_out") {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        init_repo_with_commit(tmp.path()).await;
-        let bogus = "0000000000000000000000000000000000000000";
-        let outcome = checkout_session_commit(tmp.path(), bogus, true, "sess-bogus").await;
-        assert!(!outcome.checked_out);
-    }
-    #[tokio::test]
-    async fn checkout_session_commit_refuses_non_oid_refspec() {
-        if bazel_skip("checkout_session_commit_refuses_non_oid_refspec") {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        init_repo_with_commit(tmp.path()).await;
-        for bogus in ["origin/main", "abc1234"] {
-            let outcome = checkout_session_commit(tmp.path(), bogus, true, "sess-ref").await;
-            assert!(!outcome.checked_out, "{bogus}");
-            assert!(
-                !tmp.path().join(".git/FETCH_HEAD").exists(),
-                "must not fetch for non-oid {bogus}"
-            );
-        }
-    }
-    #[tokio::test]
-    async fn checkout_session_commit_fetches_then_checks_out() {
-        if bazel_skip("checkout_session_commit_fetches_then_checks_out") {
-            return;
-        }
-        let upstream = tempfile::tempdir().unwrap();
-        init_repo_with_commit(upstream.path()).await;
-        let dest_root = tempfile::tempdir().unwrap();
-        let repo = dest_root.path().join("repo");
-        git_cli(
-            dest_root.path(),
-            &[
-                "clone",
-                "-q",
-                &upstream.path().to_string_lossy(),
-                &repo.to_string_lossy(),
-            ],
-        )
-        .await
-        .unwrap();
-        std::fs::write(upstream.path().join("two.txt"), "two\n").unwrap();
-        git_cli(upstream.path(), &["add", "."]).await.unwrap();
-        git_cli(upstream.path(), &["commit", "-q", "-m", "two"])
-            .await
-            .unwrap();
-        let second = git_cli(upstream.path(), &["rev-parse", "HEAD"])
-            .await
-            .unwrap();
-        let second = second.trim().to_owned();
-        let outcome = checkout_session_commit(&repo, &second, true, "sess-fetch").await;
-        assert!(outcome.checked_out, "expected checkout after fetch");
-        let on_head = git_cli(&repo, &["rev-parse", "HEAD"]).await.unwrap();
-        assert_eq!(on_head.trim(), second);
-        assert_eq!(
-            git_cli(&repo, &["rev-parse", "--is-shallow-repository"])
-                .await
-                .unwrap()
-                .trim(),
-            "false"
-        );
-    }
-    #[tokio::test]
-    async fn checkout_commit_with_fetch_already_on_target() {
-        if bazel_skip("checkout_commit_with_fetch_already_on_target") {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let head = init_repo_with_commit(tmp.path()).await;
-        let response = checkout_commit_with_fetch(tmp.path(), &head, false).await;
-        assert_eq!(
-            (
-                response.checked_out,
-                response.fetched,
-                response.stashed,
-                response.error.is_none()
-            ),
-            (true, false, false, true)
-        );
-    }
-    #[tokio::test]
-    async fn checkout_commit_with_fetch_rejects_unsafe_refspec() {
-        if bazel_skip("checkout_commit_with_fetch_rejects_unsafe_refspec") {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        init_repo_with_commit(tmp.path()).await;
-        let response = checkout_commit_with_fetch(tmp.path(), "foo:bar", false).await;
-        assert!(!response.checked_out);
-        assert!(!response.fetched);
-        let err = response.error.expect("error");
-        assert!(
-            err.contains("unsupported") || err.contains("refusing"),
-            "got: {err}"
-        );
-        assert!(!tmp.path().join(".git/FETCH_HEAD").exists());
-    }
-    #[tokio::test]
-    async fn checkout_commit_with_fetch_fetches_branch_ref() {
-        if bazel_skip("checkout_commit_with_fetch_fetches_branch_ref") {
-            return;
-        }
-        let upstream = tempfile::tempdir().unwrap();
-        init_repo_with_commit(upstream.path()).await;
-        let dest_root = tempfile::tempdir().unwrap();
-        let repo = dest_root.path().join("repo");
-        git_cli(
-            dest_root.path(),
-            &[
-                "clone",
-                "-q",
-                &upstream.path().to_string_lossy(),
-                &repo.to_string_lossy(),
-            ],
-        )
-        .await
-        .unwrap();
-        git_cli(upstream.path(), &["checkout", "-q", "-b", "feature"])
-            .await
-            .unwrap();
-        std::fs::write(upstream.path().join("two.txt"), "two\n").unwrap();
-        git_cli(upstream.path(), &["add", "."]).await.unwrap();
-        git_cli(upstream.path(), &["commit", "-q", "-m", "two"])
-            .await
-            .unwrap();
-        let second = git_cli(upstream.path(), &["rev-parse", "HEAD"])
-            .await
-            .unwrap();
-        let second = second.trim().to_owned();
-        let response = checkout_commit_with_fetch(&repo, "feature", false).await;
-        assert!(response.fetched, "error={:?}", response.error);
-        assert!(response.checked_out, "error={:?}", response.error);
-        let on_head = git_cli(&repo, &["rev-parse", "HEAD"]).await.unwrap();
-        assert_eq!(on_head.trim(), second);
-    }
-    #[tokio::test]
-    async fn checkout_commit_with_fetch_fetches_origin_tracking_ref() {
-        if bazel_skip("checkout_commit_with_fetch_fetches_origin_tracking_ref") {
-            return;
-        }
-        let upstream = tempfile::tempdir().unwrap();
-        init_repo_with_commit(upstream.path()).await;
-        let dest_root = tempfile::tempdir().unwrap();
-        let repo = dest_root.path().join("repo");
-        git_cli(
-            dest_root.path(),
-            &[
-                "clone",
-                "-q",
-                &upstream.path().to_string_lossy(),
-                &repo.to_string_lossy(),
-            ],
-        )
-        .await
-        .unwrap();
-        git_cli(upstream.path(), &["checkout", "-q", "-b", "feature"])
-            .await
-            .unwrap();
-        std::fs::write(upstream.path().join("two.txt"), "two\n").unwrap();
-        git_cli(upstream.path(), &["add", "."]).await.unwrap();
-        git_cli(upstream.path(), &["commit", "-q", "-m", "two"])
-            .await
-            .unwrap();
-        let second = git_cli(upstream.path(), &["rev-parse", "HEAD"])
-            .await
-            .unwrap();
-        let second = second.trim().to_owned();
-        let response = checkout_commit_with_fetch(&repo, "origin/feature", false).await;
-        assert!(response.fetched, "error={:?}", response.error);
-        assert!(response.checked_out, "error={:?}", response.error);
-        let on_head = git_cli(&repo, &["rev-parse", "HEAD"]).await.unwrap();
-        assert_eq!(on_head.trim(), second);
-    }
-    #[tokio::test]
-    async fn checkout_commit_with_fetch_fetches_tag_ref() {
-        if bazel_skip("checkout_commit_with_fetch_fetches_tag_ref") {
-            return;
-        }
-        let upstream = tempfile::tempdir().unwrap();
-        init_repo_with_commit(upstream.path()).await;
-        git_cli(upstream.path(), &["tag", "v1.0.0"]).await.unwrap();
-        let tagged = git_cli(upstream.path(), &["rev-parse", "refs/tags/v1.0.0"])
-            .await
-            .unwrap();
-        let tagged = tagged.trim().to_owned();
-        git_cli(upstream.path(), &["checkout", "-q", "-b", "dev"])
-            .await
-            .unwrap();
-        std::fs::write(upstream.path().join("two.txt"), "two\n").unwrap();
-        git_cli(upstream.path(), &["add", "."]).await.unwrap();
-        git_cli(upstream.path(), &["commit", "-q", "-m", "two"])
-            .await
-            .unwrap();
-        let dest_root = tempfile::tempdir().unwrap();
-        let repo = dest_root.path().join("repo");
-        git_cli(
-            dest_root.path(),
-            &[
-                "clone",
-                "-q",
-                "--no-tags",
-                &upstream.path().to_string_lossy(),
-                &repo.to_string_lossy(),
-            ],
-        )
-        .await
-        .unwrap();
-        assert!(
-            git_cli(&repo, &["rev-parse", "refs/tags/v1.0.0"])
-                .await
-                .is_err()
-        );
-        let response = checkout_commit_with_fetch(&repo, "refs/tags/v1.0.0", false).await;
-        assert!(response.fetched, "error={:?}", response.error);
-        assert!(response.checked_out, "error={:?}", response.error);
-        let on_head = git_cli(&repo, &["rev-parse", "HEAD"]).await.unwrap();
-        assert_eq!(on_head.trim(), tagged);
-        let local_tag = git_cli(&repo, &["rev-parse", "refs/tags/v1.0.0"])
-            .await
-            .unwrap();
-        assert_eq!(local_tag.trim(), tagged);
-    }
-    #[tokio::test]
-    async fn checkout_commit_with_fetch_rejects_abbreviated_sha() {
-        if bazel_skip("checkout_commit_with_fetch_rejects_abbreviated_sha") {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        init_repo_with_commit(tmp.path()).await;
-        let response = checkout_commit_with_fetch(tmp.path(), "abc1234f", false).await;
-        assert!(!response.checked_out);
-        assert!(!response.fetched);
-        let err = response.error.expect("error");
-        assert!(
-            err.contains("unsupported") || err.contains("refusing"),
-            "got: {err}"
-        );
-        assert!(!tmp.path().join(".git/FETCH_HEAD").exists());
-    }
-    #[tokio::test]
-    async fn checkout_commit_with_fetch_pops_stash_on_unsupported_target() {
-        if bazel_skip("checkout_commit_with_fetch_pops_stash_on_unsupported_target") {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        init_repo_with_commit(tmp.path()).await;
-        std::fs::write(tmp.path().join("README.md"), "dirty edit\n").unwrap();
-        let response = checkout_commit_with_fetch(tmp.path(), "deadbeef", true).await;
-        assert!(!response.checked_out);
-        assert!(!response.stashed, "auto-stash must be popped on failure");
-        assert!(response.error.is_some());
-        assert_eq!(
-            std::fs::read_to_string(tmp.path().join("README.md")).unwrap(),
-            "dirty edit\n"
-        );
-        let stash_list = git_cli(tmp.path(), &["stash", "list"]).await.unwrap();
-        assert!(
-            stash_list.trim().is_empty(),
-            "no leftover stash, got: {stash_list:?}"
-        );
-    }
-    #[tokio::test]
-    async fn pop_checkout_auto_stash_restores_dirty_tree() {
-        if bazel_skip("pop_checkout_auto_stash_restores_dirty_tree") {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        init_repo_with_commit(tmp.path()).await;
-        std::fs::write(tmp.path().join("README.md"), "dirty edit\n").unwrap();
-        git_cli(
-            tmp.path(),
-            &["stash", "push", "-m", "auto-stash before checkout deadbeef"],
-        )
-        .await
-        .unwrap();
-        assert_eq!(
-            std::fs::read_to_string(tmp.path().join("README.md")).unwrap(),
-            "hello\n"
-        );
-        let response = pop_checkout_auto_stash(
-            tmp.path(),
-            true,
-            false,
-            "targeted fetch timed out".to_owned(),
-        )
-        .await;
-        assert_eq!(
-            (
-                response.checked_out,
-                response.fetched,
-                response.stashed,
-                response.error.as_deref()
-            ),
-            (false, false, false, Some("targeted fetch timed out"))
-        );
-        assert_eq!(
-            std::fs::read_to_string(tmp.path().join("README.md")).unwrap(),
-            "dirty edit\n"
-        );
-        let stash_list = git_cli(tmp.path(), &["stash", "list"]).await.unwrap();
-        assert!(
-            stash_list.trim().is_empty(),
-            "no leftover stash, got: {stash_list:?}"
-        );
-    }
-    #[tokio::test]
-    async fn checkout_session_commit_dirty_during_merge_surfaces_skipped_reason() {
-        if bazel_skip("checkout_session_commit_dirty_during_merge_surfaces_skipped_reason") {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let head = init_repo_with_commit(tmp.path()).await;
-        std::fs::write(tmp.path().join("second.txt"), "x\n").unwrap();
-        git_cli(tmp.path(), &["add", "."]).await.unwrap();
-        git_cli(tmp.path(), &["commit", "-q", "-m", "second"])
-            .await
-            .unwrap();
-        std::fs::write(tmp.path().join("README.md"), "dirty\n").unwrap();
-        std::fs::write(tmp.path().join(".git").join("MERGE_HEAD"), &head).unwrap();
-        let outcome = checkout_session_commit(tmp.path(), &head, true, "sess-merge").await;
-        assert!(outcome.stash_ref.is_none());
-        let reason = outcome
-            .stash_skipped_reason
-            .expect("expected stash_skipped_reason");
-        assert!(reason.contains("MERGE_HEAD"), "got: {reason}");
-    }
-    #[test]
-    fn append_stash_suffix_appends_when_some() {
-        let mut s = String::from("checked out abc");
-        append_stash_suffix(&mut s, Some("deadbeef"));
-        assert_eq!(
-            s,
-            "checked out abc; saved your dirty changes to stash deadbeef"
-        );
-    }
-    #[test]
-    fn append_stash_suffix_composes_after_closing_paren() {
-        let mut s = String::from("checked out abc (archive unavailable)");
-        append_stash_suffix(&mut s, Some("deadbeef"));
-        assert_eq!(
-            s,
-            "checked out abc (archive unavailable); saved your dirty changes to stash deadbeef"
-        );
-    }
-    #[test]
-    fn append_stash_suffix_noop_when_none() {
-        let mut s = String::from("checked out abc");
-        append_stash_suffix(&mut s, None);
-        assert_eq!(s, "checked out abc");
-    }
-    fn outcome(
-        checked_out: bool,
-        stash_ref: Option<&str>,
-        skipped: Option<&str>,
-    ) -> CheckoutSessionOutcome {
-        CheckoutSessionOutcome {
-            checked_out,
-            stash_ref: stash_ref.map(str::to_owned),
-            stash_skipped_reason: skipped.map(str::to_owned),
-        }
-    }
-    #[test]
-    fn build_restore_decision_checkout_failed_carries_stash_skipped_reason() {
-        let d = build_restore_decision(
-            Some("0123456789abcdef"),
-            &outcome(false, None, Some("MERGE_HEAD present")),
-            RestoreKind::RegistryOff,
-        );
-        assert!(!d.restored);
-        assert!(d.degree.is_none());
-        let s = d.summary.unwrap();
-        assert!(s.contains("restore aborted"));
-        assert!(s.contains("; stash skipped: MERGE_HEAD present"));
-    }
-    /// Passing the dedicated `CheckoutFailed` variant must yield the
-    /// same failure decision as the `!outcome.checked_out` short-circuit
-    /// — but the variant carries explicit semantic intent at the call
-    /// site.
-    #[test]
-    fn build_restore_decision_checkout_failed_variant_produces_failure() {
-        let d = build_restore_decision(
-            Some("0123456789abcdef"),
-            &outcome(true, None, Some("MERGE_HEAD present")),
-            RestoreKind::CheckoutFailed,
-        );
-        assert!(!d.restored);
-        assert!(d.degree.is_none());
-        let s = d.summary.unwrap();
-        assert!(s.contains("restore aborted"));
-        assert!(s.contains("; stash skipped: MERGE_HEAD present"));
-    }
-    #[test]
-    fn build_restore_decision_checkout_failed_variant_without_stash_reason() {
-        let d = build_restore_decision(
-            Some("0123456789abcdef"),
-            &outcome(true, None, None),
-            RestoreKind::CheckoutFailed,
-        );
-        assert!(!d.restored);
-        assert!(d.degree.is_none());
-        assert_eq!(d.summary.unwrap(), "restore aborted (checkout failed)");
-    }
-    #[test]
-    fn build_restore_decision_appends_stash_ref_on_success() {
-        let d = build_restore_decision(
-            Some("0123456789abcdef"),
-            &outcome(true, Some("deadbeef"), None),
-            RestoreKind::RegistryOff,
-        );
-        assert!(
-            d.summary
-                .unwrap()
-                .contains("; saved your dirty changes to stash deadbeef")
-        );
-    }
-    #[test]
-    fn restore_degree_serializes_snake_case() {
-        let json = serde_json::to_string(&RestoreDegree::Full).unwrap();
-        assert_eq!(json, "\"full\"");
-        let json = serde_json::to_string(&RestoreDegree::HeadOnly).unwrap();
-        assert_eq!(json, "\"head_only\"");
-    }
-    #[test]
-    fn restore_degree_deserialises_snake_case() {
-        let v: RestoreDegree = serde_json::from_str("\"full\"").unwrap();
-        assert_eq!(v, RestoreDegree::Full);
-        let v: RestoreDegree = serde_json::from_str("\"head_only\"").unwrap();
-        assert_eq!(v, RestoreDegree::HeadOnly);
-    }
-    #[test]
-    fn restore_degree_rejects_unknown_string() {
-        let err = serde_json::from_str::<RestoreDegree>("\"full_\"");
-        assert!(err.is_err(), "typo must not deserialize");
-        let err = serde_json::from_str::<RestoreDegree>("\"FULL\"");
-        assert!(err.is_err(), "wrong case must not deserialize");
-    }
-    /// MakeWriter that captures emitted log lines into a shared buffer.
-    #[derive(Clone, Default)]
-    struct CapturingWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-    impl std::io::Write for CapturingWriter {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(buf);
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturingWriter {
-        type Writer = CapturingWriter;
-        fn make_writer(&'a self) -> Self::Writer {
-            self.clone()
-        }
-    }
-    #[test]
-    fn should_warn_registry_disabled_truth_table() {
-        let cases: [(bool, bool, bool); 4] = [
-            (false, false, true),
-            (false, true, false),
-            (true, false, false),
-            (true, true, false),
-        ];
-        for (is_jj, reg, expected) in cases {
-            assert_eq!(
-                should_warn_registry_disabled(is_jj, reg),
-                expected,
-                "(is_jj={is_jj}, registry_present={reg})"
-            );
-        }
-    }
-    #[test]
-    fn warn_registry_disabled_restore_emits_warn_with_target_and_session_id() {
-        use tracing::subscriber::with_default;
-        use tracing_subscriber::fmt;
-        let buf: std::sync::Arc<std::sync::Mutex<Vec<u8>>> = Default::default();
-        let writer = CapturingWriter(buf.clone());
-        let subscriber = fmt()
-            .with_writer(writer)
-            .with_max_level(tracing::Level::TRACE)
-            .with_ansi(false)
-            .with_target(true)
-            .finish();
-        with_default(subscriber, || {
-            warn_registry_disabled_restore("session-xyz");
-        });
-        let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
-        assert!(out.contains("WARN"), "no WARN level in: {out}");
-        assert!(
-            out.contains(RESTORE_CODE_LOG),
-            "missing target {RESTORE_CODE_LOG} in: {out}"
-        );
-        assert!(
-            out.contains("session registry disabled"),
-            "missing canonical message in: {out}"
-        );
-        assert!(out.contains("session-xyz"), "missing session_id in: {out}");
-    }
-    #[tokio::test]
-    async fn capture_git_state_records_head_and_staged() {
-        if bazel_skip("capture_git_state_records_head_and_staged") {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let head = init_repo_with_commit(tmp.path()).await;
-        std::fs::write(tmp.path().join("staged.txt"), "work\n").unwrap();
-        git_cli(tmp.path(), &["add", "staged.txt"]).await.unwrap();
-        let state = capture_git_state(tmp.path())
-            .await
-            .expect("capture on a real repo");
-        assert_eq!(state.head, head, "captured HEAD must match rev-parse HEAD");
-        assert_eq!(
-            state.staged,
-            vec![PathBuf::from("staged.txt")],
-            "captured staged set must list the staged path"
-        );
-    }
-    /// Safety-critical invariant: a soft restore rewinds HEAD but never destroys a
-    /// turn-local commit — its content survives on disk (proving `--soft`) and the
-    /// commit stays reachable via the reflog.
-    #[tokio::test]
-    async fn soft_restore_preserves_turn_local_commit() {
-        if bazel_skip("soft_restore_preserves_turn_local_commit") {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let head_a = init_repo_with_commit(tmp.path()).await;
-        let state = capture_git_state(tmp.path()).await.unwrap();
-        assert_eq!(state.head, head_a);
-        assert!(state.staged.is_empty());
-        std::fs::write(tmp.path().join("feature.txt"), "turn work\n").unwrap();
-        git_cli(tmp.path(), &["add", "feature.txt"]).await.unwrap();
-        git_cli(tmp.path(), &["commit", "-q", "-m", "turn-local"])
-            .await
-            .unwrap();
-        let head_b = git_cli(tmp.path(), &["rev-parse", "HEAD"])
-            .await
-            .unwrap()
-            .trim()
-            .to_owned();
-        assert_ne!(head_a, head_b, "turn-local commit must advance HEAD");
-        let outcome = soft_restore_git_state(tmp.path(), &state, "sess-soft").await;
-        assert!(outcome.restored, "soft restore should succeed");
-        assert!(outcome.aborted_reason.is_none());
-        let head_now = git_cli(tmp.path(), &["rev-parse", "HEAD"])
-            .await
-            .unwrap()
-            .trim()
-            .to_owned();
-        assert_eq!(
-            head_now, head_a,
-            "HEAD must be rewound to the recorded commit"
-        );
-        let feature = tmp.path().join("feature.txt");
-        assert!(
-            feature.exists(),
-            "soft restore must preserve working-tree content"
-        );
-        assert_eq!(std::fs::read_to_string(&feature).unwrap(), "turn work\n");
-        let obj_type = git_cli(tmp.path(), &["cat-file", "-t", &head_b])
-            .await
-            .expect("turn-local commit object must still exist");
-        assert_eq!(obj_type.trim(), "commit");
-        let prev_head = git_cli(tmp.path(), &["rev-parse", "HEAD@{1}"])
-            .await
-            .unwrap();
-        assert_eq!(
-            prev_head.trim(),
-            head_b,
-            "turn-local commit must remain reachable via the reflog"
-        );
-    }
-    #[tokio::test]
-    async fn git_checkpoint_store_record_first_wins_and_truncate() {
-        let store = GitCheckpointStore::new();
-        let mk = |h: &str| GitStateRef {
-            head: h.to_owned(),
-            staged: vec![],
-        };
-        store.record(0, mk("aaaaaaa")).await;
-        store.record(1, mk("bbbbbbb")).await;
-        store.record(1, mk("ccccccc")).await;
-        assert_eq!(store.get(0).await.unwrap().head, "aaaaaaa");
-        assert_eq!(store.get(1).await.unwrap().head, "bbbbbbb");
-        assert!(store.get(2).await.is_none());
-        store.truncate_from(1).await;
-        assert!(
-            store.get(0).await.is_some(),
-            "indices below target are retained"
-        );
-        assert!(
-            store.get(1).await.is_none(),
-            "indices >= target are dropped"
-        );
-    }
-    #[tokio::test]
-    async fn git_checkpoint_get_at_or_before_falls_back_to_nearest_earlier() {
-        let store = GitCheckpointStore::new();
-        let mk = |h: &str| GitStateRef {
-            head: h.to_owned(),
-            staged: vec![],
-        };
-        store.record(0, mk("aaaaaaa")).await;
-        store.record(2, mk("ccccccc")).await;
-        let (idx, state) = store.get_at_or_before(2).await.unwrap();
-        assert_eq!((idx, state.head.as_str()), (2, "ccccccc"));
-        let (idx, state) = store.get_at_or_before(3).await.unwrap();
-        assert_eq!(
-            (idx, state.head.as_str()),
-            (2, "ccccccc"),
-            "must return the greatest captured index <= target"
-        );
-        let (idx, _) = store.get_at_or_before(1).await.unwrap();
-        assert_eq!(idx, 0, "index 1 is uncaptured; nearest <= 1 is 0");
-        let store_late = GitCheckpointStore::new();
-        store_late.record(5, mk("ddddddd")).await;
-        assert!(
-            store_late.get_at_or_before(3).await.is_none(),
-            "no checkpoint at or before target ⇒ None"
-        );
-    }
-    #[tokio::test]
-    async fn git_checkpoint_claim_attempt_is_once_per_prompt_until_truncate() {
-        let store = GitCheckpointStore::new();
-        assert!(
-            store.claim_attempt(3).await,
-            "the first begin claims the slot"
-        );
-        assert!(
-            !store.claim_attempt(3).await,
-            "a re-delivered begin must not re-claim (so it skips capturing mid-turn state)"
-        );
-        assert!(
-            store.claim_attempt(4).await,
-            "an unrelated prompt is claimed independently"
-        );
-        store.truncate_from(3).await;
-        assert!(
-            store.claim_attempt(3).await,
-            "after truncate the prompt index can be re-claimed"
-        );
-    }
-    /// A session cwd may be a repo subdirectory: capture and restore must both
-    /// anchor on the repo root so staged paths re-stage correctly (subdir-cwd regression).
-    #[tokio::test]
-    async fn capture_and_restore_anchor_on_repo_root_from_subdir_cwd() {
-        if bazel_skip("capture_and_restore_anchor_on_repo_root_from_subdir_cwd") {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        let head_a = init_repo_with_commit(root).await;
-        std::fs::create_dir(root.join("sub")).unwrap();
-        std::fs::write(root.join("root.txt"), "r\n").unwrap();
-        std::fs::write(root.join("sub/s.txt"), "s\n").unwrap();
-        git_cli(root, &["add", "root.txt", "sub/s.txt"])
-            .await
-            .unwrap();
-        let subdir = root.join("sub");
-        let state = capture_git_state(&subdir).await.unwrap();
-        assert_eq!(state.head, head_a);
-        let mut staged = state.staged.clone();
-        staged.sort();
-        assert_eq!(
-            staged,
-            vec![PathBuf::from("root.txt"), PathBuf::from("sub/s.txt")],
-            "captured staged set must be repo-root-relative from a subdir cwd"
-        );
-        git_cli(root, &["commit", "-q", "-m", "turn-local"])
-            .await
-            .unwrap();
-        let outcome = soft_restore_git_state(&subdir, &state, "sess-subdir").await;
-        assert!(outcome.restored);
-        let head_now = git_cli(root, &["rev-parse", "HEAD"]).await.unwrap();
-        assert_eq!(head_now.trim(), head_a);
-        let staged_after_phase1 = git_cli(root, &["diff", "--cached", "--name-only"])
-            .await
-            .unwrap();
-        assert!(
-            staged_after_phase1.trim().is_empty(),
-            "phase 1 unstages to HEAD; re-staging is deferred to phase 2"
-        );
-        restage_git_paths(&subdir, &state, "sess-subdir").await;
-        let staged_now = git_cli(root, &["diff", "--cached", "--name-only"])
-            .await
-            .unwrap();
-        let mut lines: Vec<&str> = staged_now.lines().collect();
-        lines.sort();
-        assert_eq!(
-            lines,
-            vec!["root.txt", "sub/s.txt"],
-            "both staged paths must be re-staged from a subdir cwd"
-        );
-    }
-    /// The abort path leaves git untouched: an unstashable dirty tree (in-progress
-    /// merge) returns `restored: false` with a reason and HEAD unchanged.
-    #[tokio::test]
-    async fn soft_restore_aborts_on_unstashable_dirty_tree_without_touching_git() {
-        if bazel_skip("soft_restore_aborts_on_unstashable_dirty_tree_without_touching_git") {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let head_a = init_repo_with_commit(tmp.path()).await;
-        let state = capture_git_state(tmp.path()).await.unwrap();
-        assert_eq!(state.head, head_a);
-        std::fs::write(tmp.path().join("feature.txt"), "turn\n").unwrap();
-        git_cli(tmp.path(), &["add", "feature.txt"]).await.unwrap();
-        git_cli(tmp.path(), &["commit", "-q", "-m", "turn-local"])
-            .await
-            .unwrap();
-        let head_b = git_cli(tmp.path(), &["rev-parse", "HEAD"])
-            .await
-            .unwrap()
-            .trim()
-            .to_owned();
-        std::fs::write(tmp.path().join("README.md"), "dirty\n").unwrap();
-        std::fs::write(tmp.path().join(".git").join("MERGE_HEAD"), &head_b).unwrap();
-        let outcome = soft_restore_git_state(tmp.path(), &state, "sess-abort").await;
-        assert!(
-            !outcome.restored,
-            "must not restore when a dirty tree cannot be stashed"
-        );
-        assert!(outcome.aborted_reason.is_some(), "abort reason must be set");
-        assert!(outcome.stash_ref.is_none());
-        let head_now = git_cli(tmp.path(), &["rev-parse", "HEAD"]).await.unwrap();
-        assert_eq!(head_now.trim(), head_b, "HEAD must be unchanged on abort");
-    }
-    /// When `reset --soft` fails after dirty work was stashed, the stash is popped
-    /// back (not stranded): `restored: false`, no leftover stash, dirty content back.
-    #[tokio::test]
-    async fn soft_restore_restores_stash_when_reset_fails() {
-        if bazel_skip("soft_restore_restores_stash_when_reset_fails") {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        init_repo_with_commit(tmp.path()).await;
-        std::fs::write(tmp.path().join("README.md"), "dirty edit\n").unwrap();
-        let bogus = GitStateRef {
-            head: "0".repeat(40),
-            staged: Vec::new(),
-        };
-        let outcome = soft_restore_git_state(tmp.path(), &bogus, "sess-reset-fail").await;
-        assert!(
-            !outcome.restored,
-            "a failed reset must report restored: false"
-        );
-        assert!(
-            outcome.stash_ref.is_none(),
-            "the stash must be popped back, leaving nothing orphaned"
-        );
-        assert_eq!(
-            std::fs::read_to_string(tmp.path().join("README.md")).unwrap(),
-            "dirty edit\n",
-            "dirty work must be restored to the working tree"
-        );
-        let stash_list = git_cli(tmp.path(), &["stash", "list"]).await.unwrap();
-        assert!(
-            stash_list.trim().is_empty(),
-            "no stash entry should remain after the pop, got: {stash_list:?}"
-        );
-    }
-    fn skip_without_git_cli() -> bool {
-        std::env::var("BAZEL_TEST").is_ok()
-    }
-    /// `origin.git` (bare, HEAD → main) plus a work clone on `conv/t` forked
-    /// from a pushed `main`. Returns (tempdir, work path).
-    async fn conv_repo_with_origin() -> (tempfile::TempDir, PathBuf) {
-        let tmp = tempfile::tempdir().unwrap();
-        let bare = tmp.path().join("origin.git");
-        let work = tmp.path().join("work");
-        std::fs::create_dir_all(&bare).unwrap();
-        std::fs::create_dir_all(&work).unwrap();
-        git_cli(&bare, &["init", "--bare"]).await.unwrap();
-        git_cli(&bare, &["symbolic-ref", "HEAD", "refs/heads/main"])
-            .await
-            .unwrap();
-        git_cli(&work, &["init", "-b", "main"]).await.unwrap();
-        configure_test_identity(&work).await;
-        std::fs::write(work.join("README.md"), "base\n").unwrap();
-        git_cli(&work, &["add", "-A"]).await.unwrap();
-        git_cli(&work, &["commit", "-m", "init"]).await.unwrap();
-        git_cli(&work, &["remote", "add", "origin", bare.to_str().unwrap()])
-            .await
-            .unwrap();
-        git_cli(&work, &["push", "-u", "origin", "main"])
-            .await
-            .unwrap();
-        git_cli(&work, &["checkout", "-b", "conv/t"]).await.unwrap();
-        (tmp, work)
-    }
-    async fn configure_test_identity(repo: &Path) {
-        git_cli(repo, &["config", "user.name", "test"])
-            .await
-            .unwrap();
-        git_cli(repo, &["config", "user.email", "test@test.com"])
-            .await
-            .unwrap();
-        git_cli(repo, &["config", "commit.gpgsign", "false"])
-            .await
-            .unwrap();
-    }
-    fn conv_commit_req(push: bool) -> GitCommitReq {
-        GitCommitReq {
-            message: "conv commit".to_owned(),
-            push,
-            stage_all: true,
-            seed_default_excludes: true,
-            expected_branch: Some("conv/t".to_owned()),
-            ..Default::default()
-        }
-    }
-    #[tokio::test]
-    #[cfg_attr(
-        not(unix),
-        ignore = "test invokes git CLI which is not always available"
-    )]
-    async fn conv_commit_seeds_excludes_and_pushes() {
-        if skip_without_git_cli() {
-            return;
-        }
-        let (_tmp, work) = conv_repo_with_origin().await;
-        std::fs::create_dir_all(work.join("node_modules")).unwrap();
-        std::fs::write(work.join("node_modules/dep.js"), "x").unwrap();
-        std::fs::write(work.join(".env"), "SECRET=1").unwrap();
-        std::fs::write(work.join("src.txt"), "real").unwrap();
-        let res = commit(&work, &conv_commit_req(true)).await.unwrap();
-        let outcome = res.outcome.expect("git backend returns an outcome");
-        assert!(!outcome.clean);
-        assert!(outcome.pushed);
-        assert_eq!(outcome.push, PushStatus::Ok);
-        let sha = outcome.sha.expect("commit produced a HEAD");
-        let tree = git_cli(&work, &["ls-tree", "-r", "--name-only", "HEAD"])
-            .await
-            .unwrap();
-        assert!(tree.contains("src.txt"));
-        assert!(
-            !tree.contains(".env"),
-            "seeded excludes must hide .env: {tree}"
-        );
-        assert!(!tree.contains("node_modules"), "{tree}");
-        let remote_sha = git_cli(&work, &["rev-parse", "origin/conv/t"])
-            .await
-            .unwrap();
-        assert_eq!(remote_sha, sha);
-        let res2 = commit(&work, &conv_commit_req(true)).await.unwrap();
-        let outcome2 = res2.outcome.unwrap();
-        assert!(outcome2.clean);
-        assert_eq!(outcome2.sha.as_deref(), Some(sha.as_str()));
-        let exclude = git_cli(&work, &["rev-parse", "--git-path", "info/exclude"])
-            .await
-            .unwrap();
-        let content = std::fs::read_to_string(work.join(exclude)).unwrap();
-        assert_eq!(content.matches(DEFAULT_EXCLUDES_MARKER).count(), 1);
-    }
-    #[tokio::test]
-    #[cfg_attr(
-        not(unix),
-        ignore = "test invokes git CLI which is not always available"
-    )]
-    async fn conv_commit_legacy_clean_tree_still_errors_without_stage_all() {
-        if skip_without_git_cli() {
-            return;
-        }
-        let (_tmp, work) = conv_repo_with_origin().await;
-        let req = GitCommitReq {
-            message: "nothing staged".to_owned(),
-            ..Default::default()
-        };
-        assert!(
-            commit(&work, &req).await.is_err(),
-            "legacy contract: committing with nothing staged errors"
-        );
-    }
-    #[tokio::test]
-    #[cfg_attr(
-        not(unix),
-        ignore = "test invokes git CLI which is not always available"
-    )]
-    async fn conv_commit_refuses_wrong_branch() {
-        if skip_without_git_cli() {
-            return;
-        }
-        let (_tmp, work) = conv_repo_with_origin().await;
-        let mut req = conv_commit_req(false);
-        req.expected_branch = Some("conv/other".to_owned());
-        let err = commit(&work, &req).await.expect_err("wrong branch refused");
-        assert!(err.to_string().contains("expected 'conv/other'"), "{err}");
-    }
-    #[tokio::test]
-    #[cfg_attr(
-        not(unix),
-        ignore = "test invokes git CLI which is not always available"
-    )]
-    async fn conv_commit_classifies_non_fast_forward_push_and_never_forces() {
-        if skip_without_git_cli() {
-            return;
-        }
-        let (tmp, work) = conv_repo_with_origin().await;
-        std::fs::write(work.join("a.txt"), "a").unwrap();
-        commit(&work, &conv_commit_req(true)).await.unwrap();
-        let work2 = tmp.path().join("work2");
-        git_cli(
-            tmp.path(),
-            &[
-                "clone",
-                "--branch",
-                "conv/t",
-                tmp.path().join("origin.git").to_str().unwrap(),
-                work2.to_str().unwrap(),
-            ],
-        )
-        .await
-        .unwrap();
-        configure_test_identity(&work2).await;
-        std::fs::write(work2.join("b.txt"), "b").unwrap();
-        git_cli(&work2, &["add", "-A"]).await.unwrap();
-        git_cli(&work2, &["commit", "-m", "out of band"])
-            .await
-            .unwrap();
-        git_cli(&work2, &["push", "origin", "conv/t"])
-            .await
-            .unwrap();
-        let diverged_sha = git_cli(&work2, &["rev-parse", "HEAD"]).await.unwrap();
-        std::fs::write(work.join("c.txt"), "c").unwrap();
-        let res = commit(&work, &conv_commit_req(true)).await.unwrap();
-        let outcome = res.outcome.unwrap();
-        assert!(!outcome.clean);
-        assert!(!outcome.pushed);
-        assert_eq!(outcome.push, PushStatus::Conflict);
-        assert!(
-            res.warning.is_some(),
-            "push failure still surfaces a warning"
-        );
-        git_cli(&work, &["fetch", "origin", "conv/t"])
-            .await
-            .unwrap();
-        let remote_sha = git_cli(&work, &["rev-parse", "FETCH_HEAD"]).await.unwrap();
-        assert_eq!(remote_sha, diverged_sha);
-    }
-    #[tokio::test]
-    #[cfg_attr(
-        not(unix),
-        ignore = "test invokes git CLI which is not always available"
-    )]
-    async fn sync_rebase_reports_the_rewritten_head() {
-        if skip_without_git_cli() {
-            return;
-        }
-        let (tmp, work) = conv_repo_with_origin().await;
-        git_cli(&work, &["checkout", "main"]).await.unwrap();
-        let work2 = tmp.path().join("work2");
-        git_cli(
-            tmp.path(),
-            &[
-                "clone",
-                "--branch",
-                "main",
-                tmp.path().join("origin.git").to_str().unwrap(),
-                work2.to_str().unwrap(),
-            ],
-        )
-        .await
-        .unwrap();
-        configure_test_identity(&work2).await;
-        std::fs::write(work2.join("base.txt"), "base").unwrap();
-        git_cli(&work2, &["add", "-A"]).await.unwrap();
-        git_cli(&work2, &["commit", "-m", "advance main"])
-            .await
-            .unwrap();
-        git_cli(&work2, &["push", "origin", "main"]).await.unwrap();
-        std::fs::write(work.join("local.txt"), "local").unwrap();
-        let req = GitCommitReq {
-            message: "local commit".to_owned(),
-            sync: true,
-            stage_all: true,
-            expected_branch: Some("main".to_owned()),
-            ..Default::default()
-        };
-        let res = commit(&work, &req).await.unwrap();
-        let outcome = res.outcome.unwrap();
-        assert!(outcome.pushed);
-        let head = git_cli(&work, &["rev-parse", "HEAD"]).await.unwrap();
-        assert_eq!(
-            outcome.sha.as_deref(),
-            Some(head.as_str()),
-            "sha must be the post-rebase HEAD"
-        );
-        assert_eq!(res.data.commit_hash.as_deref(), Some(head.as_str()));
-        let remote = git_cli(&work, &["rev-parse", "origin/main"]).await.unwrap();
-        assert_eq!(remote, head);
-    }
-    #[tokio::test]
-    #[cfg_attr(
-        not(unix),
-        ignore = "test invokes git CLI which is not always available"
-    )]
-    async fn sync_base_up_to_date_and_clean_merge() {
-        if skip_without_git_cli() {
-            return;
-        }
-        let (tmp, work) = conv_repo_with_origin().await;
-        std::fs::write(work.join("conv.txt"), "conv").unwrap();
-        commit(&work, &conv_commit_req(true)).await.unwrap();
-        for base in [Some("main"), None] {
-            let res = sync_base(&work, base, false, Some("conv/t")).await.unwrap();
-            assert_eq!(res.outcome, GitSyncBaseOutcome::UpToDate, "base={base:?}");
-        }
-        let work2 = tmp.path().join("work2");
-        git_cli(
-            tmp.path(),
-            &[
-                "clone",
-                "--branch",
-                "main",
-                tmp.path().join("origin.git").to_str().unwrap(),
-                work2.to_str().unwrap(),
-            ],
-        )
-        .await
-        .unwrap();
-        configure_test_identity(&work2).await;
-        std::fs::write(work2.join("base.txt"), "base change").unwrap();
-        git_cli(&work2, &["add", "-A"]).await.unwrap();
-        git_cli(&work2, &["commit", "-m", "advance main"])
-            .await
-            .unwrap();
-        git_cli(&work2, &["push", "origin", "main"]).await.unwrap();
-        let res = sync_base(&work, Some("main"), false, Some("conv/t"))
-            .await
-            .unwrap();
-        match res.outcome {
-            GitSyncBaseOutcome::Merged { sha } => {
-                assert_eq!(sha, git_cli(&work, &["rev-parse", "HEAD"]).await.unwrap());
-                assert!(
-                    work.join("base.txt").exists(),
-                    "merge brought the base file in"
-                );
-            }
-            other => panic!("expected Merged, got {other:?}"),
-        }
-    }
-    #[tokio::test]
-    #[cfg_attr(
-        not(unix),
-        ignore = "test invokes git CLI which is not always available"
-    )]
-    async fn sync_base_conflicts_left_in_progress_and_abort_rolls_back() {
-        if skip_without_git_cli() {
-            return;
-        }
-        let (tmp, work) = conv_repo_with_origin().await;
-        std::fs::write(work.join("README.md"), "conv version\n").unwrap();
-        commit(&work, &conv_commit_req(true)).await.unwrap();
-        let pre_merge_sha = git_cli(&work, &["rev-parse", "HEAD"]).await.unwrap();
-        let work2 = tmp.path().join("work2");
-        git_cli(
-            tmp.path(),
-            &[
-                "clone",
-                "--branch",
-                "main",
-                tmp.path().join("origin.git").to_str().unwrap(),
-                work2.to_str().unwrap(),
-            ],
-        )
-        .await
-        .unwrap();
-        configure_test_identity(&work2).await;
-        std::fs::write(work2.join("README.md"), "main version\n").unwrap();
-        git_cli(&work2, &["add", "-A"]).await.unwrap();
-        git_cli(&work2, &["commit", "-m", "conflicting base change"])
-            .await
-            .unwrap();
-        git_cli(&work2, &["push", "origin", "main"]).await.unwrap();
-        let res = sync_base(&work, Some("main"), false, Some("conv/t"))
-            .await
-            .unwrap();
-        match &res.outcome {
-            GitSyncBaseOutcome::Conflicts { files } => {
-                assert_eq!(files, &vec!["README.md".to_owned()]);
-            }
-            other => panic!("expected Conflicts, got {other:?}"),
-        }
-        assert!(
-            git_cli_raw(&work, &["rev-parse", "-q", "--verify", "MERGE_HEAD"])
-                .await
-                .unwrap()
-                .0,
-            "conflicted merge must stay in progress"
-        );
-        assert!(
-            sync_base(&work, Some("main"), false, Some("conv/t"))
-                .await
-                .is_err()
-        );
-        let res = sync_base(&work, None, true, Some("not-the-branch"))
-            .await
-            .unwrap();
-        assert_eq!(res.outcome, GitSyncBaseOutcome::Aborted);
-        assert!(
-            !git_cli_raw(&work, &["rev-parse", "-q", "--verify", "MERGE_HEAD"])
-                .await
-                .unwrap()
-                .0
-        );
-        assert_eq!(
-            git_cli(&work, &["rev-parse", "HEAD"]).await.unwrap(),
-            pre_merge_sha
-        );
-        assert_eq!(
-            std::fs::read_to_string(work.join("README.md")).unwrap(),
-            "conv version\n"
-        );
-        let res = sync_base(&work, None, true, None).await.unwrap();
-        assert_eq!(res.outcome, GitSyncBaseOutcome::Aborted);
-    }
-    #[tokio::test]
-    #[cfg_attr(
-        not(unix),
-        ignore = "test invokes git CLI which is not always available"
-    )]
-    async fn sync_base_refuses_wrong_branch() {
-        if skip_without_git_cli() {
-            return;
-        }
-        let (_tmp, work) = conv_repo_with_origin().await;
-        let err = sync_base(&work, Some("main"), false, Some("conv/other"))
-            .await
-            .expect_err("wrong branch refused");
-        assert!(err.to_string().contains("expected 'conv/other'"), "{err}");
-    }
-    #[tokio::test]
-    #[cfg_attr(
-        not(unix),
-        ignore = "test invokes git CLI which is not always available"
-    )]
-    async fn sync_pull_failure_reports_push_skipped() {
-        if skip_without_git_cli() {
-            return;
-        }
-        let (_tmp, work) = conv_repo_with_origin().await;
-        std::fs::write(work.join("local.txt"), "local").unwrap();
-        let req = GitCommitReq {
-            message: "local".to_owned(),
-            sync: true,
-            stage_all: true,
-            ..Default::default()
-        };
-        let res = commit(&work, &req).await.unwrap();
-        assert!(res.warning.is_some(), "pull failure surfaces a warning");
-        let outcome = res.outcome.unwrap();
-        assert!(!outcome.pushed);
-        assert_eq!(
-            outcome.push,
-            PushStatus::Skipped,
-            "an implied push skipped by a pull failure must not read as never-requested"
-        );
-    }
-    #[tokio::test]
-    #[cfg_attr(
-        not(unix),
-        ignore = "test invokes git CLI which is not always available"
-    )]
-    async fn sync_base_refuses_dirty_tree() {
-        if skip_without_git_cli() {
-            return;
-        }
-        let (_tmp, work) = conv_repo_with_origin().await;
-        std::fs::write(work.join("dirty.txt"), "uncommitted").unwrap();
-        let err = sync_base(&work, Some("main"), false, Some("conv/t"))
-            .await
-            .expect_err("dirty tree refused");
-        assert!(err.to_string().contains("not clean"), "{err}");
-    }
-}
+#[path = "git_restore_code_tests.rs"]
+mod restore_code_tests;

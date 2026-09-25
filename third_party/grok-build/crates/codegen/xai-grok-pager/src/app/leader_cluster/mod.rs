@@ -1,49 +1,47 @@
-//! In-process multi-client leader cluster: a REAL leader IPC server fronting a
-//! REAL `MvpAgent`, with each test client being a full pager view-model
-//! (`AppView`) wired through the production leader bridge. Deterministically
-//! exercises the multi-client surface the PTY `LeaderCluster` covers, one
-//! layer down — no subprocesses, no terminals, no screen scraping.
+//! In-process multi-client leader cluster: a REAL leader IPC server fronting a REAL `MvpAgent`.
+//! Each test client is a full pager view-model (`AppView`) wired through the production leader bridge.
+//! Deterministically exercises what the PTY `LeaderCluster` covers, one layer down: no subprocesses, no terminals, no screen scraping.
 //!
-//! Per client: `LeaderClient::connect(sock).into_channels()` →
-//! [`bridge_channels`] → one `AppView`; inbound ACP is pumped through
-//! `acp_handler::handle`, user intent is driven through `dispatch`, and
-//! effects run through the real `effects::execute` (the same loop
-//! `event_loop::run` performs, minus the terminal).
+//! Per client: `LeaderClient::connect(sock).into_channels()`, then [`bridge_channels`], then one `AppView`.
+//! Inbound ACP is pumped through `acp_handler::handle` and user intent is driven through `dispatch`.
+//! Effects run through the real `effects::execute` (the same loop `event_loop::run` performs, minus the terminal).
 //!
-//! Env sandboxing follows this crate's `serial(GROK_HOME)` idiom; note
-//! `grok_home()` is process-cached (OnceLock), so disk assertions always go
-//! through [`effective_grok_home`] rather than assuming the temp dir won.
+//! Env sandboxing follows this crate's `serial(GROK_HOME)` idiom.
+//! `grok_home()` is process-cached (OnceLock), so disk assertions always go through [`effective_grok_home`] rather than assuming the temp dir won.
 //!
-//! The scenarios are `#[ignore]`d in the shared lib test binary: the harness
-//! mutates process-global env (proxy URLs, `XAI_API_KEY`,
-//! `GROK_LEADER_SOCKET`, `GROK_HOME`) for a real agent's whole lifetime, and
-//! in a several-thousand-test process that poisons concurrently-running tests
-//! (and `grok_home()`'s OnceLock is usually already pinned). Run on demand:
+//! The scenarios are `#[ignore]`d in the shared lib test binary.
+//! The harness mutates process-global env (proxy URLs, `XAI_API_KEY`, `GROK_LEADER_SOCKET`, `GROK_HOME`) for a real agent's whole lifetime.
+//! In a several-thousand-test process that mutation poisons concurrently-running tests; `grok_home()`'s OnceLock is usually already pinned too.
+//! Run on demand:
 //!
 //! ```bash
 //! cargo test -p xai-grok-pager --lib -- app::leader_cluster --ignored --test-threads=1
 //! ```
 //!
-//! Follow-up to un-ignore: move the scenarios to a dedicated test binary
-//! (single-process isolation via a test-harness feature over the pub(crate)
-//! seams), where env is set before any process-global's first touch.
+//! To un-ignore them, move the scenarios to a dedicated test binary where env is set before any process-global's first touch.
+//! That gives single-process isolation via a test-harness feature over the pub(crate) internals.
 //!
 //! Unix-only: the leader transport here is a unix socket.
 
+use std::cell::RefCell;
+use std::future::Future;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::time::Duration;
 
 use agent_client_protocol as acp;
 use tempfile::TempDir;
-use tokio::task::JoinSet;
+use tokio::task::{JoinSet, LocalSet};
 use tokio_util::sync::CancellationToken;
 use xai_acp_lib::{AcpClientRx, acp_send};
+use xai_grok_shell::agent::MvpAgent;
 use xai_grok_shell::leader::{
     ClientCapabilities as LeaderClientCapabilities, ClientMode, ConnectionStatus,
     LEADER_SOCKET_ENV, LeaderClient, LeaderEnvUrls, LeaderLock, LeaderReconnector,
-    LeaderServerControlState, LeaderServerMetadata, ReconnectPolicy, run_leader_server,
+    LeaderServerControlState, LeaderServerMetadata, ReconnectPolicy, SLOT_DIR_ENV,
+    run_leader_server,
 };
 use xai_grok_test_support::MockInferenceServer;
 
@@ -59,22 +57,39 @@ use crate::scrollback::block::RenderBlock;
 const PUMP_TICK: Duration = Duration::from_millis(10);
 const TURN_BUDGET: Duration = Duration::from_secs(60);
 
-/// Await a bring-up step with a hard budget so an on-demand run that hangs
-/// names its phase instead of parking until the test-runner kill.
+/// Every agent the cluster ever spawned, killed generations included.
+/// `MvpAgent`'s background tasks hold raw `LocalRef` self-pointers and stay on the `LocalSet` after the agent's
+/// connection is aborted, so the agents must be freed only after the `LocalSet` is (`InProcessAgent::keepalive`).
+type AgentKeepalives = Rc<RefCell<Vec<Rc<MvpAgent>>>>;
+
+/// Run one scenario on a current-thread runtime and `LocalSet`, then tear down in the order the agents' `LocalRef`
+/// contract needs: the `LocalSet` (and every agent background task still on it) first, the agents themselves last.
+/// The keepalive sink is declared before the runtime so the order also holds while a failed scenario unwinds.
+fn run_cluster_scenario<Fut: Future<Output = ()>>(scenario: impl FnOnce(AgentKeepalives) -> Fut) {
+    let agent_keepalives = AgentKeepalives::default();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let local = LocalSet::new();
+    local.block_on(&rt, scenario(Rc::clone(&agent_keepalives)));
+    drop(local);
+    drop(agent_keepalives);
+}
+
+/// Await a bring-up step with a hard budget so an on-demand run that hangs names its phase instead of parking until the test-runner kill.
 async fn bounded<T>(what: &str, fut: impl std::future::Future<Output = T>) -> T {
     tokio::time::timeout(Duration::from_secs(30), fut)
         .await
         .unwrap_or_else(|_| panic!("leader-cluster bring-up timed out: {what}"))
 }
 
-/// The grok home the agent actually persisted under: `grok_home()` is
-/// process-cached, so an earlier test in this binary may have pinned it.
+/// The grok home the agent actually persisted under: `grok_home()` is process-cached, so an earlier test in this binary may have pinned it.
 fn effective_grok_home() -> PathBuf {
     xai_grok_config::grok_home()
 }
 
-/// Concatenated agent-message text across a view's scrollback (copy of the
-/// acp_handler tests' helper; that one is test-mod private).
+/// Concatenated agent-message text across a view's scrollback (copy of the acp_handler tests' helper; that one is test-mod private).
 fn agent_message_text(view: &AgentView) -> String {
     let mut out = String::new();
     for i in 0..view.scrollback.len() {
@@ -95,13 +110,12 @@ struct ClusterClient {
     progress_tx: tokio::sync::mpsc::UnboundedSender<effects::RestoreProgressMsg>,
     _progress_rx: tokio::sync::mpsc::UnboundedReceiver<effects::RestoreProgressMsg>,
     bridge_cancel: CancellationToken,
-    /// Present when the client was built with a reconnector: observes
-    /// generation bumps after a leader kill/respawn.
+    /// Present when the client was built with a reconnector: observes generation bumps after a leader kill/respawn.
     status_rx: Option<tokio::sync::watch::Receiver<ConnectionStatus>>,
 }
 
 impl ClusterClient {
-    /// Drain everything currently ready (inbound ACP + finished tasks).
+    /// Drain everything currently ready (inbound ACP and finished tasks).
     /// Returns whether anything was processed.
     fn pump_once(&mut self) -> bool {
         let mut progressed = false;
@@ -127,11 +141,19 @@ impl ClusterClient {
         }
     }
 
-    /// The event loop's `process_effects`, minus terminal/auth-handle wiring
-    /// (that fn is event_loop-private; this mirrors its body).
+    /// The event loop's `process_effects`, minus terminal/auth-handle wiring (that fn is event_loop-private; this mirrors its body).
     fn process_effects(&mut self, effs: Vec<super::actions::Effect>) {
         let flags = super::event_loop::session_flags_for_effects(&mut self.app, &effs);
-        for eff in effs {
+        let mut effs = effs.into_iter().peekable();
+        while let Some(eff) = effs.next() {
+            let Some(eff) = effects::take_coalesced_interjects(
+                eff,
+                &mut effs,
+                &mut self.tasks,
+                &self.app.acp_tx,
+            ) else {
+                continue;
+            };
             let (_quit, _meta) = effects::execute(
                 eff,
                 &mut self.tasks,
@@ -150,11 +172,14 @@ impl ClusterClient {
         self.process_effects(effs);
     }
 
-    /// Pump until `pred(app)` holds, within [`TURN_BUDGET`]. No fixed sleeps
-    /// beyond the pump tick; panics with `what` on expiry. Single-client sugar
-    /// over [`pump_clients_until`] so there is exactly one pump loop.
+    /// Pump until `pred(app)` holds, within [`TURN_BUDGET`].
+    /// No fixed sleeps beyond the pump tick; panics with `what` on expiry.
+    /// Single-client sugar over [`pump_clients_until`] so there is exactly one pump loop.
     async fn pump_until(&mut self, what: &str, pred: impl Fn(&AppView) -> bool) {
-        pump_clients_until(&mut [self], what, |clients| pred(&clients[0].app)).await;
+        pump_clients_until(&mut [self], what, |clients| {
+            clients.first().is_some_and(|c| pred(&c.app))
+        })
+        .await;
     }
 
     /// The most recently created agent view (scenarios add tabs in order).
@@ -176,10 +201,10 @@ impl ClusterClient {
                     .as_ref()
                     .is_some_and(|s| s.0.as_ref() == sid)
             })
-            .unwrap_or_else(|| panic!("no agent view for session {sid}"))
+            .unwrap_or_else(|| panic!("no agent view for session"))
     }
 
-    /// Create a new session through the real dispatch → effect → agent path.
+    /// Create a new session through the real path: dispatch, then effects, then the agent.
     async fn new_session(&mut self) -> String {
         self.act(Action::NewSession);
         self.pump_until("session/new completes", |app| {
@@ -197,8 +222,7 @@ impl ClusterClient {
             .to_string()
     }
 
-    /// Attach to an existing session (viewer path) and wait for the replay to
-    /// land.
+    /// Attach to an existing session (viewer path) and wait for the replay to land.
     async fn load_session(&mut self, sid: &str) {
         self.act(Action::LoadSession(sid.to_string(), None, false));
         let sid_owned = sid.to_string();
@@ -214,8 +238,7 @@ impl ClusterClient {
         .await;
     }
 
-    /// Drive one full turn on the active agent and wait until it lands
-    /// (sentinel visible + agent back to Idle).
+    /// Drive one full turn on the active agent and wait until it lands (sentinel visible, agent back to Idle).
     async fn run_turn(&mut self, prompt: &str, sentinel: &str) {
         self.act(Action::SendPrompt(prompt.to_string()));
         let sentinel_owned = sentinel.to_string();
@@ -233,8 +256,7 @@ impl ClusterClient {
     }
 }
 
-/// Pump several clients until `pred` holds across them, within
-/// [`TURN_BUDGET`]; panics with `what` on expiry.
+/// Pump several clients until `pred` holds across them, within [`TURN_BUDGET`]; panics with `what` on expiry.
 async fn pump_clients_until(
     clients: &mut [&mut ClusterClient],
     what: &str,
@@ -256,37 +278,37 @@ async fn pump_clients_until(
     }
 }
 
-/// The cluster: leader server + real agent, plus knobs to kill/respawn the
-/// leader generation under the same socket path.
+/// The cluster: leader server and real agent, plus knobs to kill/respawn the leader generation under the same socket path.
 struct PagerLeaderCluster {
     sock_path: PathBuf,
     server: MockInferenceServer,
     server_cancel: CancellationToken,
-    /// The current generation's server/agent/bridge tasks. `kill_leader`
-    /// aborts + drains them so a respawn can never race a still-running old
-    /// agent on the same GROK_HOME (two agents on one updates.jsonl is the
-    /// corruption class the real leader's flock exists to prevent).
+    /// The current generation's server/agent/bridge tasks.
+    /// `kill_leader` aborts and drains them so a respawn can never race a still-running old agent on the same GROK_HOME.
+    /// (Two agents writing one updates.jsonl is the corruption the real leader's flock exists to prevent.)
     generation_tasks: Vec<tokio::task::JoinHandle<()>>,
+    /// Owned by [`run_cluster_scenario`], which frees the agents only after the `LocalSet`; a killed generation's
+    /// agent stays allocated (I/O tasks gone, background tasks idling against a live agent) rather than freed under them.
+    agent_keepalives: AgentKeepalives,
     client_count: Arc<AtomicUsize>,
     workdir: TempDir,
     authenticated: bool,
-    /// Held for the cluster's lifetime so a `LeaderReconnector`-driven
-    /// `connect_or_spawn` can never win the flock and spawn a subprocess —
-    /// it always takes the wait-for-socket path onto our in-process server.
+    /// Held for the cluster's lifetime so a `LeaderReconnector`-driven `connect_or_spawn` can never win the flock and spawn a subprocess.
+    /// It always takes the wait-for-socket path onto our in-process server.
     _flock: LeaderLock,
-    /// Restored on drop, INCLUDING panic unwinds. Field order is load-bearing:
-    /// `_flock` drops first (removes its lock/sock files while the env still
-    /// points at the sandbox), then the guards restore the env, then the temp
-    /// home is deleted.
+    /// Restored on drop, INCLUDING panic unwinds.
+    /// Field order matters: `_flock` drops first, removing its lock/sock files while the env still points at the sandbox.
+    /// Then the guards restore the env, then the temp home is deleted.
     _env: Vec<crate::test_util::EnvVarGuard>,
     _grok_home: TempDir,
 }
 
 impl PagerLeaderCluster {
-    /// Stand up the cluster. Callers MUST be `#[serial_test::serial(GROK_HOME)]`
-    /// (env mutation) and run inside a current-thread `LocalSet`.
-    async fn start() -> Self {
-        let _ = rustls::crypto::ring::default_provider().install_default();
+    /// Stand up the cluster.
+    /// Callers MUST be `#[serial_test::serial(GROK_HOME)]` (env mutation) and run inside [`run_cluster_scenario`],
+    /// whose keepalive sink this takes.
+    async fn start(agent_keepalives: AgentKeepalives) -> Self {
+        xai_grok_extra_ca::ensure_default_crypto_provider();
 
         let server = MockInferenceServer::start().await.expect("mock server");
         let grok_home = TempDir::new().unwrap();
@@ -301,9 +323,10 @@ impl PagerLeaderCluster {
             crate::test_util::EnvVarGuard::set("GROK_TELEMETRY_ENABLED", "false"),
             crate::test_util::EnvVarGuard::set("GROK_FEEDBACK_ENABLED", "false"),
             crate::test_util::EnvVarGuard::set("GROK_TRACE_UPLOAD", "false"),
-            // Pin every leader-path derivation (LeaderLock::new / reconnect's
-            // connect_or_spawn) to this cluster's socket.
+            // Pin every leader-path derivation (LeaderLock::new / reconnect's connect_or_spawn) to this cluster's socket
             crate::test_util::EnvVarGuard::set(LEADER_SOCKET_ENV, &sock_path),
+            // Keep the flock's acquire slot inside the sandbox rather than the host's `/tmp/grok-file-lock-<uid>`
+            crate::test_util::EnvVarGuard::set(SLOT_DIR_ENV, grok_home.path().join("lock-slots")),
         ];
 
         // Hold the flock for the cluster's lifetime (see field doc).
@@ -320,6 +343,7 @@ impl PagerLeaderCluster {
             server,
             server_cancel: CancellationToken::new(),
             generation_tasks: Vec::new(),
+            agent_keepalives,
             client_count,
             workdir,
             authenticated: false,
@@ -331,8 +355,7 @@ impl PagerLeaderCluster {
         cluster
     }
 
-    /// Bind a fresh leader-server generation at the fixed socket path and
-    /// wire a fresh REAL agent behind it.
+    /// Bind a fresh leader-server generation at the fixed socket path and wire a fresh REAL agent behind it.
     async fn spawn_leader_generation(&mut self) {
         let _ = std::fs::remove_file(&self.sock_path);
         let (acp_tx, acp_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -345,9 +368,8 @@ impl PagerLeaderCluster {
             socket_path: self.sock_path.clone(),
             lock_path: self.sock_path.with_extension("lock"),
             ws_url_suffix: String::new(),
-            // MUST be the client-side comparison source (xai_grok_version), not
-            // this crate's version: a reconnecting client evicts strictly-older
-            // leaders, and "evict" here would signal THIS test process.
+            // MUST be the client-side comparison source (xai_grok_version), not this crate's version
+            // A reconnecting client evicts strictly-older leaders, and "evict" here would signal THIS test process
             leader_binary_version: xai_grok_version::VERSION.to_string(),
         });
         let sock_for_server = self.sock_path.clone();
@@ -373,10 +395,9 @@ impl PagerLeaderCluster {
             .await;
         }));
 
-        generation_tasks.extend(xai_grok_shell::leader::in_process::spawn_agent(
-            acp_rx,
-            response_tx,
-        ));
+        let agent = xai_grok_shell::leader::in_process::spawn_agent(acp_rx, response_tx).await;
+        generation_tasks.extend(agent.tasks);
+        self.agent_keepalives.borrow_mut().push(agent.keepalive);
         self.generation_tasks = generation_tasks;
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
@@ -386,33 +407,28 @@ impl PagerLeaderCluster {
         assert!(self.sock_path.exists(), "leader socket never bound");
     }
 
-    /// Kill the current leader generation (server + agent die together, like
-    /// a real leader process crash) and wait for the socket to vanish.
+    /// Kill the current leader generation (server and agent die together, like a real leader process crash) and wait for the socket to vanish.
     async fn kill_leader(&mut self) {
         self.server_cancel.cancel();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         while self.sock_path.exists() && tokio::time::Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        // Fail HERE if the old generation never released the socket: its late
-        // shutdown cleanup would otherwise delete the respawned generation's
-        // fresh socket from under it (same-path race), which surfaces as a
-        // confusing reconnect-budget expiry downstream.
+        // Fail HERE if the old generation never released the socket
+        // Its late shutdown cleanup would otherwise delete the respawned generation's fresh socket from under it (same-path race)
+        // That shows up downstream as a confusing reconnect-budget expiry
         assert!(
             !self.sock_path.exists(),
             "old leader generation never released the socket"
         );
-        // Abort + drain the generation's agent/bridge tasks (the server task
-        // has already run its socket cleanup above). Channel-closure teardown
-        // is only eventual; without this drain an old agent task could still
-        // be running against the same GROK_HOME when the next generation's
-        // agent starts — two writers on one updates.jsonl, the corruption
-        // class the real leader's flock prevents.
+        // Abort and drain the generation's agent/bridge tasks (the server task has already run its socket cleanup above)
+        // Channel-closure teardown is only eventual
+        // Without the drain an old agent task could still run against the same GROK_HOME when the next generation's agent starts
         for task in self.generation_tasks.drain(..) {
             task.abort();
             let _ = task.await;
         }
-        // The next generation's agent must re-authenticate its ACP surface.
+        // The next generation's agent must re-authenticate its ACP connection
         self.authenticated = false;
     }
 
@@ -420,9 +436,9 @@ impl PagerLeaderCluster {
         self.spawn_leader_generation().await;
     }
 
-    /// Connect a pager client. With `reconnect: true` the bridge gets a real
-    /// `LeaderReconnector` (socket pinned via `GROK_LEADER_SOCKET`, flock held
-    /// by the cluster, so reconnects always adopt the in-process server).
+    /// Connect a pager client.
+    /// With `reconnect: true` the bridge gets a real `LeaderReconnector`.
+    /// The socket is pinned via `GROK_LEADER_SOCKET` and the cluster holds the flock, so reconnects always adopt the in-process server.
     async fn client(&mut self, name: &str, reconnect: bool) -> ClusterClient {
         let conn = bounded(
             "client connect",
@@ -432,6 +448,7 @@ impl PagerLeaderCluster {
                 ClientMode::Stdio,
                 LeaderClientCapabilities {
                     client_version: Some("0.0.0-test".to_string()),
+                    user_message_echo: true,
                     ..Default::default()
                 },
             ),
@@ -452,6 +469,7 @@ impl PagerLeaderCluster {
                 },
                 LeaderClientCapabilities {
                     client_version: Some("0.0.0-test".to_string()),
+                    user_message_echo: true,
                     ..Default::default()
                 },
                 status_tx,
@@ -485,9 +503,7 @@ impl PagerLeaderCluster {
                     .meta(
                         serde_json::json!({
                             "startupHints": {
-                                "nonInteractive": true,
-                                "skipGitStatus": true,
-                                "skipProjectLayout": true
+                                "nonInteractive": true
                             },
                             "clientType": "pager-cluster",
                             "clientVersion": "0.0.0-test",
@@ -514,7 +530,13 @@ impl PagerLeaderCluster {
             self.authenticated = true;
         }
 
-        let mut app = AppView::new(tx, ModelState::default(), Vec::new());
+        // Headless leader has no terminal; out-of-band escapes have nowhere to go
+        let mut app = AppView::new(
+            tx,
+            ModelState::default(),
+            Vec::new(),
+            crate::render::draw::EscapeWriter::disconnected(),
+        );
         app.leader_mode = true;
         app.auth_state = AuthState::Done;
         app.trust_state = TrustState::Done;
@@ -532,8 +554,7 @@ impl PagerLeaderCluster {
         }
     }
 
-    /// Inference request count (chat/responses/messages only), for
-    /// no-turn-was-re-driven invariants.
+    /// Inference request count (chat/responses/messages only), used to assert that no turn was re-driven.
     fn inference_request_count(&self) -> usize {
         self.server
             .requests()
@@ -550,8 +571,7 @@ impl PagerLeaderCluster {
 impl Drop for PagerLeaderCluster {
     fn drop(&mut self) {
         self.server_cancel.cancel();
-        // Best-effort (Drop cannot await): stop the generation's tasks so they
-        // never outlive the env guards / temp dirs dropping right after.
+        // Best-effort (Drop cannot await): stop the generation's tasks so they never outlive the env guards / temp dirs dropping right after
         for task in self.generation_tasks.drain(..) {
             task.abort();
         }

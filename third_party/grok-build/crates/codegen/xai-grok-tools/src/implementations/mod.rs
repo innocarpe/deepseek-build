@@ -16,14 +16,18 @@ pub mod web_search;
 pub use grok_build::bash::{BashError, BashToolInput};
 pub use grok_build::{
     AskUserQuestionTool, BashTool, EnterPlanModeTool, ExitPlanModeTool, GrepTool, KillTaskTool,
-    ListDirTool, ReadFileTool, SearchReplaceTool, TaskOutputTool, TaskTool, TodoWriteTool,
-    WaitTasksTool, WebFetchTool, WebSearchTool,
+    ListDirTool, ReadFileTool, SearchReplaceTool, SendSubagentMessageDisposition,
+    SendSubagentMessageTool, TaskOutputTool, TaskTool, TodoWriteTool, WaitTasksTool, WebFetchTool,
+    WebSearchTool,
 };
 pub use memory::{MemoryGetImpl, MemorySearchImpl};
 pub use opencode::{
     OpenCodeBashTool, OpenCodeEditTool, OpenCodeGlobTool, OpenCodeGrepTool, OpenCodeReadTool,
     OpenCodeSkillTool, OpenCodeTodoWriteTool, OpenCodeWriteTool,
 };
-pub use search_tool::SearchTool;
-pub use use_tool::{UseTool, UseToolInput};
+pub fn extra_write_qualified_ids() -> Vec<String> {
+    Vec::new()
+}
+pub use search_tool::{SEARCH_TOOL_NAME, SearchTool};
+pub use use_tool::{USE_TOOL_NAME, UseTool, UseToolInput};
 pub use web_search::WebSearchConfig;

@@ -1,5 +1,3 @@
-//! Fixtures shared by the conversation tests.
-
 use super::*;
 
 pub(super) fn count_cache_control(value: &serde_json::Value) -> usize {
@@ -49,8 +47,7 @@ pub(super) fn agent_request(turns: usize) -> serde_json::Value {
 }
 
 pub(super) fn btw_prepare_items(mut items: Vec<ConversationItem>) -> Vec<ConversationItem> {
-    // Strip reasoning (same as strip_reasoning_blocks): filter out
-    // sibling Reasoning items entirely.
+    // Strip reasoning (same as strip_reasoning_blocks)
     items.retain(|item| !matches!(item, ConversationItem::Reasoning(_)));
     // Truncate trailing incomplete tool runs.
     while let Some(last) = items.last() {
@@ -147,25 +144,9 @@ pub(super) fn make_response(message: ConversationItem) -> ConversationResponse {
     }
 }
 
-// KV Cache Invariant Tests (adapted to sibling-Reasoning)
-//
-// These tests enforce prefix stability and correct turn ordering for the
-// Responses API input construction. Prompt caching (server-side prefix
-// match) requires that request N's serialised input is a strict prefix
-// of request N+1's. Any re-ordering of items -- especially reasoning
-// items -- destroys the prefix and tanks the cache hit rate.
-//
-// The invariant asserted is `&input2[..input1.len()] == input1` for
-// every pair of consecutive turns.
-//
-// In the sibling-Reasoning refactor, reasoning rides as
-// `ConversationItem::Reasoning(rs::ReasoningItem)` siblings in the flat
-// ordered `items` list. The serialized wire shape is produced by the
-// `From<&ConversationRequest> for rs::CreateResponse` impl with no
-// placeholder/splice dance. The old `__RAW_OUTPUT_PLACEHOLDER_`
-// / `extract_raw_input_items` / `splice_raw_input_items` tests are
-// structurally obsolete and are not ported; the invariants they pinned
-// are preserved here in a backend-shape-agnostic form.
+// These tests enforce prefix stability and correct turn ordering for the Responses API input construction. Prompt
+// caching (server-side prefix match) requires that request N's serialised input is a strict prefix of request N+1's. The
+// invariant asserted is `&input2[..input1.len()] == input1` for every pair of consecutive turns
 
 pub(super) fn reasoning_sibling(
     id: &str,
@@ -187,7 +168,10 @@ pub(super) fn input_items_json(req: &ConversationRequest) -> Vec<serde_json::Val
     let cr: rs::CreateResponse = req.into();
     let mut body = serde_json::to_value(&cr).unwrap();
     patch_reasoning_text_types(&mut body);
-    body["input"].as_array().cloned().unwrap_or_default()
+    body.get("input")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default()
 }
 
 pub(super) fn summarise_input(items: &[serde_json::Value]) -> Vec<String> {
@@ -223,8 +207,15 @@ pub(super) fn assert_prefix_stable(base: &ConversationRequest, extended: &Conver
         ext_input.len(),
         base_input.len(),
     );
+    let Some(prefix) = ext_input.get(..base_input.len()) else {
+        panic!(
+            "extended input shorter than base: base={} ext={}",
+            base_input.len(),
+            ext_input.len()
+        );
+    };
     assert_eq!(
-        &ext_input[..base_input.len()],
+        prefix,
         base_input.as_slice(),
         "serialized input of request N must be a prefix of request N+1.\n\
              Base ({} items): {:?}\nExtended ({} items): {:?}\n\

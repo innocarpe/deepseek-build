@@ -98,7 +98,7 @@ impl FacetProvider for KindFacet {
     }
     fn extract(&self, item: &NormalizedItem) -> Option<FacetValue> {
         Some(FacetValue::One(serde_json::Value::String(
-            item.kind.as_str().to_owned(),
+            item.kind.as_ref().to_owned(),
         )))
     }
 }
@@ -415,6 +415,7 @@ mod tests {
             git_remotes: Vec::new(),
             source_workspace_dir: None,
             last_turn_summary: None,
+            last_recap: None,
             session_kind: None,
         };
         merged_session_to_row(m, &build_facet_registry())
@@ -481,6 +482,7 @@ mod tests {
             git_remotes: Vec::new(),
             source_workspace_dir: None,
             last_turn_summary: None,
+            last_recap: None,
             session_kind: None,
         });
         let lf = reg.extract_all(&local);
@@ -609,6 +611,7 @@ mod tests {
             git_remotes: Vec::new(),
             source_workspace_dir: None,
             last_turn_summary: None,
+            last_recap: None,
             session_kind: None,
         });
         assert!(!reg.extract_all(&local).contains_key(STARRED_FACET_KEY));
@@ -655,6 +658,7 @@ mod tests {
             git_remotes: Vec::new(),
             source_workspace_dir: source_ws.map(Into::into),
             last_turn_summary: None,
+            last_recap: None,
             session_kind: None,
         };
         merged_session_to_row(m, &build_facet_registry())
@@ -682,6 +686,7 @@ mod tests {
             git_remotes: Vec::new(),
             source_workspace_dir: Some("/Users/me/xai-main".into()),
             last_turn_summary: None,
+            last_recap: None,
             session_kind: Some("worktree".into()),
         });
         let f = reg.extract_all(&local);
@@ -694,7 +699,7 @@ mod tests {
             Some(FacetValue::One(serde_json::Value::String(s))) if s == "/Users/me/xai-main"
         ));
 
-        // Conversations carry no local git enrichment.
+        // Conversations carry no local git data
         let conv = NormalizedItem::from_conversation(&Conversation {
             conversation_id: "c1".into(),
             ..Conversation::default()

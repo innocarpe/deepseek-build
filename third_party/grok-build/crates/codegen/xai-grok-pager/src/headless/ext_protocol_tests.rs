@@ -145,7 +145,7 @@ fn headless_task_completed_parses_task_id() {
 }
 
 #[test]
-fn headless_subagent_spawned_and_finished_parse() {
+fn headless_subagent_spawn_and_finish_decode_lifecycle_identity() {
     let spawned = make_ext_notif(
         "x.ai/session_notification",
         serde_json::json!({
@@ -159,7 +159,7 @@ fn headless_subagent_spawned_and_finished_parse() {
     );
     assert!(matches!(
         handle_ext_notification(&spawned),
-        ExtEvent::SubagentSpawned { subagent_id } if subagent_id == "sub-1"
+        ExtEvent::SubagentSpawned { subagent_id, attempt_id: None, event_seq: None } if subagent_id == "sub-1"
     ));
     let finished = make_ext_notif(
         "x.ai/session_notification",
@@ -175,7 +175,52 @@ fn headless_subagent_spawned_and_finished_parse() {
     );
     assert!(matches!(
         handle_ext_notification(&finished),
-        ExtEvent::SubagentFinished { subagent_id } if subagent_id == "sub-1"
+        ExtEvent::SubagentFinished { subagent_id, attempt_id: None, event_seq: None } if subagent_id == "sub-1"
+    ));
+
+    let sequenced = make_raw_ext_notif(
+        "x.ai/session_notification",
+        serde_json::json!({
+            "sessionId": "sess-1",
+            "update": {
+                "sessionUpdate": "subagent_spawned",
+                "subagent_id": "sub-1",
+                "attempt_id": "at1.one"
+            },
+            "_meta": { "eventId": "sess-1-42" }
+        }),
+    );
+    assert!(matches!(
+        handle_ext_notification(&sequenced),
+        ExtEvent::SubagentSpawned {
+            attempt_id: Some(attempt_id),
+            event_seq: Some(42),
+            ..
+        } if attempt_id == "at1.one"
+    ));
+}
+
+#[test]
+fn headless_subagent_progress_decodes_lifecycle_identity() {
+    let progress = make_raw_ext_notif(
+        "x.ai/session_notification",
+        serde_json::json!({
+            "sessionId": "sess-1",
+            "update": {
+                "sessionUpdate": "subagent_progress",
+                "subagent_id": "sub-1",
+                "attempt_id": "at1.one"
+            },
+            "_meta": { "eventId": "sess-1-43" }
+        }),
+    );
+    assert!(matches!(
+        handle_ext_notification(&progress),
+        ExtEvent::SubagentProgress {
+            attempt_id: Some(attempt_id),
+            event_seq: Some(43),
+            ..
+        } if attempt_id == "at1.one"
     ));
 }
 
@@ -417,7 +462,7 @@ fn headless_version_mismatch_logs_warn_with_both_versions() {
         "log names the method: {logs}"
     );
     let banner = crate::glyphs::sanitize_toast_message(
-        "⚠ Version mismatch: client 0.1.157, leader 0.1.150 — restart grok to match",
+        "⚠ Version mismatch: client 0.1.157, leader 0.1.150. Restart grok to match",
     );
     assert!(
         logs.contains(banner.as_ref()),
@@ -441,7 +486,7 @@ fn headless_version_mismatch_without_message_still_warns() {
     assert!(is_none);
     assert!(logs.contains("WARN"), "logged at warn level: {logs}");
     let banner = crate::glyphs::sanitize_toast_message(
-        "⚠ Version mismatch: client 0.1.157, leader 0.1.150 — restart grok to match",
+        "⚠ Version mismatch: client 0.1.157, leader 0.1.150. Restart grok to match",
     );
     assert!(
         logs.contains(banner.as_ref()),
@@ -534,6 +579,15 @@ fn ext_method_reply(
 /// `x.ai/ask_user_question` gets a typed `cancelled` reply on the wire;
 /// malformed params are still answered (known methods do not parse params).
 #[test]
+fn mcp_elicit_replies_cancelled() {
+    use xai_grok_tools::mcp_elicitation::McpElicitExtResponse;
+    let raw = ext_method_reply("x.ai/mcp/elicit", serde_json::json!({}))
+        .expect("policy reply, not an error");
+    let typed: McpElicitExtResponse = serde_json::from_str(raw.0.get()).expect("typed cancel");
+    assert!(matches!(typed, McpElicitExtResponse::Cancel));
+}
+
+#[test]
 fn ask_user_question_replies_cancelled() {
     use xai_grok_tools::implementations::grok_build::ask_user_question::AskUserQuestionExtResponse;
     for params in [
@@ -550,8 +604,7 @@ fn ask_user_question_replies_cancelled() {
     }
 }
 
-/// `x.ai/exit_plan_mode` is approved (no feedback) so the shell executes the
-/// exit and the model proceeds to implement.
+/// `x.ai/exit_plan_mode` is approved (no feedback) so the shell executes the exit and the model proceeds to implement.
 #[test]
 fn exit_plan_mode_replies_approved() {
     use xai_grok_tools::implementations::grok_build::exit_plan_mode::ExitPlanModeExtResponse;
@@ -566,8 +619,7 @@ fn exit_plan_mode_replies_approved() {
     assert!(parsed.feedback.is_none());
 }
 
-/// Unknown methods (including lookalikes of the known ones) get a
-/// MethodNotFound error carrying the method name — never a dropped channel.
+/// Unknown methods (including lookalikes of the known ones) get a MethodNotFound error carrying the method name, never a dropped channel.
 #[test]
 fn unknown_ext_method_replies_method_not_found() {
     for method in [
@@ -600,4 +652,64 @@ fn dropped_receiver_does_not_panic() {
         }
         .boxed(),
     );
+}
+
+#[test]
+fn headless_memory_flush_notifications_decode() {
+    use crate::headless::reducer::Lifecycle;
+
+    let started = make_ext_notif(
+        "x.ai/session/update",
+        serde_json::json!({ "sessionUpdate": "memory_flush_started" }),
+    );
+    assert!(matches!(
+        handle_ext_notification(&started),
+        ExtEvent::Lifecycle(Lifecycle::MemoryFlushStarted)
+    ));
+
+    let completed = make_ext_notif(
+        "x.ai/session/update",
+        serde_json::json!({
+            "sessionUpdate": "memory_flush_completed",
+            "result": "written",
+            "path": "/tmp/memory/sessions/log.md"
+        }),
+    );
+    match handle_ext_notification(&completed) {
+        ExtEvent::Lifecycle(Lifecycle::MemoryFlushCompleted { result, path }) => {
+            assert_eq!(result, "written");
+            assert_eq!(path.as_deref(), Some("/tmp/memory/sessions/log.md"));
+        }
+        _ => panic!("expected MemoryFlushCompleted"),
+    }
+}
+
+#[test]
+fn headless_memory_capture_activity_decodes_without_content() {
+    use crate::headless::reducer::Lifecycle;
+
+    let notification = make_ext_notif(
+        "x.ai/session/update",
+        serde_json::json!({
+            "sessionUpdate": "memory_capture_activity",
+            "activity": "running",
+            "from_turn": 2,
+            "through_turn": 5,
+            "attempt": 1
+        }),
+    );
+    match handle_ext_notification(&notification) {
+        ExtEvent::Lifecycle(Lifecycle::MemoryCaptureActivity {
+            activity,
+            from_turn,
+            through_turn,
+            attempt,
+            detail,
+        }) => {
+            assert_eq!(activity, "running");
+            assert_eq!((from_turn, through_turn, attempt), (2, 5, 1));
+            assert!(detail.is_none());
+        }
+        _ => panic!("expected MemoryCaptureActivity"),
+    }
 }

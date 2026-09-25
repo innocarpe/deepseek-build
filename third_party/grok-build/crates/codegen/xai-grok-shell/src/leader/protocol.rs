@@ -5,7 +5,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::cpu_profile::{ControlError, ProfileArtifactFormat};
 
-const MAX_MESSAGE_SIZE: u32 = 64 * 1024 * 1024; // 64MB
+const MAX_MESSAGE_SIZE: u32 = 64 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProtocolError {
@@ -74,19 +74,14 @@ where
     write_frame(writer, &data).await
 }
 
-/// Unique identifier for a connected client.
-///
-/// Each client gets a unique ID when connecting to the leader server.
+/// Unique identifier assigned to each client connecting to the leader server.
 /// IDs are monotonically increasing and wrap around at u64::MAX.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ClientId(pub u64);
 
 impl ClientId {
-    /// Generate a new unique client ID.
-    ///
-    /// Uses an atomic counter that wraps around at u64::MAX.
-    /// While collisions are theoretically possible after 2^64 IDs,
-    /// this is practically impossible in real-world usage.
+    /// Generate a new unique client ID from an atomic counter that wraps at u64::MAX.
+    /// Collisions would need 2^64 IDs, which never happens in practice.
     pub fn new() -> Self {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -110,20 +105,16 @@ impl Default for ClientId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClientMode {
-    /// Headless mode (grok agent, grok agent headless) - uses websocket relay.
-    /// Leader connects to websocket relay once and forwards messages.
+    /// Headless mode (grok agent, grok agent headless): the leader connects to the websocket relay once and forwards messages.
     Headless,
-    /// Stdio mode (grok agent stdio, grok -p) - uses local IPC.
-    /// Client sends/receives ACP messages directly via IPC.
+    /// Stdio mode (grok agent stdio, grok -p): the client sends and receives ACP messages directly via local IPC.
     Stdio,
 }
 
-/// Client capabilities reported during registration.
-///
-/// These capabilities are used by the leader to customize behavior for each client,
-/// such as injecting settings into session requests.
 pub const LEADER_PROTOCOL_VERSION: u32 = 1;
 
+/// Client capabilities reported during registration.
+/// The leader uses them to customize behavior per client, such as injecting settings into session requests.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ClientCapabilities {
     /// Auto-approve all tool executions without confirmation (YOLO mode).
@@ -131,35 +122,29 @@ pub struct ClientCapabilities {
     #[serde(default)]
     pub yolo_mode: bool,
 
-    /// Classifier permission mode (auto). When true and not yolo, the leader
-    /// injects `autoMode: true` into session/new and session/load `_meta`.
+    /// Classifier permission mode (auto).
+    /// When true and not yolo, the leader injects `autoMode: true` into session/new and session/load `_meta`.
     #[serde(default)]
     pub auto_mode: bool,
 
     /// Default model ID to use for new sessions.
-    /// When set, the leader will inject `modelId` into session/new requests
-    /// (only if the request doesn't already specify a modelId).
+    /// When set, the leader injects `modelId` into session/new requests that don't already specify one.
     #[serde(default)]
     pub default_model: Option<String>,
 
     /// Client binary version (e.g., "0.1.150").
-    /// Used by the leader to detect version mismatches after client auto-updates.
-    /// If the client version differs from the leader's version, a warning is logged.
+    /// The leader logs a warning when this differs from its own version, which happens after client auto-updates.
     #[serde(default)]
     pub client_version: Option<String>,
 
     /// Whether this client has advertised `x.ai/codeNavigation.enabled`.
-    /// When true, the leader injects `codeNavEnabled: true` into `session/new`
-    /// and `session/load` requests so the agent can gate code-nav startup on a
-    /// per-client basis rather than reading from shared last-initialized state.
+    /// When true, the leader injects `codeNavEnabled: true` into `session/new` and `session/load` requests.
+    /// The agent can then gate code-nav startup per client rather than reading shared last-initialized state.
     #[serde(default)]
     pub code_nav_enabled: bool,
 
-    /// Whether the client handles terminal ACP messages (create, output, kill, etc.).
-    /// When true, the leader injects `clientTerminal: true` into `session/new` and
-    /// `session/load` so the agent routes terminal commands to the client via ACP
-    /// instead of running them locally. Per-client so a TUI (`terminal: false`) and
-    /// a web client (`terminal: true`) sharing the same leader get independent routing.
+    /// Whether the client handles terminal ACP messages (create, output, kill, etc.). When true, the leader injects `clientTerminal: true` into `session/new` and `session/load`.
+    /// The agent then routes terminal commands to the client via ACP instead of running them locally. Per-client so a TUI (`terminal: false`) and a web client (`terminal: true`) sharing the same leader get independent routing.
     #[serde(default)]
     pub terminal: bool,
 
@@ -169,6 +154,18 @@ pub struct ClientCapabilities {
     pub fs_read: bool,
     #[serde(default)]
     pub fs_write: bool,
+
+    /// Whether this client will draw a status row (`x.ai/statusLine`). When true, the leader injects `clientStatusLine: true`.
+    /// The agent then builds the payload for a client that asked, not for whichever one started the process. The flag it sets is per session, so other subscribers of a shared session receive the payload too.
+    #[serde(default)]
+    pub status_line: bool,
+
+    /// Whether this client wants live `user_message_chunk` during a prompt (`x.ai/userMessageEcho`).
+    /// When true, the leader injects `clientUserMessageEcho: true`. False is omitted so a client
+    /// that advertised at initialize is not overridden (`grok agent` is persist-only).
+    /// The flag it sets is per session, so other subscribers of a shared session receive the echo too.
+    #[serde(default)]
+    pub user_message_echo: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -182,12 +179,125 @@ pub struct LeaderCapabilities {
     pub profile_formats: Vec<ProfileArtifactFormat>,
     #[serde(default)]
     pub workspace_exposure: bool,
-    /// Whether the leader supports [`ControlCommand::RelaunchForUpdate`] — a
-    /// disruptive, bounded-grace relaunch onto a freshly-installed binary
-    /// (driven by `grok update`). Old leaders default to `false`, so a new
-    /// client falls back to advising a manual restart (graceful degradation).
+    /// Whether the leader supports [`ControlCommand::RelaunchForUpdate`], a disruptive relaunch onto a freshly-installed binary driven by `grok update`.
+    /// Old leaders default to `false`, so a new client falls back to advising a manual restart.
     #[serde(default)]
     pub relaunch_v1: bool,
+    /// Whether the leader can run the worker door (`ControlCommand::CursorWorker*`).
+    /// `false` on leaders built without that support, which answer those commands with a `ControlError`.
+    #[serde(default)]
+    pub cursor_worker: bool,
+}
+
+/// Prefix of the `last_error` a `stopped_link_required` door reports: the worker crate's
+/// `TokenStop::LinkState` text, `<prefix><code> (<reason>)`, forwarded verbatim by the leader.
+/// Clients parse it until the status payload carries the code structurally; the `cursor-worker`
+/// build pins it against the crate's Display in `cursor_worker_tests`.
+pub const CURSOR_WORKER_HUB_REFUSAL_PREFIX: &str = "hub refused the cursor session: ";
+
+/// Bound on opening one worker door inside the leader (git in `claim::start`,
+/// the repository URL scan, the bridge spawn). `CursorWorkerStart` can open two
+/// kinds sequentially, so the first reply may take two of these plus a stop.
+pub const CURSOR_WORKER_DOOR_OPEN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// One worker claim in [`ControlPayload::CursorWorkerStatus`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CursorWorkerClaim {
+    pub bc_id: String,
+    /// `claimed`, `idle`, or `released`.
+    pub state: String,
+    pub worktree_path: String,
+    pub source_dir: String,
+    #[serde(default)]
+    pub controller_id: Option<String>,
+    pub claimed_at_ms: i64,
+    pub active_requests: u32,
+}
+
+/// One door's status in the `doors` list of [`ControlPayload::CursorWorkerStatus`]. `kind` is
+/// `bound` or `any_repo`; `state` is the same set as the flat `state` field, with `none` for a
+/// door that is not running (only its last open failure is reported then).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CursorWorkerDoorStatus {
+    pub kind: String,
+    pub state: String,
+    #[serde(default)]
+    pub worker_id: Option<String>,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    /// The registered working directory: the first worker dir (bound) or the clone root (any-repo).
+    #[serde(default)]
+    pub working_dir: Option<String>,
+    #[serde(default)]
+    pub worker_dirs: Vec<String>,
+    #[serde(default)]
+    pub cursor_api_base: Option<String>,
+    pub uptime_ms: u64,
+    #[serde(default)]
+    pub last_error: Option<String>,
+    #[serde(default)]
+    pub claims: Vec<CursorWorkerClaim>,
+}
+
+impl CursorWorkerDoorStatus {
+    /// A slot with no live door: open failed, or a whole-start refusal with no slot row.
+    pub fn not_running(kind: impl Into<String>, error: Option<String>) -> CursorWorkerDoorStatus {
+        CursorWorkerDoorStatus {
+            kind: kind.into(),
+            state: "none".to_owned(),
+            worker_id: None,
+            display_name: None,
+            working_dir: None,
+            worker_dirs: Vec::new(),
+            cursor_api_base: None,
+            uptime_ms: 0,
+            last_error: error,
+            claims: Vec::new(),
+        }
+    }
+}
+
+/// One door's summary in [`CursorWorkerSummary::doors`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CursorWorkerDoorSummary {
+    pub kind: String,
+    pub state: String,
+    pub claims: u32,
+    #[serde(default)]
+    pub last_error: Option<String>,
+}
+
+impl CursorWorkerDoorSummary {
+    pub fn not_running(kind: impl Into<String>, error: Option<String>) -> CursorWorkerDoorSummary {
+        CursorWorkerDoorSummary {
+            kind: kind.into(),
+            state: "none".to_owned(),
+            claims: 0,
+            last_error: error,
+        }
+    }
+}
+
+/// Cursor worker summary in [`ControlPayload::LeaderInfo`]. The flat fields mirror the bound
+/// door, else the first running door, else the `none` state. `doors` is empty only from
+/// leaders that predate the two-door split; a current leader that refused before any slot
+/// still emits one `none` row carrying `last_start_error`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CursorWorkerSummary {
+    pub state: String,
+    pub claims: u32,
+    #[serde(default)]
+    pub doors: Vec<CursorWorkerDoorSummary>,
+}
+
+/// Arguments of [`ControlCommand::CursorWorkerStart`] and of the leader boot hook. Fields left
+/// empty fall back to the `[cursor_worker]` table on the leader.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct CursorWorkerStartArgs {
+    pub name: Option<String>,
+    pub worker_dirs: Vec<String>,
+    pub max_agents: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -211,14 +321,13 @@ pub enum ControlCommand {
     WorkspaceResume,
     WorkspaceStop,
     WorkspaceStatus,
-    /// Ask the leader to relaunch onto a freshly-installed binary (driven by
-    /// `grok update`). The leader stops admitting new turns, waits a bounded
-    /// grace period for in-flight turns to finish, flushes session state, then
-    /// exits with [`ShutdownReason::AutoUpdate`] so connected clients reconnect
-    /// onto the new binary and restore their sessions via `session/load`.
-    ///
-    /// `to_version` is the version `grok update` just installed; the leader uses
-    /// it to decline if it is already running that version or newer.
+    /// Register the leader as a worker. Idempotent for identical arguments on a live door; different arguments, or a door that stopped, restart it.
+    CursorWorkerStart(CursorWorkerStartArgs),
+    CursorWorkerStop,
+    CursorWorkerStatus,
+    /// Ask the leader to relaunch onto a freshly-installed binary (driven by `grok update`). The leader stops admitting new turns, waits a bounded grace period for in-flight turns, and flushes session state.
+    /// It then exits with [`ShutdownReason::AutoUpdate`] so connected clients reconnect onto the new binary and restore sessions via `session/load`.
+    /// `to_version` is the version `grok update` just installed; the leader declines if it already runs that version or newer.
     RelaunchForUpdate {
         to_version: String,
     },
@@ -241,6 +350,9 @@ pub enum ControlPayload {
         cpu_profile_stopping: bool,
         profile_started_at: Option<String>,
         profile_formats: Vec<ProfileArtifactFormat>,
+        /// `None` from leaders that predate the worker door.
+        #[serde(default)]
+        cursor_worker: Option<CursorWorkerSummary>,
     },
     CpuProfileStatus {
         active: bool,
@@ -274,16 +386,37 @@ pub enum ControlPayload {
         sessions: Vec<String>,
         pid: u32,
     },
-    /// Ack for [`ControlCommand::RelaunchForUpdate`]: the leader accepted the
-    /// request and will exit after a bounded grace period of `grace_ms`.
+    /// `state` is one of `none`, `connecting`, `registered`, `reconnecting`, `stopped_link_required`, `stopped_hub_unavailable`, `stopped_unimplemented`.
+    /// The flat fields mirror the bound door, else the first running door, else the `none` state,
+    /// for clients that predate `doors`; `doors` carries one entry per door and is empty from
+    /// leaders that predate the two-door split.
+    CursorWorkerStatus {
+        state: String,
+        #[serde(default)]
+        worker_id: Option<String>,
+        #[serde(default)]
+        display_name: Option<String>,
+        #[serde(default)]
+        worker_dirs: Vec<String>,
+        #[serde(default)]
+        cursor_api_base: Option<String>,
+        uptime_ms: u64,
+        #[serde(default)]
+        last_error: Option<String>,
+        #[serde(default)]
+        claims: Vec<CursorWorkerClaim>,
+        #[serde(default)]
+        doors: Vec<CursorWorkerDoorStatus>,
+        pid: u32,
+    },
+    /// Ack for [`ControlCommand::RelaunchForUpdate`]: the leader accepted the request and will exit after a bounded grace period of `grace_ms`.
     Relaunching {
         from_version: String,
         to_version: String,
         grace_ms: u64,
     },
-    /// Response to [`ControlCommand::RelaunchForUpdate`] when the leader will not
-    /// relaunch — e.g. it is already running `to_version` or newer, or a relaunch
-    /// is already in progress.
+    /// Response to [`ControlCommand::RelaunchForUpdate`] when the leader will not relaunch.
+    /// E.g. it is already running `to_version` or newer, or a relaunch is already in progress.
     RelaunchDeclined { reason: String },
 }
 
@@ -292,7 +425,6 @@ pub enum ControlPayload {
 pub enum ClientMessage {
     Register {
         client_type: String,
-        /// Client mode determines how leader handles this client's communication
         mode: ClientMode,
         #[serde(default)]
         capabilities: ClientCapabilities,
@@ -309,23 +441,15 @@ pub enum ClientMessage {
 }
 
 /// Reason for a planned leader shutdown, sent with [`ServerMessage::ShuttingDown`].
-///
-/// ## Runtime status
-///
-/// | Variant | Emitted today? | Notes |
-/// |---------|---------------|-------|
-/// | `AutoUpdate` | **Yes** — when `run_auto_update_checker` triggers shutdown | |
-/// | `Manual` | **Yes** — default for SIGTERM, test cancellation, all other paths | |
-/// | `IdleTimeout` | **No** — reserved for a future idle-timeout feature | |
+/// ## Runtime status | Variant | Emitted today? | Notes | |---------|---------------|-------| | `AutoUpdate` | **Yes** — when `run_auto_update_checker` triggers shutdown | | | `Manual` | **Yes** — default for SIGTERM, test cancellation, all other paths | | | `IdleTimeout` | **No** — reserved for a future idle-timeout feature | |
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ShutdownReason {
     /// Leader is shutting down to install a downloaded binary auto-update.
-    /// Clients should reconnect immediately via `connect_or_spawn`; the new binary
-    /// will be picked up automatically.
+    /// Clients should reconnect immediately via `connect_or_spawn`; the new binary is picked up automatically.
     AutoUpdate,
-    /// Reserved for a future idle-timeout feature (no active clients for a configurable
-    /// duration). **Not emitted in the current implementation.**
+    /// Reserved for a future idle-timeout feature (no active clients for a configurable duration).
+    /// **Not emitted in the current implementation.**
     IdleTimeout,
     /// Unspecified or externally-triggered shutdown (SIGTERM, programmatic cancel, etc.).
     Manual,
@@ -336,16 +460,12 @@ fn default_ready() -> bool {
     true
 }
 
-/// New fields must use `#[serde(default)]` — the leader and client can run different binary versions.
+/// New fields must use `#[serde(default)]`; the leader and client can run different binary versions.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
-    /// Registration confirmation.
-    ///
-    /// `ready` indicates whether the leader has already completed its startup
-    /// (auth + model prefetch). When `ready = false` the client **must** wait for a
-    /// subsequent [`LeaderReady`](Self::LeaderReady) message before sending any ACP
-    /// traffic — the server will hold the connection open until the leader is ready.
+    /// Registration confirmation. `ready` indicates whether the leader has already completed its startup (auth and model prefetch).
+    /// When `ready = false` the client **must** wait for a subsequent [`LeaderReady`](Self::LeaderReady) message before sending any ACP traffic. The server holds the connection open until the leader is ready.
     Registered {
         client_id: u64,
         /// Whether the leader is fully initialised and ready to forward ACP traffic.
@@ -370,26 +490,18 @@ pub enum ServerMessage {
         code: i32,
         message: String,
     },
-    /// Advance notice of a planned shutdown. Sent before [`Shutdown`](Self::Shutdown)
-    /// to give clients time to prepare for reconnection.
-    ///
-    /// Clients should treat this as a signal that [`Shutdown`](Self::Shutdown) is
-    /// imminent and pre-arm their reconnection handlers (e.g. show a banner).
+    /// Advance notice of a planned shutdown.
+    /// Sent before [`Shutdown`](Self::Shutdown) to give clients time to prepare for reconnection.
+    /// Clients should treat this as a signal that [`Shutdown`](Self::Shutdown) is imminent and prepare their reconnection handlers (e.g. show a banner).
     ShuttingDown {
         reason: ShutdownReason,
-        /// Milliseconds until the actual [`Shutdown`](Self::Shutdown) message.
-        ///
-        /// **Currently always `0`** — the server sends `Shutdown` immediately after
-        /// `ShuttingDown` with no intervening sleep. Clients must not rely on this
-        /// field providing a real grace window in the current implementation; treat
-        /// `ShuttingDown` as equivalent to an imminent `Shutdown` regardless of this
-        /// value.
+        /// Milliseconds until the actual [`Shutdown`](Self::Shutdown) message. **Currently always `0`**: the server sends `Shutdown` immediately after `ShuttingDown` with no intervening sleep.
+        /// Clients must not rely on this field providing a real grace window. Treat `ShuttingDown` as an imminent `Shutdown` regardless of this value.
         delay_ms: u64,
     },
     Shutdown,
-    /// Sent by the server after a `Registered { ready: false }` once the leader
-    /// finishes initialising. The client should treat this as the signal that
-    /// ACP traffic will now be forwarded correctly.
+    /// Sent by the server after a `Registered { ready: false }` once the leader finishes initialising.
+    /// The client should treat this as the signal that ACP traffic will now be forwarded correctly.
     LeaderReady,
 }
 
@@ -426,8 +538,7 @@ impl InternalMethod {
         Self::iter().find(|method| method.name() == name)
     }
 
-    /// The decoder routes a custom method to `ext_method` / `ext_notification`
-    /// only when it carries the `_` prefix, and rejects the bare name.
+    /// The decoder routes a custom method to `ext_method` or `ext_notification` only when it carries the `_` prefix, and rejects the bare name.
     fn wire_name(self) -> String {
         format!("_{}", self.name())
     }
@@ -577,8 +688,7 @@ mod tests {
             msg,
             ServerMessage::Registered {
                 client_id: 7,
-                // `ready` defaults to `true` via `default_ready()` — old leaders
-                // that predate the field are already initialised.
+                // `ready` defaults to `true` via `default_ready()`: old leaders that predate the field are already initialised
                 ready: true,
                 leader_protocol_version: None,
                 leader_binary_version: None,
@@ -600,6 +710,7 @@ mod tests {
                 profile_formats: vec![ProfileArtifactFormat::Svg],
                 workspace_exposure: true,
                 relaunch_v1: true,
+                cursor_worker: true,
             }),
         };
 
@@ -618,6 +729,7 @@ mod tests {
                     profile_formats,
                     workspace_exposure: true,
                     relaunch_v1: true,
+                    cursor_worker: true,
                 }),
             } if profile_formats == vec![ProfileArtifactFormat::Svg]
         ));
@@ -625,10 +737,9 @@ mod tests {
 
     #[test]
     fn profile_artifact_format_serde_names_are_stable() {
-        // Wire compat contract: `svg` must stay decodable (old leaders
-        // advertise it), and `folded` is the name new binaries will start
-        // advertising once the fleet can decode it. Renaming either variant
-        // breaks the Registered handshake across version skew.
+        // Wire compat contract: `svg` must stay decodable (old leaders advertise it)
+        // `folded` is the name new binaries will start advertising once the fleet can decode it
+        // Renaming either variant breaks the Registered handshake across version skew
         assert_eq!(
             serde_json::to_string(&ProfileArtifactFormat::Svg).unwrap(),
             "\"svg\""
@@ -674,6 +785,7 @@ mod tests {
                 cpu_profile_active: false,
                 cpu_profile_stopping: false,
                 profile_started_at: None,
+                cursor_worker: None,
                 ..
             }
         ));
@@ -752,6 +864,192 @@ mod tests {
         let json = r#"{"control_v1":true,"runtime_cpu_profile":false,"profile_formats":[]}"#;
         let caps: LeaderCapabilities = serde_json::from_str(json).unwrap();
         assert!(!caps.workspace_exposure);
+        assert!(!caps.cursor_worker);
+    }
+
+    #[tokio::test]
+    async fn cursor_worker_control_command_roundtrip() {
+        let (mut client, mut server) = duplex(1024);
+        let args = CursorWorkerStartArgs {
+            name: Some("devbox".into()),
+            worker_dirs: vec!["/home/u/proj".into()],
+            max_agents: Some(2),
+        };
+        let msg = ClientMessage::Control {
+            request_id: "cw-1".into(),
+            command: ControlCommand::CursorWorkerStart(args.clone()),
+        };
+
+        write_message(&mut client, &msg).await.unwrap();
+        let received: ClientMessage = read_message(&mut server).await.unwrap();
+
+        assert!(matches!(
+            received,
+            ClientMessage::Control {
+                request_id,
+                command: ControlCommand::CursorWorkerStart(received_args),
+            } if request_id == "cw-1" && received_args == args
+        ));
+    }
+
+    /// The newtype variant must stay wire-identical to a struct variant: the tag and the
+    /// argument fields share one flat object.
+    #[test]
+    fn cursor_worker_start_serializes_flat() {
+        let command = ControlCommand::CursorWorkerStart(CursorWorkerStartArgs {
+            name: Some("devbox".into()),
+            worker_dirs: vec!["/home/u/proj".into()],
+            max_agents: Some(2),
+        });
+        assert_eq!(
+            serde_json::json!({
+                "type": "cursor_worker_start",
+                "name": "devbox",
+                "worker_dirs": ["/home/u/proj"],
+                "max_agents": 2,
+            }),
+            serde_json::to_value(&command).unwrap()
+        );
+    }
+
+    #[test]
+    fn cursor_worker_start_defaults_every_argument() {
+        let decoded: ControlCommand =
+            serde_json::from_str(r#"{"type":"cursor_worker_start"}"#).unwrap();
+        assert_eq!(
+            ControlCommand::CursorWorkerStart(CursorWorkerStartArgs::default()),
+            decoded
+        );
+        let stop: ControlCommand =
+            serde_json::from_str(r#"{"type":"cursor_worker_stop"}"#).unwrap();
+        assert_eq!(ControlCommand::CursorWorkerStop, stop);
+        let status: ControlCommand =
+            serde_json::from_str(r#"{"type":"cursor_worker_status"}"#).unwrap();
+        assert_eq!(ControlCommand::CursorWorkerStatus, status);
+    }
+
+    #[test]
+    fn cursor_worker_status_payload_roundtrip() {
+        let claim = CursorWorkerClaim {
+            bc_id: "bc-1".into(),
+            state: "claimed".into(),
+            worktree_path: "/home/u/.grok/worktrees/proj/cursor-bc-1".into(),
+            source_dir: "/home/u/proj".into(),
+            controller_id: Some("ctrl-1".into()),
+            claimed_at_ms: 1_762_000_000_000,
+            active_requests: 1,
+        };
+        let payload = ControlPayload::CursorWorkerStatus {
+            state: "registered".into(),
+            worker_id: Some("3f1c3b2e-0000-4000-8000-000000000000".into()),
+            display_name: Some("devbox".into()),
+            worker_dirs: vec!["/home/u/proj".into()],
+            cursor_api_base: Some("https://cursor.example".into()),
+            uptime_ms: 4200,
+            last_error: None,
+            claims: vec![claim.clone()],
+            doors: vec![
+                CursorWorkerDoorStatus {
+                    kind: "bound".into(),
+                    state: "registered".into(),
+                    worker_id: Some("3f1c3b2e-0000-4000-8000-000000000000".into()),
+                    display_name: Some("devbox".into()),
+                    working_dir: Some("/home/u/proj".into()),
+                    worker_dirs: vec!["/home/u/proj".into()],
+                    cursor_api_base: Some("https://cursor.example".into()),
+                    uptime_ms: 4200,
+                    last_error: None,
+                    claims: vec![claim],
+                },
+                CursorWorkerDoorStatus {
+                    kind: "any_repo".into(),
+                    state: "none".into(),
+                    worker_id: None,
+                    display_name: None,
+                    working_dir: None,
+                    worker_dirs: Vec::new(),
+                    cursor_api_base: None,
+                    uptime_ms: 0,
+                    last_error: Some("cursor any-repo id: unwritable".into()),
+                    claims: Vec::new(),
+                },
+            ],
+            pid: 4242,
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        let decoded: ControlPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(payload, decoded);
+        assert!(json.contains("\"type\":\"cursor_worker_status\""));
+        assert!(json.contains("\"kind\":\"any_repo\""));
+    }
+
+    /// An old leader sends no `doors`; a new CLI must decode its payload with an empty list.
+    #[test]
+    fn cursor_worker_status_payload_defaults_optional_fields() {
+        let json = r#"{"type":"cursor_worker_status","state":"none","uptime_ms":0,"pid":1}"#;
+        let decoded: ControlPayload = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            ControlPayload::CursorWorkerStatus {
+                state: "none".into(),
+                worker_id: None,
+                display_name: None,
+                worker_dirs: Vec::new(),
+                cursor_api_base: None,
+                uptime_ms: 0,
+                last_error: None,
+                claims: Vec::new(),
+                doors: Vec::new(),
+                pid: 1,
+            },
+            decoded
+        );
+    }
+
+    #[test]
+    fn cursor_worker_claim_defaults_controller_id() {
+        let json = r#"{"bc_id":"b","state":"idle","worktree_path":"/w","source_dir":"/s","claimed_at_ms":1,"active_requests":0}"#;
+        let decoded: CursorWorkerClaim = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            CursorWorkerClaim {
+                bc_id: "b".into(),
+                state: "idle".into(),
+                worktree_path: "/w".into(),
+                source_dir: "/s".into(),
+                controller_id: None,
+                claimed_at_ms: 1,
+                active_requests: 0,
+            },
+            decoded
+        );
+    }
+
+    #[test]
+    fn leader_info_cursor_worker_summary_roundtrip() {
+        let summary = CursorWorkerSummary {
+            state: "registered".into(),
+            claims: 2,
+            doors: vec![CursorWorkerDoorSummary {
+                kind: "bound".into(),
+                state: "registered".into(),
+                claims: 2,
+                last_error: None,
+            }],
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let decoded: CursorWorkerSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(summary, decoded);
+
+        // An old leader's summary carries no `doors`.
+        let legacy: CursorWorkerSummary =
+            serde_json::from_str(r#"{"state":"none","claims":0}"#).unwrap();
+        assert_eq!(
+            CursorWorkerSummary {
+                state: "none".into(),
+                claims: 0,
+                doors: Vec::new(),
+            },
+            legacy
+        );
     }
 
     #[test]
@@ -794,7 +1092,9 @@ mod tests {
             ] {
                 let json: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
                 assert_eq!(
-                    json["method"].as_str().and_then(|m| m.strip_prefix('_')),
+                    json.get("method")
+                        .and_then(|v| v.as_str())
+                        .and_then(|m| m.strip_prefix('_')),
                     Some(method.name()),
                     "unroutable wire method: {line}"
                 );

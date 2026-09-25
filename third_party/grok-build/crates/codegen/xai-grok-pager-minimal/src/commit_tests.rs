@@ -1,14 +1,14 @@
-//! Unit tests for [`super`] — minimal mode's commit pipeline.
+//! Unit tests for [`super`], minimal mode's commit pipeline.
 //!
-//! Split out of `commit.rs` to keep the production module scannable; the
-//! `#[path]` attribute there keeps this a plain child module (`super::*` still
-//! reaches the private items under test).
+//! Split out of `commit.rs` to keep the production module scannable.
+//! The `#[path]` attribute there keeps this a plain child module (`super::*` still reaches the private items under test).
 
 use super::*;
 use ratatui::style::Color;
 use xai_grok_pager::scrollback::block::RenderBlock;
 use xai_grok_pager::scrollback::entry::ScrollbackEntry;
 use xai_grok_pager::scrollback::state::ScrollbackState;
+use xai_grok_pager_diff::DiffLine;
 
 fn test_cwd() -> &'static std::path::Path {
     std::path::Path::new("/test/session")
@@ -49,7 +49,7 @@ fn commits_leading_finalized_run_and_stops_at_running() {
     s.push(finalized("a"));
     s.push(finalized("b"));
     s.push(running("c"));
-    s.push(finalized("d")); // after the running block — must NOT commit yet
+    s.push(finalized("d")); // after the running block: must NOT commit yet
 
     assert_eq!(commit_collect(&mut s), vec![0, 1]);
     assert_eq!(minimal_api::commit_scan_cursor(&s), 2);
@@ -82,24 +82,20 @@ fn pending_user_input_holds_the_frontier() {
 
 #[test]
 fn running_agent_message_commits_once_a_later_block_exists() {
-    // The tracker leaves an agent message's `is_running` flag set until turn
-    // end (handle_tool_call resets current_agent_msg without finishing the
-    // entry when a tool follows). Minimal must still commit that message
-    // mid-turn once a later block proves it's complete — otherwise the rest
-    // of the turn piles up in the fixed-height live tail and scrolls instead
-    // of accumulating into native scrollback.
+    // The tracker leaves an agent message's `is_running` flag set until turn end handle_tool_call resets
+    // current_agent_msg without finishing the entry when a tool follows. Otherwise the rest of the turn piles up in
+    // the live tail and scrolls instead of accumulating into native scrollback.
     let mut s = ScrollbackState::new();
     s.push(ScrollbackEntry::running(RenderBlock::agent_message(
         "answer text",
     )));
 
-    // While it's the last entry it may still be streaming → stays live.
+    // While it's the last entry it may still be streaming, so it stays live
     assert_eq!(commit_collect(&mut s), Vec::<usize>::new());
     assert_eq!(minimal_api::commit_scan_cursor(&s), 0);
 
-    // A later block (the tracker moved on) proves the message is done → it
-    // commits even though its is_running flag still lingers. The new
-    // last/running entry stays in the live tail.
+    // A later tool (the tracker moved on) proves the message is done, so it commits even though its is_running flag still lingers
+    // The new last/running entry stays in the live tail
     s.push(running("tool"));
     assert_eq!(commit_collect(&mut s), vec![0]);
     assert!(minimal_api::is_committed(&s, s.get(0).unwrap()));
@@ -107,13 +103,51 @@ fn running_agent_message_commits_once_a_later_block_exists() {
 }
 
 #[test]
+fn interleaved_thinking_does_not_commit_a_still_streaming_agent_message() {
+    // After a long subagent the model often emits a first response token, then more thinking, then the rest of the sentence
+    // Thinking is pushed *after* the live agent entry without resetting `current_agent_msg`, so later chunks still append
+    // "Any later block" used to trip print-once and freeze "The user" / "That" on the terminal while the rest of the stream landed only in memory
+    let mut s = ScrollbackState::new();
+    let msg = s.push(ScrollbackEntry::running(RenderBlock::agent_message(
+        "The user",
+    )));
+    s.push(ScrollbackEntry::running(RenderBlock::thinking_streaming()));
+
+    assert_eq!(
+        commit_collect(&mut s),
+        Vec::<usize>::new(),
+        "interleaved thinking must not freeze the still-open agent stream"
+    );
+    assert!(!minimal_api::is_committed(&s, s.get(0).unwrap()));
+    assert_eq!(minimal_api::commit_scan_cursor(&s), 0);
+
+    // Later tokens still append to the same entry (`current_agent_msg` is still set)
+    // Committing at the thinking boundary would have left this suffix invisible on the print-once terminal
+    assert!(s.push_chunk_to_agent(msg, " asked me to wait."));
+    assert_eq!(commit_collect(&mut s), Vec::<usize>::new());
+    match &s.get(0).unwrap().block {
+        RenderBlock::AgentMessage(m) => {
+            assert_eq!(m.text(), "The user asked me to wait.");
+        }
+        other => panic!("expected agent message, got {other:?}"),
+    }
+
+    // A later tool is the real "tracker moved on" signal: now the prefix (whatever has arrived) is complete and must leave the live tail
+    s.push(ScrollbackEntry::running(RenderBlock::execute("true")));
+    assert_eq!(commit_collect(&mut s), vec![0]);
+    assert!(minimal_api::is_committed(&s, s.get(0).unwrap()));
+    assert!(!minimal_api::is_committed(&s, s.get(1).unwrap()));
+    assert!(!minimal_api::is_committed(&s, s.get(2).unwrap()));
+}
+
+#[test]
 fn running_tool_still_holds_the_frontier_even_with_a_later_block() {
-    // The agent-message relaxation must NOT extend to tools: a running tool
-    // can still update its result, so committing it (print-once) would lose
-    // the update. It holds the frontier regardless of later blocks.
+    // The agent-message relaxation must NOT extend to tools
+    // A running tool can still update its result, so committing it (print-once) would lose the update
+    // It holds the frontier regardless of later blocks
     let mut s = ScrollbackState::new();
     s.push(finalized("a"));
-    s.push(running("running tool")); // stub == not an AgentMessage
+    s.push(running("running tool")); // the stub block is not an AgentMessage
     s.push(finalized("after"));
     assert_eq!(commit_collect(&mut s), vec![0]);
     assert_eq!(minimal_api::commit_scan_cursor(&s), 1);
@@ -126,7 +160,7 @@ fn plan_body_anchored_above_a_parked_tool_commits_while_it_is_still_running() {
     let tool = s.push(running("exit_plan_mode")); // parked on the decision
     s.insert_block_before(tool, RenderBlock::agent_message("PLAN BODY"));
 
-    // Prompt + plan commit; the running tool row still holds the frontier.
+    // Prompt and plan commit; the running tool row still holds the frontier
     assert_eq!(commit_collect(&mut s), vec![0, 1]);
     assert_eq!(minimal_api::commit_scan_cursor(&s), 2);
     assert!(matches!(
@@ -136,8 +170,7 @@ fn plan_body_anchored_above_a_parked_tool_commits_while_it_is_still_running() {
     assert!(minimal_api::is_committed(&s, s.get(1).unwrap()));
     assert!(!minimal_api::is_committed(&s, s.get(2).unwrap()));
 
-    // Answering the prompt finalizes the tool row, which then commits once,
-    // in its finished form — and the plan is NOT re-emitted.
+    // Answering the prompt finalizes the tool row, which then commits once, in its finished form; the plan is NOT re-emitted
     s.get_mut(2).unwrap().mark_completed();
     assert_eq!(commit_collect(&mut s), vec![2]);
     assert!(!scan_frontier(&s, false).will_commit);
@@ -145,15 +178,13 @@ fn plan_body_anchored_above_a_parked_tool_commits_while_it_is_still_running() {
 
 #[test]
 fn anchored_plan_body_is_not_left_in_the_live_tail() {
-    // Whatever the commit pass prints must leave the live tail, or the plan is
-    // painted under the prompt AND printed above it.
+    // Whatever the commit pass prints must leave the live tail, or the plan is painted under the prompt AND printed above it
     let mut s = ScrollbackState::new();
     s.push(finalized("user prompt"));
     let tool = s.push(running("exit_plan_mode"));
     s.insert_block_before(tool, RenderBlock::agent_message("PLAN BODY"));
 
-    // Sizing pass: the tail is just the tool row (index 2), and a commit is
-    // pending for the two entries above it.
+    // Sizing pass: the tail is just the tool row (index 2), and a commit is pending for the two entries above it
     let before = scan_frontier(&s, true);
     assert_eq!(before.tail_start, 2, "plan is excluded from the live tail");
     assert!(before.will_commit);
@@ -179,19 +210,15 @@ fn revised_plan_anchors_to_its_own_tool_row_and_neither_plan_re_emits() {
 
     // Tool #1 and plan two commit; tool #2 holds the frontier.
     assert_eq!(commit_collect(&mut s), vec![1, 2]);
-    // A third pass re-emits nothing.
     assert!(commit_collect(&mut s).is_empty());
     assert_eq!(minimal_api::commit_scan_cursor(&s), 3);
 }
 
 #[test]
 fn bg_task_started_commits_while_running_and_does_not_wedge_frontier() {
-    // A fresh background task is pushed as a running "started" block
-    // (`set_last_running(true)`). Its `is_running` flag is animation-only —
-    // the block is a finalized lifecycle event whose content never changes —
-    // so it must commit immediately even mid-turn. Otherwise it wedges the
-    // frontier and the task (plus everything after it) stays hidden in the
-    // live tail until the task finishes (the reported dogfood bug).
+    // Its `is_running` flag is animation-only: the block is a finalized lifecycle event whose content never changes.
+    // It must commit immediately even mid-turn. Otherwise it wedges the frontier and the task (plus everything after
+    // it) stays hidden in the live tail until the task finishes.
     let mut s = ScrollbackState::new();
     s.push(finalized("a"));
     s.push(ScrollbackEntry::running(RenderBlock::bg_task(
@@ -199,7 +226,7 @@ fn bg_task_started_commits_while_running_and_does_not_wedge_frontier() {
     )));
     s.push(running("later tool")); // more turn output after the bg task
 
-    // "a" + the running bg task commit; only the trailing running tool stays.
+    // "a" and the running bg task commit; only the trailing running tool stays
     assert_eq!(commit_collect(&mut s), vec![0, 1]);
     assert!(minimal_api::is_committed(&s, s.get(1).unwrap()));
     assert!(!minimal_api::is_committed(&s, s.get(2).unwrap()));
@@ -207,9 +234,8 @@ fn bg_task_started_commits_while_running_and_does_not_wedge_frontier() {
 
 #[test]
 fn bg_task_started_commits_as_last_running_entry() {
-    // Even as the last entry of a still-running turn the bg "started" block
-    // commits — a lifecycle block never streams more content (completion is
-    // a separate block).
+    // Even as the last entry of a still-running turn the bg "started" block commits
+    // A lifecycle block never streams more content (completion is a separate block)
     let mut s = ScrollbackState::new();
     s.push(finalized("a"));
     s.push(ScrollbackEntry::running(RenderBlock::bg_task(
@@ -227,9 +253,8 @@ fn no_double_commit_after_mid_list_shift_remove() {
     assert_eq!(commit_collect(&mut s), vec![0, 1, 2]);
     assert_eq!(minimal_api::commit_scan_cursor(&s), 3);
 
-    // Remove an already-committed entry below the cursor (shift_remove shifts
-    // the remaining indices down). The cursor is clamped; the per-entry
-    // `committed` flags travel with "b"/"c", so neither is re-emitted.
+    // Remove an already-committed entry below the cursor (shift_remove shifts the remaining indices down)
+    // The cursor is clamped; the per-entry `committed` flags travel with "b"/"c", so neither is re-emitted
     assert!(s.remove_entry(a));
     s.push(finalized("d")); // now at index 2
 
@@ -241,18 +266,14 @@ fn no_double_commit_after_mid_list_shift_remove() {
 
 #[test]
 fn mid_list_removal_below_cursor_does_not_strand_uncommitted_entries() {
-    // Regression (review bug 2): a committed placeholder ("Loading
-    // session...") is removed AFTER new uncommitted entries were appended
-    // past the cursor — the `/resume` / reconnect `SessionLoaded` ordering.
-    // Removing below the cursor shifts the uncommitted entries down one;
-    // without the cursor decrement in `remove_entry` the first of them
-    // slid below the cursor and was never committed NOR drawn in the live
-    // tail (silently missing from minimal mode).
+    // Regression: a committed placeholder ("Loading session.") is removed AFTER new uncommitted entries were appended
+    // past the cursor. Without the cursor decrement in `remove_entry` the first of them slid below the cursor. It was
+    // never committed NOR drawn in the live tail (silently missing from minimal mode).
     let mut s = ScrollbackState::new();
     s.push(finalized("old-1"));
     let placeholder = s.push(finalized("Loading session..."));
 
-    // A draw commits both; cursor = 2.
+    // A draw commits both; the cursor lands at 2
     let mut seen = Vec::new();
     commit_leading_run(&mut s, false, |_, i| {
         seen.push(i);
@@ -261,15 +282,14 @@ fn mid_list_removal_below_cursor_does_not_strand_uncommitted_entries() {
     assert_eq!(seen, vec![0, 1]);
     assert_eq!(minimal_api::commit_scan_cursor(&s), 2);
 
-    // Replay appends entries, then the placeholder is removed in the same
-    // event cycle (before the next commit pass).
+    // Replay appends entries, then the placeholder is removed in the same event cycle (before the next commit pass)
     s.push(finalized("replayed-A"));
     s.push(finalized("replayed-B"));
     assert!(s.remove_entry(placeholder));
     // The cursor moved down with the shifted entries.
     assert_eq!(minimal_api::commit_scan_cursor(&s), 1);
 
-    // The next pass commits BOTH replayed entries — none stranded.
+    // The next pass commits BOTH replayed entries; none are stranded
     let mut seen = Vec::new();
     commit_leading_run(&mut s, false, |_, i| {
         seen.push(i);
@@ -282,11 +302,9 @@ fn mid_list_removal_below_cursor_does_not_strand_uncommitted_entries() {
 
 #[test]
 fn pending_user_input_holds_the_frontier_even_when_idle() {
-    // A block awaiting a permission / question answer must never commit,
-    // even if the turn state reads idle (e.g. a prompt outliving its turn):
-    // its rendered form still changes when the prompt resolves, and a
-    // committed copy is frozen. The idle relaxation only applies to
-    // *stale-running* flags, not pending-input marks.
+    // A block awaiting a permission / question answer must never commit, even if the turn state reads idle (e.g. a prompt outliving its turn).
+    // Its rendered form still changes when the prompt resolves, and a committed copy is frozen
+    // The idle relaxation only applies to *stale-running* flags, not pending-input marks
     let mut s = ScrollbackState::new();
     s.push(finalized("a"));
     let tool = s.push(finalized("tool"));
@@ -312,10 +330,9 @@ fn pending_user_input_holds_the_frontier_even_when_idle() {
 
 #[test]
 fn failed_emit_leaves_entry_uncommitted_for_retry() {
-    // Regression (bugbot "Committed flag set on IO failure"): a terminal
-    // write failure must NOT mark the entry committed — print-once means a
-    // marked-but-unprinted block can never be emitted again. The walk stops
-    // with the cursor before the failed entry and retries next frame.
+    // Regression: a terminal write failure must NOT mark the entry committed
+    // Print-once means a marked-but-unprinted block can never be emitted again
+    // The walk stops with the cursor before the failed entry and retries next frame
     let mut s = ScrollbackState::new();
     s.push(finalized("a"));
     s.push(finalized("b"));
@@ -340,15 +357,14 @@ fn failed_emit_leaves_entry_uncommitted_for_retry() {
 
 #[test]
 fn scan_frontier_mirrors_commit_leading_run() {
-    // `scan_frontier` (read-only: viewport sizing + the will-commit gate)
-    // must agree exactly with the mutating walk, in every phase.
+    // `scan_frontier` (read-only: viewport sizing and the will-commit gate) must agree exactly with the mutating walk, in every phase
     let mut s = ScrollbackState::new();
     s.push(finalized("a"));
     s.push(finalized("b"));
     s.push(running("c"));
     s.push(finalized("d"));
 
-    // Pre-commit: the pass would commit a+b and stop at the running entry.
+    // Pre-commit: the pass would commit "a" and "b" and stop at the running entry
     let scan = scan_frontier(&s, true);
     assert!(scan.will_commit);
     assert_eq!(scan.tail_start, 2);
@@ -376,9 +392,8 @@ fn remove_from_below_frontier_then_push_still_commits() {
     s.push(finalized("c"));
     assert_eq!(commit_collect(&mut s), vec![0, 1, 2]);
 
-    // Rewind: drop everything from index 1 (keep only "a"). Without the
-    // cursor clamp this would strand the cursor at 3 and silently skip the
-    // next pushes.
+    // Rewind: drop everything from index 1 (keep only "a")
+    // Without the cursor clamp this would strand the cursor at 3 and silently skip the next pushes
     let removed = s.remove_from(1);
     assert_eq!(removed.len(), 2);
     assert_eq!(minimal_api::commit_scan_cursor(&s), 1);
@@ -449,11 +464,9 @@ fn commit_leading_run_advances_frontier_and_marks_committed_once() {
 
 #[test]
 fn idle_turn_commits_past_stale_running_entry() {
-    // Regression for the missing-edit/stuck-spinner bug: the agent tracker
-    // can leave an entry's `is_running` flag set after the turn ends (e.g. a
-    // thinking block whose finalize was missed at the thinking→tool
-    // transition). While the turn runs, that entry correctly holds the
-    // frontier; once the turn is idle the frontier must advance past it.
+    // Regression for the missing-edit/stuck-spinner bug: the agent tracker can leave an entry's `is_running` flag set after the turn ends
+    // For example, a thinking block's finalize can be missed at the thinking-to-tool transition
+    // While the turn runs, that entry correctly holds the frontier; once the turn is idle the frontier must advance past it
     let mut s = ScrollbackState::new();
     s.push(finalized("a"));
     s.push(running("stale")); // stale is_running flag
@@ -489,12 +502,8 @@ fn clear_resets_the_frontier() {
     assert_eq!(minimal_api::commit_scan_cursor(&s), 0);
 }
 
-/// Height-exactness guard (design K5 / risk #1). `commit_active` reserves
-/// exactly `desired_height(width)` rows via `insert_before`; if `render`
-/// paints real content beyond that, those rows are silently clipped (lost)
-/// from native scrollback. Render each block type into an over-tall buffer
-/// and assert no non-space glyph lands past `desired_height`. (Background
-/// fill of blank spaces past `h` is fine — only real content matters.)
+/// Height-exactness guard: `commit_active` reserves exactly `desired_height(width)` rows via `insert_before`. only
+/// real content matters.
 fn assert_committed_fits(label: &str, block: RenderBlock, width: u16) {
     let mut entry = ScrollbackEntry::new(block);
     entry.set_display_mode(minimal_commit_display_mode(
@@ -515,9 +524,8 @@ fn assert_committed_fits_entry(label: &str, entry: &ScrollbackEntry, width: u16)
     let renderer = minimal_renderer(entry, &theme, appearance, test_cwd(), COMMITTED_TICK);
     let h = renderer.desired_height(width);
     assert!(h > 0, "{label}@{width}: desired_height was 0");
-    // The accent bar and background fill intentionally stretch to the given
-    // area height (chrome, not content). Only the content columns
-    // (x >= chrome_width) carry real text that `insert_before` would clip.
+    // The accent bar and background fill intentionally stretch to the given area height (chrome, not content)
+    // Only the content columns (x >= chrome_width) carry real text that `insert_before` would clip
     let chrome = renderer.chrome_width();
 
     let extra = 8u16;
@@ -557,7 +565,9 @@ fn committed_block_uses_owning_session_cwd_for_tool_paths() {
     let mut text = String::new();
     for y in 0..height {
         for x in 0..width {
-            text.push_str(buf[(x, y)].symbol());
+            if let Some(cell) = buf.cell((x, y)) {
+                text.push_str(cell.symbol());
+            }
         }
     }
     assert!(text.contains("src/main.rs"), "rendered text: {text:?}");
@@ -570,8 +580,7 @@ fn committed_block_uses_owning_session_cwd_for_tool_paths() {
 #[test]
 fn committed_blocks_fit_desired_height() {
     // Thinking blocks render zero rows unless `show_thinking_blocks` is on.
-    // The toggle is a thread-local, so pin it on here so the thinking
-    // block's committed height is actually exercised.
+    // The toggle is a thread-local, so pin it on here so the thinking block's committed height is actually exercised
     minimal_api::set_show_thinking_blocks(true);
 
     let long = "Hello there — this is a longer message that should wrap across \
@@ -609,10 +618,8 @@ fn committed_blocks_fit_desired_height() {
     }
 }
 
-/// Regression pinned: `md_style::to_anstyle` used to map `Color::Reset`
-/// to a concrete ANSI-7 silver, washing out assistant/thinking markdown
-/// body text on light terminals; `highlight_bash_command` leaked raw
-/// syntect RGB.
+/// Regression pinned: `md_style::to_anstyle` used to map `Color::Reset` to a concrete ANSI-7 silver.
+/// That washed out assistant/thinking markdown body text on light terminals; `highlight_bash_command` leaked raw syntect RGB.
 #[test]
 fn terminal_native_lock_paints_only_native_colors() {
     use ratatui::buffer::Buffer;
@@ -636,19 +643,19 @@ fn terminal_native_lock_paints_only_native_colors() {
               - item one\n- item two\n\n> a quote\n\n```rust\nfn main() { println!(\"hi\"); }\n```";
     use similar::ChangeTag;
     let hunk = vec![
-        xai_grok_pager::diff::DiffLine {
+        DiffLine {
             text: "let x = 1;\n".into(),
             lo: 1,
             ln: 1,
             tag: ChangeTag::Equal,
         },
-        xai_grok_pager::diff::DiffLine {
+        DiffLine {
             text: "let y = 2;\n".into(),
             lo: 2,
             ln: 0,
             tag: ChangeTag::Delete,
         },
-        xai_grok_pager::diff::DiffLine {
+        DiffLine {
             text: "let y = 3;\n".into(),
             lo: 0,
             ln: 2,
@@ -712,9 +719,8 @@ fn large_commit_is_capped_with_footer() {
 
     let theme = Theme::current();
     let appearance = committed_appearance(&AppearanceConfig::default());
-    // A tall block: a fenced code block keeps each line on its own row
-    // (markdown would otherwise join soft-wrapped prose into one paragraph),
-    // so the block is comfortably taller than the cap.
+    // A tall block: a fenced code block keeps each line on its own row (markdown would otherwise join soft-wrapped prose into one paragraph)
+    // The block is comfortably taller than the cap
     let lines: Vec<String> = (0..60).map(|i| format!("line {i}")).collect();
     let body = format!("```\n{}\n```", lines.join("\n"));
     let mut entry = ScrollbackEntry::new(RenderBlock::agent_message(body));
@@ -729,10 +735,9 @@ fn large_commit_is_capped_with_footer() {
     let cap = 12u16;
     let area = Rect::new(0, 0, width, cap);
     let mut buf = Buffer::empty(area);
-    paint_committed(&mut buf, renderer, width, full_h, theme.dim());
+    paint_committed(&mut buf, &renderer, width, full_h, theme.dim());
 
-    // The final row is the overflow footer naming the hidden line count and
-    // pointing at /transcript; the buffer is exactly `cap` rows (bounded).
+    // The final row is the overflow footer naming the hidden line count and pointing at /transcript; the buffer is exactly `cap` rows (bounded)
     let last: String = (0..width)
         .filter_map(|x| buf.cell((x, cap - 1)).map(|c| c.symbol().to_string()))
         .collect();
@@ -760,10 +765,10 @@ fn small_commit_is_not_capped() {
     let renderer = minimal_renderer(&entry, &theme, appearance, test_cwd(), COMMITTED_TICK);
     let full_h = renderer.desired_height(width);
 
-    // Buffer is exactly the block's height → no footer (uncapped path).
+    // Buffer is exactly the block's height, so there is no footer (uncapped path)
     let area = Rect::new(0, 0, width, full_h);
     let mut buf = Buffer::empty(area);
-    paint_committed(&mut buf, renderer, width, full_h, theme.dim());
+    paint_committed(&mut buf, &renderer, width, full_h, theme.dim());
 
     let mut all = String::new();
     for y in 0..full_h {
@@ -782,7 +787,13 @@ fn committed_edit_keeps_diff_line_backgrounds() {
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
     use similar::ChangeTag;
-    use xai_grok_pager::diff::DiffLine;
+    use xai_grok_pager::theme::cache as theme_cache;
+
+    // EditToolCallBlock::rendered_output reads Theme::current(), not the renderer theme.
+    // pin_theme serializes against terminal_native_lock_paints_only_native_colors so this
+    // comparison cannot see Reset insert/delete bands from a concurrent native-lock flip.
+    let _pin = theme_cache::pin_theme();
+    theme_cache::set_terminal_native_lock(false);
 
     let hunk = vec![
         DiffLine {
@@ -810,10 +821,14 @@ fn committed_edit_keeps_diff_line_backgrounds() {
             tag: ChangeTag::Equal,
         },
     ];
-    let _theme = xai_grok_pager::theme::cache::pin_theme();
     let block = RenderBlock::edit_with_hunks("src/main.rs", vec![hunk]);
     let mut entry = ScrollbackEntry::new(block);
     let theme = Theme::current();
+    assert!(
+        !theme.diff_uses_line_fg(),
+        "this regression needs a banded theme; terminal-native is covered by \
+         terminal_native_lock_paints_only_native_colors"
+    );
     let appearance = committed_appearance(&AppearanceConfig::default());
     entry.set_display_mode(minimal_commit_display_mode(&entry.block, &appearance));
     let renderer = minimal_renderer(&entry, &theme, appearance, test_cwd(), COMMITTED_TICK);
@@ -822,11 +837,10 @@ fn committed_edit_keeps_diff_line_backgrounds() {
     let h = renderer.desired_height(width);
     let area = Rect::new(0, 0, width, h);
     let mut buf = Buffer::empty(area);
-    renderer.render(area, &mut buf);
+    paint_committed(&mut buf, &renderer, width, h, theme.dim());
 
-    // The committed edit uses a flat background (terminal transparency), but
-    // must still paint per-line diff styling — banded themes use backgrounds,
-    // while terminal-default/bandless themes use whole-line foregrounds.
+    // The committed edit uses a flat background (terminal transparency), but must still paint per-line diff styling
+    // Banded themes use backgrounds; terminal-default/bandless themes use whole-line foregrounds
     let mut saw_insert_bg = false;
     let mut saw_delete_bg = false;
     let mut saw_insert_fg = false;
@@ -860,13 +874,25 @@ fn committed_edit_keeps_diff_line_backgrounds() {
             "committed edit lost the delete (red) diff background"
         );
     }
+
+    let wraps = commit_wrap_flags(&renderer, buf.area.height, h);
+    let rows = crate::full_view::buffer_to_semantic_rows(&buf, &wraps);
+    match theme.diff_insert_bg {
+        Color::Rgb(r, g, b) => {
+            let needle = format!("48;2;{r};{g};{b}");
+            assert!(
+                rows.iter().any(|(ansi, _, _)| ansi.contains(&needle)),
+                "committed ANSI must keep the insert band SGR {needle}: {rows:?}"
+            );
+        }
+        bg => panic!("pin_theme TrueColor groknight insert bg should be RGB, got {bg:?}"),
+    }
 }
 
-/// Asserted through `chrome_width` because that is what both `desired_height`
-/// and `render` subtract from the wrap width — one column is the whole cost of
-/// the rail, which is why restoring it is height-safe (K5).
+/// Asserted through `chrome_width` because that is what both `desired_height` and `render` subtract from the wrap width.
+/// With the reasoning rail moved into the body rows (`rail_under_bullet`), no block reserves the accent column, so every block's chrome starts flush at column 0.
 #[test]
-fn only_thinking_spends_the_accent_column() {
+fn no_block_spends_the_accent_column() {
     let theme = Theme::current();
     let appearance = committed_appearance(&AppearanceConfig::default());
     let chrome = |entry: &ScrollbackEntry| {
@@ -880,13 +906,8 @@ fn only_thinking_spends_the_accent_column() {
         .chrome_width()
     };
 
-    assert_eq!(
-        chrome(&ScrollbackEntry::new(RenderBlock::thinking("reasoning"))),
-        1,
-        "reasoning reserves the 1-col accent gutter"
-    );
-
     for block in [
+        RenderBlock::thinking("reasoning"),
         RenderBlock::agent_message("answer"),
         RenderBlock::user_prompt("ask"),
         RenderBlock::execute("ls"),
@@ -898,18 +919,24 @@ fn only_thinking_spends_the_accent_column() {
         assert_eq!(
             chrome(&entry),
             0,
-            "only reasoning may spend the accent column: {:?}",
+            "no block may spend the accent column: {:?}",
             entry.block
         );
     }
 
-    // A column is reserved only where the block actually paints one. Reserving
-    // without painting leaves the content indented over a blank gutter — which
-    // is what a collapsed reasoning header did while `hide_accent` keyed off
-    // the block type alone.
+    // The rail is body chrome now: an open reasoning block leads with its header bullet at column 0
+    // and carries the rail on the rows below it, never a rail beside the header (the pre-`rail_under_bullet` look)
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
     let rail = xai_grok_pager::glyphs::accent_bar();
+    let bullet = appearance
+        .scrollback
+        .blocks
+        .tool
+        .bullet
+        .char()
+        .expect("minimal keeps the tool bullet")
+        .to_string();
     minimal_api::set_show_thinking_blocks(true);
     for mode in [
         DisplayMode::Collapsed,
@@ -928,25 +955,35 @@ fn only_thinking_spends_the_accent_column() {
             test_cwd(),
             COMMITTED_TICK,
         );
-        let reserved = renderer.chrome_width();
         let h = renderer.desired_height(60);
         let area = Rect::new(0, 0, 60, h);
         let mut buf = Buffer::empty(area);
         renderer.render(area, &mut buf);
-        let painted = buf.cell((0, 0)).expect("first cell").symbol() == rail;
 
+        // Every mode leads with the header's bullet, flush at column 0.
         assert_eq!(
-            reserved == 1,
-            painted,
-            "{mode:?}: reserved a column={} but painted the rail={painted} — a \
-             reserved-but-unpainted column is a blank indent",
-            reserved == 1,
+            buf.cell((0, 0)).expect("first cell").symbol(),
+            bullet,
+            "{mode:?}: the header bullet must sit at column 0"
         );
+        // Open modes run the rail down every row below the header; collapsed
+        // has no body to delimit and stays a single rail-free header row.
+        if mode == DisplayMode::Collapsed {
+            assert_eq!(h, 1, "collapsed reasoning is its one-line header");
+        } else {
+            for y in 1..h {
+                assert_eq!(
+                    buf.cell((0, y)).expect("body cell").symbol(),
+                    rail,
+                    "{mode:?}: row {y} must carry the rail under the bullet"
+                );
+            }
+        }
     }
 }
 
 #[test]
-fn committed_thinking_paints_a_dim_rail_in_column_zero() {
+fn committed_thinking_paints_a_dim_rail_under_the_bullet() {
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
     use ratatui::style::Modifier;
@@ -987,8 +1024,9 @@ fn committed_thinking_paints_a_dim_rail_in_column_zero() {
     renderer.render(area, &mut buf);
 
     let rail = xai_grok_pager::glyphs::accent_bar();
-    for y in 0..h {
-        let cell = buf.cell((0, y)).expect("accent cell");
+    // Row 0 is the header (`◆ Thought…`) — the rail starts under its bullet.
+    for y in 1..h {
+        let cell = buf.cell((0, y)).expect("rail cell");
         assert_eq!(cell.symbol(), rail, "row {y} lost the rail");
         assert!(
             cell.modifier.contains(Modifier::DIM),
@@ -1120,7 +1158,7 @@ fn collapsed_thinking_commit_is_one_advertised_row() {
         &collapsed_appearance(),
     ));
     assert_eq!(entry.display_mode(), DisplayMode::Collapsed);
-    // The mode `commit_active` records for the Ctrl+E ring.
+    // This is the mode `commit_active` records for the Ctrl+E ring
     assert!(matches!(
         entry.display_mode(),
         DisplayMode::Collapsed | DisplayMode::Truncated
@@ -1155,8 +1193,221 @@ fn collapsed_thinking_commit_is_one_advertised_row() {
     assert_eq!(renderer.desired_height(16), 1);
 }
 
-/// K5 guard: reasoning committed collapsed must still fit its reserved
-/// `insert_before` height.
+/// Unbreakable path token: slashed paths wrap at `/` before the last column and cannot prove wrap-join.
+const YAML_UNBREAKABLE: &str = "falcon_missions_nrol97_trajectory_nrol97.mat_unbreakable";
+
+fn yaml_commit_body() -> String {
+    format!(
+        "```yaml\n\
+nrol97:\n\
+  trajectory: {YAML_UNBREAKABLE}\n\
+  mission_number: 1667\n\
+  builds:\n\
+    - cgen_swrelease\n\
+```"
+    )
+}
+
+fn paint_yaml_agent(width: u16, trim: bool) -> (ratatui::buffer::Buffer, u16, Vec<bool>) {
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+
+    let theme = Theme::current();
+    let appearance = committed_appearance(&AppearanceConfig::default());
+    let mut entry = ScrollbackEntry::new(RenderBlock::agent_message(yaml_commit_body()));
+    entry.set_display_mode(minimal_commit_display_mode(&entry.block, &appearance));
+    let renderer = minimal_renderer(&entry, &theme, appearance, test_cwd(), COMMITTED_TICK);
+    let full_h = renderer.desired_height(width);
+    let area = Rect::new(0, 0, width, full_h);
+    let mut buf = Buffer::empty(area);
+    if trim {
+        paint_committed(&mut buf, &renderer, width, full_h, theme.dim());
+    } else {
+        renderer.render(area, &mut buf);
+    }
+    let wraps = renderer.row_soft_wraps(buf.area.height);
+    (buf, full_h, wraps)
+}
+
+fn row_text(buf: &ratatui::buffer::Buffer, y: u16, width: u16) -> String {
+    (0..width)
+        .filter_map(|x| buf.cell((x, y)).map(|c| c.symbol().to_string()))
+        .collect()
+}
+
+#[test]
+fn dense_commit_grid_pads_short_yaml_rows() {
+    let width = 40u16;
+    let (buf, h, _wraps) = paint_yaml_agent(width, false);
+    let mut saw_short_key = false;
+    for y in 0..h {
+        let text = row_text(&buf, y, width);
+        if !text.contains("nrol97:") || text.contains("trajectory") {
+            continue;
+        }
+        saw_short_key = true;
+        let last = buf
+            .cell((width - 1, y))
+            .map(|c| c.symbol().to_string())
+            .unwrap_or_default();
+        assert_eq!(
+            last, " ",
+            "untrimmed short YAML row must space-pad to the last column: {text:?}"
+        );
+    }
+    assert!(
+        saw_short_key,
+        "expected a short nrol97: row in {h} painted rows"
+    );
+}
+
+#[test]
+fn paint_committed_trims_pads_and_semantic_copy_keeps_yaml_intact() {
+    let width = 40u16;
+    let (buf, h, wraps) = paint_yaml_agent(width, true);
+    let mut saw_short_key = false;
+    for y in 0..h {
+        let text = row_text(&buf, y, width);
+        if !text.contains("nrol97:") || text.contains("trajectory") {
+            continue;
+        }
+        saw_short_key = true;
+        let last_vis =
+            crate::full_view::last_visible_column(&buf, y).expect("nrol97: row has glyphs");
+        assert!(
+            last_vis < width.saturating_sub(1),
+            "short YAML key must not serialize painted pads as full width: last_vis={last_vis} {text:?}"
+        );
+    }
+    assert!(saw_short_key, "expected a short nrol97: row after trim");
+
+    assert!(
+        wraps.iter().any(|w| *w),
+        "unbreakable YAML path must produce a wrap joiner"
+    );
+    let copy = crate::full_view::buffer_to_semantic_copy(&buf, &wraps);
+    assert!(
+        copy.contains(YAML_UNBREAKABLE),
+        "soft-wrapped path must join\n{copy}"
+    );
+    assert!(
+        !copy.contains("nrol97:\n\n"),
+        "trailing pads must not become blank lines between keys\n{copy}"
+    );
+    assert!(
+        copy.contains("mission_number: 1667"),
+        "short keys stay intact\n{copy}"
+    );
+}
+
+#[test]
+fn semantic_copy_exact_width_hard_break_code_lines_stay_separate() {
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+
+    let width = 40u16;
+    let line_a = "A".repeat(usize::from(width));
+    let line_b = "B".repeat(usize::from(width));
+    let body = format!("```\n{line_a}\n{line_b}\n```");
+    let theme = Theme::current();
+    let appearance = committed_appearance(&AppearanceConfig::default());
+    let mut entry = ScrollbackEntry::new(RenderBlock::agent_message(body));
+    entry.set_display_mode(minimal_commit_display_mode(&entry.block, &appearance));
+    let renderer = minimal_renderer(&entry, &theme, appearance, test_cwd(), COMMITTED_TICK);
+    let full_h = renderer.desired_height(width);
+    let area = Rect::new(0, 0, width, full_h);
+    let mut buf = Buffer::empty(area);
+    paint_committed(&mut buf, &renderer, width, full_h, theme.dim());
+    let wraps = renderer.row_soft_wraps(buf.area.height);
+    let copy = crate::full_view::buffer_to_semantic_copy(&buf, &wraps);
+    assert!(
+        copy.contains(&format!("{line_a}\n{line_b}")),
+        "exact-width hard breaks must stay separate lines\n{copy}"
+    );
+    assert!(
+        !copy.contains(&format!("{line_a}{line_b}")),
+        "native copy must not concatenate exact-width code lines\n{copy}"
+    );
+}
+
+#[test]
+fn capped_footer_does_not_join_wrapped_line() {
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+
+    let width = 20u16;
+    let body = YAML_UNBREAKABLE;
+    let theme = Theme::current();
+    let appearance = committed_appearance(&AppearanceConfig::default());
+    let mut entry = ScrollbackEntry::new(RenderBlock::agent_message(body));
+    entry.set_display_mode(minimal_commit_display_mode(&entry.block, &appearance));
+    let renderer = minimal_renderer(&entry, &theme, appearance, test_cwd(), COMMITTED_TICK);
+    let full_h = renderer.desired_height(width);
+    assert!(full_h > 2, "unbreakable token must wrap, got {full_h}");
+
+    let cap = 2u16;
+    let area = Rect::new(0, 0, width, cap);
+    let mut buf = Buffer::empty(area);
+    paint_committed(&mut buf, &renderer, width, full_h, theme.dim());
+
+    let raw = renderer.row_soft_wraps(cap);
+    assert!(
+        raw.first().copied().unwrap_or(false),
+        "precondition: first painted row wraps onto the overwritten continuation: {raw:?}"
+    );
+    let wraps = commit_wrap_flags(&renderer, cap, full_h);
+    assert!(
+        !wraps.iter().any(|w| *w),
+        "cap footer must not inherit a wrap joiner: {wraps:?}"
+    );
+
+    let copy = crate::full_view::buffer_to_semantic_copy(&buf, &wraps);
+    for line in copy.lines() {
+        if line.contains("more lines") {
+            assert!(
+                !line.contains("falcon") && !line.contains("nrol"),
+                "footer must not join the wrapped path\n{copy}"
+            );
+        }
+    }
+    assert!(copy.contains("more lines"), "footer present\n{copy}");
+}
+
+/// A full-width multiline command uses `joiner: Some("\n")`. That is not WRAPLINE.
+#[test]
+fn semantic_copy_multiline_command_keeps_newline_joiners() {
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+
+    let width = 40u16;
+    let line_a = "A".repeat(usize::from(width.saturating_sub(2)));
+    let line_b = "B".repeat(usize::from(width.saturating_sub(2)));
+    let theme = Theme::current();
+    let appearance = committed_appearance(&AppearanceConfig::default());
+    let mut entry = ScrollbackEntry::new(RenderBlock::execute(format!("{line_a}\n{line_b}")));
+    entry.set_display_mode(minimal_commit_display_mode(&entry.block, &appearance));
+    let renderer = minimal_renderer(&entry, &theme, appearance, test_cwd(), COMMITTED_TICK);
+    let full_h = renderer.desired_height(width);
+    let area = Rect::new(0, 0, width, full_h);
+    let mut buf = Buffer::empty(area);
+    paint_committed(&mut buf, &renderer, width, full_h, theme.dim());
+    let wraps = renderer.row_soft_wraps(buf.area.height);
+    assert!(
+        !wraps.iter().any(|w| *w),
+        "command `\\n` joiners must not set WRAPLINE: {wraps:?}"
+    );
+    let copy = crate::full_view::buffer_to_semantic_copy(&buf, &wraps);
+    assert!(
+        copy.contains('A') && copy.contains('B') && copy.contains("A\n"),
+        "native copy must keep the command separator\n{copy}"
+    );
+    assert!(
+        !copy.contains("A    B") && !copy.contains(&format!("{line_a}{line_b}")),
+        "native copy must not concatenate multiline commands\n{copy}"
+    );
+}
+
+/// Reasoning committed collapsed must still fit its reserved `insert_before` height.
 #[test]
 fn collapsed_thinking_commit_fits_desired_height() {
     minimal_api::set_show_thinking_blocks(true);

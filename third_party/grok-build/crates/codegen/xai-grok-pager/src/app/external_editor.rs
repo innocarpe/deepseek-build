@@ -1,6 +1,4 @@
-//! External-editor request and prompt-draft lifecycle.
-//!
-//! Prompt files are materialized at TTY handoff and removed by `Drop`.
+//! Prompt files are created just before the editor child takes the TTY and removed by `Drop`.
 
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
@@ -151,7 +149,7 @@ fn revalidate(app: &mut AppView, request: PendingEditorRequest) -> Option<Pendin
     let access = app
         .agents
         .get(&agent_id)
-        .map(|agent| agent.external_prompt_editor_access(true));
+        .map(|agent| agent.external_prompt_editor_access());
     let message = if app.voice_recording_target()
         == Some(crate::app::app_view::VoiceTarget::Agent(agent_id))
     {
@@ -288,8 +286,19 @@ pub(crate) fn finish(
             file,
             ..
         } => {
+            // Editors append a final newline on save only when the buffer doesn't already end with one
+            // The newline is editor-added exactly when the draft lacked one, so strip that single one
+            let strip_editor_newline = !original_text.ends_with('\n');
             let outcome = match editor_result {
-                Ok(status) if status.success() => file.read(),
+                Ok(status) if status.success() => file.read().map(|mut text| {
+                    if strip_editor_newline && text.ends_with('\n') {
+                        text.pop();
+                        if text.ends_with('\r') {
+                            text.pop();
+                        }
+                    }
+                    text
+                }),
                 Ok(_) => Err(PROMPT_EDITOR_NONZERO),
                 Err(error) => {
                     tracing::warn!(%error, "external prompt editor: child failed");
@@ -348,6 +357,16 @@ pub(crate) fn report_prompt_failure(app: &mut AppView, agent_id: AgentId, messag
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn get_agent(
+        app: &AppView,
+        id: crate::app::agent::AgentId,
+    ) -> &crate::app::agent_view::AgentView {
+        let Some(a) = app.agents.get(&id) else {
+            panic!("missing agent {id:?}");
+        };
+        a
+    }
 
     fn success_status() -> std::process::ExitStatus {
         #[cfg(unix)]
@@ -464,7 +483,7 @@ mod tests {
         app.screen_mode = crate::app::ScreenMode::Fullscreen;
         finish_prepare_error(&mut app, error());
         assert_eq!(
-            app.agents[&id]
+            get_agent(&app, id)
                 .toast
                 .as_ref()
                 .map(|(text, _)| text.as_str()),
@@ -475,7 +494,7 @@ mod tests {
         app.screen_mode = crate::app::ScreenMode::Minimal;
         finish_prepare_error(&mut app, error());
         assert!(
-            app.agents[&id]
+            get_agent(&app, id)
                 .scrollback
                 .iter_entries()
                 .any(|(_, entry)| entry.block.searchable_text().as_deref() == Some(message))
@@ -495,7 +514,7 @@ mod tests {
         };
         assert!(prepare(&mut app, request).unwrap().is_none());
         assert!(
-            app.agents[&id]
+            get_agent(&app, id)
                 .scrollback
                 .iter_entries()
                 .any(|(_, entry)| entry.block.searchable_text().as_deref() == Some(VOICE_MESSAGE))
@@ -512,7 +531,7 @@ mod tests {
         };
         assert!(prepare(&mut app, request).unwrap().is_none());
         assert!(
-            app.agents[&id]
+            get_agent(&app, id)
                 .scrollback
                 .iter_entries()
                 .any(|(_, entry)| entry.block.searchable_text().as_deref() == Some(VOICE_MESSAGE))
@@ -526,7 +545,7 @@ mod tests {
         app.agents.get_mut(&id).unwrap().paste_probe_in_flight = 1;
         assert!(prepare(&mut app, request).unwrap().is_none());
         assert!(
-            app.agents[&id]
+            get_agent(&app, id)
                 .scrollback
                 .iter_entries()
                 .any(|(_, entry)| entry.block.searchable_text().as_deref() == Some(PASTE_MESSAGE))
@@ -554,20 +573,75 @@ mod tests {
             file,
         };
         finish(&mut app, prepared, Ok(success_status()));
-        assert_eq!(app.agents[&id].prompt.text(), "edited\n");
+        assert_eq!(
+            get_agent(&app, id).prompt.text(),
+            "edited",
+            "the editor's final newline is stripped"
+        );
 
         app.agents.get_mut(&id).unwrap().prompt.set_text("newer");
         apply_prompt_outcome(&mut app, id, "original".to_owned(), Ok("stale".to_owned()));
-        assert_eq!(app.agents[&id].prompt.text(), "newer");
+        assert_eq!(get_agent(&app, id).prompt.text(), "newer");
 
         apply_prompt_outcome(&mut app, id, "newer".to_owned(), Err(PROMPT_EDITOR_NONZERO));
-        assert_eq!(app.agents[&id].prompt.text(), "newer");
+        assert_eq!(get_agent(&app, id).prompt.text(), "newer");
         assert!(
-            app.agents[&id]
+            get_agent(&app, id)
                 .scrollback
                 .iter_entries()
                 .any(|(_, entry)| entry.block.searchable_text().as_deref()
                     == Some(PROMPT_EDITOR_NONZERO))
+        );
+    }
+
+    /// The trailing-newline strip tells an editor-added newline from one the draft already had.
+    /// Editors append a final newline only when the buffer doesn't already end with one.
+    /// So a draft that ended with '\n' keeps it, and a blank line the user adds to a newline-less draft survives as exactly one '\n'.
+    #[test]
+    fn finish_preserves_a_drafts_own_trailing_newline() {
+        let id = AgentId(0);
+        let mut app = crate::app::app_view::tests::test_app();
+        let mut agent = crate::test_util::make_agent_view(Some("session"), "/work");
+        agent.session.id = id;
+        app.agents.insert(id, agent);
+        app.active_view = ActiveView::Agent(id);
+
+        // The draft ends with '\n': the file was saved as-is, so nothing is stripped
+        app.agents.get_mut(&id).unwrap().prompt.set_text("line\n");
+        let file = PromptEditorFile::create("edited\n").unwrap();
+        let prepared = PreparedEditorRequest::PromptDraft {
+            launch: EditorLaunch {
+                argv: vec!["editor".to_owned()],
+                path: file.path().to_path_buf(),
+            },
+            agent_id: id,
+            original_text: "line\n".to_owned(),
+            file,
+        };
+        finish(&mut app, prepared, Ok(success_status()));
+        assert_eq!(
+            get_agent(&app, id).prompt.text(),
+            "edited\n",
+            "a draft's own trailing newline survives the round trip"
+        );
+
+        // Newline-less draft, the user appends a blank line: the editor saved "text\n\n"; only the editor-added final '\n' is stripped
+        app.agents.get_mut(&id).unwrap().prompt.set_text("text");
+        let file = PromptEditorFile::create("text\n\n").unwrap();
+        let prepared = PreparedEditorRequest::PromptDraft {
+            launch: EditorLaunch {
+                argv: vec!["editor".to_owned()],
+                path: file.path().to_path_buf(),
+            },
+            agent_id: id,
+            original_text: "text".to_owned(),
+            file,
+        };
+        finish(&mut app, prepared, Ok(success_status()));
+        assert_eq!(
+            get_agent(&app, id).prompt.text(),
+            "text\n",
+            "a deliberately added trailing blank line survives as one newline"
         );
     }
 

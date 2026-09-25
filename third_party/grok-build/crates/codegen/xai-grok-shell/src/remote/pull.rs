@@ -26,7 +26,7 @@ pub async fn pull_session_to_local(
         None => return Ok(PullResult::NotFound),
     };
 
-    // cwd required for local dir placement; null means pre-writeback session.
+    // cwd is required for local dir placement; null means the session predates cwd writeback
     let cwd = match remote.cwd.as_ref() {
         Some(cwd) => cwd,
         None => {
@@ -40,6 +40,10 @@ pub async fn pull_session_to_local(
         cwd: cwd.clone(),
     };
     let dir = crate::session::persistence::session_dir(&info);
+    // Create the owner-only `<encoded-cwd>` dir up front (best-effort)
+    if let Err(e) = crate::util::grok_home::ensure_sessions_cwd_dir(cwd) {
+        tracing::warn!(?e, "failed to ensure sessions cwd dir for pulled session");
+    }
 
     let num_messages = hydrate::write_to_dir(&dir, &loaded)?;
 
@@ -54,7 +58,9 @@ pub(crate) mod hydrate {
 
     use crate::remote::client::{BackendError, LoadDataResponse, LoadedMessage, SessionInfo};
     use crate::session::info::Info;
-    use crate::session::persistence::{CHAT_FORMAT_VERSION, Summary, default_model_id};
+    use crate::session::persistence::{
+        CHAT_FORMAT_VERSION, Summary, default_model_id, sanitize_and_cap_title,
+    };
     use crate::session::storage::{SUMMARY_FILE, UPDATES_FILE};
 
     fn io_err(path: &Path, source: std::io::Error) -> BackendError {
@@ -79,7 +85,7 @@ pub(crate) mod hydrate {
             cwd: remote.cwd.clone().expect("caller verified cwd is Some"),
         };
 
-        std::fs::create_dir_all(dir).map_err(|e| io_err(dir, e))?;
+        crate::util::grok_home::create_dir_all_owner_only(dir).map_err(|e| io_err(dir, e))?;
 
         let num_messages = loaded.messages.as_ref().map_or(0, |m| m.len());
         let mut num_chat_messages = 0;
@@ -116,13 +122,37 @@ pub(crate) mod hydrate {
             .and_then(|v| v.as_str())
             .map(String::from);
 
-        let summary = Summary {
+        // Pull does not go through the rename extension, so strip and cap here before this reaches `display_name` `save_session_data` writes the metadata blob, not the session-row title (`upsert` there passes title=None)
+        // Prefer an explicit blob title, including blank (meaning cleared), so a stale row cannot resurrect a pin or clobber a metadata-only rename
+        let remote_title = match meta.and_then(|m| m.get("title")) {
+            Some(v) => v.as_str().and_then(sanitize_and_cap_title),
+            None => remote.title.as_deref().and_then(sanitize_and_cap_title),
+        };
+        let generated_title = if remote_title_is_manual(meta) {
+            remote_title.clone()
+        } else {
+            None
+        };
+        let title_is_manual = generated_title.is_some();
+
+        // Only adopt a parseable agent id; anything else is treated as absent so cold spawn mints a fresh one
+        let remote_agent_id = meta.and_then(|m| {
+            m.get("agentId")
+                .or_else(|| m.get("agent_id"))
+                .and_then(|v| v.as_str())
+                .and_then(xai_message_delivery_core::AgentId::parse)
+                .map(|id| id.as_str().to_owned())
+        });
+        let mut summary = Summary {
             info: info.clone(),
+            agent_id: remote_agent_id,
+            // A pulled session is a new activation; mint attempt_id on cold spawn.
+            attempt_id: None,
             cwd_generation: 0,
             previous_cwd: None,
             pending_cwd_switch_reminder: None,
             cwd_switch_bookkeeping_generation: 0,
-            session_summary: remote.title.clone().unwrap_or_default(),
+            session_summary: remote_title.unwrap_or_default(),
             created_at: parse_rfc3339_or_now(remote.created_at.as_deref()),
             updated_at: parse_rfc3339_or_now(remote.updated_at.as_deref()),
             num_messages,
@@ -145,20 +175,23 @@ pub(crate) mod hydrate {
             head_commit: None,
             head_branch: None,
             request_id: None,
-            // Record the *local* grok_home (where this hydrated copy lives),
-            // not the original remote session's, since reconstruction runs locally.
+            // Record the *local* grok_home (where this hydrated copy lives), not the original remote session's, since reconstruction runs locally
             grok_home: crate::session::persistence::grok_home_string(),
             last_active_at: None,
-            generated_title: None,
-            title_is_manual: false,
+            generated_title,
+            title_is_manual,
             worktree_label: None,
-            agent_name: None,
-            // Hydrated locally — record the profile this process runs under.
+            agent: Default::default(),
+            // Hydrated locally: record the profile this process runs under
             sandbox_profile: xai_grok_sandbox::configured_profile_name().map(String::from),
             reasoning_effort: None,
             last_turn_summary: None,
             last_turn_summary_prompt_id: None,
+            last_recap: None,
         };
+        if let Some(identity) = crate::session::worktree::worktree_identity_for_cwd(&info.cwd) {
+            summary.stamp_worktree_identity(&identity);
+        }
 
         let json = serde_json::to_string_pretty(&summary)?;
         write_file(&dir.join(SUMMARY_FILE), json.as_bytes())
@@ -230,11 +263,50 @@ pub(crate) mod hydrate {
     fn write_file(path: &Path, data: &[u8]) -> Result<(), BackendError> {
         std::fs::write(path, data).map_err(|e| io_err(path, e))
     }
+
+    fn remote_title_is_manual(meta: Option<&serde_json::Value>) -> bool {
+        meta.and_then(|m| {
+            m.get("title_is_manual")
+                .or_else(|| m.get("titleIsManual"))
+                .and_then(|v| v.as_bool())
+        })
+        .unwrap_or(false)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::remote::client::LoadedMessage;
+
+    #[test]
+    #[serial_test::serial]
+    fn hydrated_summary_stamps_worktree_identity_for_worktree_cwd() {
+        let home = tempfile::TempDir::new().unwrap();
+        let _env = xai_grok_test_support::EnvGuard::set("GROK_HOME", home.path());
+        let cwd = home.path().join("worktrees").join("xai").join("fix-bug");
+        std::fs::create_dir_all(&cwd).unwrap();
+
+        let data = crate::remote::client::LoadDataResponse {
+            messages: None,
+            session: Some(crate::remote::client::SessionInfo {
+                session_id: "pulled-worktree".into(),
+                title: None,
+                cwd: Some(cwd.to_string_lossy().into_owned()),
+                status: None,
+                created_at: None,
+                updated_at: None,
+                metadata: None,
+            }),
+        };
+        let dir = home.path().join("session-dir");
+        super::hydrate::write_to_dir(&dir, &data).unwrap();
+
+        let summary: crate::session::persistence::Summary =
+            serde_json::from_slice(&std::fs::read(dir.join("summary.json")).unwrap()).unwrap();
+        assert_eq!(summary.session_kind.as_deref(), Some("worktree"));
+        assert_eq!(summary.worktree_label.as_deref(), Some("fix-bug"));
+        assert!(summary.source_workspace_dir.is_none());
+    }
 
     #[test]
     fn hydrate_writes_valid_updates_jsonl() {
@@ -260,9 +332,19 @@ mod tests {
 
         for line in &lines {
             let v: serde_json::Value = serde_json::from_str(line).unwrap();
-            assert_eq!(v["timestamp"], 0);
-            assert_eq!(v["method"], "session/update");
-            assert!(v["params"].is_object());
+            assert_eq!(
+                v.pointer("/timestamp").unwrap_or(&serde_json::Value::Null),
+                0
+            );
+            assert_eq!(
+                v.pointer("/method").unwrap_or(&serde_json::Value::Null),
+                "session/update"
+            );
+            assert!(
+                v.pointer("/params")
+                    .unwrap_or(&serde_json::Value::Null)
+                    .is_object()
+            );
         }
     }
 
@@ -321,25 +403,33 @@ mod tests {
             }),
         };
         let tmp = tempfile::TempDir::new().unwrap();
-        super::hydrate::write_to_dir(tmp.path(), &data).unwrap();
+        // Subdir so the owner-only assertion covers a dir write_to_dir created.
+        let dir = tmp.path().join("session");
+        super::hydrate::write_to_dir(&dir, &data).unwrap();
 
-        let chat = std::fs::read_to_string(tmp.path().join("chat_history.jsonl")).unwrap();
+        #[cfg(unix)]
+        assert_eq!(
+            crate::test_support::unix_mode(&dir),
+            0o700,
+            "hydrated session dir must be owner-only"
+        );
+
+        let chat = std::fs::read_to_string(dir.join("chat_history.jsonl")).unwrap();
         let items: Vec<crate::sampling::ConversationItem> = chat
             .lines()
             .filter(|l| !l.is_empty())
             .filter_map(|l| serde_json::from_str(l).ok())
             .collect();
 
-        assert_eq!(items.len(), 2, "should have 1 user + 1 agent item");
+        let [user, agent] = items.as_slice() else {
+            panic!("should have 1 user + 1 agent item: {items:?}");
+        };
+        assert!(matches!(user, crate::sampling::ConversationItem::User(_)));
         assert!(matches!(
-            &items[0],
-            crate::sampling::ConversationItem::User(_)
-        ));
-        assert!(matches!(
-            &items[1],
+            agent,
             crate::sampling::ConversationItem::Assistant(_)
         ));
-        if let crate::sampling::ConversationItem::User(u) = &items[0] {
+        if let crate::sampling::ConversationItem::User(u) = user {
             let text: String = u
                 .content
                 .iter()
@@ -414,17 +504,15 @@ mod tests {
             .filter_map(|l| serde_json::from_str(l).ok())
             .collect();
 
-        assert_eq!(items.len(), 2);
-        if let crate::sampling::ConversationItem::User(u) = &items[0] {
-            assert_eq!(u.content.len(), 2, "should have text + image parts");
-            assert!(matches!(
-                &u.content[0],
-                crate::sampling::ContentPart::Text { .. }
-            ));
-            assert!(matches!(
-                &u.content[1],
-                crate::sampling::ContentPart::Image { .. }
-            ));
+        let [user, _agent] = items.as_slice() else {
+            panic!("should have 1 user + 1 agent item, got {}", items.len());
+        };
+        if let crate::sampling::ConversationItem::User(u) = user {
+            let [text, image] = u.content.as_slice() else {
+                panic!("should have text + image parts: {:?}", u.content);
+            };
+            assert!(matches!(text, crate::sampling::ContentPart::Text { .. }));
+            assert!(matches!(image, crate::sampling::ContentPart::Image { .. }));
         } else {
             panic!("expected User item");
         }
@@ -456,5 +544,198 @@ mod tests {
         let content = std::fs::read_to_string(tmp.path().join("updates.jsonl")).unwrap();
         let lines: Vec<&str> = content.lines().collect();
         assert_eq!(lines.len(), 2, "invalid message should be skipped");
+    }
+
+    fn hydrate_summary(
+        title: Option<&str>,
+        metadata: Option<serde_json::Value>,
+    ) -> crate::session::persistence::Summary {
+        let data = crate::remote::client::LoadDataResponse {
+            messages: None,
+            session: Some(crate::remote::client::SessionInfo {
+                session_id: "pull-title".into(),
+                title: title.map(str::to_owned),
+                cwd: Some("/tmp".into()),
+                status: None,
+                created_at: None,
+                updated_at: None,
+                metadata,
+            }),
+        };
+        let tmp = tempfile::TempDir::new().unwrap();
+        super::hydrate::write_to_dir(tmp.path(), &data).unwrap();
+        let json = std::fs::read_to_string(tmp.path().join("summary.json")).unwrap();
+        serde_json::from_str(&json).unwrap()
+    }
+
+    #[test]
+    fn hydrate_adopts_only_parseable_remote_agent_id() {
+        let valid = hydrate_summary(None, Some(serde_json::json!({ "agentId": "ag1.c0ffee" })));
+        assert_eq!(valid.agent_id.as_deref(), Some("ag1.c0ffee"));
+        assert!(valid.attempt_id.is_none());
+
+        let snake = hydrate_summary(None, Some(serde_json::json!({ "agent_id": "ag1.c0ffee" })));
+        assert_eq!(snake.agent_id.as_deref(), Some("ag1.c0ffee"));
+
+        let invalid = hydrate_summary(
+            None,
+            Some(serde_json::json!({ "agentId": "legacy-session-id" })),
+        );
+        assert!(invalid.agent_id.is_none());
+
+        let empty = hydrate_summary(None, Some(serde_json::json!({ "agentId": "" })));
+        assert!(empty.agent_id.is_none());
+    }
+
+    #[test]
+    fn hydrate_restores_title_is_manual_and_generated_title() {
+        let summary = hydrate_summary(
+            Some("Pinned hop"),
+            Some(serde_json::json!({ "title_is_manual": true })),
+        );
+        assert!(summary.title_is_manual);
+        assert_eq!(summary.generated_title.as_deref(), Some("Pinned hop"));
+        assert_eq!(summary.manual_title_opt().as_deref(), Some("Pinned hop"));
+    }
+
+    #[test]
+    fn hydrate_accepts_camel_case_title_is_manual() {
+        let summary = hydrate_summary(
+            Some("Camel"),
+            Some(serde_json::json!({ "titleIsManual": true })),
+        );
+        assert!(summary.title_is_manual);
+        assert_eq!(summary.generated_title.as_deref(), Some("Camel"));
+    }
+
+    #[test]
+    fn hydrate_defaults_title_is_manual_false_when_absent() {
+        let summary = hydrate_summary(Some("Auto remote"), None);
+        assert!(!summary.title_is_manual);
+        assert!(summary.generated_title.is_none());
+        assert!(summary.manual_title_opt().is_none());
+        assert_eq!(summary.display_title(), "Auto remote");
+    }
+
+    #[test]
+    fn hydrate_ignores_manual_flag_over_blank_title() {
+        let summary = hydrate_summary(
+            Some("   "),
+            Some(serde_json::json!({ "title_is_manual": true })),
+        );
+        assert!(!summary.title_is_manual);
+        assert!(summary.generated_title.is_none());
+        assert!(summary.manual_title_opt().is_none());
+    }
+
+    #[test]
+    fn hydrate_ignores_manual_flag_over_none_title() {
+        let summary = hydrate_summary(None, Some(serde_json::json!({ "title_is_manual": true })));
+        assert!(!summary.title_is_manual);
+        assert!(summary.generated_title.is_none());
+        assert!(summary.manual_title_opt().is_none());
+    }
+
+    #[test]
+    fn hydrate_prefers_metadata_title_over_stale_session_row() {
+        let summary = hydrate_summary(
+            Some("stale auto row"),
+            Some(serde_json::json!({
+                "title": "Pinned hop",
+                "title_is_manual": true
+            })),
+        );
+        assert!(summary.title_is_manual);
+        assert_eq!(summary.generated_title.as_deref(), Some("Pinned hop"));
+        assert_eq!(summary.manual_title_opt().as_deref(), Some("Pinned hop"));
+        assert_eq!(summary.display_title(), "Pinned hop");
+    }
+
+    #[test]
+    fn hydrate_blank_metadata_title_does_not_fall_back_to_stale_row() {
+        let summary = hydrate_summary(
+            Some("stale pinned row"),
+            Some(serde_json::json!({
+                "title": "",
+                "title_is_manual": false
+            })),
+        );
+        assert!(!summary.title_is_manual);
+        assert!(summary.generated_title.is_none());
+        assert!(summary.manual_title_opt().is_none());
+        assert_eq!(summary.session_summary, "");
+    }
+
+    #[test]
+    fn hydrate_from_summary_export_round_trips_manual_flag() {
+        use crate::session::export::ExportedMetadata;
+        use crate::session::info::Info;
+
+        let info = Info {
+            id: agent_client_protocol::SessionId::new("export-pull"),
+            cwd: "/tmp".into(),
+        };
+        let mut summary = crate::session::persistence::Summary::new(
+            &info,
+            agent_client_protocol::ModelId::new("test-model"),
+        )
+        .unwrap();
+        summary.generated_title = Some("Pinned hop".into());
+        summary.title_is_manual = true;
+        summary.session_summary = "stale auto".into();
+        let meta = ExportedMetadata::from_summary(&summary);
+        let json = serde_json::to_value(&meta).unwrap();
+        let pulled = hydrate_summary(meta.title.as_deref(), Some(json));
+        assert_eq!(pulled.manual_title_opt().as_deref(), Some("Pinned hop"));
+        assert_eq!(pulled.display_title(), "Pinned hop");
+    }
+
+    #[test]
+    fn hydrate_stale_exported_flag_does_not_promote_auto_fallback() {
+        use crate::session::export::ExportedMetadata;
+        use crate::session::info::Info;
+
+        let info = Info {
+            id: agent_client_protocol::SessionId::new("stale-hop"),
+            cwd: "/tmp".into(),
+        };
+        let mut summary = crate::session::persistence::Summary::new(
+            &info,
+            agent_client_protocol::ModelId::new("test-model"),
+        )
+        .unwrap();
+        summary.session_summary = "auto first-prompt summary".into();
+        summary.generated_title = Some("   ".into());
+        summary.title_is_manual = true;
+        let meta = ExportedMetadata::from_summary(&summary);
+        let pulled = hydrate_summary(
+            meta.title.as_deref(),
+            Some(serde_json::to_value(&meta).unwrap()),
+        );
+        assert!(pulled.manual_title_opt().is_none());
+        assert!(!pulled.title_is_manual);
+    }
+
+    #[test]
+    fn hydrate_strips_controls_and_caps_pulled_title() {
+        use crate::session::persistence::MAX_TITLE_SCALARS;
+
+        let dirty = format!("\u{1b}]0;PWNED\u{07}{}", "é".repeat(MAX_TITLE_SCALARS + 10));
+        let summary = hydrate_summary(
+            Some(&dirty),
+            Some(serde_json::json!({ "title_is_manual": true })),
+        );
+        const PREFIX: &str = "]0;PWNED";
+        let expected = format!(
+            "{PREFIX}{}",
+            "é".repeat(MAX_TITLE_SCALARS - PREFIX.chars().count())
+        );
+        assert_eq!(summary.display_title(), expected);
+        assert_eq!(summary.display_title().chars().count(), MAX_TITLE_SCALARS);
+        assert!(summary.title_is_manual);
+        assert_eq!(
+            summary.manual_title_opt().as_deref(),
+            Some(expected.as_str())
+        );
     }
 }

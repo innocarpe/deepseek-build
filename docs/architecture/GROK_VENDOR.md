@@ -47,14 +47,36 @@ Evidence for G004: the script must exit 0 for `check` on a machine with the host
 
 ## Refresh procedure
 
-Never silent-copy. Always a dedicated PR:
+**The full procedure lives in
+[`skills/grok-sync`](../../skills/grok-sync/SKILL.md) and
+[`grok-sync-runbook.md`](../../docs/contributing/grok-sync-runbook.md).** Start
+with the inventory, which measures the gap before anyone plans a method:
+
+```bash
+./scripts/grok-sync-inventory.sh
+```
+
+Never silent-copy. Always a dedicated PR, and choose the method from the
+measurement:
+
+| Method | When |
+|---|---|
+| **Patch re-apply** (below) | `./scripts/apply-grok-build-patches.sh --check` passes |
+| **Three-way merge** (runbook §2) | patches conflict — the general case once the overlay is large |
+
+### Patch re-apply path (small overlay)
 
 1. Update sibling or clone upstream Grok Build to the desired rev.  
 2. `rsync -a --delete --exclude target --exclude .git <src>/ third_party/grok-build/`  
-   (or `git subtree pull` if that workflow is adopted later).  
+   (or `git subtree pull` if that workflow is adopted later), then
+   `./scripts/apply-grok-build-patches.sh` to re-apply the local patches.
 3. Confirm `SOURCE_REV` matches the intended pin.  
 4. Re-run `./scripts/build-grok-pager.sh check`.  
 5. PR title: `chore(vendor): refresh grok-build to <short-sha>` with license note unchanged.
+
+Record the sync in
+[`docs/product/UPSTREAM_SYNC_LEDGER.md`](../product/UPSTREAM_SYNC_LEDGER.md) —
+what was taken, held and rejected, and why.
 
 ---
 

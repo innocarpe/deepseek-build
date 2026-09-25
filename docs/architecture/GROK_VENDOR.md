@@ -58,81 +58,61 @@ Never silent-copy. Always a dedicated PR:
 
 ---
 
-## Local patches
+## The DeepSeek overlay
 
-Local work on the vendored tree comes in two forms, and an
-`rsync -a --delete` refresh would silently drop both — re-apply after every
-refresh and keep this list current:
+The vendored tree is "as upstream" plus a **product overlay**: the deliberate
+local deviations that make this Grok-derived code the DeepSeek Build product.
+The overlay is carried **in the tree** — a refresh must preserve it, and
+whatever method is used (see the sync runbook) is judged by whether the overlay
+survived.
 
-### Applied directly in the tree
-
-The tree ships "as upstream", but a small set of **deliberate local deviations** lives in the vendored sources. `rsync -a --delete` in the refresh procedure would silently drop them — re-apply after every refresh and keep this list current:
-
-| File | Patch | Why |
-|------|-------|-----|
+| File | Overlay | Why |
+|------|---------|-----|
 | `crates/codegen/xai-grok-pager/src/app/mod.rs` | `print_exit_resume_hint` prints the command from env `GROK_INVOCATION_NAME` (default `grok`) via `invocation_name()` + pure `resume_hint_line()` | dsb-cli brands quit hints `dsb --resume <id>` so the printed command is pasteable |
 | `crates/codegen/xai-grok-pager/src/app/screen_mode_relaunch.rs` | `screen_mode_relaunch_resume_hint` uses `super::invocation_name()` (pure `_with` variant for tests) | Same branding for the screen-mode relaunch failure hint |
-| `crates/codegen/xai-grok-pager-render/src/theme/deepseeknight.rs` | Keeps the classic blue-ramp and neutral-ramp DeepSeek constructors via shared `deepseeknight_inner(neutral)` plus ramp/blue-accent unit tests | Classic `deepseeknight` remains picker-selectable and product/default; neutral `deepseeknight-neutral` is first-class/selectable |
-| `crates/codegen/xai-grok-pager-render/src/theme/deepseeknight_v2.rs` | Defines the measured C-balanced `deepseeknight_v2()` palette and its integrity tests | Selectable DeepSeek Night v2 alternate, exposed as `deepseeknight-v2`; classic remains the product/default skin |
-| `crates/codegen/xai-grok-pager-render/src/theme/mod.rs` | Registers `DeepSeekNightV2` first, classic `DeepSeekNight` second, neutral third, and `GrokDay` fourth in picker/catalog order; keeps classic as the product/default skin; maps `"dark"` to classic; retains only explicit `groknight` / `grok-night` for hidden legacy compatibility | Classic owns product/runtime defaults; V2, classic, neutral, and GrokDay are selectable; only GrokNight stays hidden/compatibility-only |
-| `crates/codegen/xai-grok-pager-render/src/theme/cache.rs` | `CURRENT` plus config/appearance resolution defaults to `DeepSeekNight`; terminal-native lock intentionally reports nominal `GrokNight` | Classic is the product/default dark fallback while explicit V2 and legacy theme values remain honored |
+| `crates/codegen/xai-grok-pager/src/app/terminal_restore.rs` | The panic hook ends with `super::disable_mouse_paste_raw()` | The mouse/paste reset must remain last so a panicking agent shutdown cannot leave mouse reporting or bracketed paste enabled in the user's shell |
+| `crates/codegen/xai-grok-pager-render/src/theme/deepseeknight.rs` | Classic blue-ramp and neutral-ramp DeepSeek constructors via shared `deepseeknight_inner(neutral)` plus ramp/blue-accent unit tests | Classic `deepseeknight` remains picker-selectable and product/default; `deepseeknight-neutral` is first-class/selectable |
+| `crates/codegen/xai-grok-pager-render/src/theme/deepseeknight_v2.rs` | The measured C-balanced `deepseeknight_v2()` palette and its integrity tests | Selectable DeepSeek Night v2 alternate, exposed as `deepseeknight-v2`; classic remains the product/default skin |
+| `crates/codegen/xai-grok-pager-render/src/theme/mod.rs` | Registers `DeepSeekNightV2`, classic `DeepSeekNight`, neutral `DeepSeekNightNeutral` in `ThemeKind`/`ALL`/picker order, with `display_name`, `aliases`, `requires_truecolor`, `display_name_for_canonical`, and `Theme::current()`/`Default` resolving to the classic skin | Classic owns product/runtime defaults; V2, classic and neutral are selectable; only `groknight` stays hidden/compatibility-only |
+| `crates/codegen/xai-grok-pager-render/src/theme/cache.rs` | `CURRENT` plus config/appearance resolution defaults to `DeepSeekNight`; the byte↔kind table covers the DeepSeek kinds; terminal-native lock intentionally reports nominal `GrokNight` | Classic is the product/default dark fallback while explicit V2 and legacy theme values remain honored |
 | `crates/codegen/xai-grok-pager-render/src/theme/system_appearance.rs` | Dark appearance fallback → `DeepSeekNight`; light appearance fallback → `GrokDay`; explicit overrides remain honored | Auto mode follows the classic dark and GrokDay light defaults |
-| `crates/codegen/xai-grok-pager-render/src/syntax.rs` | Night syntax group includes V2, classic/neutral DeepSeek kinds, `GrokNight`, `TokyoNight`, `RosePineMoon`, and `OscuraMidnight` | All supported dark variants share the night syntax palette; terminal-native mode remains nominal `GrokNight` |
-| `crates/codegen/xai-grok-pager/src/settings/defs.rs` | `THEME_CHOICES` / `CONCRETE_THEME_CHOICES` place `deepseeknight-v2` before canonical `deepseeknight` (`DeepSeek Night (classic)`) and include neutral as a selectable DeepSeek skin | Settings pickers surface V2, classic, and neutral; classic is the product/default choice, and only GrokNight remains hidden compatibility |
-| `crates/codegen/xai-grok-pager/src/views/settings_modal/tests.rs` | Exhaustive preview coverage retains V2, classic, and neutral `ThemeKind` arms | Preview remains compatible with legacy/config values while the picker catalogs expose classic after the V2 picker entry |
-| `crates/dsb-cli/src/agent_launch.rs` | First-launch picker writes the chosen skin into the seed config; `GROK_THEME`/`LC_GROK_THEME` only set from explicit env (`DEEPSEEK_BUILD_THEME`/`GROK_THEME`) so in-pager `/theme` persists | First-launch classic/V2 onboarding plus persistent theme changes; classic remains the product/default and V2 remains selectable |
+| `crates/codegen/xai-grok-pager-render/src/syntax.rs` | Night syntax group includes V2, classic/neutral DeepSeek kinds, `GrokNight`, `TokyoNight`, `RosePineMoon`, `OscuraMidnight` | All supported dark variants share the night syntax palette; terminal-native mode remains nominal `GrokNight` |
+| `crates/codegen/xai-grok-pager/src/settings/defs.rs` | `THEME_CHOICES` / `CONCRETE_THEME_CHOICES` lead with `deepseeknight-v2`, canonical `deepseeknight` (`DeepSeek Night (classic)`) and neutral; `theme` / `auto_dark_theme` default to `deepseeknight` | Settings pickers surface V2, classic and neutral; classic is the product/default choice |
+| `crates/codegen/xai-grok-shell/src/extensions/deepseek.rs` + `extensions/mod.rs` | The `x.ai/deepseek/status` extension: balance and session usage for the status line | The product's account/cost surface has no upstream equivalent |
+| `crates/codegen/xai-grok-pager/src/app/dispatch/deepseek.rs` (+ `tests/deepseek.rs`) | `Effect::FetchDeepSeekStatus` polling, `TaskResult::DeepSeekStatus*` handling, session-safe staleness | Renders the DeepSeek balance row without leaking results across sessions |
+| `crates/codegen/xai-grok-pager/src/app/agent_view/*`, `views/agent_status.rs` | The `deepseek_status` layout row and balance chips (currency formatting) | The bottom status row is product UI |
+| `crates/codegen/xai-grok-sampling-types/src/{conversation,types}.rs` | Maps DeepSeek `prompt_cache_hit_tokens` into `cached_read_tokens` | Cache-hit reporting is the L2 contract; upstream has no DeepSeek wire shape |
+| `crates/codegen/xai-grok-agent/templates/prompt.md` + `src/prompt/prompt_encrypted.rs` | The agent prompt carries no hardcoded third-party vendor claim; the encrypted copy is regenerated from the template | Product identity. Regenerate with `python3 crates/codegen/xai-grok-agent/scripts/encrypt_templates.py` |
+| `crates/codegen/xai-grok-shell/src/builtin.rs` | The version-transition cleanup removes only `CHANGELOG.json`; `$GROK_HOME/CHANGELOG.md` is preserved | `dsb-cli seed_product_changelog` writes it every launch, and deleting it made the welcome-screen CHANGELOG click a silent no-op |
+| `crates/codegen/xai-grok-update/src/*` | The product update feed: npm/gh-release coordinates, a default of `"npm"` for unknown installer classifications, and `installer_allows_downgrade` returning `false` unconditionally | The product has no x.ai CDN pointer to roll back, so a lower version from any source must never be installed over it |
+| `crates/codegen/xai-grok-pager-bin/build.rs` | `DEEPSEEK_BUILD_VERSION` first, then `GROK_VERSION`; version-derived `--cfg` **and** an `OUT_DIR` file read with `include_str!` | sccache keys on neither `env!` alone — a warm-cache release once shipped the previous version |
+| `crates/codegen/xai-grok-pager/src/lib.rs`, `trace_cmd.rs`, `tracing.rs`, `app/cli.rs`, `app/mod.rs`, `app/effects/*` | `crate::VERSION_WITH_COMMIT`, `name = "dsb"`, `about = "DeepSeek Build TUI"`, `DeepSeek Build` notification titles | Product version, command name and identity in the TUI surface |
+| `crates/codegen/xai-grok-tools/src/types/snippet_store.rs`, `implementations/grok_build/read_file/mod.rs` | Snippet-store wiring and the snippet-safety/truncation path in `read_file` | Spec 45's snippet contract is L1 and must not be bypassed |
+| `crates/codegen/xai-grok-shell/src/session/helpers/{path_a_cache_signal,spec10_path_a_assembly}.rs` | Path A cache-signal and spec-10 assembly helpers | L2 cache discipline and the Path A assembly contract |
+| `crates/dsb-cli/src/agent_launch.rs` | First-launch picker writes the chosen skin into the seed config; `GROK_THEME`/`LC_GROK_THEME` only set from explicit env (`DEEPSEEK_BUILD_THEME`/`GROK_THEME`) | First-launch classic/V2 onboarding plus persistent theme changes |
 
-Tests: `resume_hint_line_brands_invocation_name` and `failed_relaunch_hint_brands_invocation_name` pin the `dsb` output; upstream default (`grok`) assertions keep passing. Theme tests pin the official `#4D6BFE` accent on the classic and neutral constructors, the v2 palette invariants, the classic dark/GrokDay light resolution defaults, and the picker contract (V2 first; classic second; neutral third; GrokDay fourth; only GrokNight hidden). Settings preview coverage retains legacy theme kinds while both settings catalogs expose `deepseeknight-v2`, `DeepSeek Night (classic)`, and `DeepSeek Night Neutral`; classic remains product/default and neutral remains first-class/selectable.
+Tests: `resume_hint_line_brands_invocation_name` and
+`failed_relaunch_hint_brands_invocation_name` pin the `dsb` output; upstream
+default (`grok`) assertions keep passing. Theme tests pin the official
+`#4D6BFE` accent on the classic and neutral constructors, the v2 palette
+invariants, the classic dark/GrokDay light resolution defaults, and the picker
+contract. Settings preview coverage retains legacy theme kinds while both
+catalogs expose `deepseeknight-v2`, `DeepSeek Night (classic)` and
+`DeepSeek Night Neutral`.
 
-### Carried as patch files under `patches/grok-build/`
+### Patch series (historic)
 
-DSB carries local feature work on the vendored tree as patches under
-`patches/grok-build/` — **outside** the vendor tree, so an `rsync --delete`
-refresh cannot wipe them.
+`patches/grok-build/` carried thirteen patches between the `1.0.0` vendor land
+and the `1.0.41` sync. **The `1.0.41` sync superseded them**: measured against
+the new base, all thirteen conflicted, and the overlay had grown to 133 files
+with in-tree edits the series never carried. The overlay is now carried in the
+tree, and `./scripts/apply-grok-build-patches.sh` reports that and exits 0.
 
-| Patch | Commit it derives from |
-|-------|------------------------|
-| `0001-*.patch` | `feat(sampling-types): map DeepSeek prompt_cache_hit_tokens into cached_read_tokens` |
-| `0002-*.patch` | `feat(shell): add x.ai/deepseek/status extension for balance and session usage` |
-| `0003-*.patch` | `fix(shell): preserve one-pass repair and repair pre-existing lib-test build breakage` |
-| `0004-*.patch` | `test(pager): cover DeepSeekNight kinds in settings preview test` |
-| `0005-*.patch` | `feat(pager): render DeepSeek status with session-safe polling` |
-| `0006-*.patch` | `test(shell): cover large MCP image persistence and resume` |
-| `0007-*.patch` | `fix(vendor): drop hardcoded released-by-xAI identity text` |
-| `0008-*.patch` | `fix(vendor): sync encrypted agent prompt with the identity edit` |
-| `0009-*.patch` | `test(grok): expect DeepSeek status effects` |
-| `0010-*.patch` | `test(pager): align product baseline expectations` |
-| `0011-*.patch` | `test(pager): stabilize prompt history tick delivery` |
-| `0012-*.patch` | `fix(vendor): satisfy the strict clippy baseline` |
-| `0013-*.patch` | `fix(shell): preserve the seeded product changelog` |
-
-These patches carry the **DeepSeek status line**, its shell-side repair
-dependency, the focused large-MCP-image persistence/resume regression, prompt
-identity, product-specific pager expectations, strict vendor lint repairs, and
-seeded product changelog preservation. The status patch records session-bound
-unsupported capability handling, transient retry, and stale-result safety;
-patch 0006 keeps the DSB image regression durable instead of relying on the
-upstream changelog claim. A refresh must never silently drop any of the complete
-13-patch series.
-
-- **Re-apply after refresh:** `./scripts/apply-grok-build-patches.sh`
-  (add `--check` for a dry run; already-applied patches are skipped).
-- **Regenerate** when the patch set changes:
-  `git format-patch <base>..HEAD -- third_party/grok-build -o patches/grok-build`
-  where `<base>` is the merge-base of the vendor PR that carried the patches.
-- **Refresh conflicts:** if `apply-grok-build-patches.sh` fails after an
-  upstream refresh, fix the conflicts by hand, re-run
-  `./scripts/build-grok-pager.sh check`, and regenerate the patches before
-  merging the refresh PR.
-
-Refresh procedure step 2 therefore becomes:
-
-2. `rsync -a --delete --exclude target --exclude .git <src>/ third_party/grok-build/`  
-   (or `git subtree pull` if that workflow is adopted later), then  
-   `./scripts/apply-grok-build-patches.sh` to re-apply the local patches.
-
----
-
+A series is still the right shape when a **small** overlay must survive a
+`rsync --delete` refresh; regenerate one with
+`git format-patch <base>..HEAD -- third_party/grok-build -o patches/grok-build`
+if that method is chosen again.
+|------|-------|-----|
 ## CI plan
 
 ### Default CI workflow (`ci.yml`)

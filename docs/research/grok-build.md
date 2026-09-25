@@ -136,3 +136,102 @@ regression, rather than relying on the public source note alone.
   authoritative default path.
 - The source refresh is deliberately kept in this research record. Product
   commitments remain governed by the architecture and product specifications.
+
+---
+
+## 1.0.41 sync record (non-binding)
+
+This note records the source-refresh evidence and adoption decisions for the
+`1.0.0` → `1.0.41` base move. It is research, not a product policy; the
+product commitments live in [CHANGELIST_6_0_0.md](../product/CHANGELIST_6_0_0.md)
+and [PRD-v6.md](../product/PRD-v6.md).
+
+| Source identity | Commit | `SOURCE_REV` | Version |
+| --- | --- | --- | --- |
+| Old baseline | `8a14c91d` | `27b3c66635e2c0bf213429a36ab916f25d59df20` | `1.0.0` |
+| Refresh target | `f0e3be1100` | `036a5d8348cd744767cd0b08518ab17bf608fa7f` | `1.0.41` |
+
+**Scale.** 25 upstream sync commits, 3,587 changed files, +750,612 / −383,434,
+41 releases, 472 changelog bullets, workspace crates 81 → 102.
+
+**Method: three-way merge, not patch re-apply.** The previous procedure
+(`rsync --delete` + `apply-grok-build-patches.sh`) was measured against `1.0.41`
+and cannot work: **0 of 13** patches applied, and the overlay had grown to 133
+files (`+7,796 / −882` vs the pin) including in-tree edits the series never
+carried. Merge roles: base `8a14c91d`, ours = the vendored tree, theirs =
+`f0e3be1100`. 158 conflict hunks across 75 files were resolved by taking
+upstream's refactors and re-deriving the product overlay on top.
+
+### Cluster inventory of the covered range
+
+`scripts/grok-sync-inventory.sh` clusters the 472 bullets:
+
+| Cluster | Bullets | Disposition |
+| --- | ---: | --- |
+| TUI / pager UX | 114 | taken (upstream work; branding re-applied) |
+| Sessions | 61 | taken |
+| Subagents | 41 | taken; the `capability_mode` removal is a dsb-visible break |
+| Skills / plugins / workflows | 38 | taken |
+| Performance | 36 | taken — the largest felt improvement |
+| Tools | 34 | taken; dsb's snippet wiring preserved |
+| Model plumbing | 34 | taken; feeds L2 cost/cache behaviour |
+| Permissions / sandbox / hooks | 33 | taken |
+| MCP | 32 | taken |
+| Worktrees / git | 16 | taken; `grok clone` content store left (see below) |
+| xAI-only (N/A) | 19 | **not applicable** — telemetry, consent, xAI login/OIDC/team policy, billing/credit, self-update channels, voice, video/ZDR, desktop/Computer-Hub, `x.ai/*` RPC names |
+| Config / policy | 9 | taken |
+| Breaking | 5 | see below |
+
+### Breaking changes and their dsb verdicts
+
+| Version | Change | Verdict |
+| --- | --- | --- |
+| 1.0.1 | `/rewind` truncates conversation only, confirms by default | inherited |
+| 1.0.1 | Managed MCP servers only via the gateway catalog | **N/A** — xAI-hosted |
+| 1.0.6 | `spawn_subagent` drops `capability_mode`; access by agent type | **real impact** — dsb spec 60 and the harness brief referenced capability modes |
+| 1.0.16 | Enterprise `requirements.toml` model restrictions | **N/A** — xAI-hosted |
+| 1.0.19 | Scheduled `/loop` tasks always run in the background | inherited |
+
+### What the merge rewrote rather than re-applied
+
+Upstream restructured several areas the overlay had touched, so the overlay was
+re-derived instead of patched:
+
+- **Test layout.** Upstream split ~430 `_tests.rs` files out of their modules
+  (`app_view_tests.rs`, `auto_update_tests.rs`, `status_line_tests.rs`, …). The
+  overlay's test expectations moved with them.
+- **Teardown.** `set_panic_hook` moved to `app/terminal_restore.rs` and gained
+  `run_bounded_teardown`; the product's mouse/paste-reset-last ordering was
+  re-inserted there.
+- **Status line.** Upstream added a general, config-driven status line
+  (`app/status_line.rs`, `views/status_line/`, the `xai-grok-status-line`
+  crate). That is a *different row* from the product's DeepSeek balance row, and
+  both are kept.
+- **Version injection.** `build.rs` moved to `xai-grok-pager-bin`; the product's
+  `DEEPSEEK_BUILD_VERSION`-first, sccache-proof injection was ported into the
+  new structure.
+- **Themes.** Upstream's `ThemeKind` gained `Terminal` and rewrote `from_name`
+  over `display_name`/`aliases`; the DeepSeek skins were re-registered in that
+  model.
+- **Updater.** Upstream restructured `xai-grok-update`; the product's feed rules
+  (npm/gh-release coordinates, default `npm`, never downgrade) were re-derived
+  and its tests updated where they asserted the upstream rollback behaviour.
+- **Logos.** Upstream deleted most `assets/logo/*`; only `logo05`/`logo07`
+  survive and they are the two the product uses, so the DeepSeek raster was
+  carried onto those and the deletions were accepted.
+
+### Deliberately not taken
+
+- `grok clone`'s content-store / projected working tree — a different
+  worktree-storage model; this product already covers worktrees through Orca.
+  Revisit if upstream's model proves materially faster.
+- The five xAI-hosted breaking changes above, and every `GROK_*` / `~/.grok` /
+  `x.ai/*` name where the *behaviour* was not worth having. Where a behaviour
+  was worth having it was taken and re-pointed at DeepSeek paths and names.
+
+### Verification boundary
+
+The merge is statically reviewed and gate-tested; the credential-gated live
+behaviours (hosted xAI features) remain untested by design. Source-only xAI
+auth, telemetry and hosted code remains for compilation, with the local default
+path DeepSeek-seeded and telemetry-off.

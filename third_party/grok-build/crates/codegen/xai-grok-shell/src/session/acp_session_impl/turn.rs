@@ -3051,6 +3051,23 @@ impl SessionActor {
                     "transient_retry_attempts": transient_retry_attempts,
                 })),
             );
+            let log_items = self.chat_state_handle.get_conversation().await;
+            if let Err(divergence) =
+                crate::session::helpers::request_log_invariant::check_request_projects_log(
+                    &log_items,
+                    &request.items,
+                )
+            {
+                xai_grok_telemetry::unified_log::error(
+                    "shell.turn.request_log_desync",
+                    Some(self.session_info.id.0.as_ref()),
+                    Some(serde_json::json!({ "detail": divergence.detail })),
+                );
+                return Err(crate::sampling::error::local_error(
+                    "request_log_desync",
+                    divergence.detail,
+                ));
+            }
             let requested_model =
                 crate::session::telemetry::requested_model_snapshot(request.model.as_deref());
             let model_timer = std::time::Instant::now();

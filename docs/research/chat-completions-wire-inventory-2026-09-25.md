@@ -63,9 +63,11 @@ persisted unit, and the client sends no cache key. `user_id` on that schema
 is documented for isolation, and this product does not send it
 (`ChatCompletionRequest.user` stays `None` in the same `From` impl).
 
-**Live call.** No credential for `https://api.deepseek.com` was available.
-The route that was available is the product's configured Chat Completions
-host for this session: `POST https://openrouter.ai/api/v1/chat/completions`,
+**Live call.** **Limit:** the environment this measurement ran in had no
+credential for `https://api.deepseek.com`. That host was not called, and
+nothing below is a response from it. The route that was available is the
+product's configured Chat Completions host for this session:
+`POST https://openrouter.ai/api/v1/chat/completions`,
 model `deepseek/deepseek-v4-flash`, `thinking.type = disabled`,
 `reasoning_effort = none`, `max_tokens = 16`, `stream = false`.
 
@@ -183,11 +185,12 @@ is not evidence about tool caching. There is still no in-history tool
 event. The expressible tool update on this transport is a new full `tools`
 array.
 
-**What this does not show.** `api.deepseek.com` was not called. OpenRouter's
-`cached_tokens` is the field this host returned; it may be OpenRouter's
-accounting of the upstream prefix cache. The official field names in §2
-stay the contract for a direct DeepSeek call until someone measures that
-host. Identical replays moved by more than a hundred tokens (641, 712, 768
+**What this does not show.** **Limit, repeated:** no credential for
+`https://api.deepseek.com` was present, so that host was not called.
+OpenRouter's `cached_tokens` is the field this host returned; it may be
+OpenRouter's accounting of the upstream prefix cache. The official field
+names in §2 stay the contract for a direct DeepSeek call until someone
+measures that host. Identical replays moved by more than a hundred tokens (641, 712, 768
 on the same 792-token body), so a unit cannot treat a single hit count as a
 precise byte boundary.
 
@@ -236,6 +239,9 @@ still has to land in the vendored assembly named in the U2.2 row.
   was already on `main`; npm still reported `5.7.0` at the start of the
   session, and this note leaves both alone.
 - No second vendored build.
+- No call to `https://api.deepseek.com`. The environment had no credential
+  for that host. Official field names in §2 are the schema pages, not a
+  captured response.
 - No Anthropic Messages migration. The Messages mapping keeps system text in
   a top-level `system` field (`conversation/messages.rs:281`), which is a
   different body. That comparison is not a decision to switch.

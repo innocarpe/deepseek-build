@@ -1,7 +1,7 @@
 # Commit conventions
 
 We follow [Conventional Commits](https://www.conventionalcommits.org/).  
-On `main`, history is primarily **one squash commit per PR** (see [pull-requests.md](./pull-requests.md) §Merge). Branch commits still matter for review and bisect *before* merge.
+On `main`, history is **merge commits with their branch commits preserved** (see [pull-requests.md](./pull-requests.md) §9). Squash and rebase are disabled, so every commit you write on a branch lands in `main` — write them atomic.
 
 ---
 
@@ -58,15 +58,21 @@ Cache-impact: low — sorted tool schema keys only
 
 ---
 
-## Branch commits vs squash on `main`
+## Branch commits on `main`
+
+`main` takes **merge commits** (squash and rebase are disabled on this repo),
+so branch commits are preserved rather than flattened. That raises the bar on
+them, it does not lower it.
 
 | Location | Expectation |
 |----------|-------------|
 | Feature branch | **Atomic** Conventional Commits (one logical concern each). Compiles/tests when feasible. Ultragoal: see [ULTRAGOAL_PR_PLANNING.md](../product/ULTRAGOAL_PR_PLANNING.md) |
-| `main` after squash | **PR title** becomes the subject; should stand alone as a changelog line |
+| `main` after merge | Every branch commit survives under the merge commit, so **each one must stand on its own as a changelog line** |
 
-Do **not** rely on squash to hide a PR that mixed three features—split the PR instead.  
-Do **not** use squash as an excuse for a single non-atomic dump commit on the branch during multi-step work.
+Do **not** rely on a merge commit to hide a PR that mixed three features — split
+the PR instead.
+Do **not** use the merge as an excuse for a single non-atomic dump commit on the
+branch during multi-step work.
 
 ---
 

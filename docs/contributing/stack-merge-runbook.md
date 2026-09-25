@@ -1,8 +1,10 @@
-# Stack / squash-merge runbook
+# Stack merge runbook
 
 **Normative for ultragoal stacking.** Companion: [ULTRAGOAL_PR_PLANNING.md](../product/ULTRAGOAL_PR_PLANNING.md).
 
-`main` uses **squash-merge**. Stacked children must be repaired carefully after the parent lands.
+`main` uses **merge commits** — squash and rebase are disabled on this repo, so a
+merged parent's commits stay ancestors and a stacked child rebases onto the new
+`main` without a repair step.
 
 ---
 
@@ -54,38 +56,31 @@ Do **not** merge if `mergeStateStatus` is `DIRTY` / `BLOCKED` (unless only faili
 
 ---
 
-## 4. Bottom-up merge + child repair after squash
+## 4. Bottom-up merge + child rebase
 
 ```bash
-# 1) Merge parent (squash)
-gh pr merge <A> --squash --delete-branch
+# 1) Merge parent (merge commit — squash is disabled on this repo)
+gh pr merge <A> --merge --delete-branch
 
 # 2) Update main
 git checkout main && git pull --ff-only origin main
 
-# 3) Repair child B onto new main (squash means A commits are NOT ancestors)
+# 3) Rebase child B onto new main. A's commits are ancestors of the merge
+#    commit, so a plain rebase drops them — no --onto needed.
 git fetch origin
 git checkout feat/unit-b
-# Option recommended: rebase onto main, dropping commits already in squash A
-git rebase --onto main origin/feat/unit-a feat/unit-b
-# If unit-a branch deleted, use the merge-base knowledge:
-#   git rebase --onto main <last-A-sha-before-b-commits> feat/unit-b
-#
-# If rebase is painful: recreate
-#   git checkout main && git checkout -b feat/unit-b-v2
-#   git cherry-pick <only-B-shas>
-#   force-with-lease push new branch; retarget PR
+git rebase main
 
 git push --force-with-lease origin feat/unit-b
 
-# 4) Retarget PR base to main if still pointing at deleted branch
+# 4) Retarget PR base to main if still pointing at the (now deleted) parent branch
 gh pr edit <B> --base main
 
 # 5) Verify only B diff remains
 gh pr diff <B>   # must NOT re-include A changes
 
 # 6) Merge child
-gh pr merge <B> --squash --delete-branch
+gh pr merge <B> --merge --delete-branch
 git checkout main && git pull --ff-only origin main
 ```
 
@@ -109,6 +104,7 @@ git checkout main && git pull --ff-only origin main
 ## 6. Anti-patterns
 
 - Merge child before parent  
-- `git rebase main` on child after parent squash without `--onto` (duplicates A)  
+- `git rebase --onto` gymnastics left over from a squash flow — with merge
+  commits on `main`, a plain `git rebase main` already drops the parent's commits  
 - Force-push `main`  
 - Parallel agents both editing `Cargo.lock`  

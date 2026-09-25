@@ -97,7 +97,7 @@ A PR is **one unit** when all of the following hold:
 2. **One primary kind** — not “half spec, half production loop.”  
 3. **One review lens** — a reviewer can ask one main question (“Is this contract right?” *or* “Does this implement the contract?”).  
 4. **Independently mergeable** — does not require an unmerged sibling branch to compile/make sense (stacked PRs are OK if each step is reviewable).  
-5. **Revertable** — `git revert` of the squash commit should not leave the tree half-migrated without a follow-up plan called out in the body.
+5. **Revertable** — `git revert` of the merge commit should not leave the tree half-migrated without a follow-up plan called out in the body.
 
 ### Decision tree: split or keep?
 
@@ -280,10 +280,9 @@ EOF
 gh pr view --json title,labels,milestone,url
 gh pr checks
 
-# 5) after approval / solo checklist: squash merge (repo default)
-gh pr merge --squash
+# 5) after approval / solo checklist: merge commit (repo default) and clean up
+gh pr merge --merge --delete-branch
 git checkout main && git pull origin main
-git branch -d spec/10-cache-contract
 ```
 
 ### Stacked work
@@ -342,18 +341,19 @@ No mandatory 24h wait in early milestones; still sleep on **high cache-impact** 
 
 | Setting | Value |
 |---------|--------|
-| Allowed method on GitHub | **Squash merge only** |
-| Squash title | PR title |
-| Squash body | PR body (trimmed as needed) |
+| Allowed method on GitHub | **Merge commit only** — squash and rebase are disabled on this repo (`gh api repos/innocarpe/deepseek-build --jq .allow_squash_merge` → `false`) |
+| Branch commits | Stay in `main` history — each one should stand on its own as a changelog line |
+| Merge title | GitHub default (`Merge pull request #N from …`) |
+| Merge body | The PR body is the review artifact; keep it correct, since it is what remains linked to the merge |
 | Delete branch on merge | yes |
 
-After squash, `main` history should read like a product changelog of intents:
+`main` reads as a product changelog of intents, with each PR's branch commits
+preserved under its merge commit:
 
 ```text
-spec(cache): …
-feat(provider): …
-fix(tools): …
-docs(contributing): …
+Merge pull request #210 from innocarpe/feat/agent-korean-output
+docs(agents): scope the Korean-output measurement to this tree
+docs(agents): make Korean session output a standing rule in this repo
 ```
 
 not:
@@ -364,6 +364,9 @@ address comments
 fix stuff
 merge branch 'x'
 ```
+
+Because merge commits keep ancestry, a stacked child rebases onto the new `main`
+cleanly once its parent lands — there is no squash-repair step.
 
 ---
 
@@ -422,7 +425,7 @@ Agents **must not**:
 | `skills/pr-authoring/SKILL.md` | Agent skill loaded when opening/writing PRs |
 | `AGENTS.md` | Standing agent contract |
 | `docs/contributing/*` | Normative human + agent process |
-| Review / self-merge checklist | Social gate before squash-merge |
+| Review / self-merge checklist | Social gate before merge |
 | Optional `./scripts/check-pr-title.sh` | Local helper only |
 
 **Do not** add GitHub Actions that only police titles, labels, or markdown path inventories. That is not product CI. Product CI appears when there is a real build/test surface (see `.github/workflows/README.md`).

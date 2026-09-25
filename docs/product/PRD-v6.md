@@ -58,16 +58,21 @@ for speed were rejected rather than absorbed; the verdicts are in the ledger.
 
 ### Shipped — honesty table
 
-Filled at the cut; each row states the measured result rather than the intent.
-A row that cannot be evidenced stays **not claimed**.
+Each row states the measured result, taken on `main` after the port merged
+(2026-09-25). A claim that could not be evidenced would stay **not claimed**;
+none did.
 
 | Claim | Status | Evidence |
 |---|---|---|
-| C1 | | |
-| C2 | | |
-| C3 | | |
-| C4 | | |
-| C5 | | |
+| C1 | **shipped** | `SOURCE_REV = 036a5d8348cd744767cd0b08518ab17bf608fa7f`; the vendored `xai-grok-version` crate reports `1.0.41`; `build-grok-pager.sh check` exits 0 |
+| C2 | **shipped** | Each overlay group is present in the tree: DeepSeek Night themes (12 files), the `x.ai/deepseek/status` extension (6), the snippet store (4), `DEEPSEEK_BUILD_VERSION` injection (6), Path A cache signal (3), spec-10 assembly (3), the product update rules (2). The agent prompt carries no vendor claim, and the product overwrites `system_prompt_label` on every DeepSeek stanza (`dsb-cli`) |
+| C3 | **shipped** | [`CHANGELIST_6_0_0.md`](./CHANGELIST_6_0_0.md) — faster / fixed / new / changed / not-taken, one file |
+| C4 | **shipped** | [`skills/grok-sync`](../../skills/grok-sync/SKILL.md), [`grok-sync-runbook.md`](../contributing/grok-sync-runbook.md), [`UPSTREAM_SYNC_LEDGER.md`](./UPSTREAM_SYNC_LEDGER.md), `scripts/grok-sync-inventory.sh` — all on `main`; the inventory reports the pin, upstream HEAD, and the 472-bullet cluster table in one command |
+| C5 | **shipped** | Run on `main` after the port merged: `test-owner-bar` **ALL PASS (PASS=60 FAIL=0 NOT_RUN=0)** · `check-path-a-linkage` **PASS** · `test-heart-regression` **PASS** · `test-grok-vendor-offline` **ALL PASSED** · `test-product-offline` **ALL PASSED** · `check-semver` ok · CI `grok clippy` and `grok fmt` **pass** |
+
+**Not claimed.** The port did not exercise credential-gated live behaviour: the
+L3 checks (`L3.1`–`L3.3`, `L3.5`) and the Path A e2e are `SKIP` without an API
+key. The merge left them unverified, and this table does not imply otherwise.
 
 ---
 

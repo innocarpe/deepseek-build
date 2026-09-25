@@ -1019,7 +1019,9 @@ mod tests {
     }
 
     /// §1.10. The mock's hit is the shared byte prefix of the serialized
-    /// messages. No §1.9 harness exists in this tree, so this test owns the mock.
+    /// messages. The §1.9 scenario bench is the sibling `cache_guard` module;
+    /// this test keeps its own byte-prefix mock so the append rule does not
+    /// depend on that bench.
     #[test]
     fn in_history_update_appends_and_head_rewrite_breaks_the_byte_prefix() {
         let tools = vec![tool(
@@ -1305,3 +1307,11 @@ mod tests {
         assert!(!change.log_block().contains("system"));
     }
 }
+
+/// Spec 10 §1.9 Path A bench. Sibling file so this module stays the assembly,
+/// same layout as `session_compact`'s `#[path]` tests. Not an integration
+/// test under `tests/`: the scored bytes are this module's assembly, and the
+/// §1.10 byte-prefix mock already lives here.
+#[cfg(test)]
+#[path = "spec10_path_a_cache_guard.rs"]
+mod cache_guard;

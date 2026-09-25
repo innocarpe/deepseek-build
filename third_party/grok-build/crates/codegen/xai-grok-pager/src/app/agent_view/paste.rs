@@ -434,7 +434,6 @@ impl AgentView {
     ) -> Option<(InputOutcome, crate::app::actions::ClipboardPasteCompletion)> {
         /// Upper bound on the size of a paste payload the drop classifier will scan.
         /// 10 MB matches `MAX_SEND_BYTES` for individual image attachments: above any realistic drop, below any log/code paste worth iterating.
-
         const DROP_CLASSIFIER_MAX_BYTES: usize = 10 * 1024 * 1024;
         if text.len() >= DROP_CLASSIFIER_MAX_BYTES {
             return None;

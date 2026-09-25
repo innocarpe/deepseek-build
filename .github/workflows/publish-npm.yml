@@ -202,9 +202,24 @@ jobs:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
-          PUBLISHED="$(npm view "@innocarpe/deepseek-build@${VERSION}" version)"
-          echo "registry reports: ${PUBLISHED}"
-          [[ "$PUBLISHED" == "$VERSION" ]]
+          # The registry read can lag the successful publish: `v5.7.0` published
+          # at 12:16:44 and this step read E404 at 12:17:51, then the package
+          # appeared. Poll instead of failing the run on a propagation delay --
+          # a genuine publish failure still surfaces, just later.
+          PUBLISHED=""
+          for attempt in $(seq 1 20); do
+            PUBLISHED="$(npm view "@innocarpe/deepseek-build@${VERSION}" version 2>/dev/null || true)"
+            if [[ "$PUBLISHED" == "$VERSION" ]]; then
+              echo "registry reports: ${PUBLISHED} (attempt ${attempt})"
+              break
+            fi
+            echo "registry does not report ${VERSION} yet (attempt ${attempt}: '${PUBLISHED}')"
+            sleep 15
+          done
+          if [[ "$PUBLISHED" != "$VERSION" ]]; then
+            echo "::error::registry never reported ${VERSION} after 20 attempts" >&2
+            exit 1
+          fi
           echo "--- provenance / attestations ---"
           npm view "@innocarpe/deepseek-build@${VERSION}" dist.attestations --json || \
             echo "no attestations reported yet (provenance can lag the publish)"

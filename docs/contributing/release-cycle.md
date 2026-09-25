@@ -20,11 +20,15 @@ one-time code to type ([ADR 0012](../adr/0012-npm-trusted-publishing.md)).
 remaining human step is a **one-time** enrollment on the npm website
 (§Trusted Publisher enrollment), not a per-release gate.
 
-> **Status of the automatic path.** It is implemented and the trusted publisher
-> is **enrolled** (2026-09-25), but an OIDC publish has **not yet run**: no
-> release has been cut since. The next release is the first real exercise. If
-> the tag run fails at the publish step, the emergency path is the working
-> route, and the troubleshooting order is in ADR 0012.
+> **Status of the automatic path.** The first OIDC publish ran for `v5.7.0`
+> (2026-09-25) and the package reached the registry. The run still shows
+> **failure**, and the cause was the verification step, not the publish: npm
+> wrote `5.7.0` at 12:16:44 and the `npm view` check read `E404` at 12:17:51,
+> then the version appeared. The step now polls for up to five minutes, so a
+> propagation delay no longer reddens a successful release — and a genuine
+> publish failure still fails, just later. If a tag run fails at the publish
+> step itself, the emergency path is the working route; the troubleshooting
+> order is in ADR 0012.
 >
 > Enrolling it needed 2FA enabled on the npm account first — npm requires
 > interactive 2FA to modify package settings, and the account had it disabled.

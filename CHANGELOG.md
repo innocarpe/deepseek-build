@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+
+## 5.6.0 — 2026-09-25
+
 - First-run setup now asks for the API provider first — DeepSeek API or
   OpenRouter — then for that provider's key. The choice is saved with the key
   and the full-screen agent's model stanzas follow it (OpenRouter uses
@@ -15,11 +18,6 @@
   the value of `DEEPSEEK_API_KEY`. A key saved without `--provider` keeps the
   provider the home is already set up for — including after `auth logout`,
   which deletes the key but not the choice.
-- Fix release binaries shipping with the previous release's compiled version
-  (5.5.2 shipped a 5.5.1-labeled agent): the product version is now baked via
-  a generated file read with `include_str!`, so sccache keys on the file
-  content and a version change always recompiles. The release workflow now
-  also verifies the extracted tarball's agent `--version` before upload.
 
 ## 5.5.4 — 2026-08-10
 
@@ -32,6 +30,11 @@
 ## 5.5.3 — 2026-08-09
 
 - fix compiled version injection (sccache-proof) and gate shipped tarball
+- Fix release binaries shipping with the previous release's compiled version
+  (5.5.2 shipped a 5.5.1-labeled agent): the product version is now baked via
+  a generated file read with `include_str!`, so sccache keys on the file
+  content and a version change always recompiles. The release workflow now
+  also verifies the extracted tarball's agent `--version` before upload.
 
 ## 5.5.2 — 2026-08-09
 

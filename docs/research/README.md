@@ -10,5 +10,6 @@ Non-binding notes on other tools. **Do not treat as product commitment.**
 | [gajae-code.md](gajae-code.md) | Why deferred for v1 |
 | [adversarial-review-2026-08-06-codex-xhigh.md](adversarial-review-2026-08-06-codex-xhigh.md) | Codex xhigh FAIL review (first pass; partial amendments in PR #4) |
 | [adversarial-review-2026-08-06-claude-opus.md](adversarial-review-2026-08-06-claude-opus.md) | Claude Opus FAIL review post-#4; doc escape hatches + missing artifacts |
+| [upstream-gap-sweep-2026-09-25.md](upstream-gap-sweep-2026-09-25.md) | Deep Code + Reasonix vs dsb: what is missing, with the take / hold / reject call on each |
 
 When a research insight becomes a product rule, promote it into `docs/product/`, `docs/specs/`, or an ADR — do not leave it only here.

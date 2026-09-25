@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Editing a file with CRLF line endings works, and the file keeps them. A
+  multi-line `old_string` used to fail with `no_match` on any CRLF file — a
+  Windows checkout, a `core.autocrlf` working copy, a `.bat` — because the
+  snippet scope held `\r\n` while the model wrote `\n`. A single-line edit that
+  did apply wrote LF into the file and left it with two conventions. `read` now
+  returns LF and records the file's convention on the snippet, `edit` matches
+  on LF and writes every line break back as the file's own, and a mixed file is
+  uniformized on its next edit. Spec 45 §1.8 promised this; §1.9 now states it
+  and both edit entry points — the `edit` tool and Path A `search_replace` —
+  share one rule.
+
 
 ## 5.6.0 — 2026-09-25
 

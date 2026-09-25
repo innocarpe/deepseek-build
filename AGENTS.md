@@ -201,7 +201,12 @@ single clone and no Orca, work as usual: branch, commit, PR
   `rg -l grok-build scripts/`) — goes serially across all worktrees. Units that
   only build and test `crates/` can run in parallel.
 - **Leave other sessions' worktrees alone** — their files, branches and
-  terminals. Ask the owning session or report instead.
+  terminals. Ask the owning session or report instead. **Do not judge a worktree
+  abandoned from `orca terminal list`:** on 2026-09-25 it returned 0 terminals
+  for a worktree whose agent was mid-build, because that session ran outside
+  Orca. Check live processes (`pgrep -fl "/deepseek-build/<slug>"`) and the last
+  commit time, and treat "no signal" as unknown rather than idle
+  (`skills/worktree-dispatch` §0).
 - **Open work sessions as `deepseek-build` (`dsb`), not another coding agent.**
   Every session that changes this repo runs under the product this repo ships:
   its TUI, its tools, its cache behaviour. Claude Code, Codex and similar spend

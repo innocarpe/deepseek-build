@@ -1,6 +1,20 @@
 # Changelog
 
 ## Unreleased
+
+- A published release no longer prints `[alpha]` because `version.json`
+  still names an older stable pointer. `6.0.0` with `stable_version`
+  `5.7.0` reported `deepseek-build 6.0.0 (…) [alpha]`. That file is an
+  updater cache, not this product's channel: install does not write it.
+  A release SemVer omits the suffix. A pre-release (`6.1.0-alpha.1`)
+  still uses the upstream comparison, and that comparison itself is
+  unchanged.
+- The npm package and `deepseek-build-agent` are one install. postinstall
+  of an older package replaced a newer agent (a `5.7.0` package over a
+  `6.0.0` agent). The installer now leaves the newer agent in place
+  unless `DEEPSEEK_BUILD_ALLOW_DOWNGRADE=1`. The wrapper no longer stamps
+  its package version onto the agent, and it warns when the two versions
+  differ. `dsb --version` reports the native binary.
 - Pasting an image into a pane on a remote host now attaches it. A pasted image
   path is resolved by the host the pager runs on, and a terminal that works
   this way uploads the bytes to that host first — an Orca SSH pane writes the

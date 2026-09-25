@@ -26,13 +26,14 @@ use indexmap::IndexMap;
 use ratatui::layout::Rect;
 
 use super::block::{BlockContent, RenderBlock};
+use super::blocks::UserPromptBlock;
 use super::blocks::tool::{EditToolCallBlock, ToolCallBlock};
 use super::entry::{EntryId, ScrollbackEntry};
 use super::layout::HorizontalLayout;
 use super::selection::SelectionBox;
 use super::sticky::{PromptDescriptor, StickyHeaderLayout, compute_sticky_layout};
 use super::types::DisplayMode;
-use super::wrappers::EntryRenderer;
+use super::wrappers::{EntryRenderer, block_content_width_for};
 use crate::appearance::AppearanceConfig;
 use crate::render::Renderable;
 use crate::theme::Theme;
@@ -535,6 +536,7 @@ impl ScrollbackState {
         entry.id = id;
 
         self.apply_edit_default_display_mode(&mut entry);
+        self.apply_prompt_default_display_mode(&mut entry);
 
         // Track if this entry is running
         if entry.is_running {
@@ -603,6 +605,7 @@ impl ScrollbackState {
         let mut entry = ScrollbackEntry::new(block);
         entry.id = id;
         self.apply_edit_default_display_mode(&mut entry);
+        self.apply_prompt_default_display_mode(&mut entry);
         if entry.is_running {
             self.running.insert(id);
         }
@@ -640,6 +643,46 @@ impl ScrollbackState {
                 edit,
             );
         }
+    }
+
+    /// The width a prompt's text wraps at in a pane `pane_width` wide: the entry's content column minus the timestamp
+    /// gutter that overlays it.
+    ///
+    /// `0` means the width is not known yet (before the first `prepare_layout`). Callers must treat that as "leave the
+    /// fold alone" rather than as a real narrow width.
+    fn prompt_content_width(&self, pane_width: u16) -> u16 {
+        if pane_width == 0 {
+            return 0;
+        }
+        // The same entry-area → content-width chain the renderer and the pane use, so a prompt's fold cannot be
+        // decided at another width than the one it is measured and painted at.
+        block_content_width_for(
+            &self.appearance,
+            &RenderBlock::UserPrompt(UserPromptBlock::new("")),
+            self.entry_area_width(pane_width),
+        )
+    }
+
+    /// A fresh prompt adopts the fold its width implies, so the submitted echo is a one-row band in a phone-width pane
+    /// instead of a full body.
+    ///
+    /// The block's own `default_display_mode()` answers from the width-blind estimate, and `ScrollbackEntry::new` has
+    /// already applied it — so a prompt pushed into a narrow pane would otherwise arrive `Expanded` and paint every
+    /// wrapped row. A pinned entry keeps the mode the user left it in. An unpinned one is treated as sitting on its
+    /// default, because `ScrollbackEntry::new` derives that default from the block and leaves no record of an explicit
+    /// choice — the same caveat [`Self::apply_edit_default_display_mode`]'s materialize policy carries.
+    ///
+    /// No-op before the first frame: with no width there is nothing to decide, and the resize path re-derives the
+    /// default once a previous width exists.
+    fn apply_prompt_default_display_mode(&self, entry: &mut ScrollbackEntry) {
+        if entry.display_mode_pinned || !matches!(entry.block, RenderBlock::UserPrompt(_)) {
+            return;
+        }
+        let content_width = self.prompt_content_width(self.last_width);
+        if content_width == 0 {
+            return;
+        }
+        entry.display_mode = auto_prompt_display_mode(entry, content_width);
     }
 
     /// Remove an entry by EntryId. No-op if the id is not present. Used by the cancel-with-restore flow to undo the
@@ -1354,6 +1397,8 @@ impl ScrollbackState {
             let has_targeted_dirty =
                 !self.dirty_heights.is_empty() && self.dirty_heights.len() < self.entries.len();
             if width_changed {
+                // A prompt's automatic fold depends on the width, so re-derive it before the width field moves.
+                rederive_prompt_folds_for_width(self, width);
                 for entry in self.entries.values_mut() {
                     entry.invalidate_width_caches();
                 }
@@ -1546,6 +1591,7 @@ impl ScrollbackState {
     /// Invalidate caches if width changed.
     pub fn invalidate_if_width_changed(&mut self, width: u16) {
         if width != self.last_width {
+            rederive_prompt_folds_for_width(self, width);
             for entry in self.entries.values_mut() {
                 entry.invalidate_cache();
             }
@@ -1649,6 +1695,37 @@ impl ScrollbackState {
         };
         let entry_bottom = entry_top + info.height as usize;
         entry_top < bottom && entry_bottom > top
+    }
+}
+
+/// Re-derive every unpinned prompt's automatic fold for `new_width`.
+///
+/// Called from both width-change paths before the width field is updated, so the old width is still readable.
+/// Comparing an entry's current mode against the default it had at the old width tells "still sitting on the
+/// automatic default" apart from "the user folded this by hand". Only the former is re-derived.
+fn rederive_prompt_folds_for_width(state: &mut ScrollbackState, new_width: u16) {
+    let old_prompt_width = state.prompt_content_width(state.last_width);
+    if old_prompt_width == 0 {
+        return;
+    }
+    let new_prompt_width = state.prompt_content_width(new_width);
+    for entry in state.entries.values_mut() {
+        if entry.display_mode_pinned || !matches!(entry.block, RenderBlock::UserPrompt(_)) {
+            continue;
+        }
+        if entry.display_mode == auto_prompt_display_mode(entry, old_prompt_width) {
+            entry.display_mode = auto_prompt_display_mode(entry, new_prompt_width);
+        }
+    }
+}
+
+/// The mode a prompt falls into on its own at `content_width`: collapsed when the echo needs more rows than its
+/// collapse budget allows there, expanded when it fits.
+fn auto_prompt_display_mode(entry: &ScrollbackEntry, content_width: u16) -> DisplayMode {
+    if entry.is_foldable_at(content_width) {
+        DisplayMode::Collapsed
+    } else {
+        DisplayMode::Expanded
     }
 }
 
@@ -3452,5 +3529,125 @@ mod tests {
         assert_eq!(state.selected(), Some(0));
         assert_eq!(state.current_turn(), Some(0));
         assert_eq!(state.scroll_offset(), 2);
+    }
+
+    // ── Width-derived prompt fold at push and on resize ────────────
+
+    /// The measured iPhone Orca pane is 55 columns. At that pane width the prompt's content column (entry area minus
+    /// chrome minus the timestamp gutter) is narrow enough that a ~100-column one-liner needs more than one row.
+    const PHONE_PANE: u16 = 55;
+    /// The narrowest desktop pane observed on the same machine.
+    const DESKTOP_PANE: u16 = 80;
+
+    fn hundred_column_prompt() -> String {
+        "x".repeat(100)
+    }
+
+    #[test]
+    fn prompt_at_phone_width_defaults_to_collapsed() {
+        let mut state = ScrollbackState::new();
+        state.prepare_layout(PHONE_PANE, 20);
+        let id = state.push_block(user_block(&hundred_column_prompt()));
+        assert_eq!(
+            state.get_by_id(id).unwrap().display_mode,
+            DisplayMode::Collapsed,
+            "a ~100-column prompt pushed into a {PHONE_PANE}-column pane must arrive folded"
+        );
+    }
+
+    #[test]
+    fn prompt_at_desktop_width_stays_expanded() {
+        let mut state = ScrollbackState::new();
+        state.prepare_layout(DESKTOP_PANE, 20);
+        let id = state.push_block(user_block(&hundred_column_prompt()));
+        assert_eq!(
+            state.get_by_id(id).unwrap().display_mode,
+            DisplayMode::Expanded,
+            "the same prompt fits its desktop budget and must stay expanded"
+        );
+    }
+
+    #[test]
+    fn prompt_pushed_before_first_frame_keeps_its_block_default() {
+        let mut state = ScrollbackState::new();
+        let text = hundred_column_prompt();
+        let id = state.push_block(user_block(&text));
+        assert_eq!(
+            state.get_by_id(id).unwrap().display_mode,
+            RenderBlock::user_prompt(text).default_display_mode(),
+            "with no width yet the block's own default stands"
+        );
+    }
+
+    #[test]
+    fn resize_narrow_folds_unpinned_prompt() {
+        let mut state = ScrollbackState::new();
+        state.prepare_layout(DESKTOP_PANE, 20);
+        let pinned = state.push_block(user_block(&hundred_column_prompt()));
+        let automatic = state.push_block(user_block(&hundred_column_prompt()));
+        // A manual fold is a user gesture: pinned-and-expanded, the shape `fold_selected_impl` produces.
+        state.get_by_id_mut(pinned).unwrap().display_mode_pinned = true;
+
+        state.prepare_layout(PHONE_PANE, 20);
+
+        assert_eq!(
+            state.get_by_id(automatic).unwrap().display_mode,
+            DisplayMode::Collapsed,
+            "an unpinned prompt still on its desktop default folds when the pane narrows"
+        );
+        assert_eq!(
+            state.get_by_id(pinned).unwrap().display_mode,
+            DisplayMode::Expanded,
+            "a pinned prompt keeps the mode the user left it in"
+        );
+    }
+
+    #[test]
+    fn resize_wider_unfolds_the_automatic_prompt() {
+        let mut state = ScrollbackState::new();
+        state.prepare_layout(PHONE_PANE, 20);
+        let id = state.push_block(user_block(&hundred_column_prompt()));
+        assert_eq!(
+            state.get_by_id(id).unwrap().display_mode,
+            DisplayMode::Collapsed
+        );
+
+        state.prepare_layout(DESKTOP_PANE, 20);
+
+        assert_eq!(
+            state.get_by_id(id).unwrap().display_mode,
+            DisplayMode::Expanded,
+            "widening back to a desktop pane unfolds the prompt again"
+        );
+    }
+
+    #[test]
+    fn phone_width_prompt_echo_is_one_row_without_padding() {
+        let mut state = ScrollbackState::new();
+        state.prepare_layout(PHONE_PANE, 20);
+        let id = state.push_block(user_block(&hundred_column_prompt()));
+        assert_eq!(
+            state.get_by_id(id).unwrap().display_mode,
+            DisplayMode::Collapsed,
+            "the test measures the folded echo, so the fold must have fired"
+        );
+
+        let height = state.get_cached_entry_height(0).expect("layout cache");
+        assert_eq!(
+            height, 1,
+            "the collapsed prompt echo is one row with no vertical padding"
+        );
+    }
+
+    #[test]
+    fn desktop_width_prompt_echo_keeps_its_padding() {
+        let mut state = ScrollbackState::new();
+        state.prepare_layout(DESKTOP_PANE, 20);
+        state.push_block(user_block("Hello"));
+        assert_eq!(
+            state.get_cached_entry_height(0),
+            Some(3),
+            "desktop keeps the two pad rows around the one-row prompt"
+        );
     }
 }

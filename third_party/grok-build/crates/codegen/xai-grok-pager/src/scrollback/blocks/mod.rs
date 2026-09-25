@@ -31,5 +31,7 @@ pub use tool::{
     SentMessagePresentation, SentMessageToolCallBlock, ToolCallBlock, UseToolCallBlock,
     discovered_tool_action, render_diff_hunk_highlighted, render_diff_hunks_highlighted,
 };
+/// The narrow-pane threshold, shared with the composer so the echo and the input box agree about phone width.
+pub(crate) use user::COLLAPSED_NARROW_TERMINAL_COLS;
 pub use user::UserPromptBlock;
 pub use workflow::{WorkflowBlock, WorkflowBlockPhase, WorkflowBlockStatus};

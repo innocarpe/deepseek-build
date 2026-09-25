@@ -309,21 +309,25 @@ impl<'a> EntryRenderer<'a> {
     /// Timestamps are shown for user and agent messages (including /btw responses and mid-turn interjections).
     /// Thinking traces, tool calls, and system messages get none.
     fn should_show_timestamp(&self) -> bool {
-        matches!(
-            self.entry.block,
-            RenderBlock::UserPrompt(_) | RenderBlock::AgentMessage(_) | RenderBlock::Btw(_)
-        )
+        timestamp_gutter_applies(&self.entry.block)
     }
 
     /// Width reserved for the timestamp on the right side of content lines.
     ///
     /// When non-zero, content is wrapped at `content_width - reserved` so text never collides with the timestamp overlay.
     fn timestamp_reserved(&self) -> u16 {
-        if self.appearance().show_timestamps && self.should_show_timestamp() {
-            10 // max short format: "  12:30 PM"
-        } else {
-            0
-        }
+        timestamp_reserved_for(self.appearance(), &self.entry.block)
+    }
+
+    /// The width this entry's text actually wraps at, for an entry area `width` wide.
+    ///
+    /// One helper so the height passes, the fold decision and the vpad rule cannot drift apart. `hide_accent` stays on
+    /// [`Self::chrome_width`] so minimal mode still reclaims the accent column; every other caller shares
+    /// [`block_content_width_for`].
+    pub(crate) fn block_content_width(&self, width: u16) -> u16 {
+        width
+            .saturating_sub(self.chrome_width())
+            .saturating_sub(self.timestamp_reserved())
     }
 
     /// Thinking entries take no rows when the Appearance toggle is off.
@@ -338,9 +342,7 @@ impl<'a> EntryRenderer<'a> {
         if self.thinking_hidden() {
             return 0;
         }
-        let content_width = width
-            .saturating_sub(self.chrome_width())
-            .saturating_sub(self.timestamp_reserved());
+        let content_width = self.block_content_width(width);
         self.entry
             .ensure_truncated_height_cached(content_width, self.appearance(), self.cwd)
     }
@@ -369,9 +371,7 @@ impl<'a> EntryRenderer<'a> {
         if self.thinking_hidden() {
             return 0;
         }
-        let content_width = width
-            .saturating_sub(self.chrome_width())
-            .saturating_sub(self.timestamp_reserved());
+        let content_width = self.block_content_width(width);
         let content_lines = self.estimate_content_lines(content_width);
         // `inline_media_rows` (in `assemble_height`) covers trailing tool media.
         // `estimate_extra_rows` adds the Mermaid treatment rows (one affordance row or fallback caption per diagram)
@@ -387,9 +387,11 @@ impl<'a> EntryRenderer<'a> {
         if let Some(lines) = self.entry.cached_estimate_lines(content_width) {
             return lines;
         }
-        // Collapsed / Truncated foldable entries render a compact ~1-line header, NOT their (often huge) hidden body
-        // Use the ENTRY-level foldability, matching the fold path
-        let lines = if self.entry.display_mode != DisplayMode::Expanded && self.entry.is_foldable()
+        // Collapsed / Truncated foldable entries render a compact ~1-line header, NOT their (often huge) hidden body.
+        // Ask at this width so a prompt that only folds in a narrow pane is estimated at one row instead of its full
+        // body height.
+        let lines = if self.entry.display_mode != DisplayMode::Expanded
+            && self.entry.is_foldable_at(content_width)
         {
             1
         } else {
@@ -403,7 +405,11 @@ impl<'a> EntryRenderer<'a> {
     /// Saturating throughout so a multi-MB block whose line count hits the u16 ceiling can't overflow and corrupt `virtual_y` / `total_height`.
     /// Shared by `desired_height` and `estimate_height` so the assembly stays canonical.
     fn assemble_height(&self, content_width: u16, content_lines: u16) -> u16 {
-        let vpad: u16 = if self.entry.block.has_vpad_for(self.appearance()) {
+        let vpad: u16 = if self
+            .entry
+            .block
+            .has_vpad_for_width(self.appearance(), content_width)
+        {
             2
         } else {
             0
@@ -416,9 +422,7 @@ impl<'a> EntryRenderer<'a> {
     /// The forward ([`rendered_row_of_logical_line`]) and inverse ([`logical_line_of_rendered_row`]) derive from one
     /// predicate and can't drift. They still occupy rows, so the full-enumeration index is used.
     pub(crate) fn logical_line_start_rows(&self, width: u16) -> (Vec<u16>, u16) {
-        let content_width = width
-            .saturating_sub(self.chrome_width())
-            .saturating_sub(self.timestamp_reserved());
+        let content_width = self.block_content_width(width);
         // Compute vpad and populate the cache before borrowing the cached output
         // `ensure_cached` takes the RefCell mutably on a miss, so the `Ref` from `cached_output_ref` must come after it
         let ctx = self
@@ -457,8 +461,20 @@ impl<'a> EntryRenderer<'a> {
         if height == 0 || (self.group_header_count > 0 && !self.group_collapse_header) {
             return flags;
         }
+        // The cached width is the wrap width `render` / `desired_height` just measured. Read it before borrowing the
+        // cached lines: both sit in the same `RefCell`. Pad rows have to match that measurement; the width-blind
+        // answer would shift wrap flags by a row on a phone-width prompt.
+        let vpad_top = u16::from(
+            self.entry
+                .cached_content_width()
+                .map(|width| {
+                    self.entry
+                        .block
+                        .has_vpad_for_width(self.appearance(), width)
+                })
+                .unwrap_or_else(|| self.entry.block.has_vpad_for(self.appearance())),
+        );
         let output = self.entry.cached_output_ref();
-        let vpad_top = u16::from(self.entry.block.has_vpad_for(self.appearance()));
         let (header_rows, skip_remaining) = if self.group_collapse_header {
             if self.skip_rows == 0 {
                 (1u16, 0u16)
@@ -515,6 +531,46 @@ impl<'a> EntryRenderer<'a> {
     }
 }
 
+/// Whether this block's first content line carries a right-aligned timestamp.
+///
+/// Timestamps are shown for user and agent messages (including `/btw` responses and mid-turn interjections) but not
+/// for thinking traces, tool calls, or system messages.
+pub(crate) fn timestamp_gutter_applies(block: &RenderBlock) -> bool {
+    matches!(
+        block,
+        RenderBlock::UserPrompt(_) | RenderBlock::AgentMessage(_) | RenderBlock::Btw(_)
+    )
+}
+
+/// Width reserved on the right of a block's content for the timestamp overlay.
+///
+/// Free function so every caller that only has the appearance and the block computes the same reservation as
+/// [`EntryRenderer::timestamp_reserved`].
+pub(crate) fn timestamp_reserved_for(appearance: &AppearanceConfig, block: &RenderBlock) -> u16 {
+    if appearance.show_timestamps && timestamp_gutter_applies(block) {
+        10 // max short format: "  12:30 PM"
+    } else {
+        0
+    }
+}
+
+/// The width a block's text wraps at, given the entry area [`EntryRenderer`] is handed — accent, pads and the
+/// timestamp gutter removed.
+///
+/// Callers that have an [`EntryRenderer`] use [`EntryRenderer::block_content_width`], which also honours
+/// `hide_accent`. This function is the same subtraction for the state and the pane, where the accent column is shown.
+pub(crate) fn block_content_width_for(
+    appearance: &AppearanceConfig,
+    block: &RenderBlock,
+    entry_area_width: u16,
+) -> u16 {
+    let chrome =
+        crate::scrollback::layout::HorizontalLayout::chrome_width(&appearance.scrollback.layout);
+    entry_area_width
+        .saturating_sub(chrome)
+        .saturating_sub(timestamp_reserved_for(appearance, block))
+}
+
 /// Diamond chrome prefix every group header draws before its text: verb-run labels, truncation labels, and plain counts alike, in both fold states.
 /// Selection geometry for labeled headers derives from this same string (see [`group_header_chrome_prefix_width`]) so render and hitbox can't drift.
 pub(crate) fn group_header_chrome_prefix() -> String {
@@ -545,9 +601,7 @@ impl Renderable for EntryRenderer<'_> {
         if self.thinking_hidden() {
             return 0;
         }
-        let content_width = width
-            .saturating_sub(self.chrome_width())
-            .saturating_sub(self.timestamp_reserved());
+        let content_width = self.block_content_width(width);
         // Use cached output for height calculation
         // The is_selected flag only affects styling (e.g., UserPrompt prefix color), not line count
         // The non-selected cached output therefore gives the correct height
@@ -746,7 +800,12 @@ impl Renderable for EntryRenderer<'_> {
             .ensure_cached(text_width, self.appearance(), self.is_selected, self.cwd);
         let cached_ref = self.entry.cached_output_ref();
         let output: &BlockOutput = &cached_ref;
-        let has_vpad = self.entry.block.has_vpad(&ctx);
+        // `ctx.width` here is the pre-timestamp content column. The height passes reserved pad rows from
+        // `block_content_width`, so the paint has to ask the same question or it draws pad the layout did not reserve.
+        let has_vpad = self
+            .entry
+            .block
+            .has_vpad_for_width(self.appearance(), self.block_content_width(area.width));
         // Determine how many rows of vpad/content to skip.
         // Layout is: [vpad_top?] [content lines...] [vpad_bottom?]
         let vpad_top = if has_vpad { 1u16 } else { 0 };
@@ -912,7 +971,8 @@ mod tests {
             let height = renderer.desired_height(width);
             let wraps = renderer.row_soft_wraps(height);
             let output = entry.cached_output_ref();
-            let vpad_top = u16::from(entry.block.has_vpad_for(&appearance));
+            let content_width = renderer.block_content_width(width);
+            let vpad_top = u16::from(entry.block.has_vpad_for_width(&appearance, content_width));
             let mut painted = 0u16;
             let mut saw_empty = false;
             let mut saw_separator = false;

@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- A submitted prompt on a phone-width pane is a one-row band. The fold is measured at the width the text actually wraps at, so a long one-line prompt no longer stays expanded and skips the one-row budget. At or below 60 columns the echo also drops its two blank pad rows and the decorative `❯` on both the echo and the input box; `$ `, `↻  `, `? ` and `! ` stay, because those say what kind of turn or mode this is. Widths above 60 keep today's three-line budget, the padding and the arrow, and a prompt folded by a resize unfolds again when the pane widens.
 - Pasting an image into a pane on a remote host now attaches it. A pasted image
   path is resolved by the host the pager runs on, and a terminal that works
   this way uploads the bytes to that host first — an Orca SSH pane writes the

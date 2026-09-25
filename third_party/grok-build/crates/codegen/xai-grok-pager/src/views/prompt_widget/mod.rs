@@ -1609,7 +1609,13 @@ impl PromptWidget {
         max_height: u16,
     ) -> u16 {
         let content_width = self.content_width(area_width, style);
-        let prefix_w = if style.show_prefix { PREFIX_WIDTH } else { 0 };
+        // Pane width, not content width. The shared threshold is about the pane (see `shows_prefix`); passing the
+        // content width would drop the prefix on a 60-column chromeless box that the renderer keeps it on.
+        let prefix_w = if self.shows_prefix(style, area_width) {
+            PREFIX_WIDTH
+        } else {
+            0
+        };
         let text_width = content_width.saturating_sub(prefix_w);
         // History browse live-populates the composer per selection move
         // Freeze the box at its pre-open one-row height so stepping through entries of different heights doesn't resize the layout per keypress
@@ -1663,6 +1669,23 @@ impl PromptWidget {
             // Caret or text top scrolled out of view: Up must move/scroll within the text.
             _ => false,
         }
+    }
+
+    /// Whether the composer draws a prefix cell at `area_width`.
+    ///
+    /// The decorative `❯` is dropped on a phone-width pane: two columns of a 55-column pane should go to the text, and
+    /// the box border already frames the input. Meaning-bearing prefixes survive — the history search indicator
+    /// (`? `) and caller overrides (bash `! `) say which mode the composer is in.
+    ///
+    /// Compared against the pane width, the same quantity the echo's rule uses. A content-width comparison would drop
+    /// the arrow on a 60-column `chrome: false` box and shift mouse hit-testing left by two columns.
+    fn shows_prefix(&self, style: &PromptStyle, area_width: u16) -> bool {
+        if !style.show_prefix {
+            return false;
+        }
+        let meaning_bearing = (self.history_search.is_active() && !self.history_search.is_browse())
+            || style.prefix_override.is_some();
+        meaning_bearing || area_width > crate::scrollback::blocks::COLLAPSED_NARROW_TERMINAL_COLS
     }
 
     /// Compute the content width inside the chrome (if any).
@@ -3082,8 +3105,11 @@ impl PromptWidget {
         }
 
         // Render prefix on first text row: search icon when history search is active, else ❯.
-        let prefix_w = if style.show_prefix { PREFIX_WIDTH } else { 0 };
-        if style.show_prefix && text_area_rect.width > PREFIX_WIDTH {
+        // `shows_prefix` owns the narrow-pane rule so this pass and `desired_height` agree. Both feed it the pane
+        // width (`area`), which is the quantity the shared constant is about.
+        let show_prefix = self.shows_prefix(style, area.width);
+        let prefix_w = if show_prefix { PREFIX_WIDTH } else { 0 };
+        if show_prefix && text_area_rect.width > PREFIX_WIDTH {
             let (prefix_str, accent_color) =
                 if self.history_search.is_active() && !self.history_search.is_browse() {
                     // Search-mode indicator, the highest prefix priority

@@ -5033,6 +5033,46 @@
     }
 
     #[test]
+    fn phone_width_composer_drops_the_arrow_prefix() {
+        let _guard = crate::theme::cache::pin_theme();
+        let style = PromptStyle::default();
+        assert!(
+            style.show_prefix,
+            "the default style must ask for the arrow, or this test proves nothing"
+        );
+
+        // A 55-column pane. The box border already frames the input.
+        let buf = draw_bordered(55, &style);
+        let text_row = buf_text_at(&buf, 0, 55, 1);
+        assert!(
+            !text_row.contains(crate::glyphs::prompt_arrow()),
+            "a phone-width composer must not paint the arrow: {text_row:?}"
+        );
+
+        let wide = draw_bordered(179, &style);
+        let wide_row = buf_text_at(&wide, 0, 179, 1);
+        assert!(
+            wide_row.contains(crate::glyphs::prompt_arrow()),
+            "desktop keeps the arrow: {wide_row:?}"
+        );
+    }
+
+    #[test]
+    fn phone_width_composer_keeps_meaning_bearing_prefixes() {
+        let _guard = crate::theme::cache::pin_theme();
+        let style = PromptStyle {
+            prefix_override: Some(("! ", ratatui::style::Color::Yellow)),
+            ..Default::default()
+        };
+        let buf = draw_bordered(55, &style);
+        let text_row = buf_text_at(&buf, 0, 55, 1);
+        assert!(
+            text_row.contains("! "),
+            "bash mode's `! ` must survive the narrow band: {text_row:?}"
+        );
+    }
+
+    #[test]
     fn title_renders_on_top_border_with_corners_intact() {
         // Pinned: the caption blend reads the ambient theme at draw time.
         let _guard = crate::theme::cache::pin_theme();

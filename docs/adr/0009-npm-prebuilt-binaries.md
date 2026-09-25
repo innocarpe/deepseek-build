@@ -37,6 +37,39 @@ The other platform mappings are deferred candidates, not current release
 targets. Windows is not a first-class prebuilt target yet; document the
 source/dev path.
 
+### Source-checkout amendment (2026-09-26)
+
+`npm install` in a git checkout must not download or compile the product.
+The script's package root is a checkout when **all three** are present:
+
+| Signal | Checkout | Packed install (`npm pack` / registry) |
+|--------|----------|----------------------------------------|
+| `.git` | directory (clone) or a file whose first line is `gitdir:` (worktree) | absent — npm never packs `.git` |
+| `Cargo.toml` | file at the package root | absent — not in `package.json` `"files"` |
+| `scripts/install.sh` | file | absent — `"files"` ships `npm/scripts/**` only |
+
+Missing any one means the tree is **not** a checkout and `postinstall` runs.
+The check does not walk up to a parent `.git`. A GitHub zipball (source
+files, no `.git`) still installs.
+
+The three files alone are not enough to skip. Measured on npm 12.1.0,
+`npm install -g .` symlinks the checkout into the prefix and runs
+`postinstall` **in the checkout** with `npm_config_global=true`. That smoke
+path (ADR 0007) must still install. Skip only when the tree is a checkout
+and npm is not doing a global install, and either:
+
+- `INIT_CWD` is the checkout (`npm install` run there), or
+- `npm_config_prefix` is the checkout (`npm install --prefix <checkout>`), or
+- neither variable is set (`node npm/scripts/postinstall.js`)
+
+`npm install <checkout>` from another directory leaves `INIT_CWD` elsewhere
+and the prefix at the user's prefix, so it still installs.
+`DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD` does not override the skip. Build a
+checkout with `./scripts/install.sh`.
+
+The package root is the script directory (`npm/scripts/../..`), not
+`process.cwd()`.
+
 ### Current scope amendment (2026-08-07)
 
 The immediate product contract is **Apple Silicon macOS only**. The npm

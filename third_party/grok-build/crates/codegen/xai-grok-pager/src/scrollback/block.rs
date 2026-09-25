@@ -102,8 +102,20 @@ pub trait BlockContent {
     }
 
     /// Whether block can be collapsed/expanded.
+    ///
+    /// Width-blind; see [`Self::is_foldable_at`] for the width-aware form.
     fn is_foldable(&self) -> bool {
         true
+    }
+
+    /// Whether this block folds at `content_width` — the width its text wraps
+    /// at. The width-blind [`Self::is_foldable`] predates phone-width panes: a
+    /// prompt that fits three rows at desktop width can need five at 34
+    /// columns. Defaults to the width-blind answer, so only blocks whose
+    /// fold decision actually depends on the wrap width need to override it.
+    fn is_foldable_at(&self, content_width: u16) -> bool {
+        let _ = content_width;
+        self.is_foldable()
     }
 
     /// Get the next display mode when toggling fold.
@@ -508,6 +520,10 @@ impl BlockContent for RenderBlock {
 
     fn is_foldable(&self) -> bool {
         delegate_block!(self, is_foldable())
+    }
+
+    fn is_foldable_at(&self, content_width: u16) -> bool {
+        delegate_block!(self, is_foldable_at(content_width))
     }
 
     fn next_fold_mode(&self, current: DisplayMode, is_running: bool) -> DisplayMode {

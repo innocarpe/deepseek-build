@@ -34,6 +34,11 @@ const COLLAPSED_NARROW_MAX_LINES: usize = 1;
 /// [`COLLAPSED_NARROW_TERMINAL_COLS`]. Deriving this from the render width
 /// (rather than reading a single constant) is what lets the same block fold
 /// harder in a phone-width pane than in a desktop one.
+///
+/// A budget only decides how many rows are *shown*; whether the block folds at
+/// all is [`UserPromptBlock::is_foldable_at`]'s call, and that decision has to
+/// be width-aware too — see the note there for why a width-blind estimate left
+/// this budget unreached in a phone-width pane.
 fn collapsed_max_lines(width: u16, mode: DisplayMode) -> Option<usize> {
     match mode {
         DisplayMode::Expanded => None,
@@ -526,6 +531,11 @@ impl BlockContent for UserPromptBlock {
         false
     }
 
+    /// Width-blind foldability, kept for callers that have no render width to
+    /// hand (the 45-odd sites that only ask "may this block fold at all?").
+    /// Estimates the visual row count with a *conservative* content width and
+    /// so under-reports for panes narrower than the estimate; callers that
+    /// know the real content width must use [`Self::is_foldable_at`].
     fn is_foldable(&self) -> bool {
         // Estimate visual line count to catch long single-line prompts that
         // wrap past the limit. Uses a conservative content width (terminal
@@ -541,6 +551,44 @@ impl BlockContent for UserPromptBlock {
                 w.div_ceil(MIN_CONTENT_WIDTH)
             };
             if visual_lines > COLLAPSED_MAX_LINES {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Width-aware foldability: does this prompt exceed the collapse budget it
+    /// would actually be rendered under at `content_width`?
+    ///
+    /// The width-blind [`Self::is_foldable`] divides by a 60-column constant,
+    /// which is wider than a phone pane's real content width. A ~100-column
+    /// one-liner therefore scored `ceil(100/60) = 2` rows — under the
+    /// three-row roomy threshold — so the block reported "not foldable" and
+    /// `default_display_mode()` handed it `Expanded`. `Expanded` maps to
+    /// `max_lines = None`, so the narrow budget [`collapsed_max_lines`]
+    /// computes for that same width never got applied and the echo stayed at
+    /// full body height. Measuring against the budget *and* the width the text
+    /// actually wraps at is what makes the narrow fold fire.
+    ///
+    /// Wrapping mirrors `wrap_prompt_lines`: every row (first and continuation)
+    /// is indented by the `❯ ` prefix, so the prefix width is subtracted once.
+    /// Row counts are `ceil(line_width / wrap_width)`, a LOWER bound on what
+    /// word-boundary wrapping produces — a line that breaks early can only need
+    /// more rows, never fewer, so this under-reports foldability at worst and
+    /// never invents a fold for a prompt that fits. A `None` budget means the
+    /// mode never folds.
+    fn is_foldable_at(&self, content_width: u16) -> bool {
+        let Some(budget) = collapsed_max_lines(content_width, DisplayMode::Collapsed) else {
+            return false;
+        };
+        let wrap_width = usize::from(content_width)
+            .saturating_sub(crate::glyphs::PROMPT_ARROW_WIDTH as usize)
+            .max(1);
+        let mut visual_lines = 0usize;
+        for line in self.text.lines() {
+            let w = line.width();
+            visual_lines += if w == 0 { 1 } else { w.div_ceil(wrap_width) };
+            if visual_lines > budget {
                 return true;
             }
         }

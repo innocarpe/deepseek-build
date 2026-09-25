@@ -20,6 +20,7 @@ use crate::scrollback::text_selection::{
     VisibleBlockGeometry,
 };
 use crate::scrollback::types::{BlockContext, DisplayMode, derive_selection_text, selectable_cols};
+use crate::scrollback::wrappers::block_content_width_for;
 use crate::theme::Theme;
 
 /// Scrollback pane widget.
@@ -1324,7 +1325,12 @@ fn paint_expandable_indicator(
     if !display_cfg.expandable_indicator {
         return;
     }
-    if !entry.block.is_foldable() {
+    // Width-aware so the chevron appears on a block that is folded at THIS
+    // width — a prompt folded by the narrow-pane default included. Uses the
+    // renderer's own entry-area -> content-width chain so the gate agrees with
+    // the fold decision that collapsed the block in the first place.
+    let content_width = block_content_width_for(appearance, &entry.block, content_area.width);
+    if !entry.block.is_foldable_at(content_width) {
         return;
     }
     let at_min_fold = entry.display_mode == DisplayMode::Collapsed

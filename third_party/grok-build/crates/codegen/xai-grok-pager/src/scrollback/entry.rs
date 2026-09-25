@@ -273,6 +273,30 @@ impl ScrollbackEntry {
         }
     }
 
+    /// [`Self::toggle_fold`] at a known content width.
+    ///
+    /// A prompt can be foldable in a phone-width pane and not in a desktop one
+    /// (see [`BlockContent::is_foldable_at`]), so the gate and the body both
+    /// have to ask the width-aware question — otherwise a narrow-pane echo
+    /// collapsed by the width-aware default could never be expanded again.
+    pub fn toggle_fold_at(&mut self, content_width: u16) {
+        if self.is_foldable_at(content_width) {
+            if self.block.is_foldable_at(content_width) {
+                self.display_mode = self
+                    .block
+                    .next_fold_mode(self.display_mode, self.is_running);
+            } else {
+                // Block itself isn't foldable at this width but hooks make it
+                // foldable: toggle between Collapsed and Expanded.
+                self.display_mode = match self.display_mode {
+                    DisplayMode::Collapsed => DisplayMode::Expanded,
+                    _ => DisplayMode::Collapsed,
+                };
+            }
+            self.invalidate_cache();
+        }
+    }
+
     /// Get the current display mode.
     pub fn display_mode(&self) -> DisplayMode {
         self.display_mode
@@ -562,6 +586,13 @@ impl ScrollbackEntry {
     /// Whether this entry is foldable — considers both the block and attached hooks.
     pub fn is_foldable(&self) -> bool {
         self.block.is_foldable() || self.hook_data.as_ref().is_some_and(|hd| hd.has_content())
+    }
+
+    /// [`Self::is_foldable`] at a known content width. Hooks are
+    /// width-independent, so only the block's answer changes with the width.
+    pub fn is_foldable_at(&self, content_width: u16) -> bool {
+        self.block.is_foldable_at(content_width)
+            || self.hook_data.as_ref().is_some_and(|hd| hd.has_content())
     }
 
     /// True for a thinking block hidden by the Appearance toggle. Takes the

@@ -1177,6 +1177,14 @@ impl ScrollbackState {
     /// gap_after (because display_mode changes affect the pairwise gap rule) and
     /// then rebuilds virtual_y.
     pub(super) fn rebuild_virtual_y_from_heights(&mut self) {
+        // Read the cache's own width before the mutable borrow below, so the
+        // shared `prompt_content_width` helper (which borrows `&self`) does not
+        // clash. The sticky decision is width-dependent, so it reads the width
+        // the prompts were laid out at instead of a width-blind estimate.
+        let Some(cache_width) = self.layout_cache.as_ref().map(|c| c.width) else {
+            return;
+        };
+        let prompt_width = self.prompt_content_width(cache_width);
         let Some(cache) = self.layout_cache.as_mut() else {
             return;
         };
@@ -1208,8 +1216,11 @@ impl ScrollbackState {
                 let min_height = truncated_height.min(MAX_TRUNCATED_HEADER_HEIGHT);
                 // Expanded foldable prompts participate in push calculations
                 // but don't stick themselves — they scroll away normally.
-                let sticky =
-                    !(entry.block.is_foldable() && entry.display_mode == DisplayMode::Expanded);
+                // Foldability is asked at this width: a prompt that only folds
+                // in a narrow pane still counts as foldable here, and one that
+                // is force-expanded by the user stays sticky at any width.
+                let sticky = !(entry.block.is_foldable_at(prompt_width)
+                    && entry.display_mode == DisplayMode::Expanded);
                 cache.prompt_descriptors.push(PromptDescriptor {
                     entry_idx: idx,
                     y_virtual: y,
@@ -1348,6 +1359,7 @@ impl ScrollbackState {
             return false;
         };
         let entry_area_width = self.entry_area_width(width);
+        let prompt_width = self.prompt_content_width(width);
         let cwd = self.cwd.as_deref();
         let Some(cache) = self.layout_cache.as_mut() else {
             return false;
@@ -1384,7 +1396,9 @@ impl ScrollbackState {
         } else {
             MAX_TRUNCATED_HEADER_HEIGHT
         };
-        let is_foldable = new_entry.block.is_foldable();
+        // At the width this entry is laid out at: a prompt that only folds in
+        // a narrow pane is still foldable here.
+        let is_foldable = new_entry.block.is_foldable_at(prompt_width);
         let new_groupable = new_entry.block.is_groupable();
         let new_collapsed = new_entry.display_mode == DisplayMode::Collapsed;
         let new_display_mode = new_entry.display_mode;
@@ -1506,6 +1520,7 @@ impl ScrollbackState {
         );
 
         // Pass 3: Build virtual_y and prompt descriptors from heights + gaps.
+        let prompt_width = self.prompt_content_width(width);
         let mut y: usize = 0;
         for (idx, entry_layout) in cache.entries.iter().enumerate() {
             cache.virtual_y.push(y);
@@ -1515,8 +1530,8 @@ impl ScrollbackState {
             {
                 let truncated_height = cache.entry_truncated_heights[idx];
                 let min_height = truncated_height.min(MAX_TRUNCATED_HEADER_HEIGHT);
-                let sticky =
-                    !(entry.block.is_foldable() && entry.display_mode == DisplayMode::Expanded);
+                let sticky = !(entry.block.is_foldable_at(prompt_width)
+                    && entry.display_mode == DisplayMode::Expanded);
                 cache.prompt_descriptors.push(PromptDescriptor {
                     entry_idx: idx,
                     y_virtual: y,

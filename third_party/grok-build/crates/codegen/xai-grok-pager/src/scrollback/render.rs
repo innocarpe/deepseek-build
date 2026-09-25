@@ -55,18 +55,11 @@ pub fn media_open_button_col(content_width: u16, is_video: bool) -> u16 {
 
 /// Width reserved for the timestamp on message blocks.
 ///
-/// Matches the constant in `EntryRenderer::timestamp_reserved()`.
+/// Thin alias for the shared reservation in
+/// [`super::wrappers::timestamp_reserved_for`], so this pass cannot drift from
+/// `EntryRenderer::timestamp_reserved()`.
 fn timestamp_reserved_for_block(block: &RenderBlock, appearance: &AppearanceConfig) -> u16 {
-    if appearance.show_timestamps
-        && matches!(
-            block,
-            RenderBlock::UserPrompt(_) | RenderBlock::AgentMessage(_) | RenderBlock::Btw(_)
-        )
-    {
-        10
-    } else {
-        0
-    }
+    super::wrappers::timestamp_reserved_for(appearance, block)
 }
 
 /// A reusable scratch buffer for rendering clipped entries.

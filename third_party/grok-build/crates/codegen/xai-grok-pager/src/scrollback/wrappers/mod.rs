@@ -30,7 +30,9 @@ mod padded;
 pub use accented::Accented;
 pub use block_renderer::BlockRenderer;
 pub use entry_renderer::EntryRenderer;
+pub(crate) use entry_renderer::block_content_width_for;
 pub(crate) use entry_renderer::group_header_chrome_prefix_width;
+pub(crate) use entry_renderer::timestamp_reserved_for;
 pub use padded::Padded;
 
 #[cfg(test)]

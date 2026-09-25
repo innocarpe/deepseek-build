@@ -26,13 +26,14 @@ use indexmap::IndexMap;
 use ratatui::layout::Rect;
 
 use super::block::{BlockContent, RenderBlock};
+use super::blocks::UserPromptBlock;
 use super::blocks::tool::{EditToolCallBlock, ToolCallBlock};
 use super::entry::{EntryId, ScrollbackEntry};
 use super::layout::HorizontalLayout;
 use super::selection::SelectionBox;
 use super::sticky::{PromptDescriptor, StickyHeaderLayout, compute_sticky_layout};
 use super::types::DisplayMode;
-use super::wrappers::EntryRenderer;
+use super::wrappers::{EntryRenderer, block_content_width_for};
 use crate::appearance::AppearanceConfig;
 use crate::render::Renderable;
 use crate::theme::Theme;
@@ -589,6 +590,7 @@ impl ScrollbackState {
         entry.id = id;
 
         self.apply_edit_default_display_mode(&mut entry);
+        self.apply_prompt_default_display_mode(&mut entry);
 
         // Track if this entry is running
         if entry.is_running {
@@ -671,6 +673,7 @@ impl ScrollbackState {
         let mut entry = ScrollbackEntry::new(block);
         entry.id = id;
         self.apply_edit_default_display_mode(&mut entry);
+        self.apply_prompt_default_display_mode(&mut entry);
         if entry.is_running {
             self.running.insert(id);
         }
@@ -709,6 +712,55 @@ impl ScrollbackState {
                 edit,
             );
         }
+    }
+
+    /// The width a prompt's `❯ …` text wraps at in a pane `pane_width` wide:
+    /// the entry's content column minus the timestamp gutter that overlays it.
+    ///
+    /// `0` means "the width is not known yet" (before the first
+    /// `prepare_layout`), which callers must treat as "leave the fold alone"
+    /// rather than as a real narrow width.
+    fn prompt_content_width(&self, pane_width: u16) -> u16 {
+        if pane_width == 0 {
+            return 0;
+        }
+        let layout = HorizontalLayout::new(
+            Rect::new(0, 0, pane_width, 1),
+            &self.appearance.scrollback.layout,
+        );
+        // The same entry-area -> content-width chain the renderer and the pane
+        // use, so a prompt's fold cannot be decided at another width than the
+        // one it is measured and painted at.
+        block_content_width_for(
+            &self.appearance,
+            &RenderBlock::UserPrompt(UserPromptBlock::new("")),
+            layout.entry_content_area().width,
+        )
+    }
+
+    /// A fresh prompt adopts the fold its width implies, so the submitted echo
+    /// is a one-row band in a phone-width pane instead of a full body.
+    ///
+    /// The block's own `default_display_mode()` answers from the width-blind
+    /// estimate, and `ScrollbackEntry::new` has already applied it — so a
+    /// prompt pushed into a narrow pane would otherwise arrive `Expanded` and
+    /// paint every wrapped row. A pinned entry (`display_mode_pinned`) keeps
+    /// the mode the user left it in; an unpinned one is treated as sitting on
+    /// its default, because `ScrollbackEntry::new` derives that default from the
+    /// block and leaves no record of an explicit choice — the same caveat
+    /// [`Self::apply_edit_default_display_mode`]'s materialize policy carries.
+    ///
+    /// No-op before the first frame: with no width there is nothing to decide,
+    /// and the resize path re-derives the default once the width arrives.
+    fn apply_prompt_default_display_mode(&self, entry: &mut ScrollbackEntry) {
+        if entry.display_mode_pinned || !matches!(entry.block, RenderBlock::UserPrompt(_)) {
+            return;
+        }
+        let content_width = self.prompt_content_width(self.last_width);
+        if content_width == 0 {
+            return;
+        }
+        entry.display_mode = auto_prompt_display_mode(entry, content_width);
     }
 
     /// Remove an entry by EntryId. No-op if the id is not present.
@@ -1615,6 +1667,9 @@ impl ScrollbackState {
             let width_changed = width != self.last_width;
             let resized = width_changed && self.last_width != 0;
             if width_changed {
+                // A prompt's automatic fold depends on the width, so re-derive
+                // it before the caches are dropped (see the helper).
+                self.rederive_prompt_folds_for_width(width);
                 for entry in self.entries.values_mut() {
                     entry.invalidate_width_caches();
                 }
@@ -1744,9 +1799,36 @@ impl ScrollbackState {
         }
     }
 
+    /// Re-derive every unpinned prompt's automatic fold for `new_width`.
+    ///
+    /// Called from both width-change paths (`prepare_layout`'s Case 1 rebuild
+    /// and [`Self::invalidate_if_width_changed`]) before the width field is
+    /// updated, so the old width is still readable here — comparing an entry's
+    /// current mode against the default it had at the OLD width is what tells
+    /// "still sitting on the automatic default" apart from "the user folded
+    /// this by hand". Only the former is re-derived: a prompt submitted on a
+    /// desktop unfolds into the phone pane's one-row band, and widening back
+    /// restores it.
+    fn rederive_prompt_folds_for_width(&mut self, new_width: u16) {
+        let old_prompt_width = self.prompt_content_width(self.last_width);
+        if old_prompt_width == 0 {
+            return;
+        }
+        let new_prompt_width = self.prompt_content_width(new_width);
+        for entry in self.entries.values_mut() {
+            if entry.display_mode_pinned || !matches!(entry.block, RenderBlock::UserPrompt(_)) {
+                continue;
+            }
+            if entry.display_mode == auto_prompt_display_mode(entry, old_prompt_width) {
+                entry.display_mode = auto_prompt_display_mode(entry, new_prompt_width);
+            }
+        }
+    }
+
     /// Invalidate caches if width changed.
     pub fn invalidate_if_width_changed(&mut self, width: u16) {
         if width != self.last_width {
+            self.rederive_prompt_folds_for_width(width);
             for entry in self.entries.values_mut() {
                 entry.invalidate_cache();
             }
@@ -1864,6 +1946,24 @@ fn edit_default_display_mode(expanded_by_default: bool, edit: &EditToolCallBlock
         DisplayMode::Expanded
     } else {
         DisplayMode::Collapsed
+    }
+}
+
+/// The mode a prompt falls into on its own at `content_width`: a collapsed
+/// one-row band when the echo needs more rows than its collapse budget allows
+/// there, fully expanded when it fits.
+///
+/// This is the width-aware counterpart of
+/// `UserPromptBlock::default_display_mode()`. [`ScrollbackState::push`] applies
+/// it to a fresh prompt, and the resize path re-derives from it — comparing an
+/// entry's current mode against this function at the OLD width is what tells
+/// "still sitting on the automatic default" apart from "the user folded this by
+/// hand" (see [`ScrollbackState::apply_prompt_default_display_mode`]).
+fn auto_prompt_display_mode(entry: &ScrollbackEntry, content_width: u16) -> DisplayMode {
+    if entry.is_foldable_at(content_width) {
+        DisplayMode::Collapsed
+    } else {
+        DisplayMode::Expanded
     }
 }
 

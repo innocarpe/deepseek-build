@@ -374,10 +374,7 @@ impl<'a> EntryRenderer<'a> {
     /// and mid-turn interjections) but NOT for thinking traces, tool calls, or
     /// system messages.
     fn should_show_timestamp(&self) -> bool {
-        matches!(
-            self.entry.block,
-            RenderBlock::UserPrompt(_) | RenderBlock::AgentMessage(_) | RenderBlock::Btw(_)
-        )
+        timestamp_gutter_applies(&self.entry.block)
     }
 
     /// Width reserved for the timestamp on the right side of content lines.
@@ -385,11 +382,15 @@ impl<'a> EntryRenderer<'a> {
     /// When > 0, content is wrapped at `content_width - reserved` so text
     /// never collides with the timestamp overlay.
     fn timestamp_reserved(&self) -> u16 {
-        if self.appearance().show_timestamps && self.should_show_timestamp() {
-            10 // max short format: "  12:30 PM"
-        } else {
-            0
-        }
+        timestamp_reserved_for(self.appearance(), &self.entry.block)
+    }
+
+    /// The width this entry's text actually wraps at, for an entry area `width`
+    /// wide. One helper so the height passes, the fold decision and the vpad
+    /// rule cannot drift apart: every one of them must agree on the width, or a
+    /// block is measured at one width and rendered at another.
+    pub(crate) fn block_content_width(&self, width: u16) -> u16 {
+        block_content_width_for(self.appearance(), &self.entry.block, width)
     }
 
     fn accent(&self, content_width: u16) -> Option<AccentStyle> {
@@ -418,9 +419,7 @@ impl<'a> EntryRenderer<'a> {
         if self.thinking_hidden() {
             return 0;
         }
-        let content_width = width
-            .saturating_sub(self.chrome_width())
-            .saturating_sub(self.timestamp_reserved());
+        let content_width = self.block_content_width(width);
         self.entry
             .ensure_truncated_height_cached(content_width, self.appearance(), self.cwd)
     }
@@ -454,9 +453,7 @@ impl<'a> EntryRenderer<'a> {
         if self.thinking_hidden() {
             return 0;
         }
-        let content_width = width
-            .saturating_sub(self.chrome_width())
-            .saturating_sub(self.timestamp_reserved());
+        let content_width = self.block_content_width(width);
         let content_lines = self.estimate_content_lines(content_width);
         // `inline_media_rows` (in `assemble_height`) covers trailing tool media.
         // `estimate_extra_rows` adds the Mermaid treatment rows (one affordance
@@ -476,10 +473,13 @@ impl<'a> EntryRenderer<'a> {
             return lines;
         }
         // Collapsed / Truncated foldable entries render a compact ~1-line header,
-        // NOT their (often huge) hidden body. Use the ENTRY-level foldability
-        // (`block.is_foldable()` OR attached hooks), matching the fold path, so a
-        // hook-only-foldable collapsed entry isn't over-counted.
-        let lines = if self.entry.display_mode != DisplayMode::Expanded && self.entry.is_foldable()
+        // NOT their (often huge) hidden body. Use the ENTRY-level foldability at
+        // this width (`block.is_foldable_at(content_width)` OR attached hooks),
+        // matching the fold path, so a hook-only-foldable collapsed entry isn't
+        // over-counted — and so a prompt that only folds at a narrow width is
+        // estimated at one row instead of its full body height.
+        let lines = if self.entry.display_mode != DisplayMode::Expanded
+            && self.entry.is_foldable_at(content_width)
         {
             1
         } else {
@@ -522,9 +522,7 @@ impl<'a> EntryRenderer<'a> {
     /// final rendered row, used to bound the last logical line (which has no
     /// following start) and to clamp out-of-range lookups.
     pub(crate) fn logical_line_start_rows(&self, width: u16) -> (Vec<u16>, u16) {
-        let content_width = width
-            .saturating_sub(self.chrome_width())
-            .saturating_sub(self.timestamp_reserved());
+        let content_width = self.block_content_width(width);
         // Compute vpad and populate the cache before borrowing the cached output:
         // `ensure_cached` takes the RefCell mutably on a miss, so the `Ref` from
         // `cached_output_ref` must come after it.
@@ -590,6 +588,53 @@ impl<'a> EntryRenderer<'a> {
     }
 }
 
+/// Whether this block's first content line carries a right-aligned timestamp.
+///
+/// Timestamps are shown for user and agent messages (including `/btw` responses
+/// and mid-turn interjections) but NOT for thinking traces, tool calls, or
+/// system messages.
+pub(crate) fn timestamp_gutter_applies(block: &RenderBlock) -> bool {
+    matches!(
+        block,
+        RenderBlock::UserPrompt(_) | RenderBlock::AgentMessage(_) | RenderBlock::Btw(_)
+    )
+}
+
+/// Width reserved on the right of a block's content for the timestamp overlay.
+///
+/// Free function (rather than a method) so every caller that only has the
+/// appearance and the block — the sticky-header sizing, the expandable-chevron
+/// gate, the state layout — computes the same reservation as
+/// [`EntryRenderer::timestamp_reserved`].
+pub(crate) fn timestamp_reserved_for(appearance: &AppearanceConfig, block: &RenderBlock) -> u16 {
+    if appearance.show_timestamps && timestamp_gutter_applies(block) {
+        10 // max short format: "  12:30 PM"
+    } else {
+        0
+    }
+}
+
+/// The width a block's text wraps at, given the area [`EntryRenderer`] is
+/// handed for it — accent + pads + timestamp gutter removed.
+///
+/// The single definition of the entry-area → content-width step. `width` is the
+/// renderer's own area width for a single entry (`EntryRenderer::block_content_width`),
+/// or a pane width whose entry area has already been resolved by
+/// [`HorizontalLayout::entry_content_area`]. Both callers below pass the value
+/// their own geometry produced, so the fold decision, the height passes and the
+/// vpad rule read one number.
+pub(crate) fn block_content_width_for(
+    appearance: &AppearanceConfig,
+    block: &RenderBlock,
+    entry_area_width: u16,
+) -> u16 {
+    let chrome =
+        crate::scrollback::layout::HorizontalLayout::chrome_width(&appearance.scrollback.layout);
+    entry_area_width
+        .saturating_sub(chrome)
+        .saturating_sub(timestamp_reserved_for(appearance, block))
+}
+
 /// Diamond chrome prefix every group header draws before its text — verb-run
 /// labels, truncation labels, and plain counts alike, in both fold states.
 /// Selection geometry for labeled headers derives from this same string (see
@@ -622,9 +667,7 @@ impl Renderable for EntryRenderer<'_> {
         if self.thinking_hidden() {
             return 0;
         }
-        let content_width = width
-            .saturating_sub(self.chrome_width())
-            .saturating_sub(self.timestamp_reserved());
+        let content_width = self.block_content_width(width);
         // Use cached output for height calculation. The is_selected flag only
         // affects styling (e.g., UserPrompt prefix color), not line count, so
         // the non-selected cached output gives the correct height.

@@ -7,7 +7,7 @@
 use std::io::{self, IsTerminal, Write};
 
 use anyhow::{Context, Result, bail};
-use dsb_config::{BuildHome, CredentialSource, Credentials, ENV_API_KEY};
+use dsb_config::{BuildHome, CredentialSource, Credentials, ENV_API_KEY, Provider};
 
 /// Interactive first-run wizard. Saves key to credentials file.
 pub fn run_setup_wizard(home: &BuildHome) -> Result<Credentials> {
@@ -43,7 +43,7 @@ pub fn run_setup_wizard(home: &BuildHome) -> Result<Credentials> {
         bail!("empty API key — setup cancelled");
     }
 
-    let creds = Credentials::save(home, key).context("save credentials")?;
+    let creds = Credentials::save(home, Provider::DeepSeek, key).context("save credentials")?;
     println!();
     println!("Saved credentials → {}", path.display());
     println!("Source: credentials file · key: {}", creds.masked_key());

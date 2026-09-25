@@ -399,7 +399,7 @@ async fn real_main() -> Result<()> {
 fn run_setup_cmd(api_key: Option<&str>) -> Result<()> {
     let home = BuildHome::resolve();
     if let Some(key) = api_key.map(str::trim).filter(|k| !k.is_empty()) {
-        let creds = dsb_config::Credentials::save(&home, key)?;
+        let creds = dsb_config::Credentials::save(&home, dsb_config::Provider::DeepSeek, key)?;
         println!(
             "Saved credentials → {} ({})",
             home.credentials_path().display(),

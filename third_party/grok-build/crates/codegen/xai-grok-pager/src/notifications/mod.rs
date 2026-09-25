@@ -1,3 +1,4 @@
+pub mod agent_status;
 pub mod config;
 pub mod focus;
 pub mod hooks;
@@ -26,6 +27,21 @@ pub struct NotificationEvent {
     pub session_id: Option<String>,
 }
 
+/// Map the pager's title state onto the status vocabulary a host reads.
+///
+/// Precedence mirrors the title: a pending permission is the most actionable
+/// fact about the pane, so it outranks a running turn — an agent blocked on
+/// approval is not making progress even while `is_busy` is still set.
+fn agent_status_state_for(state: &title::TitleState<'_>) -> agent_status::AgentStatusState {
+    if state.has_pending_permissions {
+        return agent_status::AgentStatusState::Waiting;
+    }
+    if state.is_busy || state.activity.is_some() {
+        return agent_status::AgentStatusState::Working;
+    }
+    agent_status::AgentStatusState::Done
+}
+
 pub struct NotificationService {
     config: NotificationConfig,
     pub focus_tracker: focus::FocusTracker,
@@ -42,6 +58,10 @@ pub struct NotificationService {
     /// `true` after the first notification; cleared via
     /// [`clear_permission_notification`] when the queue drains to empty.
     permission_notified: bool,
+    /// OSC 9999 explicit status frames for hosts that read them (Orca). Silent
+    /// on every other host, and deduped so a resting pane does not rewrite an
+    /// identical frame on every tick.
+    agent_status_reporter: agent_status::AgentStatusReporter,
 }
 
 impl NotificationService {
@@ -64,6 +84,7 @@ impl NotificationService {
             progress_active: false,
             progress_last_sent: None,
             permission_notified: false,
+            agent_status_reporter: agent_status::AgentStatusReporter::new(),
         }
     }
 
@@ -139,6 +160,19 @@ impl NotificationService {
             self.clear_progress_into(&mut buf);
         }
 
+        // Why here as well as `on_tick`: tick demand falls to `None` once a pane
+        // is idle, so the tick that would carry the closing frame may never
+        // run. This is the turn-end hook that still fires.
+        if let Some(status_esc) = self.agent_status_reporter.frame_for(
+            agent_status::host(),
+            agent_status_state_for(state),
+            state.model,
+            state.session_name,
+            self.terminal_ctx,
+        ) {
+            buf.push_str(&status_esc);
+        }
+
         if !buf.is_empty() {
             xai_grok_shell::util::with_locked_stderr(|stderr| {
                 use std::io::Write;
@@ -164,6 +198,19 @@ impl NotificationService {
 
         if !state.is_busy {
             self.clear_progress_into(&mut buf);
+        }
+
+        // Same reason as `flush_idle_state`: this is the idle edge the caller
+        // routes through the frame pipeline, and it must carry the closing
+        // status frame or a host would hold `working` past the turn.
+        if let Some(status_esc) = self.agent_status_reporter.frame_for(
+            agent_status::host(),
+            agent_status_state_for(state),
+            state.model,
+            state.session_name,
+            self.terminal_ctx,
+        ) {
+            buf.push_str(&status_esc);
         }
 
         if buf.is_empty() { None } else { Some(buf) }
@@ -207,6 +254,19 @@ impl NotificationService {
             }
         }
 
+        // Report explicit status to hosts that read OSC 9999 (Orca). Rides the
+        // same tick as the title so the two can never disagree about the turn
+        // state, and stays silent everywhere else.
+        if let Some(status_esc) = self.agent_status_reporter.frame_for(
+            agent_status::host(),
+            agent_status_state_for(state),
+            state.model,
+            state.session_name,
+            self.terminal_ctx,
+        ) {
+            buf.push_str(&status_esc);
+        }
+
         if buf.is_empty() { None } else { Some(buf) }
     }
 
@@ -222,6 +282,17 @@ impl NotificationService {
 
         let mut buf = String::new();
         self.clear_progress_into(&mut buf);
+        // Close the turn out explicitly: a host holding `working` when the pane
+        // exits keeps a spinner alive for a session that is gone.
+        if let Some(status_esc) = self.agent_status_reporter.frame_for(
+            agent_status::host(),
+            agent_status::AgentStatusState::Done,
+            None,
+            None,
+            self.terminal_ctx,
+        ) {
+            buf.push_str(&status_esc);
+        }
         if !buf.is_empty() {
             xai_grok_shell::util::with_locked_stderr(|stderr| {
                 use std::io::Write as _;
@@ -288,6 +359,7 @@ impl NotificationService {
             progress_active: false,
             progress_last_sent: None,
             permission_notified: false,
+            agent_status_reporter: agent_status::AgentStatusReporter::new(),
         }
     }
 }

@@ -18,6 +18,64 @@ pub struct Snippet {
     pub version: String,
     pub scope: String,
     pub preview: String,
+    /// Spec 45 §1.9: the newline convention `edit` restores when writing this file.
+    #[serde(default)]
+    pub line_ending: LineEnding,
+}
+
+/// The newline convention a file is written back with (spec 45 §1.9).
+///
+/// Defaults to `Lf`, which is also how a file with no line break and a
+/// pre-§1.9 serialized snippet (no `line_ending` field) are read.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum LineEnding {
+    /// `\n` — including a file that contains no line break at all.
+    #[default]
+    Lf,
+    /// `\r\n`, chosen when the file bytes contain at least one.
+    Crlf,
+}
+
+impl LineEnding {
+    /// `crlf` iff the raw bytes contain at least one `\r\n` (spec 45 §1.9 step 1).
+    pub fn detect(raw: &str) -> Self {
+        if raw.contains("\r\n") {
+            Self::Crlf
+        } else {
+            Self::Lf
+        }
+    }
+
+    /// Text as the model should see it: `\n` only (spec 45 §1.9 step 2).
+    ///
+    /// Borrows when there is nothing to change, so an LF file costs no copy.
+    pub fn normalize<'a>(self, text: &'a str) -> std::borrow::Cow<'a, str> {
+        if text.contains('\r') {
+            std::borrow::Cow::Owned(text.replace("\r\n", "\n").replace('\r', "\n"))
+        } else {
+            std::borrow::Cow::Borrowed(text)
+        }
+    }
+
+    /// Text as this file stores it: every `\n` becomes the file's convention
+    /// (spec 45 §1.9 step 4).
+    ///
+    /// Normalizes first, so a `new_string` that arrived with `\r\n` cannot
+    /// double the `\r`.
+    pub fn restore(self, text: &str) -> String {
+        match self {
+            Self::Lf => self.normalize(text).into_owned(),
+            Self::Crlf => self.normalize(text).replace('\n', "\r\n"),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Lf => "lf",
+            Self::Crlf => "crlf",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
@@ -84,8 +142,11 @@ impl SnippetStore {
         start_line: Option<usize>,
         end_line: Option<usize>,
     ) -> Result<(Snippet, String), EditError> {
-        let content = fs::read_to_string(path).map_err(|e| EditError::Io(e.to_string()))?;
+        let raw = fs::read_to_string(path).map_err(|e| EditError::Io(e.to_string()))?;
         let version = file_version(path)?;
+        // Spec 45 §1.9: the model sees one newline convention; the file keeps its own.
+        let line_ending = LineEnding::detect(&raw);
+        let content = line_ending.normalize(&raw).into_owned();
         let lines: Vec<&str> = content.split('\n').collect();
         let start = start_line.unwrap_or(1).max(1);
         let end = end_line.unwrap_or(lines.len().max(1)).max(start);
@@ -107,6 +168,7 @@ impl SnippetStore {
                 "lines".into()
             },
             preview,
+            line_ending,
         };
         self.by_id
             .insert(snippet.snippet_id.clone(), snippet.clone());
@@ -134,8 +196,11 @@ impl SnippetStore {
         }
         let content =
             fs::read_to_string(&snippet.path).map_err(|e| EditError::Io(e.to_string()))?;
+        // Spec 45 §1.9: match on LF-normalized text, write back in the file's convention.
+        let content = snippet.line_ending.normalize(&content).into_owned();
+        let old_string = snippet.line_ending.normalize(old_string).into_owned();
         let (before, scope, after) = split_scope(&content, snippet.start_line, snippet.end_line);
-        let count = scope.matches(old_string).count();
+        let count = scope.matches(old_string.as_str()).count();
         match (count, expected_count) {
             (0, _) => return Err(EditError::NoMatch),
             (1, _) => {}
@@ -146,11 +211,13 @@ impl SnippetStore {
         }
         let new_scope = if let Some(exp) = expected_count {
             // replace exactly exp times left-to-right
-            replace_n(&scope, old_string, new_string, exp)
+            replace_n(&scope, old_string.as_str(), new_string, exp)
         } else {
-            scope.replacen(old_string, new_string, 1)
+            scope.replacen(old_string.as_str(), new_string, 1)
         };
         let new_content = format!("{before}{new_scope}{after}");
+        // Model text is LF; the file gets its own convention back (step 4).
+        let new_content = snippet.line_ending.restore(&new_content);
         atomic_write(&snippet.path, &new_content)?;
         self.expire_path(&snippet.path);
         Ok(new_content)
@@ -342,6 +409,124 @@ mod tests {
         let mut store = SnippetStore::new();
         store.write_new(&path, "hi\n").unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "hi\n");
+    }
+
+    // --- Spec 45 §1.9: line endings -----------------------------------------
+
+    #[test]
+    fn read_normalizes_crlf_content() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        write_file(&path, "alpha\r\nbeta\r\ngamma\r\n");
+        let mut store = SnippetStore::new();
+        let (snip, content) = store.issue_for_file(&path, None, None).unwrap();
+        // The model sees LF only; the file's convention travels as metadata.
+        assert!(!content.contains('\r'));
+        assert_eq!(content, "alpha\nbeta\ngamma\n");
+        assert!(!snip.preview.contains('\r'));
+        assert_eq!(snip.line_ending, LineEnding::Crlf);
+        assert_eq!(snip.scope, "whole_file");
+    }
+
+    #[test]
+    fn edit_multiline_crlf_file_with_lf_old_string() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        write_file(&path, "alpha\r\nbeta\r\ngamma\r\n");
+        let mut store = SnippetStore::new();
+        let (snip, _) = store.issue_for_file(&path, None, None).unwrap();
+        // Pre-§1.9 this returned NoMatch: the scope held "beta\r\ngamma".
+        store
+            .edit(&snip.snippet_id, "beta\ngamma", "BETA\nGAMMA", None)
+            .unwrap();
+        let after = fs::read_to_string(&path).unwrap();
+        assert_eq!(after, "alpha\r\nBETA\r\nGAMMA\r\n");
+    }
+
+    #[test]
+    fn edit_preserves_crlf_on_write() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        write_file(&path, "alpha\r\nbeta\r\ngamma\r\n");
+        let mut store = SnippetStore::new();
+        let (snip, _) = store.issue_for_file(&path, None, None).unwrap();
+        store.edit(&snip.snippet_id, "beta", "BETA", None).unwrap();
+        let after = fs::read_to_string(&path).unwrap();
+        assert_eq!(after, "alpha\r\nBETA\r\ngamma\r\n");
+        // Every break is CRLF; no line was left as LF.
+        assert!(!after.replace("\r\n", "").contains('\n'));
+    }
+
+    #[test]
+    fn edit_lf_file_stays_lf() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        write_file(&path, "alpha\nbeta\ngamma\n");
+        let mut store = SnippetStore::new();
+        let (snip, _) = store.issue_for_file(&path, None, None).unwrap();
+        assert_eq!(snip.line_ending, LineEnding::Lf);
+        store.edit(&snip.snippet_id, "beta", "BETA", None).unwrap();
+        let after = fs::read_to_string(&path).unwrap();
+        assert_eq!(after, "alpha\nBETA\ngamma\n");
+        assert!(!after.contains('\r'));
+    }
+
+    #[test]
+    fn edit_normalizes_crlf_new_string() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        write_file(&path, "alpha\r\nbeta\r\ngamma\r\n");
+        let mut store = SnippetStore::new();
+        let (snip, _) = store.issue_for_file(&path, None, None).unwrap();
+        // A model that echoed CRLF back must not produce "BETA\r\r\nGAMMA":
+        // the CR arrives on every line of the old_string, not just the seam.
+        store
+            .edit(&snip.snippet_id, "beta\r\ngamma", "BETA\r\nGAMMA", None)
+            .unwrap();
+        let after = fs::read_to_string(&path).unwrap();
+        assert_eq!(after, "alpha\r\nBETA\r\nGAMMA\r\n");
+        assert!(!after.contains("\r\r"));
+    }
+
+    #[test]
+    fn edit_uniformizes_mixed_endings() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        write_file(&path, "one\r\ntwo\nthree\r\n");
+        let mut store = SnippetStore::new();
+        let (snip, _) = store.issue_for_file(&path, None, None).unwrap();
+        assert_eq!(snip.line_ending, LineEnding::Crlf);
+        store.edit(&snip.snippet_id, "two", "TWO", None).unwrap();
+        let after = fs::read_to_string(&path).unwrap();
+        assert_eq!(after, "one\r\nTWO\r\nthree\r\n");
+        assert!(!after.replace("\r\n", "").contains('\n'));
+    }
+
+    #[test]
+    fn edit_no_trailing_newline_file_keeps_shape() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        write_file(&path, "alpha\r\nbeta");
+        let mut store = SnippetStore::new();
+        let (snip, _) = store.issue_for_file(&path, None, None).unwrap();
+        store.edit(&snip.snippet_id, "beta", "BETA", None).unwrap();
+        // No newline is invented at the end of the file.
+        assert_eq!(fs::read_to_string(&path).unwrap(), "alpha\r\nBETA");
+    }
+
+    #[test]
+    fn line_ending_detect_and_restore() {
+        assert_eq!(LineEnding::detect("no breaks"), LineEnding::Lf);
+        assert_eq!(LineEnding::detect("a\nb"), LineEnding::Lf);
+        assert_eq!(LineEnding::detect("a\r\nb"), LineEnding::Crlf);
+        assert_eq!(LineEnding::detect("a\r\nb\nc"), LineEnding::Crlf);
+        assert_eq!(LineEnding::Lf.restore("a\nb"), "a\nb");
+        assert_eq!(LineEnding::Crlf.restore("a\nb"), "a\r\nb");
+        assert_eq!(LineEnding::Crlf.restore("a\r\nb"), "a\r\nb");
+        assert_eq!(LineEnding::Lf.restore("a\r\nb"), "a\nb");
+        assert_eq!(LineEnding::Lf.normalize("a\r\nb"), "a\nb");
+        assert_eq!(LineEnding::Lf.as_str(), "lf");
+        assert_eq!(LineEnding::Crlf.as_str(), "crlf");
     }
 
     #[test]

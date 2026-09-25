@@ -23,6 +23,7 @@ A snippet is a session-owned record:
 | `version` | Monotonic content fingerprint of the file at issue time (see §1.3). |
 | `scope` | `lines` \| `whole_file` \| `symbol` (M2 implements `lines` + `whole_file`; `symbol` optional later). |
 | `preview` | Short text preview for model UX (may be truncated; not used for match). |
+| `line_ending` | `lf` \| `crlf` observed at issue time; the convention `edit` restores on write (§1.9). |
 | `encoding` | `utf-8` default; non-UTF-8 text → fail closed or binary path (no silent mojibake edit). |
 | `issued_at_turn` | Session turn index when created (audit only; not for cache prefix). |
 
@@ -115,7 +116,36 @@ M2 is single-threaded tool dispatch unless spec 50 lands. Still:
 ### 1.8 Non-text / binary
 
 - Binary or undecodable files: `read` may return metadata only; **no** `snippet_id` for binary edit.  
-- Line-ending policy: preserve original file newline style on write when possible; tests pin `\n`-only fixtures.
+
+### 1.9 Line endings (normative)
+
+Editing must not depend on which newline convention a file uses. Windows
+checkouts, `core.autocrlf` working copies, and `*.bat` / `*.ps1` files are
+ordinary `edit` targets, not failure cases.
+
+**Invariant: LF in, file's convention out.**
+
+1. `read` records `line_ending` (`lf` | `crlf`) on the snippet: `crlf` iff the
+   file bytes contain at least one `\r\n`, else `lf`.
+2. `read` returns content and `preview` **normalized to `\n`**. The model sees
+   one newline convention regardless of the file's, so an `old_string` copied
+   out of a `read` result is LF.
+3. `edit` normalizes both `old_string` and `new_string` to `\n` before matching.
+   A CRLF file is therefore *editable* with ordinary LF tool arguments.
+4. `edit` writes back **all** `\n` as the snippet's `line_ending`. An edit on a
+   CRLF file must not turn any line into LF.
+5. A file whose endings are mixed is uniformized to its `line_ending` on the
+   next successful `edit`. This is intended: an edit is the point at which the
+   product stops preserving an accident.
+
+Rationale: without §1.9 step 3, a multi-line `old_string` never matches a CRLF
+file and `edit` returns `no_match` — the contract's own error, for a reason the
+model cannot act on. Without step 4, a single-line edit overwrites with LF and
+leaves the file with two conventions.
+
+Non-UTF-8 content still fails closed at `read` (§1.8); line-ending handling does
+not extend the snippet contract to binary files. `write` (create-new) writes the
+model's content as given — a new file has no convention to preserve.
 
 ## 2. Non-goals
 
@@ -148,6 +178,12 @@ M2 is single-threaded tool dispatch unless spec 50 lands. Still:
 | `write_existing_denied_by_default` | existing path not overwritten without policy force |
 | `bash_mutation_expires_snippets` | after dirty bash, old snippet_id fails version/expiry |
 | `snippet_not_in_stable_prefix` | snippet table not serialized into spec 10 stable prefix bytes |
+| `read_normalizes_crlf_content` | CRLF file → `read` content and preview carry `\n` only; `line_ending == crlf` |
+| `edit_multiline_crlf_file_with_lf_old_string` | golden: multi-line `old_string` written with `\n` matches a CRLF file and applies |
+| `edit_preserves_crlf_on_write` | golden: after an edit, file bytes contain `\r\n` at every line break and no bare `\n` |
+| `edit_lf_file_stays_lf` | negative guard: an LF file gains no `\r` |
+| `edit_normalizes_crlf_new_string` | `new_string` sent with `\r\n` does not double the `\r` on a CRLF file |
+| `edit_uniformizes_mixed_endings` | mixed file → all breaks become the snippet's `line_ending` |
 
 ## 5. Implementation notes
 

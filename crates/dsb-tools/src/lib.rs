@@ -35,7 +35,7 @@ pub use permissions::{
     default_coding_policy, dogfood_coding_policy,
 };
 pub use plan::{PlanError, PlanItem, PlanStore};
-pub use snippets::{EditError, Snippet, SnippetStore, WriteError};
+pub use snippets::{EditError, LineEnding, Snippet, SnippetStore, WriteError};
 pub use tools::{
     AskCallback, CORE_TOOL_NAMES, ToolError, ToolExecutor, ToolName, ToolRequest, ToolResponse,
     core_tool_names, tool_definitions, tool_definitions_with_options, tool_definitions_with_plan,

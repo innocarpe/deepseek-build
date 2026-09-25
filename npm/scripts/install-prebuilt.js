@@ -10,6 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { platformId, releaseAssetName, releaseDownloadUrl } = require('../lib/platform');
+const { NPM12_REBUILD_COMMAND } = require('../lib/run-native');
 const {
   VERSION_STAMP_ENV,
   readReportedVersion,
@@ -107,12 +108,21 @@ function run(cmd, args, opts = {}) {
   return r;
 }
 
+/**
+ * npm 12 denies `npm rebuild -g <name>` the same way it denies the install
+ * script. The spec-less `--allow-scripts=<name>` form npm prints also fails
+ * (`ENOENT package.json`). Repeat the package name.
+ */
+function retryLine() {
+  return `  Retry: ${NPM12_REBUILD_COMMAND}`;
+}
+
 function selfCheckFailure(problem, binDir) {
   return (
     `installed binary failed self-check: ${problem}.\n` +
     `  The download may be corrupt (truncated download, wrong architecture, low disk space).\n` +
     `  ${binDir} was left unchanged — a previous installation, if any, still runs there.\n` +
-    `  Retry: npm rebuild -g @innocarpe/deepseek-build`
+    retryLine()
   );
 }
 
@@ -149,7 +159,7 @@ function installFromStageDir({ stageDir, version, binDir, pkgNativeBin, platform
       ok: false,
       error:
         `could not create a staging dir under ${binDir}: ${e.message}\n` +
-        `  Retry: npm rebuild -g @innocarpe/deepseek-build`,
+        retryLine(),
       platform,
       url,
     };
@@ -170,7 +180,7 @@ function installFromStageDir({ stageDir, version, binDir, pkgNativeBin, platform
           error:
             `could not stage ${name} under ${binDir}: ${e.message}\n` +
             `  ${binDir} was left unchanged.\n` +
-            `  Retry: npm rebuild -g @innocarpe/deepseek-build`,
+            retryLine(),
           platform,
           url,
         };
@@ -208,7 +218,7 @@ function installFromStageDir({ stageDir, version, binDir, pkgNativeBin, platform
           error:
             `could not install ${name}: ${e.message}\n` +
             `  ${binDir} may hold a partial install.\n` +
-            `  Retry: npm rebuild -g @innocarpe/deepseek-build`,
+            retryLine(),
           platform,
           url,
         };

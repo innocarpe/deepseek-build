@@ -109,9 +109,9 @@ function downgradeRefusal(existingVersion, packageVersion, env = process.env) {
     `refusing to replace deepseek-build-agent ${existingVersion} with package ${packageVersion}.\n` +
     `  The installed agent is newer. It was left unchanged.\n` +
     `  To align the npm package with the agent:\n` +
-    `    npm install -g @innocarpe/deepseek-build@${existingVersion}\n` +
+    `    npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build@${existingVersion}\n` +
     `  To install this older package on purpose:\n` +
-    `    DEEPSEEK_BUILD_ALLOW_DOWNGRADE=1 npm install -g @innocarpe/deepseek-build@${packageVersion}`
+    `    DEEPSEEK_BUILD_ALLOW_DOWNGRADE=1 npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build@${packageVersion}`
   );
 }
 
@@ -133,11 +133,13 @@ function mismatchWarning(packageVersion, agentVersion) {
   if (cmp > 0) {
     lines.push(
       '  The agent is newer. This package will not replace it unless DEEPSEEK_BUILD_ALLOW_DOWNGRADE=1.',
-      `  Align the package: npm install -g @innocarpe/deepseek-build@${agentVersion}`
+      `  Align the package: npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build@${agentVersion}`
     );
   } else {
     lines.push(
-      `  The agent is older than this package. Run the install again so postinstall can fetch ${packageVersion}.`
+      '  The agent is older than this package. npm 12 does not run postinstall unless you opt in, so a plain reinstall does not fetch it.',
+      '  Fix once: npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build',
+      '  npm rebuild needs the same opt-in: npm rebuild -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build'
     );
   }
   return lines.join('\n');

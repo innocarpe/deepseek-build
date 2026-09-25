@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- `npm install -g` on npm 12 no longer looks finished when the agent was
+  never downloaded. npm 12.0.0 denies dependency install scripts unless the
+  installer opts in, and still prints `added 1 package` (this machine: npm
+  12.1.0). The published tarball does not contain `npm/native-bin/`. With no
+  binary on disk, `dsb` exits 127 and prints the command that works:
+  `npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build`.
+  The form npm itself prints, with no package spec, exits `ENOENT package.json`.
+  Plain `npm rebuild -g @innocarpe/deepseek-build` stays blocked. When an
+  older agent is already installed, the shim still runs it and warns — it
+  does not stamp `DEEPSEEK_BUILD_VERSION`, so `--version` reports that older
+  binary — and the warning names the same command. The postinstall retry
+  uses the rebuild form that includes `--allow-scripts`. A script that does
+  run and fails still exits 1. npm 11.20.0 runs the script with or without
+  the flag. The READMEs and `docs/user-guide/05-npm.md` show the working
+  command.
+
 - A published release no longer prints `[alpha]` because `version.json`
   still names an older stable pointer. `6.0.0` with `stable_version`
   `5.7.0` reported `deepseek-build 6.0.0 (…) [alpha]`. That file is an

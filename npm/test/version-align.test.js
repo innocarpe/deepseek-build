@@ -50,6 +50,14 @@ test('mismatchWarning names both versions and stays quiet when they match', () =
   assert.match(newer, /DEEPSEEK_BUILD_ALLOW_DOWNGRADE/);
   const older = mismatchWarning('6.0.0', '5.7.0');
   assert.match(older, /older than this package/);
+  assert.match(
+    older,
+    /npm install -g --allow-scripts=@innocarpe\/deepseek-build @innocarpe\/deepseek-build/
+  );
+  assert.match(
+    older,
+    /npm rebuild -g --allow-scripts=@innocarpe\/deepseek-build @innocarpe\/deepseek-build/
+  );
   assert.equal(mismatchWarning('6.0.0', '6.0.0'), null);
   assert.equal(mismatchWarning('6.0.0', null), null);
 });

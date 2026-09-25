@@ -200,6 +200,12 @@ test('a failed self-check does not remove an existing installation', (t) => {
   const result = installFromStageDir({ stageDir: stage, version: VERSION, binDir });
   assert.equal(result.ok, false, 'the install must fail closed');
   assert.match(result.error, /failed self-check/);
+  // npm 12 still blocks `npm rebuild -g <pkg>` (measured). The retry has to
+  // carry --allow-scripts and repeat the package spec.
+  assert.match(
+    result.error,
+    /Retry: npm rebuild -g --allow-scripts=@innocarpe\/deepseek-build @innocarpe\/deepseek-build/
+  );
 
   for (const name of REQUIRED) {
     const dest = path.join(binDir, name);

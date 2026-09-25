@@ -25,6 +25,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { installPrebuilt } = require('./install-prebuilt');
+const { NPM12_INSTALL_COMMAND, NPM12_REBUILD_COMMAND } = require('../lib/run-native');
 
 const pkgRoot = path.resolve(__dirname, '..', '..');
 
@@ -198,7 +199,7 @@ function main(opts = {}) {
   // A global install (`npm_config_global=true`) is not this case.
   if (isProjectCheckoutInstall(root, env)) {
     console.log('deepseek-build postinstall: skipped (source checkout).');
-    console.log('Registry install: npm install -g @innocarpe/deepseek-build');
+    console.log(`Registry install: ${NPM12_INSTALL_COMMAND}`);
     console.log('From this checkout: ./scripts/install.sh');
     return { skipped: 'source-checkout' };
   }
@@ -243,16 +244,22 @@ function main(opts = {}) {
     console.warn('');
     console.warn('Default install does not compile from source (by design).');
     console.warn('  • Wait for the GitHub Release asset for your platform, or');
-    console.warn('  • Dev/source: DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD=1 npm i -g …');
+    console.warn(
+      `  • Dev/source: DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD=1 ${NPM12_INSTALL_COMMAND}`
+    );
     console.warn('  • Or use a checkout: ./scripts/install.sh');
   }
 
   printPathHint(binDir);
 
-  // Fail-close: a half-installed package (e.g. the agent self-check failed
-  // and the binary was removed from the bin dir) must NOT report a
-  // successful npm install — otherwise `dsb` silently runs a stale agent
-  // and the fix the user installed never takes effect.
+  // Fail-close when this script actually ran. npm 12's default is to never
+  // start it and still report `added 1 package`; that case is the wrapper's
+  // job (run-native.js exits 127). A script that did run and failed must
+  // exit 1 so npm reports the failure — a 0 here is how a stale agent used
+  // to survive under a "successful" install.
+  if (!String(result.error || '').includes(NPM12_REBUILD_COMMAND)) {
+    console.error(`Retry: ${NPM12_REBUILD_COMMAND}`);
+  }
   console.error('deepseek-build postinstall: install FAILED — npm install will report failure.');
   exit(1);
   return { failed: true };

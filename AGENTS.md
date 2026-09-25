@@ -113,6 +113,49 @@ contract + the `pr-authoring` skill**, not by process-police GitHub Actions.
 - Write incomplete versions (`1.0` instead of `1.0.0`) in PR bodies, tags, or ultragoal evidence
 - Drop either CLI name (`deepseek-build` / `dsb`) from install packaging without an ADR
 
+## Control-tower checkout (parallel sessions)
+
+Many agent sessions work on this repo at once. They are opened in the
+**primary checkout** (the clone the maintainer works from), which acts as a
+control tower: it directs, and **worktrees change code.**
+
+| Place | Role | Writes |
+|-------|------|--------|
+| Primary checkout | Read, plan, review, dispatch, merge | **None.** Stays on `main`, clean; only `git pull --ff-only origin main` |
+| Orca worktree | One unit of work | Code, commits, push — **one worktree = one branch = one PR** |
+
+- **Do not edit or commit in the primary checkout.** Tower sessions share its
+  index, so a stray edit or commit lands in another session's diff. A change to
+  the harness itself (`AGENTS.md`, `skills/`) is a unit of work too: it gets a
+  worktree.
+- **Create, hand off and clean up worktrees with
+  [`skills/worktree-dispatch`](skills/worktree-dispatch/SKILL.md)** — branch
+  naming, opening an agent tab in the tree, the first-run trust prompt that
+  swallows a brief, and removal after merge.
+- **Operate on a worktree by path; do not `cd` into it and stay.**
+
+  | Tool | Target it with |
+  |------|----------------|
+  | `git` | `git -C "$WT" …` |
+  | `cargo`, `scripts/*.sh`, `npm` | subshell: `(cd "$WT" && cargo test -p dsb-cli)` |
+  | `gh` | `--repo innocarpe/deepseek-build` — `gh` has no `-C` and otherwise reads the repo from cwd |
+
+- **GitHub credentials per command.** When more than one `gh` account is logged
+  in on the machine, pass the token of the account that can push here (for the
+  maintainer, `innocarpe`) on each call:
+  `GH_TOKEN="$(gh auth token --user innocarpe)" gh pr view 123 --repo innocarpe/deepseek-build`.
+  Never `gh auth switch` — it changes the active account for every other
+  session on the machine. `git push` goes to `origin`.
+- **Vendored Grok builds run one at a time.** Each worktree has its own
+  `target/`, and a cold build of `third_party/grok-build` takes 30–60+ min
+  ([release-cycle.md](docs/contributing/release-cycle.md)); parallel builds
+  starve each other. Units that touch `third_party/grok-build/**` or
+  `patches/grok-build/**`, or run `scripts/build-grok-pager.sh`,
+  `scripts/install.sh` or `scripts/package-release-binaries.sh`, go serially
+  across all worktrees. Units limited to `crates/` can run in parallel.
+- **Leave other sessions' worktrees alone** — their files, branches and
+  terminals. Ask the owning session or report instead.
+
 ## Product CI (future)
 
 Real CI belongs when there is something to **build and test** (provider, tools,
@@ -139,6 +182,11 @@ If product intent and code disagree later, **specs + ADRs win** until intentiona
 ## Layout
 
 See `docs/architecture/REPO_LAYOUT.md`. Do not invent top-level folders without an ADR.
+
+`CLAUDE.md` is a symlink to this file, and `.claude/skills` and `.agents/skills`
+are symlinks to `skills/` ([ADR 0011](docs/adr/0011-agent-harness-links.md)), so
+Claude Code, Codex and DeepSeek Build load this contract and every skill in any
+checkout or worktree. Edit `AGENTS.md` and `skills/`, never the links.
 
 ## Sibling paths
 

@@ -108,15 +108,17 @@ refresh cannot wipe them.
 | `0011-*.patch` | `test(pager): stabilize prompt history tick delivery` |
 | `0012-*.patch` | `fix(vendor): satisfy the strict clippy baseline` |
 | `0013-*.patch` | `fix(shell): preserve the seeded product changelog` |
+| `0014-*.patch` | `feat(pager): report explicit OSC 9999 agent status to Orca` |
 
 These patches carry the **DeepSeek status line**, its shell-side repair
 dependency, the focused large-MCP-image persistence/resume regression, prompt
-identity, product-specific pager expectations, strict vendor lint repairs, and
-seeded product changelog preservation. The status patch records session-bound
-unsupported capability handling, transient retry, and stale-result safety;
+identity, product-specific pager expectations, strict vendor lint repairs,
+seeded product changelog preservation, and explicit OSC 9999 agent status for
+hosts that read it. The status patch records session-bound unsupported
+capability handling, transient retry, and stale-result safety;
 patch 0006 keeps the DSB image regression durable instead of relying on the
 upstream changelog claim. A refresh must never silently drop any of the complete
-13-patch series.
+14-patch series.
 
 - **Re-apply after refresh:** `./scripts/apply-grok-build-patches.sh`
   (add `--check` for a dry run; already-applied patches are skipped).
@@ -127,6 +129,12 @@ upstream changelog claim. A refresh must never silently drop any of the complete
   upstream refresh, fix the conflicts by hand, re-run
   `./scripts/build-grok-pager.sh check`, and regenerate the patches before
   merging the refresh PR.
+- **Known-stale entries:** `0009-*` and `0010-*` fail `--check` on `main`
+  today. Their content is already committed in the tree
+  (`d9f5dc8`, `1ac8864`), so neither forward nor reverse apply succeeds and the
+  gate stops on `0009` before reaching the rest of the series. This predates
+  patch `0014`; drop or regenerate the two entries so the gate can report on
+  the series again.
 
 Refresh procedure step 2 therefore becomes:
 

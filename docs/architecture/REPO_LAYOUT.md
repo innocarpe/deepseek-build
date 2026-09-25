@@ -8,6 +8,9 @@
 deepseek-build/
 ├── README.md
 ├── AGENTS.md                 # Standing instructions for agents
+├── CLAUDE.md -> AGENTS.md    # Link so Claude Code reads the same contract (ADR 0011)
+├── .claude/skills -> ../skills   # Link: Claude Code skill discovery (ADR 0011)
+├── .agents/skills -> ../skills   # Link: Codex skill discovery (ADR 0011)
 ├── LICENSE
 ├── docs/                     # Product + engineering truth (see docs/README.md)
 │   └── architecture/
@@ -56,6 +59,13 @@ Language is locked to **Rust** by ADR 0004. Renaming the workspace needs a new A
 ### `skills/`
 
 Deep Code / Agent Skills ecosystem: bundled `SKILL.md` packages the product ships.
+
+### `CLAUDE.md`, `.claude/`, `.agents/` (links only)
+
+Coding agents look for instructions and skills in tool-specific places. These
+entries are symlinks to `AGENTS.md` and `skills/` so every checkout and worktree
+carries the harness without a setup step. Edit the targets, never the links.
+See [ADR 0011](../adr/0011-agent-harness-links.md).
 
 ### `.deepseek-build/`
 

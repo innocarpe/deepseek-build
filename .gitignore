@@ -19,6 +19,10 @@
 *.pem
 *.key
 
+# Agent harness: .claude/ and .agents/ are tracked for their skill links only
+# (ADR 0011). Per-user tool state written beside them stays local.
+.claude/settings.local.json
+
 # Runtime / session debris
 .deepseek-build/sessions/
 .deepseek-build/cache/

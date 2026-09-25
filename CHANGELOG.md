@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- The TUI fits a phone-width pane. A collapsed prompt echo now folds to one
+  line plus an ellipsis at or below 60 columns (the measured iPhone pane is 55
+  columns by 41 rows) instead of the fixed three rows it used to spend — about
+  a third of the viewport. The bottom info line (`╰─ model · flags ─╯`) is
+  drawn inside its own corners, so a long model label no longer starts on the
+  divider rule and clips a character early. Desktop widths are unchanged.
+- dsb reports its turn state to Orca over OSC 9999, so the sidebar dot, the
+  mobile session row, and the turn-complete notification have something to
+  read. Previously every dsb pane reported no agent identity and the braille
+  spinner made a *working* dsb pane read as a working Claude. The frame is
+  emitted only when Orca is the host, and carries `working` / `waiting` /
+  `done` with control characters stripped so a crafted title cannot inject
+  escapes. (Orca-side detection and launch vocabulary still need an Orca
+  change; this is the status half.)
 - Fix the emergency local publish path asking for a 2FA code that this account
   cannot produce. The account's second factor is a security key, so npm offers a
   browser approval instead of an emailed code; the script now runs the publish
@@ -43,6 +57,10 @@
   as well as the endpoint: `deepseek-v4-pro` and the V3 chat/reasoner
   families keep the text-only wire with its on-disk `<image_files>` fallback,
   while vision-capable models send the image inline.
+
+## 5.7.0 — 2026-09-25
+
+- phone-width layout and Orca pane status
 
 ## 5.6.0 — 2026-09-25
 

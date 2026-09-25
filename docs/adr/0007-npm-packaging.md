@@ -46,12 +46,18 @@ Overnight agents and humans need a **non-inventable** npm path: dual bins (`deep
 | `./scripts/check-semver.sh` + `npm run version-check` pass | Agent |
 | `npm pack` succeeds; documented local `npm i -g .` smoke (needs Rust) | Agent |
 | Dual bins `--version` match workspace SemVer | Agent |
-| **`npm publish` to registry** | **Human only** (OTP/2FA) |
+| **`npm publish` to registry** | **CI** (OIDC trusted publishing) — [ADR 0012](./0012-npm-trusted-publishing.md) |
 
 Ultragoal story **npm** may mark **complete** when agent DoD holds.  
 If story text required public publish, checkpoint **`blocked-awaiting-human`** with exact publish commands — **do not invent tokens**.
 
-### Publish procedure (human)
+> **Amended by [ADR 0012](./0012-npm-trusted-publishing.md) (2026-09-25):** the
+> registry publish is no longer human-gated. A tag push triggers
+> `.github/workflows/publish-npm.yml`, which publishes over OIDC trusted
+> publishing with provenance. A local interactive publish remains only as the
+> emergency path.
+
+### Publish procedure
 
 ```bash
 ./scripts/check-semver.sh

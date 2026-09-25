@@ -4,8 +4,8 @@ description: >
   Cut a DeepSeek Build release end-to-end without omissions: version bump,
   CHANGELOG newest-first invariant, MAJOR/README gate, chore(release) PR,
   merge, tag, prebuilt asset attach (manual fallback when CI is stuck), npm
-  publish (no-OTP first), post-publish verification. Use when the user asks to
-  release, bump, tag, publish to npm, or ship a version.
+  publish over OIDC trusted publishing, post-publish verification. Use when the
+  user asks to release, bump, tag, publish to npm, or ship a version.
 ---
 
 # Release (DeepSeek Build harness)
@@ -20,7 +20,8 @@ is silently skipped.
 2. `docs/contributing/versioning.md` — SemVer fail-close rules
 3. `docs/contributing/pr-body-standard.md` — PR narrative bar for the release PR
 4. `docs/adr/0009-npm-prebuilt-binaries.md` — npm wrapper + prebuilt tarball model
-5. `docs/adr/0008-grok-build-base.md` — vendored Grok TUI (SOURCE_REV pin)
+5. `docs/adr/0012-npm-trusted-publishing.md` — OIDC publish path + emergency path
+6. `docs/adr/0008-grok-build-base.md` — vendored Grok TUI (SOURCE_REV pin)
 
 ## Hard rules
 
@@ -38,10 +39,15 @@ is silently skipped.
 5. **No silent asset skip.** `release-prebuilt.yml` tag runs routinely stay
    "queued" forever. If `gh release view v<ver> --json assets` shows no tarball
    for `darwin-arm64`, attach manually (fallback below) — do not publish an
-   npm version whose binary is missing or stale.
+   npm version whose binary is missing or stale. `publish-npm.yml` enforces
+   this too: it waits for the asset and fails the run without it.
 6. **Verify after publish** with a real global install + `dsb --version` +
    a `strings` check for the release's markers (e.g. `deepseek.com` status
    handling) on the installed binary.
+7. **Publishing is CI's job (ADR 0012).** The tag push triggers
+   `publish-npm.yml`, which publishes over OIDC trusted publishing — no npm
+   token, no one-time code. Do not publish locally unless that path is broken;
+   the emergency path is below.
 
 ## Standard cycle
 
@@ -58,8 +64,49 @@ dsb --version
 ```
 
 `release.sh` stages: bump → MAJOR/README gate → verify → PR (`chore(release)`)
-→ merge → tag → asset wait → npm publish (no-OTP first, EOTP fallback asks for
-the one-time code or `NPM_OTP`).
+→ merge → tag → asset wait → **CI publishes over OIDC** (`publish-npm.yml`) →
+registry verified. No npm token and no one-time code are involved.
+
+## npm Trusted Publisher enrollment (one-time, npm website)
+
+ADR 0012's automatic path only works once the package has a trusted publisher
+configured on npmjs.com. **It is enrolled (2026-09-25)** for
+`innocarpe/deepseek-build` + `publish-npm.yml`, so this section is here to
+re-verify or redo it, not as a pending task.
+
+Enrolling or editing it requires **interactive 2FA on the npm account** (npm
+requires 2FA to modify package settings). Note that `npm trust list <package>`
+is not a cheap read-only check any more — with 2FA enabled it answers `EOTP`
+and waits for a browser approval. Read the package settings page instead.
+
+Enrollment (browser, as the npm account):
+
+1. Enable 2FA on the npm account (npm's setup page offers a security key; an
+   authenticator app is the alternative).
+2. Package → **Settings** → **Trusted Publisher** → **GitHub Actions**:
+   - Organization or user: `innocarpe`
+   - Repository: `deepseek-build`
+   - Workflow filename: `publish-npm.yml` (filename only — no path; case-sensitive)
+   - Environment: empty
+   - Allowed actions: `npm stage publish` **and** `npm publish`
+3. Read the saved connection back off the page to confirm.
+
+The `aside` CLI drove this (signing in, approving the security key, reading
+emailed codes from Gmail). It cannot perform the 2FA enrollment itself — that
+needs the account holder's key or authenticator secret once.
+
+## Emergency path (CI cannot publish)
+
+```bash
+./scripts/npm-emergency-publish.sh <ver>        # interactive, publishes locally
+./scripts/release.sh <ver> --publish-only --local-publish   # same, in the orchestrator
+```
+
+It refuses to publish without the release asset, drives `npm login
+--auth-type=web` through `aside exec` (the browser agent signs in and reads any
+emailed code from Gmail), and publishes. **It does not ask a person for a
+number.** It carries no provenance attestation — there is no local OIDC
+provider — so prefer fixing CI over using it.
 
 ## Manual asset fallback (reliable path when CI is stuck)
 
@@ -73,8 +120,10 @@ cp "$WT/third_party/grok-build/target/release/xai-grok-pager-bin" \
 # attach tarball to the GitHub release (creates v4.0.4 if missing)
 cd "$WT" && ./scripts/package-release-binaries.sh --upload
 gh release view v4.0.4 --json assets                      # confirm tarball
-# publish
-./scripts/release.sh 4.0.4 --publish-only                 # or: cd npm && npm publish --access public
+# then let CI publish (it re-runs on demand):
+gh workflow run publish-npm.yml --ref v4.0.4
+# or, only if CI itself is unavailable:
+./scripts/npm-emergency-publish.sh 4.0.4
 ```
 
 ## Post-publish verification checklist
@@ -87,6 +136,8 @@ gh release view v4.0.4 --json assets                      # confirm tarball
 - [ ] `gh release view v<ver> --json tagName,assets` shows the `darwin-arm64` tarball
 - [ ] CHANGELOG still newest-first: `./scripts/reorder-changelog.sh --check`
 - [ ] README version literals match `<ver>`
+- [ ] `npm view @innocarpe/deepseek-build@<ver> dist.attestations` shows a
+      provenance attestation (CI path; the emergency path has none)
 
 ## Anti-patterns
 
@@ -97,6 +148,8 @@ gh release view v4.0.4 --json assets                      # confirm tarball
 | `4.0` / `v4` in any public text | SemVer fail-close (Agents.md) |
 | Bumping to a new MAJOR with stale README banner | Tag ships ahead of the documented story |
 | Claiming done after `npm publish` | Unverified global install is not a release |
+| Local publish when CI could publish | Loses provenance and leaves the irreversible step off the audit trail |
+| "Fixing" an OIDC 403 by adding a bypass token | The bypass is being retired; fix the publisher or the workflow instead |
 
 ## Done means
 

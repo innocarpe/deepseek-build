@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Release orchestrator: bump -> PR -> merge -> tag -> wait for prebuilt assets -> npm publish.
+# Release orchestrator: bump -> PR -> merge -> tag -> wait for prebuilt assets
+# -> CI publishes to npm over OIDC -> verify the registry.
 #
 # The standard change cycle (see docs/contributing/release-cycle.md):
 #   fix -> PR (pr-authoring skill) -> merge -> ./scripts/release.sh <ver>
@@ -8,10 +9,13 @@
 # Usage:
 #   ./scripts/release.sh 4.0.4 [--desc "one-line note"]
 #     [--no-publish] [--skip-bump] [--skip-pr] [--skip-tag] [--publish-only]
-#     [--platform ID] [--timeout SEC] [--wait-all]
+#     [--local-publish] [--platform ID] [--timeout SEC] [--wait-all]
 #
-# Human gate: npm OTP is only asked if npm demands one (EOTP). With a
-# publish-capable token (granular/automation) publish is fully automatic.
+# Publishing (ADR 0012): the tag push triggers .github/workflows/publish-npm.yml,
+# which publishes via OIDC trusted publishing — no npm token and no one-time
+# code. This script watches that run and verifies the registry afterwards.
+# --local-publish is the emergency path for when CI cannot publish; it needs an
+# interactive npm login and may prompt for a one-time code (EOTP).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -19,7 +23,7 @@ cd "$ROOT"
 
 VERSION=""
 DESC=""
-SKIP_BUMP=0; SKIP_PR=0; SKIP_TAG=0; NO_PUBLISH=0; WAIT_ALL=0
+SKIP_BUMP=0; SKIP_PR=0; SKIP_TAG=0; NO_PUBLISH=0; WAIT_ALL=0; LOCAL_PUBLISH=0
 PLATFORM=""; TIMEOUT=5400
 
 while [[ $# -gt 0 ]]; do
@@ -29,11 +33,12 @@ while [[ $# -gt 0 ]]; do
     --skip-pr) SKIP_PR=1; shift ;;
     --skip-tag) SKIP_TAG=1; shift ;;
     --no-publish) NO_PUBLISH=1; shift ;;
+    --local-publish) LOCAL_PUBLISH=1; shift ;;
     --publish-only) SKIP_BUMP=1; SKIP_PR=1; SKIP_TAG=1; shift ;;
     --platform) PLATFORM="$2"; shift 2 ;;
     --timeout) TIMEOUT="$2"; shift 2 ;;
     --wait-all) WAIT_ALL=1; shift ;;
-    -h|--help) sed -n '1,24p' "$0"; exit 0 ;;
+    -h|--help) sed -n '1,25p' "$0"; exit 0 ;;
     -*) echo "unknown option: $1" >&2; exit 1 ;;
     *) VERSION="$1"; shift ;;
   esac
@@ -135,10 +140,15 @@ tag, prebuilt attach, npm publish.
 - Kind: \`chore(release)\`. Cache impact: none (no agent/prompt/tool behavior change).
 
 ## Notes
-- npm publish tries without OTP first; a one-time code is asked only if npm
-  returns EOTP: \`./scripts/release.sh $VERSION --publish-only\`
-- \`release-prebuilt.yml\` attaches prebuilt tarballs to the \`v$VERSION\` release;
-  wait for the publishing platform's asset before \`npm publish\`.
+- Publishing runs in CI: the \`v$VERSION\` tag push triggers \`publish-npm.yml\`,
+  which publishes over OIDC trusted publishing (ADR 0012) — no token, no
+  one-time code. \`release.sh\` watches that run and verifies the registry.
+- Emergency fallback when CI cannot publish: a local interactive publish
+  (\`./scripts/release.sh $VERSION --publish-only --local-publish\`) — see
+  \`docs/contributing/release-cycle.md\` §Emergency path.
+- \`release-prebuilt.yml\` attaches the prebuilt tarball to the \`v$VERSION\`
+  release; \`publish-npm.yml\` waits for that asset and refuses to publish
+  without it (ADR 0009).
 EOF
   if [[ -x "$HOME/.local/bin/gh-public-english-gate" ]]; then
     "$HOME/.local/bin/gh-public-english-gate" --body-file "$BODY"
@@ -206,31 +216,74 @@ if [[ "$ASSET_OK" -eq 0 ]]; then
 fi
 
 # --- 6. npm publish -------------------------------------------------------------
+# Default path: the tag push triggers .github/workflows/publish-npm.yml, which
+# publishes over OIDC trusted publishing (ADR 0012) — no token, no one-time
+# code. This script therefore only *watches* that run and verifies the result.
+# A local `npm publish` is the emergency path (--local-publish) for a broken or
+# unavailable workflow; see docs/contributing/release-cycle.md §Emergency path.
 if [[ "$NO_PUBLISH" -eq 1 ]]; then
-  echo "== skipping publish (--no-publish). Manual: npm publish --access public =="
+  echo "== skipping publish (--no-publish). CI publishes on the tag push (ADR 0012) =="
   exit 0
 fi
-echo "== npm publish @innocarpe/deepseek-build@$VERSION =="
-npm whoami >/dev/null
-# Try without OTP first: a publish-capable token (granular/automation) needs no
-# one-time code. Only fall back to OTP if npm actually demands one (EOTP).
-ERR_LOG="$(mktemp)"
-if ! npm publish --access public 2> "$ERR_LOG"; then
-  if rg -qi "EOTP|one-time pass|two-factor|2fa" "$ERR_LOG"; then
-    OTP="${NPM_OTP:-}"
-    if [[ -z "$OTP" ]]; then
-      read -rsp "npm OTP (one-time code): " OTP
-      echo
+
+if [[ "$LOCAL_PUBLISH" -eq 1 ]]; then
+  echo "== LOCAL npm publish @innocarpe/deepseek-build@$VERSION (emergency path) =="
+  echo "   CI (publish-npm.yml) is the default. See release-cycle.md §Emergency path."
+  npm whoami >/dev/null
+  ERR_LOG="$(mktemp)"
+  if ! npm publish --access public 2> "$ERR_LOG"; then
+    if rg -qi "EOTP|one-time pass|two-factor|2fa" "$ERR_LOG"; then
+      OTP="${NPM_OTP:-}"
+      if [[ -z "$OTP" ]]; then
+        read -rsp "npm OTP (one-time code): " OTP
+        echo
+      fi
+      [[ -n "$OTP" ]] || { echo "error: empty OTP" >&2; rm -f "$ERR_LOG"; exit 1; }
+      npm publish --access public --otp "$OTP"
+    else
+      cat "$ERR_LOG" >&2
+      rm -f "$ERR_LOG"
+      exit 1
     fi
-    [[ -n "$OTP" ]] || { echo "error: empty OTP" >&2; rm -f "$ERR_LOG"; exit 1; }
-    npm publish --access public --otp "$OTP"
-  else
-    cat "$ERR_LOG" >&2
-    rm -f "$ERR_LOG"
+  fi
+  rm -f "$ERR_LOG"
+else
+  echo "== waiting for CI publish (publish-npm.yml) of $VERSION =="
+  DEADLINE=$(( $(date +%s) + TIMEOUT ))
+  RUN_ID=""
+  while [[ $(date +%s) -lt $DEADLINE ]]; do
+    RUN_ID="$(gh run list --workflow publish-npm.yml --event push --limit 20 \
+      --json databaseId,headBranch,status \
+      --jq "[.[] | select(.headBranch == \"v$VERSION\")][0].databaseId" 2>/dev/null || true)"
+    if [[ -n "$RUN_ID" && "$RUN_ID" != "null" ]]; then
+      break
+    fi
+    echo "  waiting for the publish-npm run for tag v$VERSION…"
+    sleep 20
+  done
+  if [[ -z "$RUN_ID" || "$RUN_ID" == "null" ]]; then
+    echo "error: no publish-npm.yml run appeared for v$VERSION within ${TIMEOUT}s" >&2
+    echo "  The trusted publisher may be unconfigured, or Actions may be queued." >&2
+    echo "  Emergency path: ./scripts/release.sh $VERSION --publish-only --local-publish" >&2
+    exit 1
+  fi
+  echo "== CI run $RUN_ID — waiting for it to finish =="
+  if ! gh run watch "$RUN_ID" --exit-status >/dev/null 2>&1; then
+    echo "error: publish-npm.yml run $RUN_ID did not succeed" >&2
+    echo "  gh run view $RUN_ID --log-failed" >&2
+    echo "  Emergency path: ./scripts/release.sh $VERSION --publish-only --local-publish" >&2
     exit 1
   fi
 fi
-rm -f "$ERR_LOG"
+
+# Verify the registry, whichever path published. The local tarball smoke is the
+# caller's job (release skill §Post-publish verification); CI runs its own.
+LIVE="$(npm view "@innocarpe/deepseek-build@$VERSION" version 2>/dev/null || true)"
+if [[ "$LIVE" != "$VERSION" ]]; then
+  echo "error: registry does not report $VERSION (got '${LIVE:-none}')" >&2
+  exit 1
+fi
+echo "== registry reports @innocarpe/deepseek-build@$LIVE =="
 
 echo
 echo "== done. User verification: =="

@@ -2,6 +2,14 @@
 
 Build/test CI only — **no process-police** (PR title/label regex bots).
 
+## Workflows
+
+| Workflow | File | Trigger | Role |
+|----------|------|---------|------|
+| **CI** | [`ci.yml`](./ci.yml) | PR / push to `main` | Build + test; one required check |
+| **release-prebuilt** | [`release-prebuilt.yml`](./release-prebuilt.yml) | `v*.*.*` tag | Build + attach the `darwin-arm64` release tarball |
+| **publish-npm** | [`publish-npm.yml`](./publish-npm.yml) | `v*.*.*` tag | Publish to npm over OIDC trusted publishing ([ADR 0012](../../docs/adr/0012-npm-trusted-publishing.md)) |
+
 ## Primary workflow
 
 | Workflow | File | Required check name |
@@ -84,8 +92,27 @@ Docs-only → `changes` + `required` only (~seconds).
 |------|-----|
 | `./scripts/smoke-dogfood.sh` | Largely duplicates `test` + `semver` (re-runs workspace tests + version checks). Keep as **local / release** checklist |
 | Live DeepSeek API | Secrets; optional in the smoke script when `DEEPSEEK_API_KEY` is set |
-| npm publish | Owner-gated ADR 0007 |
 | Process-police | Docs + review harness |
+
+## Release workflows (not PR checks)
+
+Neither release workflow reports a check on pull requests, so neither belongs in
+branch protection.
+
+| Workflow | Publishes? | Notes |
+|----------|-----------|-------|
+| `release-prebuilt.yml` | No | Builds and attaches the release tarball; `contents: write` |
+| `publish-npm.yml` | **Yes** | OIDC trusted publishing; `id-token: write`, no npm secret |
+
+`publish-npm.yml` refuses to publish unless the release asset exists and the
+packaged agent executes and reports the release version (ADR 0009 ordering), so
+it is safe to re-run: the ordering gate and an "already published" check both
+guard the registry write.
+
+**npm publish is no longer owner-gated** (ADR 0012 amended ADR 0007). The
+trusted publisher must be enrolled on npmjs.com once — see
+[release-cycle.md](../../docs/contributing/release-cycle.md) §Trusted Publisher
+enrollment.
 
 ## Branch protection / ruleset
 
@@ -104,6 +131,8 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -W clippy::all
 cargo test --workspace
 ./scripts/check-semver.sh && node npm/scripts/check-version-match.js
+# workflow lint (matches what CI relies on):
+actionlint .github/workflows/*.yml
 # release / dogfood checklist (not a CI job):
 ./scripts/smoke-dogfood.sh
 ```

@@ -12,10 +12,23 @@ fix on a branch → PR (pr-authoring skill) → merge (merge commit)
 → ./scripts/release.sh <version> → npm i -g @innocarpe/deepseek-build@<version> → verify
 ```
 
-Only the npm publish step can need a human, and only when npm actually demands
-a one-time code (EOTP) — a publish-capable token (granular/automation) publishes
-with no OTP at all. Everything else in the release half is scripted so a single
-change costs minutes, not a build marathon.
+**No step needs a human.** The tag push triggers
+[`publish-npm.yml`](../../.github/workflows/publish-npm.yml), which publishes
+over OIDC **trusted publishing** — there is no npm token to hold and no
+one-time code to type ([ADR 0012](../adr/0012-npm-trusted-publishing.md)).
+`release.sh` waits for that run and verifies the registry afterwards. The one
+remaining human step is a **one-time** enrollment on the npm website
+(§Trusted Publisher enrollment), not a per-release gate.
+
+> **Status of the automatic path.** It is implemented and the trusted publisher
+> is **enrolled** (2026-09-25), but an OIDC publish has **not yet run**: no
+> release has been cut since. The next release is the first real exercise. If
+> the tag run fails at the publish step, the emergency path is the working
+> route, and the troubleshooting order is in ADR 0012.
+>
+> Enrolling it needed 2FA enabled on the npm account first — npm requires
+> interactive 2FA to modify package settings, and the account had it disabled.
+> That is why the enrollment is a browser step and not part of this cycle.
 
 ## Where the time actually goes
 
@@ -37,16 +50,18 @@ turn repeated builds into incremental ones.
 |--------|------|
 | [`bump-version.sh`](../../scripts/bump-version.sh) | Single-command bump: `Cargo.toml`, `package.json`, `Cargo.lock`, `CHANGELOG.md`, README.md version literals, `docs/product/versions/README.md`. Requires a clean tree; `--dry-run` previews. |
 | [`reorder-changelog.sh`](../../scripts/reorder-changelog.sh) | Reorder CHANGELOG.md to the invariant (Unreleased top, versions newest-first) without touching non-version sections; `--check` exits non-zero if out of order. |
-| [`release.sh`](../../scripts/release.sh) | Orchestrator: bump → MAJOR/README gate → verify → PR (`chore(release)`) → merge → tag `v{ver}` → wait for prebuilt assets → `npm publish` (OTP only if npm demands it). |
+| [`release.sh`](../../scripts/release.sh) | Orchestrator: bump → MAJOR/README gate → verify → PR (`chore(release)`) → merge → tag `v{ver}` → wait for prebuilt assets → wait for CI publish → verify the registry. |
+| [`npm-emergency-publish.sh`](../../scripts/npm-emergency-publish.sh) | **Emergency path only.** Local interactive publish that drives `npm login --auth-type=web` and any emailed code through the `aside` browser agent, so no person has to supply a number. |
 
 ### `release.sh` flags
 
 | Flag | Meaning |
 |------|---------|
 | `--desc "…"` | One-line note seeded into CHANGELOG + versions README |
-| `--no-publish` | Stop after assets are ready (hand off to human) |
+| `--no-publish` | Stop after assets are ready |
 | `--skip-bump` / `--skip-pr` / `--skip-tag` | Resume from a later stage |
 | `--publish-only` | Skip everything, wait for assets + publish |
+| `--local-publish` | **Emergency:** publish from this machine instead of waiting for CI (interactive npm login) |
 | `--platform ID` | Platform to wait for (default: detect from `npm/lib/platform.js`) |
 | `--wait-all` | Retained for future matrix expansion; currently waits for the single `darwin-arm64` target |
 | `--timeout SEC` | Asset wait timeout (default 5400) |
@@ -85,13 +100,42 @@ turn repeated builds into incremental ones.
 
 ## Human gates
 
-1. **npm OTP (only if demanded)** — `release.sh` publishes without `--otp` first;
-   if npm returns EOTP it pauses for the one-time code (or `NPM_OTP` env).
+1. **Trusted Publisher enrollment (one-time, npm website)** — the automatic
+   publish path needs a trusted publisher configured for
+   `@innocarpe/deepseek-build`. Enrolling it requires **interactive 2FA** on the
+   npm account (npm requires 2FA to modify package settings). See
+   §Trusted Publisher enrollment. After this is done once, releases need no
+   human.
 2. **PR body review** — read the generated `chore(release)` PR before it is merged;
    fill CHANGELOG release notes before running the script if a placeholder remains.
 3. **CHANGELOG/README honesty** — run `./scripts/reorder-changelog.sh --check`
    before merging anything that touches the changelog; keep the newest-first
    invariant green.
+
+## Trusted Publisher enrollment (one-time)
+
+Check the current state:
+
+```bash
+npx npm@latest trust list @innocarpe/deepseek-build
+# 403 "Please enable 2fa for your account" → neither the account 2FA nor the
+# publisher exists yet; the CI publish step will fail until both are done.
+```
+
+Enrollment, on npmjs.com as the package's maintainer:
+
+1. Enable 2FA on the npm account (security key, or an authenticator app).
+2. Package → **Settings** → **Trusted Publisher** → **GitHub Actions**:
+   - Organization or user: `innocarpe`
+   - Repository: `deepseek-build`
+   - Workflow filename: `publish-npm.yml` — **filename only, no path, case-sensitive**
+   - Environment: empty
+   - Allowed actions: `npm stage publish` **and** `npm publish`
+3. Read the saved connection back off the page to confirm it stored what you
+   intended (npm does not validate on save; errors surface only at publish).
+
+The `aside` CLI can drive steps 2–3 and read emailed codes from Gmail; step 1
+is an account-identity action and needs a person.
 
 ## CI notes (`release-prebuilt.yml`)
 
@@ -101,6 +145,8 @@ turn repeated builds into incremental ones.
 > every shipped version. The wait loop in `release.sh` is a fast-path when CI
 > works; the manual fallback below is the reliable path. The current release
 > matrix is intentionally limited to Apple Silicon macOS (`darwin-arm64`).
+> `publish-npm.yml` is built for the same reality: it waits for the asset, so a
+> late manual attach still publishes, and it can be re-run on demand.
 
 - **Change-scope fast path:** if `third_party/` is unchanged since the previous
   SemVer tag, the vendored agent binary is extracted from that release's
@@ -117,6 +163,40 @@ turn repeated builds into incremental ones.
   users are outside the current product support boundary and receive a clear
   unsupported-platform message.
 
+## CI notes (`publish-npm.yml`)
+
+- **Trigger:** `v*.*.*` tag push. `workflow_dispatch` exists only to retry a
+  tag that already contains the workflow; a tag older than the workflow has no
+  dispatchable run, so cut a new tag or use the emergency path.
+- **Refuse-to-publish gates** (all before `npm publish` runs): full SemVer;
+  the tag exists and `HEAD` **is** the tag commit; `package.json` matches the
+  tag; the `darwin-arm64` tarball is attached; the packaged agent **executes**
+  and reports the release version; the version is not already on the registry.
+- **Auth:** `id-token: write` only. No npm secret is read.
+- **Provenance:** generated automatically by trusted publishing, and
+  `--provenance` is passed explicitly. Verify after publish with
+  `npm view @innocarpe/deepseek-build@<version> dist.attestations`.
+- **Runner:** `macos-14`, so the job can execute the packaged `darwin-arm64`
+  agent. npm trusted publishing supports GitHub-hosted runners only.
+- **After publish** the job runs the user-facing path: a clean
+  `npm install -g` and `dsb --version` / `deepseek-build --version`.
+
+### Emergency path (CI cannot publish)
+
+```bash
+./scripts/npm-emergency-publish.sh <version>
+# or, from the orchestrator:
+./scripts/release.sh <version> --publish-only --local-publish
+```
+
+It refuses to publish without the release asset, then drives
+`npm login --auth-type=web` through `aside exec`: the browser agent signs in as
+the npm account, completes the CLI session, and reads any emailed one-time code
+from Gmail. **No person is asked for a number**, and no code or token is
+written to a log, commit or PR. The local publish carries **no provenance
+attestation** (there is no local OIDC provider), so it is a fallback, not a
+peer of the CI path.
+
 ### Manual asset fallback (when CI never runs)
 
 1. **Build from the tag tree** (never from a worktree HEAD that differs from
@@ -129,8 +209,9 @@ turn repeated builds into incremental ones.
 3. **Attach assets:** `./scripts/package-release-binaries.sh --upload` (creates
    the GitHub release `v<version>` if missing and uploads the local platform
    tarball). Confirm with `gh release view v<version> --json assets`.
-4. **Publish:** `./scripts/release.sh <version> --publish-only` (or
-   `npm publish --access public` directly in `npm/`; OTP only if npm demands it).
+4. **Publish:** re-run the CI job (`gh workflow run publish-npm.yml --ref
+   v<version>`) so the publish still goes through OIDC and gets provenance;
+   use the emergency path only if CI itself is unavailable.
 
 ## Verification after publish
 

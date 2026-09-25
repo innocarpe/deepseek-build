@@ -1,0 +1,232 @@
+# Publish @innocarpe/deepseek-build to npm with OIDC trusted publishing
+# (ADR 0012) — no long-lived npm token, no one-time code, provenance attached.
+#
+# Ordering contract (ADR 0009 / release skill hard rule 5): the npm package is a
+# thin wrapper whose postinstall downloads
+# `deepseek-build-<version>-darwin-arm64.tar.gz` from the GitHub release, so a
+# version must never reach npm before its asset is attached. This workflow waits
+# for the asset, executes the packaged agent to prove it reports the release
+# version, and only then publishes.
+#
+# The trusted publisher configured on npmjs.com must name THIS file:
+# `publish-npm.yml` (filename only, no path). All fields are case-sensitive.
+# Provenance is generated and published automatically for a public package built
+# from a public repository; `--provenance` is passed anyway so the intent is
+# explicit and a future config default cannot silently drop it.
+name: publish-npm
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  # Retry lever for a tag that already contains this workflow (a publish that
+  # failed after the tag existed), where the push event itself cannot be
+  # replayed: `gh workflow run publish-npm.yml --ref v<version>`. GitHub only
+  # runs the file as it exists on the selected ref, so a tag predating this
+  # workflow has no dispatchable run. The resolve step refuses a tree whose HEAD
+  # is not the tag commit, so pointing this at a branch cannot publish
+  # unreleased code.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "SemVer version to publish (tag v<version> must exist)"
+        required: true
+        type: string
+
+# Only the OIDC token permission npm's trusted publishing exchanges; no token
+# secret is read anywhere in this workflow.
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-npm-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SUPPORTED_PLATFORM: darwin-arm64
+
+jobs:
+  publish:
+    name: publish
+    # macOS because the only released platform is darwin-arm64: it lets the job
+    # execute the packaged agent to prove the asset is the release build, which
+    # a Linux runner cannot do. GitHub-hosted runners are the supported
+    # environment for npm trusted publishing.
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Ensure an OIDC-capable npm CLI
+        run: |
+          set -euo pipefail
+          need="11.5.1" # minimum for npm trusted publishing (docs.npmjs.com/trusted-publishers)
+          have="$(npm --version)"
+          echo "npm ${have} (need >= ${need})"
+          if [[ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -n 1)" != "$need" ]]; then
+            echo "upgrading npm for OIDC support"
+            npm install -g "npm@^${need}"
+          fi
+          npm --version
+
+      - name: Resolve release version
+        id: release
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${INPUT_VERSION:-}" ]]; then
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::'${VERSION}' is not full SemVer MAJOR.MINOR.PATCH" >&2
+            exit 1
+          fi
+          TAG="v${VERSION}"
+
+          git fetch --force --tags origin
+          if ! git rev-parse --verify --quiet "refs/tags/${TAG}" >/dev/null; then
+            echo "::error::tag ${TAG} does not exist — refusing to publish untagged code" >&2
+            exit 1
+          fi
+          TAG_SHA="$(git rev-parse "${TAG}^{commit}")"
+          HEAD_SHA="$(git rev-parse HEAD)"
+          if [[ "$TAG_SHA" != "$HEAD_SHA" ]]; then
+            echo "::error::HEAD ${HEAD_SHA} is not tag ${TAG} (${TAG_SHA}) — refusing to publish" >&2
+            exit 1
+          fi
+
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [[ "$PKG_VERSION" != "$VERSION" ]]; then
+            echo "::error::package.json version ${PKG_VERSION} does not match release ${VERSION}" >&2
+            exit 1
+          fi
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "publishing ${VERSION} from tag ${TAG} at ${HEAD_SHA}"
+
+      # The release skill's hard rule 5: never publish an npm version whose
+      # binary asset is missing or stale.
+      - name: Wait for the release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          ASSET="deepseek-build-${VERSION}-${SUPPORTED_PLATFORM}.tar.gz"
+          DEADLINE=$(( $(date +%s) + 3600 ))
+          while :; do
+            gh release view "v${VERSION}" --repo "$GITHUB_REPOSITORY" \
+              --json assets --jq '.assets[].name' \
+              > "$RUNNER_TEMP/assets.txt" 2>/dev/null || true
+            if grep -qx "$ASSET" "$RUNNER_TEMP/assets.txt"; then
+              echo "asset present: $ASSET"
+              break
+            fi
+            if [[ $(date +%s) -ge $DEADLINE ]]; then
+              echo "::error::${ASSET} was not attached within 3600s — refusing to publish (ADR 0009)" >&2
+              echo "Attach it (release skill 'Manual asset fallback') and re-run this job." >&2
+              exit 1
+            fi
+            echo "waiting for ${ASSET} (release-prebuilt.yml)…"
+            sleep 60
+          done
+          mkdir -p dist
+          gh release download "v${VERSION}" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ASSET" --dir dist
+          ls -l "dist/$ASSET"
+
+      - name: Verify the asset is the release build
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          ASSET="deepseek-build-${VERSION}-${SUPPORTED_PLATFORM}.tar.gz"
+          VERIFY="$RUNNER_TEMP/asset-verify"
+          rm -rf "$VERIFY"; mkdir -p "$VERIFY"
+          tar -xzf "dist/$ASSET" -C "$VERIFY"
+          for bin in deepseek-build dsb deepseek-build-agent; do
+            test -f "$VERIFY/$bin" || { echo "::error::$bin missing from $ASSET" >&2; exit 1; }
+            chmod 755 "$VERIFY/$bin"
+          done
+          OUT="$(env -u DEEPSEEK_BUILD_VERSION -u GROK_TEST_VERSION "$VERIFY/deepseek-build-agent" --version 2>&1 || true)"
+          echo "packaged agent --version: ${OUT}"
+          if [[ "$OUT" != *"$VERSION"* ]]; then
+            echo "::error::packaged agent does not report ${VERSION} — stale asset, refusing to publish" >&2
+            exit 1
+          fi
+          if ! "$VERIFY/dsb" --version 2>/dev/null | grep -q "$VERSION"; then
+            echo "::error::packaged dsb wrapper does not report ${VERSION}" >&2
+            exit 1
+          fi
+
+      - name: Check the version is not already on the registry
+        id: live
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          LIVE="$(npm view "@innocarpe/deepseek-build@${VERSION}" version 2>/dev/null || echo none)"
+          echo "registry has ${VERSION}: ${LIVE}"
+          if [[ "$LIVE" == "$VERSION" ]]; then
+            echo "already=${VERSION}" >> "$GITHUB_OUTPUT"
+          else
+            echo "already=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish with trusted publishing (OIDC)
+        if: steps.live.outputs.already == ''
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          # prepublishOnly runs check-version-match.js + check-semver.sh (the
+          # latter shells out to ripgrep).
+          command -v rg >/dev/null 2>&1 || brew install ripgrep
+          npm publish --access public --provenance
+          echo "published ${VERSION}"
+
+      - name: Verify the published package
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          PUBLISHED="$(npm view "@innocarpe/deepseek-build@${VERSION}" version)"
+          echo "registry reports: ${PUBLISHED}"
+          [[ "$PUBLISHED" == "$VERSION" ]]
+          echo "--- provenance / attestations ---"
+          npm view "@innocarpe/deepseek-build@${VERSION}" dist.attestations --json || \
+            echo "no attestations reported yet (provenance can lag the publish)"
+
+      # The user-facing path, end to end: registry install → postinstall asset
+      # download → both CLIs report the release version.
+      - name: Global install smoke (the user path)
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          PREFIX="$RUNNER_TEMP/dsb-smoke"
+          rm -rf "$PREFIX"; mkdir -p "$PREFIX"
+          npm install -g --prefix "$PREFIX" "@innocarpe/deepseek-build@${VERSION}"
+          for bin in dsb deepseek-build; do
+            OUT="$("$PREFIX/bin/$bin" --version 2>&1 || true)"
+            echo "$bin --version: ${OUT}"
+            [[ "$OUT" == *"$VERSION"* ]] || { echo "::error::$bin did not report ${VERSION}" >&2; exit 1; }
+          done
+
+      - name: sccache / npm diagnostics
+        if: always()
+        run: |
+          echo "npm: $(npm --version)"
+          npm config get registry

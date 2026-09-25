@@ -43,12 +43,17 @@ const DEFAULT_CLIENT_IDENTIFIER: &str = "grok-shell";
 const AGENT_PRODUCT: &str = "grok-shell";
 const ANTHROPIC_DEFAULT_MAX_TOKENS: u32 = 128_000;
 
-/// Text-only endpoints (DeepSeek's official API) reject `image_url` content
-/// blocks with a 400 `unknown variant 'image_url'`. When the request is bound
-/// for one of those endpoints we strip image blocks at the wire boundary —
-/// the images themselves stay available to the model via on-disk paths that
-/// the shell prepends to the user message (`<image_files>` block), so the
-/// agent can still OCR/read them with its own tools.
+/// Text-only DeepSeek models reject `image_url` content blocks with a 400
+/// `unknown variant 'image_url'`. When a request bound for DeepSeek's
+/// official API targets one of those models we strip image blocks at the
+/// wire boundary — the images themselves stay available to the model via
+/// on-disk paths that the shell prepends to the user message
+/// (`<image_files>` block), so the agent can still OCR/read them with its
+/// own tools.
+///
+/// The endpoint alone does not make the wire text-only: DeepSeek's official
+/// `deepseek-flash` (DeepSeek-V4.1-Flash) accepts `image_url` on
+/// `https://api.deepseek.com`. See [`is_text_only_deepseek_model`].
 ///
 /// Non-image blocks in the same message are collapsed into a single text
 /// message so no other content is lost, and messages without image blocks are
@@ -79,16 +84,51 @@ fn strip_image_content_blocks(messages: &mut [ChatRequestMessage]) {
     }
 }
 
-/// True when `base_url` points at DeepSeek's official API, whose
-/// /chat/completions endpoint accepts text content only. Matches any
+/// True when `base_url` points at DeepSeek's official API. Matches any
 /// `*.deepseek.com` host (including `/v1` path prefixes) so endpoint
-/// prefixes and model names cannot bypass the text-only wire.
+/// prefixes cannot bypass DeepSeek-specific handling.
 fn is_official_deepseek_endpoint(base_url: &str) -> bool {
     let host = reqwest::Url::parse(base_url)
         .ok()
         .and_then(|u| u.host_str().map(str::to_owned))
         .unwrap_or_else(|| base_url.to_owned());
     host == "api.deepseek.com" || host.ends_with(".deepseek.com")
+}
+
+/// True when the given DeepSeek model accepts text content only.
+///
+/// DeepSeek's model table splits on vision: `deepseek-flash`
+/// (DeepSeek-V4.1-Flash) accepts `image_url` — its `/models` entry reports
+/// `input_modalities: ["text", "image"]` — while `deepseek-v4-pro` reports
+/// `["text"]` and the pricing table marks its Vision row "Not supported".
+/// An image on the Pro wire is a 400, so images are stripped there only.
+///
+/// Anything naming `flash` or `vision` keeps its images, whatever else the id
+/// contains (`deepseek-v4-flash-vision-exp` names both). Unknown ids also keep
+/// images: the sampler's reactive image-strip retry covers a surprise
+/// rejection, while stripping a vision model would silently discard what the
+/// user attached.
+fn is_text_only_deepseek_model(model: &str) -> bool {
+    let model = model.trim().to_ascii_lowercase();
+    if model.is_empty() || model.contains("vision") || model.contains("flash") {
+        return false;
+    }
+    // V4 Pro documents `input_modalities: ["text"]`; the V3 chat/reasoner
+    // families predate vision entirely.
+    model.contains("v4-pro")
+        || model.contains("chat")
+        || model.contains("reasoner")
+        || model.contains("v3")
+}
+
+/// True when the wire for this request must be flattened to text.
+///
+/// Both halves are required: a DeepSeek-hosted endpoint *and* a model whose
+/// declared input modalities exclude images. The official endpoint alone once
+/// implied "text-only", which stopped holding when V4.1 Flash shipped native
+/// vision.
+fn is_text_only_wire(base_url: &str, model: Option<&str>) -> bool {
+    is_official_deepseek_endpoint(base_url) && model.is_some_and(is_text_only_deepseek_model)
 }
 
 /// Per-request `x-grok-*` headers. Optional fields are skipped when empty/`None`.
@@ -1908,7 +1948,7 @@ impl SamplingClient {
 
         let trace = request.trace.take();
         let mut chat_request: ChatCompletionRequest = request.into();
-        if is_official_deepseek_endpoint(&self.base_url) {
+        if is_text_only_wire(&self.base_url, chat_request.model.as_deref()) {
             strip_image_content_blocks(&mut chat_request.messages);
         }
         if let Some(trace) = trace {
@@ -1929,7 +1969,7 @@ impl SamplingClient {
 
         let trace = request.trace.take();
         let mut chat_request: ChatCompletionRequest = request.into();
-        if is_official_deepseek_endpoint(&self.base_url) {
+        if is_text_only_wire(&self.base_url, chat_request.model.as_deref()) {
             strip_image_content_blocks(&mut chat_request.messages);
         }
         if let Some(trace) = trace {
@@ -3136,7 +3176,7 @@ mod tests {
     }
 
     #[test]
-    fn is_official_deepseek_endpoint_detects_text_only_wire() {
+    fn is_official_deepseek_endpoint_matches_only_deepseek_hosts() {
         for url in [
             "https://api.deepseek.com",
             "https://api.deepseek.com/v1",
@@ -3147,7 +3187,7 @@ mod tests {
         ] {
             assert!(
                 is_official_deepseek_endpoint(url),
-                "expected {url} to be treated as text-only DeepSeek"
+                "expected {url} to be treated as the official DeepSeek API"
             );
         }
         for url in [
@@ -3160,8 +3200,70 @@ mod tests {
         ] {
             assert!(
                 !is_official_deepseek_endpoint(url),
-                "expected {url} to keep image support"
+                "expected {url} to stay off the DeepSeek-specific path"
             );
         }
+    }
+
+    #[test]
+    fn is_text_only_wire_requires_a_text_only_model() {
+        // DeepSeek's official V4.1 Flash accepts `image_url`
+        // (`input_modalities: ["text", "image"]`), so the endpoint alone must
+        // not flatten the wire.
+        for model in [
+            "deepseek-flash",
+            "deepseek-v4-flash",
+            "deepseek-v4-flash-vision-exp",
+        ] {
+            assert!(
+                !is_text_only_wire("https://api.deepseek.com", Some(model)),
+                "{model} on the official endpoint must keep its images"
+            );
+        }
+
+        // V4 Pro reports `input_modalities: ["text"]` and its Vision row is
+        // "Not supported", so images must still be stripped there.
+        for model in ["deepseek-v4-pro", "deepseek-v4-pro-0813"] {
+            assert!(
+                is_text_only_wire("https://api.deepseek.com", Some(model)),
+                "{model} on the official endpoint must stay text-only"
+            );
+        }
+
+        // Legacy text-only chat and reasoner families keep the strip; any id
+        // naming vision keeps its images even alongside a retired Flash name.
+        for model in [
+            "deepseek-chat",
+            "deepseek-reasoner",
+            "deepseek-chat-v3-0324",
+        ] {
+            assert!(
+                is_text_only_wire("https://api.deepseek.com", Some(model)),
+                "{model} is a text-only family"
+            );
+        }
+        assert!(!is_text_only_wire(
+            "https://api.deepseek.com",
+            Some("deepseek-v5-vision")
+        ));
+
+        // Unknown ids fail open to images: upstream's reactive image-strip
+        // retry recovers a rejection, while stripping a vision model would
+        // silently discard what the user attached.
+        assert!(!is_text_only_wire(
+            "https://api.deepseek.com",
+            Some("deepseek-v5")
+        ));
+        assert!(!is_text_only_wire("https://api.deepseek.com", None));
+
+        // A non-DeepSeek endpoint never strips, whatever the model name says.
+        assert!(!is_text_only_wire(
+            "https://openrouter.ai/api/v1",
+            Some("deepseek-v4-pro")
+        ));
+        assert!(!is_text_only_wire(
+            "http://localhost:8787/v1",
+            Some("deepseek-v4-pro")
+        ));
     }
 }

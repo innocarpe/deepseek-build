@@ -17,7 +17,14 @@
   uniformized on its next edit. Spec 45 §1.8 promised this; §1.9 now states it
   and both edit entry points — the `edit` tool and Path A `search_replace` —
   share one rule.
-
+- Image attachments now reach the model on the official DeepSeek API again.
+  DeepSeek's V4.1 Flash (`deepseek-flash`) accepts `image_url` directly, but
+  the vendored sampler flattened every request bound for `api.deepseek.com`
+  to text — a guard written when the flash line had no vision — so the model
+  never received what the user attached. The guard is now gated on the model
+  as well as the endpoint: `deepseek-v4-pro` and the V3 chat/reasoner
+  families keep the text-only wire with its on-disk `<image_files>` fallback,
+  while vision-capable models send the image inline.
 
 ## 5.6.0 — 2026-09-25
 

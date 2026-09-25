@@ -36,6 +36,7 @@ jobs:
       rust: ${{ steps.filter.outputs.rust }}
       semver: ${{ steps.filter.outputs.semver }}
       release_verify: ${{ steps.filter.outputs.release_verify }}
+      changelog: ${{ steps.filter.outputs.changelog }}
       grok: ${{ steps.filter.outputs.grok }}
     steps:
       - uses: actions/checkout@v4
@@ -64,6 +65,18 @@ jobs:
               - 'scripts/release.sh'
               - 'scripts/npm-emergency-publish.sh'
               - '.github/workflows/publish-npm.yml'
+              - '.github/workflows/ci.yml'
+            # The release move: bump-version.sh opens a version section and
+            # must take the Unreleased items with it. Reverting that (or the
+            # wiring) fails a required check instead of the next release.
+            changelog:
+              - 'CHANGELOG.md'
+              - 'scripts/bump-version.sh'
+              - 'scripts/lib/changelog_release.py'
+              - 'scripts/test-changelog-release.sh'
+              - 'scripts/reorder-changelog.sh'
+              - 'docs/contributing/release-cycle.md'
+              - 'skills/release/SKILL.md'
               - '.github/workflows/ci.yml'
             grok:
               - 'third_party/grok-build/**'
@@ -187,6 +200,22 @@ jobs:
           fi
       - run: ./scripts/test-npm-verify-retry.sh
 
+  # The CHANGELOG release move. Hermetic (fixture CHANGELOGs in a temp dir, no
+  # network, no repo writes), so it is cheap: it pins that a bump takes the
+  # Unreleased items into the new version section verbatim, which is the
+  # v5.7.0 defect — seven shipped items left filed as unreleased, one --desc
+  # line in their place.
+  changelog:
+    name: changelog move
+    needs: changes
+    if: needs.changes.outputs.changelog == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/reorder-changelog.sh --check
+      - run: ./scripts/test-changelog-release.sh
+
   # Vendored Grok validation. PRs keep the fast format and strict Clippy gates.
   # The full upstream workspace test runs once after merge instead of once per
   # stacked PR; the required aggregator accepts that job as skipped on PRs.
@@ -305,7 +334,7 @@ jobs:
   # ---------------------------------------------------------------------------
   required:
     name: required
-    needs: [changes, fmt, clippy, test, semver, release_verify, grok_fmt, grok_clippy, grok_test]
+    needs: [changes, fmt, clippy, test, semver, release_verify, changelog, grok_fmt, grok_clippy, grok_test]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -319,6 +348,7 @@ jobs:
           echo "test=${{ needs.test.result }}"
           echo "semver=${{ needs.semver.result }}"
           echo "release_verify=${{ needs.release_verify.result }}"
+          echo "changelog=${{ needs.changelog.result }}"
           echo "grok_fmt=${{ needs.grok_fmt.result }}"
           echo "grok_clippy=${{ needs.grok_clippy.result }}"
           echo "grok_test=${{ needs.grok_test.result }}"
@@ -337,6 +367,7 @@ jobs:
             "test:${{ needs.test.result }}" \
             "semver:${{ needs.semver.result }}" \
             "release_verify:${{ needs.release_verify.result }}" \
+            "changelog:${{ needs.changelog.result }}" \
             "grok_fmt:${{ needs.grok_fmt.result }}" \
             "grok_clippy:${{ needs.grok_clippy.result }}" \
             "grok_test:${{ needs.grok_test.result }}"

@@ -5,6 +5,10 @@
 | `install.sh` | Install **`deepseek-build`** + **`dsb`** onto PATH (`~/.deepseek-build/bin` or Cargo bin) |
 | `build-grok-pager.sh` | Build/check vendored Grok composition root (`deepseek-build-agent`) |
 | `check-semver.sh` | Fail-close: workspace version must be full SemVer `MAJOR.MINOR.PATCH` |
+| `bump-version.sh` | Bump the version across `Cargo.toml`, `package.json`, `Cargo.lock`, `CHANGELOG.md`, README literals and the versions log; **moves the `Unreleased` items into the new section** (`--dry-run` previews the move) |
+| `reorder-changelog.sh` | Reorder CHANGELOG to the invariant (Unreleased top, newest-first); `--check` for CI. Reorders only — it does not move items between sections |
+| `test-changelog-release.sh` | Hermetic regression test for the `Unreleased` → version-section move (fixture CHANGELOGs; no network, no repo writes) |
+| `lib/changelog_release.py` | The mover behind `bump-version.sh` (`plan` / `apply`), shared so the dry-run and the real bump report the same outcome |
 | `release.sh` | Release orchestrator (bump → PR → merge → tag → assets → CI publish → verify) |
 | `npm-emergency-publish.sh` | **Emergency** local npm publish; drives the interactive login + emailed code through `aside` (ADR 0012) |
 | `verify-npm-version.sh` | Wait (bounded retry) until the registry serves a published version — the post-publish read shared by `release.sh`, `npm-emergency-publish.sh` and `publish-npm.yml` |

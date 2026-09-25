@@ -62,6 +62,47 @@ Do **not** claim a release is ready as “1.0”; say **`1.0.0`** only when inst
 Both are built from `dsb-cli`. Prefer documenting **`deepseek-build`** first; always mention the alias.
 Config dir remains `~/.deepseek-build/` (product path ≠ command name).
 
+## Session output language (mandatory)
+
+**Human-facing session text in this repository is Korean.** The maintainer reads
+a session while it runs, so the rule covers everything a session puts on the
+screen — not only the final answer.
+
+| In scope | Example |
+|----------|---------|
+| Final answers | `핵심을 찾았습니다. 홈 전역이라 두 경우를 다 덮습니다` |
+| Progress notes between tool calls | `이제 dsb가 지침을 읽는 자리 실측` |
+| Tool-call descriptions (the one-liner on a call) | `README 구조 확인` |
+| Plan lists, status reports, questions to the human | `계획 3단계로 갈까요?` |
+
+**The opening line of a turn is in scope.** Sessions here habitually open with an
+English sentence (`"I'll start by reading the brief."`) and switch later; that
+opening line is exactly what this rule is for.
+
+**Keep verbatim:** commands, paths, code, identifiers, API and package names,
+error messages, and raw tool output. Translating those hurts readability — the
+rule is about the sentences a session writes itself.
+
+**Exceptions.** A turn that explicitly asks for another language wins. Repository
+artifacts keep the repository's conventions: code, comments, commit messages, PR
+bodies and the docs tree stay English.
+
+Measured 2026-09-25 over this repo's session logs. Of the primary sessions that
+had a standing Korean rule in context, 10 of 12 answered ≥99% of their text turns
+in Korean. Sessions from the same day without one answered 0–1% (3 of 5). So the
+rule works for the session a human is watching — but not automatically.
+
+Two shapes still leaked, and they are different problems:
+
+- **The opening line.** A turn starts with one English sentence and switches
+  after the first tool call. That is the most common leak, which is why this
+  section names it.
+- **Delegated runs.** Subagent runs from the same batch, with near-identical
+  English briefs, came back 0%, 0%, 1%, 98% — the same instruction produced very
+  different adherence, so a rule document alone is a probabilistic control
+  there. Delegated runs need the instruction in their brief as well
+  (`skills/worktree-dispatch`).
+
 ## Source priorities (fail-close) — layered
 
 Normative: [`docs/architecture/HARNESS_PHILOSOPHY.md`](docs/architecture/HARNESS_PHILOSOPHY.md)

@@ -394,7 +394,51 @@ fi
 rm -rf "$MERGE_TMP"
 
 # ---------------------------------------------------------------------------
-head_ "9. wiring: bump-version.sh runs the shared mover"
+head_ "9. the version-log row gets its PR number"
+# `bump-version.sh` writes `PR #_(fill in)_` and that was the end of it - six
+# rows on `main` shipped unrecorded. `release.sh` now fills the row from the
+# number `gh pr create` returns, so the placeholder is a state that must not
+# survive a release.
+VLOG="$ROOT/scripts/lib/version_log.py"
+cat > "$TMP/vlog.md" <<'VEOF'
+# Product versions
+
+| Date | Version | Link |
+|------|---------|------|
+| 2026-09-25 | **`5.7.0`** an older release | PR #201 |
+VEOF
+if python3 "$VLOG" set-pr "$TMP/vlog.md" 9.9.9 7 > /dev/null 2>&1; then
+  bad "a version with no row was accepted"
+else
+  ok "a missing decision-log row is an error (not a silent no-op)"
+fi
+
+printf '| 2026-09-25 | **`6.0.0`** a release | PR #_(fill in)_ |\n' >> "$TMP/vlog.md"
+python3 "$VLOG" set-pr "$TMP/vlog.md" 6.0.0 208 > /dev/null
+grep -q 'PR #208' "$TMP/vlog.md" \
+  && ok "the placeholder is replaced with the real PR number" \
+  || bad "the placeholder survived: $(grep 6.0.0 "$TMP/vlog.md")"
+
+# Resumed releases re-run this step; it must not clobber a recorded number.
+python3 "$VLOG" set-pr "$TMP/vlog.md" 6.0.0 999 > /dev/null
+if grep -q 'PR #208' "$TMP/vlog.md" && ! grep -q '999' "$TMP/vlog.md"; then
+  ok "a second run leaves a recorded number alone (resume-safe)"
+else
+  bad "re-running overwrote a recorded PR number"
+fi
+
+if python3 "$VLOG" set-pr "$TMP/vlog.md" 6.0.0 abc > /dev/null 2>&1; then
+  bad "a non-numeric PR was accepted"
+else
+  ok "a non-numeric PR number is rejected"
+fi
+
+grep -q 'version_log.py set-pr' "$ROOT/scripts/release.sh" \
+  && ok "release.sh records the number it got from gh pr create" \
+  || bad "release.sh does not call version_log.py"
+
+# ---------------------------------------------------------------------------
+head_ "10. wiring: bump-version.sh runs the shared mover"
 grep -q 'changelog_release.py apply CHANGELOG.md' "$BUMP" \
   && ok "bump-version.sh calls the mover on the real path" \
   || bad "bump-version.sh does not call the mover"

@@ -160,6 +160,12 @@ single clone and no Orca, work as usual: branch, commit, PR
   only build and test `crates/` can run in parallel.
 - **Leave other sessions' worktrees alone** — their files, branches and
   terminals. Ask the owning session or report instead.
+- **Open work sessions as `deepseek-build` (`dsb`), not another coding agent.**
+  Every session that changes this repo runs under the product this repo ships:
+  its TUI, its tools, its cache behaviour. Claude Code, Codex and similar spend
+  capacity that belongs to this product, and they hide the product's own gaps
+  from the people who would fix them. Reading, planning and review may use any
+  tool; the session that *writes the change* is `deepseek-build`.
 
 ## Product CI (future)
 

@@ -4508,6 +4508,51 @@
         buf
     }
 
+    // ── Narrow-pane arrow drop ──────────────────────────────────────
+
+    /// A phone-width composer spends its columns on the draft, not on the
+    /// decorative `❯`. The box border already frames the input.
+    #[test]
+    fn phone_width_composer_drops_the_arrow_prefix() {
+        let style = PromptStyle::default();
+        assert!(
+            style.show_prefix,
+            "the default style must ask for the arrow, or this test proves nothing"
+        );
+
+        // A 55-column pane: content = 55 - (accent 0 + pad 2 + pad 1) = 52.
+        let buf = draw_bordered(55, &style);
+        let text_row = buf_text_at(&buf, 0, 55, 1);
+        assert!(
+            !text_row.contains(crate::glyphs::prompt_arrow()),
+            "a phone-width composer must not paint the arrow: {text_row:?}"
+        );
+
+        // Desktop keeps it, so the assertion above is not vacuous.
+        let wide = draw_bordered(179, &style);
+        let wide_row = buf_text_at(&wide, 0, 179, 1);
+        assert!(
+            wide_row.contains(crate::glyphs::prompt_arrow()),
+            "desktop keeps the arrow: {wide_row:?}"
+        );
+    }
+
+    /// The history-search indicator and caller overrides are mode signals, not
+    /// decoration, so the narrow rule must not swallow them.
+    #[test]
+    fn phone_width_composer_keeps_meaning_bearing_prefixes() {
+        let style = PromptStyle {
+            prefix_override: Some(("! ", ratatui::style::Color::Yellow)),
+            ..Default::default()
+        };
+        let buf = draw_bordered(55, &style);
+        let text_row = buf_text_at(&buf, 0, 55, 1);
+        assert!(
+            text_row.contains("! "),
+            "bash mode's `! ` must survive the narrow band: {text_row:?}"
+        );
+    }
+
     #[test]
     fn title_renders_on_top_border_with_corners_intact() {
         let buf = draw_bordered(40, &title_test_style(Some("my session")));

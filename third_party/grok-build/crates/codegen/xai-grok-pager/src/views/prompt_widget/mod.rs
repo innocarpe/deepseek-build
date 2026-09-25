@@ -1494,7 +1494,11 @@ impl PromptWidget {
         max_height: u16,
     ) -> u16 {
         let content_width = self.content_width(area_width, style);
-        let prefix_w = if style.show_prefix { PREFIX_WIDTH } else { 0 };
+        let prefix_w = if self.shows_prefix(style, content_width) {
+            PREFIX_WIDTH
+        } else {
+            0
+        };
         let text_width = content_width.saturating_sub(prefix_w);
         // History browse live-populates the composer per selection move;
         // freeze the box at its pre-open one-row height so stepping through
@@ -1525,6 +1529,25 @@ impl PromptWidget {
     /// Last rendered textarea area for mouse hit-testing.
     pub fn textarea_area(&self) -> Rect {
         self.textarea_area
+    }
+
+    /// Whether the composer draws a prefix cell at `content_width`.
+    ///
+    /// The decorative `❯` is dropped on a phone-width pane for the same reason
+    /// the scrollback echo drops it: two columns of a 55-column pane should go
+    /// to the text the user is writing, and the box's border already frames the
+    /// input. Meaning-bearing prefixes survive — the history search indicator
+    /// (`? `) and caller overrides (bash `! `) tell the user which mode the
+    /// composer is in, so they are not decoration.
+    fn shows_prefix(&self, style: &PromptStyle, content_width: u16) -> bool {
+        if !style.show_prefix {
+            return false;
+        }
+        let meaning_bearing =
+            (self.history_search.is_active() && !self.history_search.is_browse())
+                || style.prefix_override.is_some();
+        meaning_bearing
+            || content_width > crate::scrollback::blocks::COLLAPSED_NARROW_TERMINAL_COLS
     }
 
     /// Compute the content width inside the chrome (if any).
@@ -3005,8 +3028,11 @@ impl PromptWidget {
         }
 
         // Render prefix on first text row: search icon when history search is active, else ❯.
-        let prefix_w = if style.show_prefix { PREFIX_WIDTH } else { 0 };
-        if style.show_prefix && text_area_rect.width > PREFIX_WIDTH {
+        // `shows_prefix` owns the narrow-pane rule so this pass and
+        // `desired_height` can never disagree about the textarea's width.
+        let show_prefix = self.shows_prefix(style, text_area_rect.width);
+        let prefix_w = if show_prefix { PREFIX_WIDTH } else { 0 };
+        if show_prefix && text_area_rect.width > PREFIX_WIDTH {
             let (prefix_str, accent_color) =
                 if self.history_search.is_active() && !self.history_search.is_browse() {
                     // Search-mode indicator — highest prefix priority. Browse

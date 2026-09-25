@@ -35,6 +35,9 @@ pub use tool::{
     render_diff_hunks_highlighted,
 };
 pub use user::UserPromptBlock;
+/// The narrow-pane threshold, shared with the composer so the echo and the
+/// input box agree about what "phone width" means.
+pub(crate) use user::COLLAPSED_NARROW_TERMINAL_COLS;
 pub use workflow::{WorkflowBlock, WorkflowBlockPhase, WorkflowBlockStatus};
 
 // Backwards compatibility alias

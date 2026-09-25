@@ -22,7 +22,11 @@ const COLLAPSED_MAX_LINES: usize = 3;
 /// three-line echo eats a third of the viewport while a single line plus the
 /// ellipsis still names the turn. Anything wider keeps [`COLLAPSED_MAX_LINES`],
 /// so the desktop layout is untouched.
-const COLLAPSED_NARROW_TERMINAL_COLS: u16 = 60;
+///
+/// `pub(crate)` so the input box can apply the same narrow-pane rule to its own
+/// decorative `❯` prefix without duplicating the threshold: the echo and the
+/// composer should agree about what "phone width" means.
+pub(crate) const COLLAPSED_NARROW_TERMINAL_COLS: u16 = 60;
 
 /// Max visible lines when a user prompt is collapsed on a narrow terminal.
 const COLLAPSED_NARROW_MAX_LINES: usize = 1;
@@ -280,6 +284,35 @@ impl UserPromptBlock {
         (prefix_style, text_style, skill_style)
     }
 
+    /// The prefix this prompt draws at `width`, or `""` for none.
+    ///
+    /// Three things ride in this one cell group, and they are not the same kind
+    /// of thing:
+    /// - `$ ` (bash) and `↻  ` (cron) say *what kind of turn this was*. They are
+    ///   information, so they are drawn whenever the caller asked for a prefix.
+    /// - `❯ ` is decoration. Above the narrow threshold it marks where the
+    ///   prompt starts; at or below it the faint band background and the ❯-less
+    ///   input box already say that, and two columns of a 55-column pane belong
+    ///   to the text instead. So it is dropped there — unless the caller passed
+    ///   `show_prefix = false`, which still means "no prefix at all".
+    ///
+    /// Both `wrap_prompt_lines` (what gets drawn) and [`Self::is_foldable_at`]
+    /// (how much room the text has) call this, so the row count can never
+    /// disagree with the rows actually painted.
+    fn prefix_for(&self, show_prefix: bool, width: u16) -> &'static str {
+        if !show_prefix {
+            ""
+        } else if self.is_bash {
+            "$ "
+        } else if self.is_cron {
+            "\u{21BB}  "
+        } else if width <= COLLAPSED_NARROW_TERMINAL_COLS {
+            ""
+        } else {
+            crate::glyphs::prompt_arrow()
+        }
+    }
+
     /// Wrap and style the prompt text, returning visual lines. When
     /// `max_lines` is set and content exceeds it, the last line is
     /// truncated with a " …" ellipsis.
@@ -303,15 +336,7 @@ impl UserPromptBlock {
             }
         };
 
-        let prefix = if !show_prefix {
-            ""
-        } else if self.is_bash {
-            "$ "
-        } else if self.is_cron {
-            "\u{21BB}  "
-        } else {
-            crate::glyphs::prompt_arrow()
-        };
+        let prefix = self.prefix_for(show_prefix, width);
         let prefix_width = prefix.width();
         let has_visible_prefix = prefix_width > 0;
         let ellipsis = " \u{2026}";
@@ -501,10 +526,15 @@ impl BlockContent for UserPromptBlock {
 
         let prompt_cfg = &ctx.appearance.scrollback.blocks.prompt;
         let compact = ctx.appearance.prompt.compact;
+        // Which prefix (if any) this width draws is `prefix_for`'s call — the
+        // same one `is_foldable_at` makes, so the fold budget and the painted
+        // rows cannot drift apart. This only says whether the config wants a
+        // prefix at all.
+        let want_prefix = prompt_cfg.show_prefix && !compact;
         let lines = self.wrap_prompt_lines(
             ctx.width,
             max_lines,
-            prompt_cfg.show_prefix && !compact,
+            want_prefix,
             ctx.is_selected,
         );
 
@@ -579,19 +609,27 @@ impl BlockContent for UserPromptBlock {
     /// full body height. Measuring against the budget *and* the width the text
     /// actually wraps at is what makes the narrow fold fire.
     ///
-    /// Wrapping mirrors `wrap_prompt_lines`: every row (first and continuation)
-    /// is indented by the `❯ ` prefix, so the prefix width is subtracted once.
-    /// Row counts are `ceil(line_width / wrap_width)`, a LOWER bound on what
-    /// word-boundary wrapping produces — a line that breaks early can only need
-    /// more rows, never fewer, so this under-reports foldability at worst and
-    /// never invents a fold for a prompt that fits. A `None` budget means the
-    /// mode never folds.
+    /// Wrapping mirrors `wrap_prompt_lines` through [`Self::prefix_for`]: the
+    /// prefix it reports (the `❯ ` on a roomy pane, nothing on a narrow one,
+    /// `$ `/`↻  ` for bash and cron either way) is subtracted once, because
+    /// every row — first and continuation — is indented by it. Row counts are
+    /// `ceil(line_width / wrap_width)`, a LOWER bound on what word-boundary
+    /// wrapping produces — a line that breaks early can only need more rows,
+    /// never fewer, so this under-reports foldability at worst and never
+    /// invents a fold for a prompt that fits. A `None` budget means the mode
+    /// never folds.
     fn is_foldable_at(&self, content_width: u16) -> bool {
         let Some(budget) = collapsed_max_lines(content_width, DisplayMode::Collapsed) else {
             return false;
         };
+        // Same helper the renderer uses, so the room this assumes is the room
+        // the text actually gets — including the columns the dropped arrow
+        // hands back on a narrow pane.
+        let prefix_width = self
+            .prefix_for(true, content_width)
+            .width();
         let wrap_width = usize::from(content_width)
-            .saturating_sub(crate::glyphs::PROMPT_ARROW_WIDTH as usize)
+            .saturating_sub(prefix_width)
             .max(1);
         let mut visual_lines = 0usize;
         for line in self.text.lines() {
@@ -653,13 +691,38 @@ mod tests {
 
     #[test]
     fn test_long_prompt_wraps() {
-        let block = UserPromptBlock::new("this is a very long prompt that should wrap");
-        let lines = block.wrap_prompt_lines(20, None, true, false);
+        // Roomy width, so the `❯ ` prefix is drawn and its two columns come
+        // out of the text's room before it wraps.
+        let block = UserPromptBlock::new(
+            "this is a very long prompt that should wrap over several rows at this width",
+        );
+        let lines = block.wrap_prompt_lines(65, None, true, false);
 
         assert!(lines.len() > 1, "Should wrap to multiple lines");
         assert!(line_text(&lines[0].content).starts_with(crate::glyphs::prompt_arrow()));
         // Continuation lines have 2-space indent
         assert!(line_text(&lines[1].content).starts_with("  "));
+    }
+
+    /// The same prompt on a narrow pane: it still wraps, but the dropped
+    /// `❯ ` means the text starts at column 0 and continuation rows are
+    /// indented by nothing — the band is pure text.
+    #[test]
+    fn test_long_prompt_wraps_without_the_arrow_on_a_narrow_pane() {
+        let block = UserPromptBlock::new("this is a very long prompt that should wrap");
+        let lines = block.wrap_prompt_lines(20, None, true, false);
+
+        assert!(lines.len() > 1, "Should wrap to multiple lines");
+        assert!(
+            !line_text(&lines[0].content).starts_with(crate::glyphs::prompt_arrow()),
+            "a narrow pane drops the arrow: {:?}",
+            line_text(&lines[0].content)
+        );
+        assert!(
+            line_text(&lines[0].content).starts_with("this"),
+            "the band starts at the text: {:?}",
+            line_text(&lines[0].content)
+        );
     }
 
     #[test]
@@ -680,14 +743,18 @@ mod tests {
 
     #[test]
     fn test_ellipsis_fits_within_width() {
-        // Create a prompt that wraps to exactly fill lines
-        let block = UserPromptBlock::new("aaaa bbbb cccc dddd eeee ffff");
+        // A prompt that needs more rows than the budget, so the last visible
+        // row is truncated with an ellipsis.
+        // 15 columns is narrow, so the arrow is dropped here and the text gets
+        // the full width; the rows carry text and ellipsis only, and must
+        // still fit inside 15.
+        let block = UserPromptBlock::new("aaaa bbbb cccc dddd eeee ffff gggg");
         let width = 15; // Narrow width to force wrapping
         let lines = block.wrap_prompt_lines(width, Some(2), true, false);
 
         assert_eq!(lines.len(), 2);
 
-        // Each line (including prefix and ellipsis) should fit within width
+        // Each line (text and ellipsis) should fit within width
         for line in &lines {
             let text = line_text(&line.content);
             let char_count = text.chars().count();
@@ -1356,10 +1423,10 @@ mod tests {
 
     /// The measured iPhone pane is 55 columns wide (`stty -f /dev/<tty>
     /// size` on the Orca-managed dsb panes — the same measurement PR #199
-    /// recorded, and re-measured for this branch). With the default chrome
-    /// (accent + 2+2 pads) and the 10-column timestamp gutter, the prompt's
-    /// text wraps at 55 - 5 - 10 = 40 columns; 34 stands for that narrow band
-    /// with a margin, so these tests stay valid if the pad widths move
+    /// recorded). With the default chrome (accent + 2+2 pads) and the
+    /// 10-column timestamp gutter, the prompt's text wraps at 55 - 5 - 10 =
+    /// 40 columns; 34 stands for that narrow band with a little margin, so
+    /// these tests stay valid if the pad widths move
     /// by a column. This is the user's reported case: a ~100-column one-liner
     /// that the width-blind `is_foldable()` scores as two visual rows (under
     /// the three-row roomy budget), so the block called itself unfolded and the
@@ -1405,6 +1472,72 @@ mod tests {
         assert!(
             block.has_vpad_for_width(&appearance, 80),
             "desktop width keeps the configured prompt pad"
+        );
+    }
+
+    // ── Narrow-band echo drops the decorative arrow ─────────────────
+
+    /// On a phone-width pane the echo is a one-row band that already carries
+    /// the user's band background, so the `❯` is decoration competing with the
+    /// text for the pane's 55 columns. The band must start at the text.
+    #[test]
+    fn phone_width_echo_drops_the_arrow_prefix() {
+        let block = UserPromptBlock::new("hello");
+        assert!(
+            AppearanceConfig::default().scrollback.blocks.prompt.show_prefix,
+            "the default config must ask for the arrow, or this test proves nothing"
+        );
+
+        let narrow = rendered_lines(&block, &collapsed_ctx(PHONE_CONTENT_WIDTH));
+        assert_eq!(
+            narrow,
+            vec!["hello".to_string()],
+            "a phone-width echo starts at the text, with no arrow column"
+        );
+
+        let desktop = rendered_lines(&block, &collapsed_ctx(80));
+        assert_eq!(
+            desktop,
+            vec![format!("{}hello", crate::glyphs::prompt_arrow())],
+            "desktop keeps the arrow it has always drawn"
+        );
+    }
+
+    /// The arrow's two columns must go back to the text, not be left blank. On a
+    /// narrow pane the single row is the whole budget, so the fold boundary has
+    /// to sit exactly at the content width — which is only true when the
+    /// dropped arrow's columns are no longer subtracted from the text's room.
+    #[test]
+    fn phone_width_fold_budget_counts_the_reclaimed_arrow_columns() {
+        let fits = UserPromptBlock::new("x".repeat(PHONE_CONTENT_WIDTH as usize));
+        assert!(
+            !fits.is_foldable_at(PHONE_CONTENT_WIDTH),
+            "text exactly as wide as the band fits its one row — subtracting the \
+             dropped arrow would fold it two columns early"
+        );
+
+        let over = UserPromptBlock::new("x".repeat(PHONE_CONTENT_WIDTH as usize + 1));
+        assert!(
+            over.is_foldable_at(PHONE_CONTENT_WIDTH),
+            "one column past the band needs a second row and must fold, which is \
+             what makes the assertion above a boundary and not a tautology"
+        );
+    }
+
+    /// Bash (`$ `) and cron (`↻  `) prefixes say *what kind of turn this was*,
+    /// not where to type. They survive the narrow band.
+    #[test]
+    fn narrow_band_keeps_meaning_bearing_prefixes() {
+        let bash = UserPromptBlock::bash("ls");
+        let lines = rendered_lines(&bash, &collapsed_ctx(PHONE_CONTENT_WIDTH));
+        assert_eq!(lines, vec!["$ ls".to_string()], "bash prefix survives");
+
+        let cron = UserPromptBlock::cron("wake up");
+        let lines = rendered_lines(&cron, &collapsed_ctx(PHONE_CONTENT_WIDTH));
+        assert_eq!(
+            lines,
+            vec!["\u{21BB}  wake up".to_string()],
+            "cron prefix survives"
         );
     }
 

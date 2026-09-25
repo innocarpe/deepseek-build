@@ -28,6 +28,9 @@ GitHub UI shows checks as `CI / <job>` (e.g. `CI / fmt`, `CI / test`, `CI / requ
 | `test` | rust paths | `cargo test --workspace` |
 | `semver` | version files | Cargo/npm SemVer match (no compile) |
 | `release_verify` | release/publish paths | publish → verify retry guard, hermetic (no network) |
+| `grok fmt` | grok paths | `cargo fmt --all -- --check` in `third_party/grok-build` (no rust-cache) |
+| `grok clippy` | grok paths | `cargo clippy --workspace -- -D warnings` there (libs and bins, not tests) |
+| `grok test` | grok paths, push to `main` only | `cargo test --workspace` there |
 | **`required`** | **always** | aggregate; branch protection requires this |
 
 ```text
@@ -38,6 +41,9 @@ PR / push
          ├─ test ────────┤
          ├─ semver ──────┤  (if version files)
          ├─ release_verify ┤  (if release/publish paths)
+         ├─ grok fmt ────┤  (parallel if grok paths)
+         ├─ grok clippy ─┤
+         ├─ grok test ───┤  (push to main only)
          └─ required (always) ← require this check only
 ```
 
@@ -57,7 +63,7 @@ report `test` and could not merge. So:
 | Compile cache families | `workspace-clippy-v2`, `workspace-test-v2`, `grok-build-clippy-v2`, `grok-build-test-v2` |
 | Base restore | PR clippy/test jobs first restore the stable `main` cache family with `save-if: false` |
 | PR/main save layer | A second cache step saves `*-pr-${{ github.event.pull_request.number }}` on pull requests and the stable `*-v2` key on `main` |
-| `cache-workspace-crates` | `true`, so workspace artifacts are retained instead of caching only dependencies |
+| `cache-workspace-crates` | `true`. For the vendored Grok workspace this does not make workspace crates fresh: a full cache hit still rebuilds them, and the saved archive stays about the size of the dependency cache. `cache-all-crates` only changes registry pruning and stays `false`. |
 | `cache-on-failure` | `true`, so a failing PR clippy/test run can still save artifacts for reruns |
 | `cache-provider` | Explicitly `github` |
 
@@ -84,6 +90,7 @@ not compile artifacts.
 | Filter | Paths |
 |--------|--------|
 | **rust** | `crates/**`, `Cargo.toml`, `Cargo.lock`, toolchain, rustfmt, clippy, this workflow |
+| **grok** | `third_party/grok-build/**`, grok patches, grok build/test scripts, `docs/architecture/GROK_VENDOR.md`, this workflow |
 | **semver** | `Cargo.toml`, `package.json`, check-semver scripts |
 | **release_verify** | `scripts/verify-npm-version.sh`, its test + mock, `release.sh`, `npm-emergency-publish.sh`, `publish-npm.yml` |
 
@@ -133,6 +140,9 @@ required
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -W clippy::all
 cargo test --workspace
+# vendored grok, from third_party/grok-build (libs and bins only):
+cargo clippy --workspace -- -D warnings
+cargo fmt --all -- --check
 ./scripts/check-semver.sh && node npm/scripts/check-version-match.js
 # workflow lint (matches what CI relies on):
 actionlint .github/workflows/*.yml

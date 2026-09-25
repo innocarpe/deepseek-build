@@ -229,7 +229,7 @@ only tests `dsb-context` is Path B evidence under OWNER_BAR §2.1.
 
 | Unit | Deliverable | Dep |
 |---|---|---|
-| **U3.1** | **Prompt/tool updates appended after cached history** — the highest-value item in the sweep, and the one that cannot be specified until U0.2 answers whether the transport can express it | U0.2 |
+| **U3.1** | **Stable-body update appended after cached history.** Spec 10 §1.10. A later change of the assembled body appends a system message and leaves the earlier one byte-for-byte. A `tools` array replacement is not a history event. `replace_or_insert_system_head` is outside this unit | U0.2 |
 
 ### Wave 4 — honesty and cut
 

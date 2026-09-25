@@ -630,18 +630,39 @@ fn retarget_product_config(
     for slot in PRODUCT_MODEL_SLOTS {
         let header = format!("[model.{slot}]");
         let Some(range) = toml_section_range(&lines, &header) else {
-            appended.push_str(&product_model_stanza(slot, provider, Some(api_key)));
+            // A header spelled another way (quoted key, …) still declares the
+            // table; appending one would make the file declare it twice.
+            if lines
+                .iter()
+                .any(|l| l.trim_start().starts_with('[') && l.contains(slot))
+            {
+                kept_custom.push(slot);
+            } else {
+                appended.push_str(&product_model_stanza(slot, provider, Some(api_key)));
+            }
             continue;
         };
-        let value = |key: &str| {
+        // `Some(None)`: the key is there but not a one-line string (array,
+        // multi-line value, …) — hand-written, so the stanza is not ours.
+        let field = |key: &str| {
             toml_section_key_index(&lines, range, key)
-                .and_then(|i| toml_rhs_string(&lines[i]))
-                .map(str::to_string)
+                .map(|i| toml_rhs_string(&lines[i]).map(str::to_string))
         };
-        let base = value("base_url").unwrap_or_else(|| DEEPSEEK_API_BASE_URL.to_string());
-        let model = value("model").unwrap_or_else(|| slot.to_string());
-        let env_key = value("env_key");
-        let has_inline_key = value("api_key").is_some();
+        let [base, model, env_key, inline_key] =
+            ["base_url", "model", "env_key", "api_key"].map(field);
+        if [&base, &model, &env_key, &inline_key]
+            .iter()
+            .any(|f| matches!(f, Some(None)))
+        {
+            kept_custom.push(slot);
+            continue;
+        }
+        let base = base
+            .flatten()
+            .unwrap_or_else(|| DEEPSEEK_API_BASE_URL.to_string());
+        let model = model.flatten().unwrap_or_else(|| slot.to_string());
+        let env_key = env_key.flatten();
+        let has_inline_key = inline_key.is_some();
         let is_default_for = |p: Provider| {
             base == provider_base_url(p)
                 && model == provider_wire_model(p, slot)
@@ -710,10 +731,18 @@ fn set_line(lines: &mut [String], i: usize, line: String) -> bool {
 /// purpose: after `auth logout` the product-written copy should not
 /// suppress setup.
 pub fn configured_model_env_key_available(home: &BuildHome) -> bool {
+    configured_model_env_key_available_in(home, |name| env::var(name).ok())
+}
+
+/// [`configured_model_env_key_available`] with an injected env lookup.
+pub(crate) fn configured_model_env_key_available_in(
+    home: &BuildHome,
+    env_lookup: impl Fn(&str) -> Option<String>,
+) -> bool {
     let Ok(body) = std::fs::read_to_string(home.path().join("config.toml")) else {
         return false;
     };
-    configured_model_env_key_available_with(&body, |name| env::var(name).ok())
+    configured_model_env_key_available_with(&body, env_lookup)
 }
 
 fn configured_model_env_key_available_with(
@@ -743,8 +772,17 @@ fn configured_model_env_key_available_with(
 }
 
 /// `[start, end)` line indices of the body of `header`'s table.
+///
+/// Matches the header ignoring whitespace and a trailing comment
+/// (`[ model.x ]  # main` is `[model.x]`).
 fn toml_section_range(lines: &[String], header: &str) -> Option<(usize, usize)> {
-    let start = lines.iter().position(|l| l.trim() == header)? + 1;
+    let is_header = |l: &String| {
+        let code = l.split('#').next().unwrap_or_default();
+        code.chars()
+            .filter(|c| !c.is_whitespace())
+            .eq(header.chars())
+    };
+    let start = lines.iter().position(is_header)? + 1;
     let end = lines[start..]
         .iter()
         .position(|l| l.trim_start().starts_with('['))
@@ -1079,6 +1117,18 @@ fn seed_product_changelog(home: &BuildHome) {
     }
 }
 
+/// Saved key to hand the agent as `(variable, value)`: under the provider's own
+/// `env_key` variable, and only when the shell did not set it. Keyed by
+/// provider so an OpenRouter key is never exported as DEEPSEEK_API_KEY (and
+/// vice versa).
+fn agent_key_env(
+    creds: &dsb_config::Credentials,
+    is_set: impl Fn(&str) -> bool,
+) -> Option<(&'static str, &str)> {
+    let var = creds.provider().env_key();
+    (!is_set(var)).then_some((var, creds.api_key()))
+}
+
 /// Exec the Grok-class agent, replacing this process (Unix).
 ///
 /// On failure to find the binary, returns an error with install guidance.
@@ -1139,14 +1189,10 @@ pub fn exec_agent(args: &[String]) -> Result<()> {
     }
     // Brand the vendored resume hints: `dsb --resume <id>` instead of `grok --resume <id>`.
     cmd.env("GROK_INVOCATION_NAME", crate::invocation_name());
-    // Hand the saved key to the stanza's `env_key` variable when the shell
-    // did not set it. Keyed by provider so an OpenRouter key is never exported
-    // as DEEPSEEK_API_KEY (and vice versa).
-    if let Ok(c) = dsb_config::Credentials::load(&home) {
-        let var = c.provider().env_key();
-        if env::var_os(var).is_none() {
-            cmd.env(var, c.api_key());
-        }
+    if let Ok(c) = dsb_config::Credentials::load(&home)
+        && let Some((var, key)) = agent_key_env(&c, |name| env::var_os(name).is_some())
+    {
+        cmd.env(var, key);
     }
 
     // Set the tab/window title to the product name before handing off to the
@@ -1997,4 +2043,78 @@ env_key = "UNSET_A"
 "#;
     assert!(!configured_model_env_key_available_with(pro_default, env));
     assert!(!configured_model_env_key_available_with("", env));
+}
+
+#[test]
+fn agent_key_env_uses_the_providers_own_variable() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dsb_config::BuildHome::from_path(dir.path());
+    let unset = |_: &str| false;
+    dsb_config::Credentials::save(&home, Provider::OpenRouter, "sk-or-v1-k").unwrap();
+    let or = dsb_config::Credentials::load_with(&home, None).unwrap();
+    assert_eq!(
+        agent_key_env(&or, unset),
+        Some(("OPENROUTER_API_KEY", "sk-or-v1-k"))
+    );
+    // A shell value wins; the saved key is not forced over it.
+    assert_eq!(agent_key_env(&or, |n| n == "OPENROUTER_API_KEY"), None);
+    // DEEPSEEK_API_KEY being set does not stop the OpenRouter hand-off.
+    assert!(agent_key_env(&or, |n| n == "DEEPSEEK_API_KEY").is_some());
+    dsb_config::Credentials::save(&home, Provider::DeepSeek, "sk-ds-k").unwrap();
+    let ds = dsb_config::Credentials::load_with(&home, None).unwrap();
+    assert_eq!(
+        agent_key_env(&ds, unset),
+        Some(("DEEPSEEK_API_KEY", "sk-ds-k"))
+    );
+}
+
+#[test]
+fn retarget_keeps_product_stanza_with_its_own_env_key() {
+    // Product URL + model, but the user's own variable: not a product default.
+    let raw = r#"[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+base_url = "https://api.deepseek.com"
+env_key = "MY_DS_KEY"
+"#;
+    let (same, kept) = retarget_product_config(raw, Provider::OpenRouter, "sk-or-v1-k");
+    assert!(same.starts_with(raw), "{same}");
+    assert!(kept.contains(&"deepseek-v4-flash"));
+}
+
+#[test]
+fn retarget_never_declares_a_product_table_twice() {
+    // Trailing comment / inner spaces: still found, rewritten in place.
+    let commented = r#"[ model.deepseek-v4-flash ]  # main
+model = "deepseek-v4-flash"
+base_url = "https://api.deepseek.com"
+env_key = "DEEPSEEK_API_KEY"
+"#;
+    let (fixed, _) = retarget_product_config(commented, Provider::OpenRouter, "sk-or-v1-k");
+    assert_eq!(fixed.matches("deepseek-v4-flash ]").count(), 1, "{fixed}");
+    assert!(!fixed.contains("\n[model.deepseek-v4-flash]\n"), "{fixed}");
+    assert!(fixed.contains(&format!("base_url = \"{OPENROUTER_API_BASE_URL}\"")));
+    // Quoted key spelling: not matched, so never appended again either.
+    let quoted = "[model.\"deepseek-v4-flash\"]\nmodel = \"deepseek-v4-flash\"\n";
+    let (fixed, kept) = retarget_product_config(quoted, Provider::OpenRouter, "sk-or-v1-k");
+    assert!(!fixed.contains("[model.deepseek-v4-flash]"), "{fixed}");
+    assert!(kept.contains(&"deepseek-v4-flash"));
+}
+
+#[test]
+fn retarget_keeps_stanzas_with_non_string_values() {
+    let raw = r#"[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+base_url = "https://api.deepseek.com"
+env_key = [
+  "MY_DS_KEY",
+]
+
+[model.deepseek-v4-pro]
+model = "deepseek-v4-pro"
+base_url = "https://api.deepseek.com"
+env_key = ["DEEPSEEK_API_KEY"]
+"#;
+    let (same, kept) = retarget_product_config(raw, Provider::OpenRouter, "sk-or-v1-k");
+    assert_eq!(same, raw);
+    assert_eq!(kept, vec!["deepseek-v4-flash", "deepseek-v4-pro"]);
 }

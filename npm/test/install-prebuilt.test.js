@@ -261,6 +261,60 @@ test('a failed install leaves a previous installation runnable, not just present
   assert.equal(problem, null, `the previous install must still run: ${problem}`);
 });
 
+test('a newer agent is not replaced by an older package', (t) => {
+  const root = withTempDir(t);
+  const binDir = path.join(root, 'home', 'bin');
+  writeExistingInstall(binDir, '6.0.0');
+  const before = Object.fromEntries(REQUIRED.map((n) => [n, sha(path.join(binDir, n))]));
+
+  const stage = makeStage(path.join(root, 'stage'), '5.7.0');
+  const result = withEnv({ DEEPSEEK_BUILD_ALLOW_DOWNGRADE: undefined }, () =>
+    installFromStageDir({ stageDir: stage, version: '5.7.0', binDir })
+  );
+  assert.equal(result.ok, false, 'an older package must not downgrade the agent');
+  assert.match(result.error, /refusing to replace deepseek-build-agent 6\.0\.0 with package 5\.7\.0/);
+
+  for (const name of REQUIRED) {
+    const dest = path.join(binDir, name);
+    assert.equal(sha(dest), before[name], `${name} must stay the newer install`);
+  }
+  assert.equal(
+    verifyInstalledBin(path.join(binDir, 'deepseek-build-agent'), 'deepseek-build-agent', '6.0.0'),
+    null
+  );
+});
+
+test('DEEPSEEK_BUILD_ALLOW_DOWNGRADE=1 installs the older package', (t) => {
+  const root = withTempDir(t);
+  const binDir = path.join(root, 'home', 'bin');
+  writeExistingInstall(binDir, '6.0.0');
+  const stage = makeStage(path.join(root, 'stage'), '5.7.0');
+
+  const result = withEnv({ DEEPSEEK_BUILD_ALLOW_DOWNGRADE: '1' }, () =>
+    installFromStageDir({ stageDir: stage, version: '5.7.0', binDir })
+  );
+  assert.equal(result.ok, true, `expected ok, got: ${result.error}`);
+  assert.equal(
+    verifyInstalledBin(path.join(binDir, 'deepseek-build-agent'), 'deepseek-build-agent', '5.7.0'),
+    null
+  );
+});
+
+test('an agent that will not run does not block a reinstall', (t) => {
+  const root = withTempDir(t);
+  const binDir = path.join(root, 'home', 'bin');
+  writeExistingInstall(binDir, '6.0.0');
+  writeStub(binDir, 'deepseek-build-agent', '6.0.0', { exitCode: 3 });
+
+  const stage = makeStage(path.join(root, 'stage'), '5.7.0');
+  const result = installFromStageDir({ stageDir: stage, version: '5.7.0', binDir });
+  assert.equal(result.ok, true, `a dead agent is not a version to protect: ${result.error}`);
+  assert.equal(
+    verifyInstalledBin(path.join(binDir, 'deepseek-build-agent'), 'deepseek-build-agent', '5.7.0'),
+    null
+  );
+});
+
 test('the mirror copy (npm/native-bin) is only written on success', (t) => {
   const root = withTempDir(t);
   const binDir = path.join(root, 'home', 'bin');

@@ -50,13 +50,13 @@ table below is the corrected inventory, with the evidence path for each.
 | Compaction that reuses the warm prefix | **Present.** `session/helpers/session_compact.rs:475,702` carries `// Prefix-cache alignment`, and `prepared_compaction_history.rs:1` reads *"Prepares one cache-aligned … compaction request history"* | **Dropped** — already there |
 | Snippet staleness guard on edit | **Present and stricter than dsh.** `xai-grok-tools/src/types/snippet_store.rs` implements issue/require/expire against a full-file `hex(sha256(bytes))`; dsh uses a path-scoped version token | **Dropped** — this product's contract already wins |
 | Background-task read surface | **Present.** `xai-grok-tools/src/bridge.rs` wires `get_task_output`, `task_ids_param`, `list_tasks` | **Dropped** — the "unify" idea had no measured gap under it |
-| Runtime invariant: request equals the log projection | **Absent.** `xai-chat-state` and `xai-grok-sampler` use "invariant" only for their own local rules; nothing checks the outgoing request against the session log | **Take** |
-| Context attached *beside* a tool result | **Absent.** `xai-grok-hooks` has `PostToolUse`/`PostToolUseFailure` events but no path that adds model-visible context alongside a result | **Take** |
-| Guard that may deny but never allow | **Absent.** No deny-only guard in `xai-tool-runtime` | **Take** |
+| Runtime invariant: request equals the log projection | **Present as of the Wave 1 unit.** `request_log_invariant.rs` checks non-system items before `run_turn_via_sampler` (`turn.rs`). System messages are the Spec 10 overlay. A tool result may be the logged text, the hard-clear placeholder, or a head/tail trim. Anything else fails the turn. An item that cannot be serialized fails closed | **Taken** |
+| Context attached *beside* a tool result | **Present in this tree.** `PostToolUse` `additional_context` is a separate `ConversationItem` via `wrap_hook_note` (`reminders.rs`), pushed in `tool_calls.rs` after the tool result. `post_tool_use_delivery_tests.rs` asserts block/context do not replace `model_output` | **Dropped** — already on the live path. Re-measured 2026-09-26; the 1.0.41 note that said absent is stale |
+| Guard that may deny but never allow | **Present as of the Wave 1 unit.** `DenyOnly` in `permission/policy.rs` has deny and abstain. `combine_decisions` uses it, so an allow on either side cannot replace a reject or policy deny | **Taken** |
 | Cache-miss **attribution** | **Absent.** Epoch changes are logged as a new hash; nothing records *which component* moved | **Take** (see the coordination note in §3) |
 | Session-cumulative cache surface | **Partial.** `xai-grok-pager/src/views/agent_status.rs:353` has `format_cache_hit_pct` — a *per-turn* `cache 45%` chip; no cumulative counter | **Take** (coordination note) |
 | Scored cache regression bench | **Absent.** Prefix-equality goldens exist; no scenario bench with a threshold | **Take** (coordination note) |
-| A changed prompt/tool set appended after cached history | **Absent, and wire-dependent.** `spec10_path_a_assembly.rs:83` assembles the stable body with `tools_document()` inlined; there is no update path | **Take — gated on U0.2** |
+| A changed prompt/tool set appended after cached history | **Present for the stable body.** Spec 10 §1.10 / `place_stable_body`. A later body is appended; the earlier system message stays byte-for-byte. A `tools` array replacement is not a history event | **Taken** — U3.1 |
 
 **Two facts that shape everything below:**
 
@@ -134,9 +134,9 @@ system message is expressible; rewriting the leading system measured
 
 | Unit | Deliverable | Dep | Size |
 |---|---|---|---|
-| **U1.1** | **Runtime invariant: request equals the log projection.** Before dispatch, check that what will be sent matches what the session log says was sent; fail loudly on divergence. Fail-close on log entries that cannot be restored. **Lands in the vendored tree**, at the sampling boundary — not in the overlay | none | medium |
-| **U1.2** | **Context beside a tool result.** A result-preserving path for notices (repeat-call nudges, policy notes) so they do not have to be stuffed into the tool's own output | none | small |
-| **U1.3** | **Deny-only guard.** A policy hook that may deny or abstain but can never allow, so listener order cannot resurrect a refused action | none | small |
+| **U1.1** | **Runtime invariant: request equals the log projection.** Done: `check_request_projects_log` runs before `run_turn_via_sampler`. Divergence fails the turn. Unserializable items fail closed | none | medium |
+| **U1.2** | **Context beside a tool result.** Already on the live path (`wrap_hook_note` + `tool_calls.rs`). No second implementation | none | small |
+| **U1.3** | **Deny-only guard.** Done: `DenyOnly` + `combine_decisions`. A later allow does not reopen a deny | none | small |
 
 ### Wave 2 — cache axis (after U0.2, coordinated)
 

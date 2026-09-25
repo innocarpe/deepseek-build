@@ -926,13 +926,44 @@ fn decision_rank(decision: &Decision) -> u8 {
     }
 }
 
+/// A policy layer that may refuse or say nothing. There is no allow variant:
+/// a later listener cannot turn a refusal into permission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DenyOnly {
+    Deny(Decision),
+    Abstain,
+}
+
+pub(crate) fn deny_only(decision: &Decision) -> DenyOnly {
+    match decision {
+        Decision::Reject(reason) => DenyOnly::Deny(Decision::Reject(reason.clone())),
+        Decision::PolicyDeny(reason) => DenyOnly::Deny(Decision::PolicyDeny(reason.clone())),
+        Decision::Allow | Decision::Ask | Decision::FollowupMessage(_) | Decision::Cancelled => {
+            DenyOnly::Abstain
+        }
+    }
+}
+
 pub(crate) fn combine_decisions(a: Option<Decision>, b: Option<Decision>) -> Option<Decision> {
     match (a, b) {
         (None, other) | (other, None) => other,
-        (Some(a), Some(b)) => Some(if decision_rank(&a) >= decision_rank(&b) {
-            a
-        } else {
-            b
+        (Some(a), Some(b)) => Some(match (deny_only(&a), deny_only(&b)) {
+            (DenyOnly::Deny(denied), DenyOnly::Abstain) => denied,
+            (DenyOnly::Abstain, DenyOnly::Deny(denied)) => denied,
+            (DenyOnly::Deny(left), DenyOnly::Deny(right)) => {
+                if decision_rank(&left) >= decision_rank(&right) {
+                    left
+                } else {
+                    right
+                }
+            }
+            (DenyOnly::Abstain, DenyOnly::Abstain) => {
+                if decision_rank(&a) >= decision_rank(&b) {
+                    a
+                } else {
+                    b
+                }
+            }
         }),
     }
 }
@@ -1037,6 +1068,25 @@ pub(crate) fn rule_is_catchall(rule: &PermissionRule) -> bool {
 mod tests {
     use super::*;
     use crate::permission::types::PermissionRule;
+
+    #[test]
+    fn a_later_allow_cannot_reopen_a_deny() {
+        let denied = Decision::PolicyDeny("blocked".into());
+        let allowed = Decision::Allow;
+        assert_eq!(
+            combine_decisions(Some(denied.clone()), Some(allowed.clone())),
+            Some(denied.clone())
+        );
+        assert_eq!(
+            combine_decisions(Some(allowed), Some(denied.clone())),
+            Some(denied)
+        );
+        assert!(matches!(deny_only(&Decision::Allow), DenyOnly::Abstain));
+        assert!(matches!(
+            deny_only(&Decision::PolicyDeny("blocked".into())),
+            DenyOnly::Deny(_)
+        ));
+    }
 
     // ── pattern_matches tests ─────────────────────────────────────────────
 

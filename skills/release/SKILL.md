@@ -42,6 +42,14 @@ is silently skipped.
    not repeat `--desc`. For a *past* release with this defect, moving the items
    into its section is a normal PR against `main`; the tag is immutable.
    Covered by `./scripts/test-changelog-release.sh` (also in CI).
+2c. **Never let `## Unreleased` touch the next heading.** A glued junction makes
+   the *merge* path file items under a version with no conflict, which is how
+   `#209` reached `## 5.7.0` and `#206` reached `## 6.0.0` while neither had
+   shipped there (`shape.rs` / the paste fix are absent from both tags).
+   `bump-version.sh` writes the blank line and refuses a glued file;
+   `reorder-changelog.sh --check` reports it. If a shipped section gains an
+   item whose code is not in that tag, check `git merge-tree` before assuming
+   someone filed it on purpose.
 3. **MAJOR gate (fail-close):** a MAJOR bump is blocked unless README's
    product-status banner already references the new major (`**5.0.0** …` row).
    Update `docs/product/` + README *before* running the release.
@@ -178,6 +186,7 @@ gh workflow run publish-npm.yml --ref v4.0.4
 | Bad | Why |
 |-----|-----|
 | Bumping without moving the `Unreleased` items | The section ships reading as "unreleased" while the version says shipped — the `v5.7.0` defect (7 items) and again at `v6.0.0` (9 items, compounding) |
+| Letting `## Unreleased` touch the next heading | A merging branch files its item under a version with no conflict — measured on `#209` (→ `5.7.0`) and `#206` (→ `6.0.0`) |
 | Rewriting items while moving them | The release record is the reviewed text of each PR, not a post-hoc summary |
 | Publishing from a worktree whose HEAD ≠ tag | Ships unreleased/unmerged code as the binary |
 | Skipping asset check because CI "should" attach | CI queue routinely never runs; 404s for users |

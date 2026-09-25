@@ -63,6 +63,23 @@ runs `postinstall`:
 `DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD` applies when a packed install's download
 fails. It does not make `npm install` inside the checkout compile.
 
+## What `--version` reports
+
+`deepseek-build --version` and `dsb --version` print the **native CLI** the
+shim executes (`dsb 6.0.0` — the installed CLI's own SemVer).
+`deepseek-build-agent --version` prints the **agent**
+(`deepseek-build 6.0.0 (<commit>)`). Neither line is rewritten from the npm
+package's `package.json`, and a release SemVer does not wear `[alpha]`.
+`[alpha]` / `[stable]` remain only for a pre-release build compared with
+the updater's cached pointer.
+
+`npm i -g @innocarpe/deepseek-build@X` installs agent `X` (ADR 0009). If the
+agent already on disk is **newer** than `X`, postinstall leaves it in place
+and the install fails, so a stale package cannot roll the agent backwards.
+Set `DEEPSEEK_BUILD_ALLOW_DOWNGRADE=1` to install that older package on
+purpose. When the package and the agent disagree, the shim prints a warning
+on stderr before the command runs.
+
 ## How wrappers work
 
 Node shims (`npm/bin/*.js`) resolve natives from:

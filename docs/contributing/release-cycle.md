@@ -53,6 +53,30 @@ turn repeated builds into incremental ones.
 | [`test-changelog-release.sh`](../../scripts/test-changelog-release.sh) | Hermetic regression test for the `Unreleased` move (`lib/changelog_release.py`); fixture CHANGELOGs in a temp dir, no network, no repo state |
 | [`release.sh`](../../scripts/release.sh) | Orchestrator: bump → MAJOR/README gate → verify → PR (`chore(release)`) → merge → tag `v{ver}` → wait for prebuilt assets → wait for CI publish → verify the registry. |
 | [`npm-emergency-publish.sh`](../../scripts/npm-emergency-publish.sh) | **Emergency path only.** Local interactive publish that drives `npm login --auth-type=web` and any emailed code through the `aside` browser agent, so no person has to supply a number. |
+| [`cache-guard.sh`](../../scripts/cache-guard.sh) | Release gate for spec 10 §1.9: runs the cache regression bench (scripted turn scenarios vs a prefix-accounting mock provider, two scored layers). Skips unless `DSB_RELEASE_CACHE_GUARD=1`; threshold via `DSB_CACHE_GUARD_THRESHOLD` (default 90). |
+
+### Cache guard (spec 10 §1.9, release gate)
+
+```bash
+DSB_RELEASE_CACHE_GUARD=1 ./scripts/cache-guard.sh
+```
+
+`cache-first` is a claim about a curve, not a turn, and this gate scores it
+before a release. Scenarios (plain and long dialogue, mixed message sizes, tool
+loops, with and without the reasoning round-trip) run through the real turn
+loop against a prefix-accounting mock provider that derives the cache hit from
+the request bytes it receives. Two layers must both pass: the distinct-epoch
+count is exactly 1 on a scenario that changes no §1.1 input (2 when one input
+is changed by design), and the last-3-request hit rate is at or above
+`DSB_CACHE_GUARD_THRESHOLD` (default 90%). A negative control perturbs the
+prefix every turn and must fail the rate layer — if it passes, the bench
+fails, because the mock stopped accounting from the request.
+
+Without `DSB_RELEASE_CACHE_GUARD=1` both the wrapper and the gated test skip, so
+the ordinary `cargo test --workspace` never pays for the bench (the contract
+tests inside it run always). Harness:
+[`crates/dsb-agent/tests/cache_guard.rs`](../../crates/dsb-agent/tests/cache_guard.rs);
+the contract and test names are spec 10 §1.9 / §4.4.
 
 ### `release.sh` flags
 
@@ -95,6 +119,17 @@ turn repeated builds into incremental ones.
 - `reorder-changelog.sh` fixes a drifted file in place (one-time cleanup) and
   `--check` fails CI/humans that let the invariant rot. It reorders only — it
   does **not** move items between sections.
+- **Keep the blank line after `## Unreleased`.** `## Unreleased` immediately
+  followed by a version heading is not cosmetic: a branch that appends an item
+  under `Unreleased` then merges into a glued tree gets that item **filed under
+  the version heading with no conflict**, so nothing ever flags it. Measured:
+  `#209` (cache attribution) landed under `5.7.0` and `#206` (SSH paste) under
+  `6.0.0`, each byte-identical to `git merge-tree` — i.e. pure auto-merge, no
+  human edit. With the blank line those same merges conflict, and the item is
+  filed by hand. `bump-version.sh` now writes the blank line and refuses a
+  glued junction; `reorder-changelog.sh --check` reports it and the in-place
+  run repairs it. Pinned by `test-changelog-release.sh` case 8, which builds
+  both merges and asserts one conflicts while the glued one does not.
 - Prereleases sort below their release (`4.0.4` > `4.0.4-beta.1` > `4.0.4-alpha.1`).
 
 ### What the Unreleased move prevents
@@ -119,9 +154,28 @@ plus the `1.0.41` port and the sync-harness item.
 
 `v5.6.0` (0 items) shows the healthy path needs no attention.
 
+### What the glued junction caused
+
+Fixing the move was not enough, because the *other* way an item reaches a
+version section is a merge. With `## Unreleased` glued to the next heading, a
+feature branch that adds an item under `Unreleased` merges into the released
+tree **cleanly** — git appends the item to the section that now ends at the
+glued heading — and the item is filed under a version nobody reviewed it for.
+Measured after `v6.0.0` shipped, both reproduced with `git merge-tree` and
+byte-identical to the real merge commit:
+
+| PR | Item | Auto-merged into | Shipped? |
+|----|------|------------------|----------|
+| `#209` | cache-epoch attribution | `## 5.7.0` | no — the code landed after the `5.7.0` tag (`shape.rs` is absent from both tags) |
+| `#206` | SSH image paste | `## 6.0.0` | no — merged `00:33`, the `v6.0.0` tag is `23:09` (`paste.rs` has the fix on `main`, not in the tag) |
+
+Both were moved back under `## Unreleased` once the junction was repaired.
+
 The move is covered by `scripts/test-changelog-release.sh` (hermetic: fixture
 CHANGELOGs in a temp dir, no repo state touched) and runs in CI's `changelog`
-job, so undoing it fails a required check rather than the next release.
+job, so undoing it fails a required check rather than the next release. Case 8
+builds the two branches and asserts the merge conflicts with the blank line and
+stays silent without it — the regression cannot come back unnoticed.
 
 ## README policy
 

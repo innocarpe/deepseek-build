@@ -4,6 +4,7 @@ const { spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { readReportedVersion, mismatchWarning } = require('./version-align');
 
 const pkgRoot = path.resolve(__dirname, '..', '..');
 
@@ -76,6 +77,12 @@ function findAgentBinary() {
  * is missing but agent exists, exec agent directly so install still works.
  */
 function run(binName, args) {
+  const agent = findAgentBinary();
+  if (agent) {
+    const msg = mismatchWarning(productVersion(), readReportedVersion(agent));
+    if (msg) console.error(msg);
+  }
+
   const isBare =
     args.length === 0 ||
     (args.length === 1 && (args[0] === 'agent' || args[0] === '--'));
@@ -87,7 +94,6 @@ function run(binName, args) {
   }
 
   if (!bin) {
-    const agent = findAgentBinary();
     if (agent && (isBare || args[0] === 'agent')) {
       const agentArgs = args[0] === 'agent' ? args.slice(1) : args;
       return exec(agent, agentArgs, productEnv());
@@ -105,7 +111,8 @@ function run(binName, args) {
     process.exit(127);
   }
 
-  // Always inject product version/home for both wrapper and agent paths.
+  // Home and installer classification. The package version is not stamped
+  // onto the child — see productEnv().
   return exec(bin, args, productEnv());
 }
 
@@ -123,7 +130,6 @@ function productVersion() {
 
 function productEnv() {
   const home = process.env.DEEPSEEK_BUILD_HOME || path.join(os.homedir(), '.deepseek-build');
-  const version = productVersion();
   const env = {
     ...process.env,
     GROK_HOME: process.env.GROK_HOME || home,
@@ -143,10 +149,12 @@ function productEnv() {
     env.GROK_THEME = userTheme;
     env.LC_GROK_THEME = userTheme;
   }
-  // Product SemVer for agent TUI display + update checks (not vendor 0.2.x).
-  if (version) {
-    env.DEEPSEEK_BUILD_VERSION = process.env.DEEPSEEK_BUILD_VERSION || version;
-  }
+  // Do not stamp DEEPSEEK_BUILD_VERSION from package.json. The agent honours
+  // that variable over the version baked into the binary (`installed()`).
+  // A package older than the agent would then make the TUI and
+  // `deepseek-build-agent --version` report the package. Measured: package
+  // 5.7.0 plus a baked 6.0.0 binary printed `deepseek-build 5.7.0 (…) [alpha]`.
+  // A value the caller already exported is left untouched via `process.env`.
   return env;
 }
 
@@ -162,4 +170,4 @@ function exec(bin, args, env) {
   process.exit(result.status === null ? 1 : result.status);
 }
 
-module.exports = { run, findBinary, findAgentBinary, candidatePaths };
+module.exports = { run, findBinary, findAgentBinary, candidatePaths, productEnv, productVersion };

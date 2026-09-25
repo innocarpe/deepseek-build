@@ -33,7 +33,7 @@ claim — "DeepSeek-native harness" — true in places where it currently is not
 
 | Condition | Consequence |
 |---|---|
-| The wire investigation (U0.2) concludes the product should move to the **Anthropic Messages** transport | Identity-relevant → its own major (`7.0.0`), with a PRD |
+| The wire investigation (U0.2) concludes the product should move to the **Anthropic Messages** transport | Identity-relevant → its own major (`7.0.0`), with a PRD. **Did not fire** (2026-09-26): [PRD-v6 §7.2](./PRD-v6.md) re-affirms [ADR 0005](../adr/0005-deepseek-provider-contract.md) |
 | `6.x` minor numbers are already spent by base-port follow-up when this train starts | The depth work moves to the next free line |
 
 ---
@@ -107,28 +107,64 @@ backend, the cache units are redefined as "make the key reach the wire first";
 if an in-history update cannot be expressed, the prompt/tool unit is dropped
 from this line and becomes `7.0.0` material.
 
-**U0.2 result (2026-09-25), measured at `687582c`.** Full table:
+**U0.2 result.** Full table:
 [chat-completions-wire-inventory-2026-09-25.md](../research/chat-completions-wire-inventory-2026-09-25.md).
-`prompt_cache_key` does not reach Chat Completions, and a prefix hit was
-observed without one, so U2.1 does not survive as a wire change. Cache reads
-are still reported (`prompt_cache_hit_tokens` /
-`prompt_cache_miss_tokens` on the official schema;
-`prompt_tokens_details.cached_tokens` on the OpenRouter route that was
-actually called). **Limit:** the environment this measurement ran in had no
-credential for `https://api.deepseek.com`, so the official host was not
-called. The official field names are the schema pages fetched that day, not a
-response from that host. Path A keeps the hit and drops the miss. An appended
-system message is expressible; rewriting the leading system measured
-`cached_tokens = 0`. A tool update has no history-event form; it is a full
-`tools` array.
+The 2026-09-25 pass (tree `687582c`) ran on OpenRouter: that environment had
+no credential for `https://api.deepseek.com`. That limit is closed. On
+2026-09-26 the same questions went to
+`POST https://api.deepseek.com/chat/completions` (model `deepseek-chat`,
+`thinking.type = disabled`, prefix about 1500 tokens, twelve HTTP 200
+responses). See §6 of that note. The model id is not an ADR 0005 pin
+(`deepseek-v4-flash` / `deepseek-v4-pro`).
 
-| Gated unit | After U0.2 |
+`prompt_cache_key` still does not reach Chat Completions in this product,
+and a prefix hit was observed without one on both hosts (OpenRouter A3 =
+768/768; official A2 = A3 = 1280 hit / 228 miss on a 1508-token prompt).
+Sending `prompt_cache_key` on the official host (row E) returned the same
+1280/228, HTTP 200. U2.1 stays closed.
+
+The official payload reports `prompt_cache_hit_tokens`,
+`prompt_cache_miss_tokens`, and `prompt_tokens_details.cached_tokens`. On
+every 2026-09-26 row the hit count equalled `cached_tokens`, and hit + miss
+equalled `prompt_tokens`. OpenRouter sent only
+`prompt_tokens_details.cached_tokens` and omitted the hit and miss names.
+Path A's `Usage` still has no `prompt_cache_miss_tokens` field, so serde
+drops the miss the official server sends. The server sends it. The client
+discards it.
+
+An appended system message is expressible. On the official host, two
+different unseen leading systems (F) were each 0 hit / 1512 miss. Those two
+calls are not a same-byte replay. Appending a system message after the user
+turn and leaving the leading system unchanged (G) was 1280 hit / 244 miss
+both times, on the same bytes (1280/1524 = 84%). Uncached input 1512 versus
+244 is 6.2×. A `tools` array did not zero the cache (D: prompt 1508 → 1766,
+hit 1408 then 1536 on the same bytes).
+
+The OpenRouter sample was not token-stable (641, 712, 768 on one 792-token
+body). That spread is why the 2026-09-25 row below called for a wide live
+threshold. It is not how the official host behaved: A, B, and G repeated
+exactly. D is the one official same-byte pair that moved, which fits a cache
+still warming and does not prove it. The wide-threshold reason is gone on
+the route `deepseek-build` / `dsb` uses when it talks to
+`api.deepseek.com`. A live threshold has to differ by route. An OpenRouter
+band is the wrong band for the official host, and the official sample is the
+wrong band for OpenRouter. Spec 10 §1.9's landed 90% is a separate number —
+Reasonix's threshold on a prefix-accounting mock — and this result does not
+retune it.
+
+[PRD-v6 §7.2](./PRD-v6.md) is closed by re-affirming ADR 0005. The §0
+condition that would move this line to `7.0.0` did not fire. The official
+host caches (1280-token hit), expresses an in-history system append (84%),
+and does not need a cache key. ADR 0005's decision text is unchanged. The
+evidence lives in the research note.
+
+| Gated unit | After the official remeasure (2026-09-26) |
 |---|---|
-| U2.1 cache-key reachability | Closed by the note. No further wire change. |
-| U2.2 cache-miss attribution | Survives, against usage fields, in `spec10_path_a_assembly.rs` / `turn.rs`. PR #209 merged the overlay attribution in `crates/` only; `origin/main` at `1b9bb1c` still does not touch the vendored turn. |
-| U2.3 cumulative cache surface | Survives. No miss count is retained on Path A. |
-| Scored cache bench (board §1) | Survives, with a wide threshold. Identical bodies were not token-stable. |
-| U3.1 in-history prompt/tool update | Survives for an appended system message. Tool updates are a `tools` array. |
+| U2.1 cache-key reachability | Closed. No further wire change. A key is unnecessary on the official host too. |
+| U2.2 cache-miss attribution | Survives, in `spec10_path_a_assembly.rs` / `turn.rs`. PR #209 attributed inside `crates/` only. A new leading system on the official host is a reproducible full miss. Categories must be components the assembly can actually distinguish. |
+| U2.3 cumulative cache surface | Survives, and the substance is the client. The official server sends `prompt_cache_miss_tokens`. Path A's `Usage` has no such field, so serde drops it. The server sends the miss. The client discards it. Spec 10 §1.5.2's `hit`/`miss`/`unreported` line is still absent on Path A. |
+| Scored cache bench (board §1) | The live OpenRouter spread (641/712/768) was the wide-threshold reason. That reason does not hold on `api.deepseek.com` same-byte replays (A, B, G exact; D moved once). Re-review any live threshold per route. Do not retune spec 10 §1.9's mock 90% from this table. |
+| U3.1 in-history prompt/tool update | Premise confirmed on the official host for `deepseek-chat`. Two cold heads: 0/1512 each. Same-byte append: 1280/244 twice (84%, 6.2× uncached input versus the rewrite). Tool updates remain a `tools` array, and that array did not zero the cache. |
 
 ### Wave 1 — wire-independent, absent-by-measurement
 
@@ -218,8 +254,13 @@ builder. Path A's bytes are the system body after
 `apply_spec10_to_conversation_request`, with `tools_document()` inlined into
 the leading system message (`spec10_path_a_assembly.rs:83`). U0.2 measured
 that rewriting that leading system returned `cached_tokens = 0` on every
-sample, and that a later system message did not force that zero. A negative
-control that perturbs `dsb-context` inputs does not perturb the body
+sample, and that a later system message did not force that zero. The
+2026-09-26 official-host pass confirms that split (two cold heads at 0/1512;
+the same appended body at 1280/244 twice). It also retires the OpenRouter
+spread as a reason to widen a live threshold on `api.deepseek.com`. A live
+threshold has to be chosen per route. Spec 10 §1.9's 90% stays the mock's
+number. A negative control that perturbs `dsb-context` inputs does not
+perturb the body
 `turn.rs` sends, so it stays green when Path A breaks. The rate arithmetic
 can stay a pure function. The scenario's request bytes are the output of
 `assemble_spec10_path_a_turn` and the Chat Completions mapping. A guard that
@@ -291,7 +332,7 @@ Re-plan if any of these become true:
 | Not done | Why |
 |---|---|
 | Spill, compaction cache alignment, snippet staleness, task-output surface | Measured present in the `1.0.41` tree — §1 |
-| Anthropic Messages migration | Investigation (U0.2), not a commitment — §0 |
+| Anthropic Messages migration | Re-affirmed Chat Completions ([PRD-v6 §7.2](./PRD-v6.md), 2026-09-26). The §0 condition did not fire. U4.1 still owes the evidence path |
 | A new major line / new PRD | Rule: a minor is not a new PRD unless identity shifts |
 | Agent teams / mailboxes / task boards | Serves a browser UI this product does not have; deferred by [NON_GOALS](./NON_GOALS.md) |
 | Sandbox modes + escalation | Correct vocabulary, no substrate |

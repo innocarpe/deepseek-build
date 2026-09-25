@@ -1,14 +1,26 @@
 # Changelog
 
 ## Unreleased
-## 6.0.0 — 2026-09-25
-
 - Pasting an image into a pane on a remote host now attaches it. A pasted image
   path is resolved by the host the pager runs on, and a terminal that works
   this way uploads the bytes to that host first — an Orca SSH pane writes the
   temp file to the remote `$TMPDIR` and pastes the remote path. An earlier
   `is_ssh` early-return skipped the classifier there, so the paste landed as
   literal path text and the attachment was impossible over SSH.
+- A cache epoch change now says *what* moved, not just *that* something did.
+  The stable prefix is built once per process and reused, so the only moment a
+  conversation's prefix actually moves is when a later process rebuilds it —
+  a resumed session. dsb stores each session's prefix shape beside its
+  transcript and, on resume, prints `prefix_change=<axes>` with a detail line
+  naming the entries (`tools.added=mcp__demo__pong`,
+  `skills.removed=old-skill`, `environment.cwd`). A session that carries no
+  stored shape — any file written before this change — logs nothing rather
+  than guess, and an unchanged prefix logs `none`. The shape is observational:
+  `stable_prefix_bytes` and every existing epoch are byte-identical, pinned by
+  a golden test that fails loudly when a change would invalidate live caches.
+
+## 6.0.0 — 2026-09-25
+
 - Port the vendored Grok Build base from `1.0.0` to `1.0.41` — 41 upstream
   releases covering 472 changelog items, 25 sync commits and 3,587 files — and
   re-derive this product's own overlay (DeepSeek sampling mapping, the status
@@ -39,17 +51,6 @@
 
 ## 5.7.0 — 2026-09-25
 
-- A cache epoch change now says *what* moved, not just *that* something did.
-  The stable prefix is built once per process and reused, so the only moment a
-  conversation's prefix actually moves is when a later process rebuilds it —
-  a resumed session. dsb stores each session's prefix shape beside its
-  transcript and, on resume, prints `prefix_change=<axes>` with a detail line
-  naming the entries (`tools.added=mcp__demo__pong`,
-  `skills.removed=old-skill`, `environment.cwd`). A session that carries no
-  stored shape — any file written before this change — logs nothing rather
-  than guess, and an unchanged prefix logs `none`. The shape is observational:
-  `stable_prefix_bytes` and every existing epoch are byte-identical, pinned by
-  a golden test that fails loudly when a change would invalidate live caches.
 - The TUI fits a phone-width pane. A collapsed prompt echo now folds to one
   line plus an ellipsis at or below 60 columns (the measured iPhone pane is 55
   columns by 41 rows) instead of the fixed three rows it used to spend — about

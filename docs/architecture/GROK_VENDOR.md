@@ -108,6 +108,7 @@ survived.
 | `crates/codegen/xai-grok-pager/src/notifications/{agent_status.rs,mod.rs}` | OSC 9999 explicit agent-status frames for hosts that read them (Orca): `working` / `waiting` / `done`, ridden on the same tick as the title, and closed explicitly on turn end and pane exit | A host that reads the status stream needs the turn boundary stated rather than inferred from the tab title; silent on every other host |
 | `crates/codegen/xai-grok-pager/src/scrollback/blocks/user.rs` | `collapsed_max_lines(width, mode)` replaces the fixed `COLLAPSED_MAX_LINES` budget: at or below `COLLAPSED_NARROW_TERMINAL_COLS` (60) a collapsed prompt folds to `COLLAPSED_NARROW_MAX_LINES` (1); wider keeps 3; `Expanded` still never folds | The measured iPhone Orca pane is 55 columns, where a three-line echo of the submitted prompt eats a third of the viewport; desktop widths (80+) keep today's three-line budget |
 | `crates/codegen/xai-grok-pager/src/views/prompt_widget/mod.rs` | The bottom info line's rect is inset one cell per corner (`area.x + 1`, `area.width - 2`) instead of starting at `content_area.x` | The label no longer paints the divider rule immediately after `╰` when it overflows a phone-width pane, and keeps a blank pad before `╯` |
+| `crates/codegen/xai-grok-pager/src/app/agent_view/paste.rs` | `try_handle_dropped_paths_paste()` drops its `is_ssh` early-return: an image path pasted into a remote pane is classified like any other, and the PTY case `ssh_image_path_attaches` pins it | The host that runs the pager is the host that can resolve the path and read its bytes, so SSH changes nothing about the classification. Hosts that paste images this way upload the bytes to that same host first — an Orca SSH pane writes the temp file over SFTP to the remote `$TMPDIR` and pastes the remote path. The early-return made such a paste land as literal path text, so image attachment was impossible over SSH |
 | `crates/codegen/xai-grok-shell/src/session/helpers/spec10_path_a_assembly.rs` | `place_stable_body`: the first Spec 10 body is written into the leading system message; a later body is appended and the earlier system message stays byte-for-byte | Spec 10 §1.10. Rewriting the leading system measured `cached_tokens = 0`; an appended system message did not force that |
 
 Tests: `resume_hint_line_brands_invocation_name` and
@@ -118,6 +119,10 @@ invariants, the classic dark/GrokDay light resolution defaults, and the picker
 contract. Settings preview coverage retains legacy theme kinds while both
 catalogs expose `deepseeknight-v2`, `DeepSeek Night (classic)` and
 `DeepSeek Night Neutral`.
+ The SSH paste deviation is pinned by the PTY case
+`ssh_image_path_attaches`, which spawns the pager with `SSH_CONNECTION` set —
+a unit test cannot, because `terminal_context()` is a process-wide static
+computed once from the environment.
 
 ### Patch series
 

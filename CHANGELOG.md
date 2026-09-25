@@ -3,6 +3,12 @@
 ## Unreleased
 ## 6.0.0 — 2026-09-25
 
+- Pasting an image into a pane on a remote host now attaches it. A pasted image
+  path is resolved by the host the pager runs on, and a terminal that works
+  this way uploads the bytes to that host first — an Orca SSH pane writes the
+  temp file to the remote `$TMPDIR` and pastes the remote path. An earlier
+  `is_ssh` early-return skipped the classifier there, so the paste landed as
+  literal path text and the attachment was impossible over SSH.
 - Port the vendored Grok Build base from `1.0.0` to `1.0.41` — 41 upstream
   releases covering 472 changelog items, 25 sync commits and 3,587 files — and
   re-derive this product's own overlay (DeepSeek sampling mapping, the status

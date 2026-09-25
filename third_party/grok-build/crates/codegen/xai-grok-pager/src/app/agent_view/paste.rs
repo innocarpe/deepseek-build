@@ -419,13 +419,19 @@ impl AgentView {
     /// Returns redraw and completion outcomes only when at least one path resolves.
     /// It must run BEFORE any clipboard image probe so the Finder icon attached to a non-image file path doesn't get rendered as a chip.
     /// `refresh_slash` fires exactly once at the end of the loop when any entry was inserted.
+    ///
+    /// **SSH hosts are not excluded.** A remote pane's pasted path names a
+    /// file on the host the pager itself runs on — the host that decides
+    /// whether the file exists and what its bytes are — so the same
+    /// classification is correct there. Terminal hosts that paste images
+    /// this way write the file over their own filesystem channel first: SSH
+    /// panes in Orca, for example, upload the bytes to the remote host and
+    /// paste the remote path. Skipping the classifier under SSH made such a
+    /// paste land as literal path text instead of an image attachment.
     pub(super) fn try_handle_dropped_paths_paste(
         &mut self,
         text: &str,
     ) -> Option<(InputOutcome, crate::app::actions::ClipboardPasteCompletion)> {
-        if crate::terminal::terminal_context().is_ssh {
-            return None;
-        }
         /// Upper bound on the size of a paste payload the drop classifier will scan.
         /// 10 MB matches `MAX_SEND_BYTES` for individual image attachments: above any realistic drop, below any log/code paste worth iterating.
         const DROP_CLASSIFIER_MAX_BYTES: usize = 10 * 1024 * 1024;
@@ -761,6 +767,13 @@ pub(super) mod paste_key_tests {
         let _ = paste_cmd_v(&mut agent, Some(""));
         assert!(agent.prompt.text().is_empty());
     }
+    // The SSH case cannot be pinned here: `terminal_context()` is a
+    // process-wide static computed once from the environment, so a unit test
+    // cannot make this process believe it is on a remote host, and a test that
+    // merely pastes a path would pass with the guard in place. The real
+    // regression test is the PTY case
+    // `pty_e2e/ssh_image_path_attaches.rs`, which spawns the pager with
+    // `SSH_CONNECTION` set.
     #[test]
     fn paste_key_image_path_detected_as_image() {
         let mut agent = make_agent();

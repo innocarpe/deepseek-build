@@ -4623,3 +4623,119 @@
             "without the remap the chip keeps its own background"
         );
     }
+
+    // ── Bottom info line inside the corner cells ────────────────────
+
+    /// The model label seen on the iPhone: long enough to overflow a
+    /// phone-width pane.
+    const PHONE_MODEL_LABEL: &str = "DeepSeek V4.1 Flash (OpenRouter) (max)";
+
+    /// The measured iPhone pane is 55 columns.
+    const MEASURED_PHONE_COLS: u16 = 55;
+
+    /// Draw a bordered prompt at `width` and return the bottom (info) row.
+    fn draw_info_row(width: u16, label: &str, flags: &[PromptFlag<'_>]) -> String {
+        let mut pw = PromptWidget::new();
+        let area = Rect::new(0, 0, width, 4);
+        let mut buf = Buffer::empty(area);
+        let info = PromptInfo {
+            model_name: label,
+            flags,
+            multiline: false,
+            usage_warning: None,
+            usage_warning_critical: false,
+        };
+        pw.draw(&mut buf, area, None, &PromptStyle::default(), Some(&info), None);
+        // The info block is the last row of the area.
+        buf_text_at(&buf, 0, width, area.bottom() - 1)
+    }
+
+    /// The info rect stops one cell short of each corner, so a label that
+    /// overflows the pane starts on the blank pad rather than on the divider
+    /// rule.
+    ///
+    /// Before the inset, the rect began two cells in (the chrome's left pad),
+    /// leaving the divider's `─` painted immediately after `╰`: the row read
+    /// `╰─ DeepSeek …` and the label lost a column to that stray rule.
+    #[test]
+    fn overflowing_label_starts_on_the_pad_not_the_divider_rule() {
+        let flags = [PromptFlag {
+            text: "always-approve",
+            color: None,
+            bold: false,
+        }];
+        let row = draw_info_row(MEASURED_PHONE_COLS, PHONE_MODEL_LABEL, &flags);
+        let chars: Vec<char> = row.chars().collect();
+
+        assert_eq!(
+            chars.first().copied(),
+            Some('\u{2570}'),
+            "the row still opens with the left corner: {row:?}"
+        );
+        assert_eq!(
+            chars.get(1).copied(),
+            Some(' '),
+            "the cell after `╰` must be the blank pad, not the `─` divider rule: {row:?}"
+        );
+        assert_eq!(
+            chars.last().copied(),
+            Some('\u{256f}'),
+            "the row still closes with the right corner: {row:?}"
+        );
+    }
+
+    /// The same label at a width where it fits is right-aligned against the
+    /// divider rule, so the rule legitimately runs up to the label. Pins that
+    /// the pad above is about overflow, not about always blanking cell 1.
+    #[test]
+    fn fitting_label_leaves_the_divider_rule_visible() {
+        let row = draw_info_row(120, PHONE_MODEL_LABEL, &[]);
+        let chars: Vec<char> = row.chars().collect();
+        assert_eq!(chars.first().copied(), Some('\u{2570}'), "{row:?}");
+        assert_eq!(
+            chars.get(1).copied(),
+            Some('\u{2500}'),
+            "a label with room keeps the divider rule after `╰`: {row:?}"
+        );
+        assert_eq!(
+            chars.get(chars.len() - 2).copied(),
+            Some(' '),
+            "and still keeps a blank pad before `╯`: {row:?}"
+        );
+    }
+
+    /// Whatever the label length, the row is exactly the pane width and both
+    /// corner cells survive — the label never paints past `╰` / `╯`.
+    #[test]
+    fn info_row_keeps_its_width_and_corners_at_every_size() {
+        let flags = [PromptFlag {
+            text: "always-approve",
+            color: None,
+            bold: false,
+        }];
+        for width in [40u16, 50, 53, 55, 60, 80, 120] {
+            for (label, flags) in [
+                (PHONE_MODEL_LABEL, &[][..]),
+                (PHONE_MODEL_LABEL, &flags[..]),
+                ("short", &[][..]),
+            ] {
+                let row = draw_info_row(width, label, flags);
+                let chars: Vec<char> = row.chars().collect();
+                assert_eq!(
+                    chars.len(),
+                    width as usize,
+                    "the info row must be exactly the pane width at {width}: {row:?}"
+                );
+                assert_eq!(
+                    chars.first().copied(),
+                    Some('\u{2570}'),
+                    "left corner must survive at {width} cols: {row:?}"
+                );
+                assert_eq!(
+                    chars.last().copied(),
+                    Some('\u{256f}'),
+                    "right corner must survive at {width} cols: {row:?}"
+                );
+            }
+        }
+    }

@@ -88,6 +88,41 @@ Full conflict rules: [HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.
 
 ---
 
+## 4. DeepSeek Harness (`dsh`) — evidence, **not** a new L1 owner
+
+**Upstream:** https://github.com/deepseek-ai/deepseek-harness
+**Read:** [research/dsh-deepseek-harness.md](../research/dsh-deepseek-harness.md) (surveyed at `477b4f4` = `0.1.7-rc.2`, 2026-09-25)
+
+DeepSeek's own open-source harness. It is **not** a source-ownership change:
+**Deep Code remains the L1 primary** and this section adds no layer to the map
+above. dsh enters as the strongest available *evidence* for how DeepSeek's own
+engineers tune a harness to DeepSeek models and the DeepSeek API, and its items
+enter `docs/specs/` only after being re-checked — and, where the wire is
+involved, measured on this product's own routes.
+
+**Its shape is not ours and is not being copied:** TypeScript on Node, an
+everything-is-a-plugin Cordis tree, a browser UI, and a stated willingness to
+break compatibility. The product stays a Rust TUI with an overlay model.
+
+### Take / leave
+
+| Take | Leave |
+|------|-------|
+| The cache-preserving lifecycle: append after cached history instead of rewriting the head (prompt, tool set, policy state) | Request-series bookkeeping (`initial/resume/change/series`, surface shadowing) — a precise instrument for dsh's own request model |
+| Runtime invariants that enforce the context contract (request equals log-derived projection) | The npm-package-attributed invariant registry shape |
+| Cache-miss **attribution** and a cumulative cache surface | — |
+| Spill: oversized tool results as head/tail + locator, fail-open | Job output rings and dual cursors |
+| Tool-result context shapes (`additionalContexts`), monotonic guards, catalog-churn-0 discipline | Sandbox modes + escalation vocabulary (no substrate here yet) |
+| Centered prompt-section ordering; recovery sentences for stale edits | Agent teams / mailboxes / task boards (serves a browser UI we do not have) |
+
+**Open question, tracked not assumed:** dsh speaks the **Anthropic Messages
+subset** of the DeepSeek API while this product speaks **Chat Completions**
+([ADR 0005](../adr/0005-deepseek-provider-contract.md)). [PRD-v7](PRD-v7.md) §6
+carries this as an investigation with an evidence bar; no spec may depend on its
+outcome until it lands.
+
+---
+
 ## Explicitly deferred
 
 ### Gajae-code
@@ -119,3 +154,5 @@ HARNESS_PHILOSOPHY (spine)
 - [deepcode-cli.md](../research/deepcode-cli.md)  
 - [reasonix.md](../research/reasonix.md)  
 - [grok-build.md](../research/grok-build.md)  
+- [dsh-deepseek-harness.md](../research/dsh-deepseek-harness.md)  
+- [upstream-gap-sweep-2026-09-25.md](../research/upstream-gap-sweep-2026-09-25.md)  

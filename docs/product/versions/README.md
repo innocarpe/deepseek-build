@@ -22,6 +22,7 @@ Tags and line PRDs do **not** override that file.
 | **4.x** | [PRD-v4.md](../PRD-v4.md) | **Tagged `4.0.0`–`4.0.2` — owner-bar NOT MET** | L3 productization *attempt*; machinery + docs, not full product identity |
 | **5.x** | [PRD-v5.md](../PRD-v5.md) | **Owner-bar MET (`5.0.0`)** · **vision-complete `5.5.0` merged on `main`** · **`5.5.2` release cut** (publication follows the merged tag workflow) | Owner-bar cut [CUT_5_0_0](../evidence/CUT_5_0_0_2026-08-07.md) · completed vision board [VISION_COMPLETE_5X_GOALS.md](../VISION_COMPLETE_5X_GOALS.md) |
 | **6.x** | [PRD-v6.md](../PRD-v6.md) | **Base refresh cut (`6.0.0`)** | Grok Build ported `1.0.0` → `1.0.41`; the product's own overlay re-derived on the new base. Owner-readable: [CHANGELIST_6_0_0.md](../CHANGELIST_6_0_0.md) |
+| **7.x** | [PRD-v7.md](../PRD-v7.md) | **Proposed — no execution authority until merged and accepted** | DeepSeek-native depth: keep a cached prefix alive while the session changes (prompt/tool/policy as appended history), make cache misses attributable and measured, enforce the context contract with runtime invariants, and spill oversized tool results. Evidence: [research/dsh-deepseek-harness.md](../../research/dsh-deepseek-harness.md). Board: [DEEPSEEK_NATIVE_DEPTH_7X_GOALS.md](../DEEPSEEK_NATIVE_DEPTH_7X_GOALS.md) |
 
 Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** product major PRDs.
 

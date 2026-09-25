@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|--------|
-| Status | **ready-for-impl** — §1.5.1 enforced with tests; §1.5.2 and §1.9 are contracts fixed here, each pending its own unit |
+| Status | **ready-for-impl** — §1.5.1 and §1.10 enforced with tests; §1.5.2 and §1.9 are contracts fixed here, each pending its own unit |
 | Philosophy | HARNESS §4.2, §5; Deep Code pillar B; Reasonix cache-first |
 | Gate | Part of **G2** |
 | Tests | **Automated golden + negative required** |
@@ -209,6 +209,54 @@ Wrapper: `scripts/cache-guard.sh`, release-gated like Reasonix's (env
 `DSB_RELEASE_CACHE_GUARD=1`; skips when unset so it never slows the normal
 suite).
 
+### 1.10 In-history stable-body update (Path A assembly)
+
+`apply_spec10_to_conversation_request` builds the §1.1 stable body on every
+Path A turn (`turn.rs`). U0.2 measured two shapes on Chat Completions.
+Replacing the bytes of the leading system message returned
+`cached_tokens = 0` on every sample. A later system message on an unchanged
+leading system was accepted (HTTP 200) and did not force that zero, except
+one identical insert that returned 0. Identical bodies were not
+token-stable (641, 712, and 768 on one 792-token request). This section
+therefore binds **bytes of system messages**, not a live token count.
+
+The product template is still recovered from the earliest system message, as
+the text before the `\n\n## Tools\n` marker. Every system message this
+section writes is a full stable body, not a delta.
+
+1. **The latest system message is the effective prompt.** The model treats
+   the last system message as the current stable body. Earlier system
+   messages stay in the transcript. This section does not delete them.
+2. **Unchanged body.** When the newly assembled body equals the latest
+   system message, ignoring trailing newlines, no system message is edited
+   and none is added.
+3. **First placement.** When no system message contains the `\n\n## Tools\n`
+   marker, the body is written into the leading system message, or inserted
+   at index 0 when the request has none. There is no earlier stable body
+   to keep.
+4. **Later change.** When a system message already contains that marker and
+   the assembled body differs from the latest system message, every earlier
+   system message stays byte-for-byte, and the new body is appended after
+   the current items.
+5. **What can move the body.** The tools document is inside the stable body
+   (§1.1 item 2), so a tools, skills, environment, or project-instruction
+   change appends under rule 4. The request `tools` array is still the full
+   list on every request. This section does not define a tool-addition or
+   tool-removal history message. Chat Completions has no field for one.
+6. **Not this section.** `replace_or_insert_system_head` rewrites the stored
+   leading system (model switch, memory) before this assembly runs. That
+   rewrite is a different byte change. This section does not turn it into
+   an append.
+7. **Epoch.** The epoch stays the hash of the latest stable body (§1.5). An
+   append changes the epoch. It does not change the bytes of the earlier
+   system message.
+
+A test that claims the append preserves a prefix derives the split from the
+serialized messages: the shared byte-prefix length is the hit, and the
+remainder is the miss. It does not hard-code a token count. The §1.9
+scenario harness is not in this tree; the §1.10 test carries this
+byte-prefix mock itself (`in_history_update_appends_and_head_rewrite_breaks_the_byte_prefix`).
+
 ## 2. Non-goals
 
 - Guaranteeing 100% provider cache hits (server policy)  
@@ -278,6 +326,12 @@ runs all of them.
 |------|--------|
 | `cache_totals_accumulate_and_track_unreported` | §1.5.2 semantics, incl. the unreported-turn rule — *next unit* |
 | `cache_guard_negative_control` | §1.9 — a perturbed prefix lands below the threshold, an unchanged one does not — *next unit* |
+
+### 4.5 §1.10 wire placement
+
+| Test | Expect |
+|------|--------|
+| `in_history_update_appends_and_head_rewrite_breaks_the_byte_prefix` | A later stable-body change leaves the leading system bytes intact and appends the new body. A byte-prefix mock, derived from the serialized messages, counts the old body inside the shared prefix. Replacing the leading system with that same new body does not. A second apply of the same body adds nothing. |
 
 ## 5. Implementation notes
 

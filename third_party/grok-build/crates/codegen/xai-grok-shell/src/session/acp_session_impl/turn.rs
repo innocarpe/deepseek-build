@@ -2989,10 +2989,10 @@ impl SessionActor {
                 })),
             );
             let mut request = request;
-            // VC007 / Spec 10: Path A turn assembly — rewrite leading system
-            // message to Spec 10 ordered stable prefix layout + epoch stamp on
-            // every main Grok turn (not only agent_launch stamp). Best-effort;
-            // never blocks sampling on assembly failure (function is infallible).
+            // VC007 / Spec 10 §1.10: assemble the stable body on every main
+            // Grok turn. First placement writes the leading system message.
+            // A later body change appends a system message and leaves the
+            // earlier one byte-for-byte. Best-effort; the function is infallible.
             {
                 let cwd = self
                     .display_cwd

@@ -6770,6 +6770,9 @@ fn max_thoughts_width_preview_title_styling_distinguishes_from_content() {
         crate::theme::ThemeKind::DeepSeekNightNeutral => {
             crate::theme::Theme::deepseeknight_neutral()
         }
+        // Terminal-native paints the terminal's own palette; there is no RGB
+        // token to compare, so mirror `Theme::current()`'s resolution.
+        crate::theme::ThemeKind::Terminal => crate::theme::Theme::current(),
         crate::theme::ThemeKind::Auto => crate::theme::Theme::groknight(),
     };
     assert_ne!(

@@ -1064,6 +1064,9 @@ mod tests {
         };
         for &kind in ThemeKind::ALL {
             let theme = match kind {
+                ThemeKind::DeepSeekNightV2 => Theme::deepseeknight_v2(),
+                ThemeKind::DeepSeekNight => Theme::deepseeknight(),
+                ThemeKind::DeepSeekNightNeutral => Theme::deepseeknight_neutral(),
                 ThemeKind::GrokNight => Theme::groknight(),
                 ThemeKind::GrokDay => Theme::grokday(),
                 ThemeKind::TokyoNight => Theme::tokyonight(),

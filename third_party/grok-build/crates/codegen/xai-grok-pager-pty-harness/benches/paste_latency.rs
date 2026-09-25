@@ -227,7 +227,11 @@ async fn bench_cell(
         Mode::Image => "image",
         Mode::All => unreachable!("cells are per concrete mode"),
     };
-    tracing::info!(surface = surface.as_str(), mode = mode_str, "running cell");
+    tracing::info!(
+        surface = Into::<&'static str>::into(surface),
+        mode = mode_str,
+        "running cell"
+    );
 
     let content = ContentController::start()
         .await
@@ -257,7 +261,7 @@ async fn bench_cell(
                 let ms = start.elapsed().as_secs_f64() * 1000.0;
                 eprintln!(
                     "  [{}/{mode_str}] iter {i}: paste {ms:.1} ms",
-                    surface.as_str()
+                    Into::<&'static str>::into(surface)
                 );
                 primary_ms.push(ms);
                 clear_input_or_respawn(
@@ -284,7 +288,7 @@ async fn bench_cell(
                 let chip = start.elapsed().as_secs_f64() * 1000.0;
                 eprintln!(
                     "  [{}/{mode_str}] iter {i}: responsiveness {resp:.1} ms, chip {chip:.1} ms",
-                    surface.as_str()
+                    Into::<&'static str>::into(surface)
                 );
                 responsiveness_ms.push(resp);
                 primary_ms.push(chip);
@@ -308,7 +312,7 @@ async fn bench_cell(
     let responsiveness_p50 =
         (!responsiveness_ms.is_empty()).then(|| stats(&mut responsiveness_ms).0);
     let result = PasteLatencyResult {
-        surface: surface.as_str(),
+        surface: Into::<&'static str>::into(surface),
         mode: mode_str,
         iterations,
         p50_ms: p50,
@@ -416,7 +420,7 @@ fn clear_input_or_respawn(
         }
     }
     tracing::warn!(
-        surface = surface.as_str(),
+        surface = Into::<&'static str>::into(surface),
         "input did not clear; respawning harness"
     );
     let _ = harness.quit();

@@ -612,6 +612,9 @@ pub(crate) async fn run_read_file(
     };
     if file_content.is_empty() {
         let stored_offset = stored_read_offset(input.offset);
+        // Upstream's observation bookkeeping for the empty-file early return;
+        // the product's snippet mint below sits in the same branch.
+        observed.note_empty_file(input.offset, input.limit);
         let snippet = if utf8_ok {
             Some(
                 mint_session_snippet(
@@ -1030,7 +1033,7 @@ mod tests {
     use crate::implementations::read_file::compress_image_for_conversation;
     use crate::implementations::skills::types::SkillInfo;
     use crate::notification::types::ToolNotificationHandle;
-    use crate::types::context::TruncationConfig;
+    use crate::types::context::{TruncationConfig, WholeReadPolicy};
     #[allow(unused_imports)]
     use crate::types::resources::{NotificationHandle, Resources, TruncationCfg};
     use crate::types::snippet_store::is_valid_snippet_id;

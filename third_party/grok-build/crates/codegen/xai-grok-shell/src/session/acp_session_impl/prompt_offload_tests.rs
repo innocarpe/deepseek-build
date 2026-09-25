@@ -311,11 +311,10 @@ fn assert_elided_ranges_match_file(is_cursor: bool) {
     let file = std::fs::read_to_string(&path).unwrap();
     let lines: Vec<&str> = file.split_inclusive('\n').collect();
     let labels: Vec<&str> = bounded.elided.iter().map(|r| r.label).collect();
-    let expected = if is_cursor && false {
-        vec!["attached context", "user query", "skill instructions"]
-    } else {
-        vec!["user query", "skill instructions", "attached context"]
-    };
+    // `assemble_with_layout` pins the order (query, skills, context) and ignores
+    // `is_cursor`, so there is one expected layout for every input.
+    let expected = vec!["user query", "skill instructions", "attached context"];
+    let _ = is_cursor;
     assert_eq!(expected, labels, "one range per part, in file order");
     for pair in bounded.elided.windows(2) {
         let [earlier, later] = pair else {

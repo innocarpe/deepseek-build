@@ -95,18 +95,38 @@ The `aside` CLI drove this (signing in, approving the security key, reading
 emailed codes from Gmail). It cannot perform the 2FA enrollment itself — that
 needs the account holder's key or authenticator secret once.
 
+## Account 2FA state (check before choosing a path)
+
+```bash
+npm profile get | grep two-factor      # currently: auth-and-writes
+```
+
+`auth-and-writes` means a **local** `npm publish` asks for proof of presence.
+The OIDC path is unaffected, and `npm stage publish` is unaffected too — only
+`npm stage approve` and a direct publish are interactive. The registered second
+factor here is a **security key**, so the proof is a browser approval, not a
+typed code.
+
 ## Emergency path (CI cannot publish)
 
 ```bash
-./scripts/npm-emergency-publish.sh <ver>        # interactive, publishes locally
+./scripts/npm-emergency-publish.sh <ver>        # publishes locally
 ./scripts/release.sh <ver> --publish-only --local-publish   # same, in the orchestrator
 ```
 
-It refuses to publish without the release asset, drives `npm login
---auth-type=web` through `aside exec` (the browser agent signs in and reads any
-emailed code from Gmail), and publishes. **It does not ask a person for a
-number.** It carries no provenance attestation — there is no local OIDC
-provider — so prefer fixing CI over using it.
+It refuses to publish without the release asset, ensures an npm session (driving
+`npm login --auth-type=web` through `aside exec` if needed), then runs the
+publish **under a pty with `--browser=false`**, captures the 2FA approval URL
+npm prints, and hands that URL to `aside exec` to approve with the registered
+security key. **It does not ask a person for a number**, and no code or
+single-use URL reaches a log, commit or PR.
+
+Both pty and `--browser=false` are load-bearing: piped, npm refuses with `EOTP`
+without offering the URL; with a browser configured it blocks on `Press ENTER`.
+
+It carries no provenance attestation (there is no local OIDC provider), so
+prefer fixing CI over using it. If the account ever gains an authenticator app,
+`NPM_OTP=<code>` still works as an override.
 
 ## Manual asset fallback (reliable path when CI is stuck)
 
@@ -149,6 +169,7 @@ gh workflow run publish-npm.yml --ref v4.0.4
 | Bumping to a new MAJOR with stale README banner | Tag ships ahead of the documented story |
 | Claiming done after `npm publish` | Unverified global install is not a release |
 | Local publish when CI could publish | Loses provenance and leaves the irreversible step off the audit trail |
+| `npm stage publish` then hand-approving every release | Works (it is how `5.6.0` shipped), but `approve` is interactive by design — it cannot run unattended |
 | "Fixing" an OIDC 403 by adding a bypass token | The bypass is being retired; fix the publisher or the workflow instead |
 
 ## Done means

@@ -54,7 +54,7 @@ turn repeated builds into incremental ones.
 | [`lib/version_log.py`](../../scripts/lib/version_log.py) | Fill the decision-log row's `PR #_(fill in)_` with the release PR number; called by `release.sh` the moment `gh pr create` returns (idempotent, so a resumed release re-runs safely) |
 | [`release.sh`](../../scripts/release.sh) | Orchestrator: bump → MAJOR/README gate → verify → PR (`chore(release)`) → merge → tag `v{ver}` → wait for prebuilt assets → wait for CI publish → verify the registry. |
 | [`npm-emergency-publish.sh`](../../scripts/npm-emergency-publish.sh) | **Emergency path only.** Local interactive publish that drives `npm login --auth-type=web` and any emailed code through the `aside` browser agent, so no person has to supply a number. |
-| [`cache-guard.sh`](../../scripts/cache-guard.sh) | Release gate for spec 10 §1.9: runs the cache regression bench (scripted turn scenarios vs a prefix-accounting mock provider, two scored layers). Skips unless `DSB_RELEASE_CACHE_GUARD=1`; threshold via `DSB_CACHE_GUARD_THRESHOLD` (default 90). |
+| [`cache-guard.sh`](../../scripts/cache-guard.sh) | Release gate for spec 10 §1.9: overlay bench always, Path A bench only when `xai-grok-shell` is already compiled in the vendored target. Skips unless `DSB_RELEASE_CACHE_GUARD=1`; threshold via `DSB_CACHE_GUARD_THRESHOLD` (default 90). |
 
 ### Cache guard (spec 10 §1.9, release gate)
 
@@ -73,11 +73,22 @@ is changed by design), and the last-3-request hit rate is at or above
 prefix every turn and must fail the rate layer — if it passes, the bench
 fails, because the mock stopped accounting from the request.
 
-Without `DSB_RELEASE_CACHE_GUARD=1` both the wrapper and the gated test skip, so
+Without `DSB_RELEASE_CACHE_GUARD=1` both the wrapper and the gated tests skip, so
 the ordinary `cargo test --workspace` never pays for the bench (the contract
-tests inside it run always). Harness:
-[`crates/dsb-agent/tests/cache_guard.rs`](../../crates/dsb-agent/tests/cache_guard.rs);
-the contract and test names are spec 10 §1.9 / §4.4.
+tests inside each harness run always).
+
+Two harnesses, one threshold. The overlay bench
+([`crates/dsb-agent/tests/cache_guard.rs`](../../crates/dsb-agent/tests/cache_guard.rs))
+drives the `dsb-agent` turn loop, including live tool execution. The Path A
+bench
+(`third_party/grok-build/crates/codegen/xai-grok-shell/src/session/helpers/spec10_path_a_cache_guard.rs`)
+scores `assemble_spec10_path_a_turn` + `place_stable_body` after the Chat
+Completions mapping. The wrapper runs that second bench only when the
+vendored target already contains `libxai_grok_shell-*.rlib` or the
+`xai_grok_shell-*` test harness. `cargo test --lib` leaves the harness and
+not the rlib; a product build leaves the rlib. A missing artifact prints a
+skip and exits 0 for that half — this script does not start a cold vendored
+build (30–60+ minutes). The contract and test names are spec 10 §1.9 / §4.4.
 
 ### `release.sh` flags
 

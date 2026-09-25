@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|--------|
-| Status | **ready-for-impl** — §1.5.1 (overlay and Path A), §1.5.2, §1.9, and §1.10 enforced with tests |
+| Status | **ready-for-impl** — §1.5.1 (overlay and Path A), §1.5.2, §1.9 (overlay bench and Path A assembly bench), and §1.10 enforced with tests |
 | Philosophy | HARNESS §4.2, §5; Deep Code pillar B; Reasonix cache-first |
 | Gate | Part of **G2** |
 | Tests | **Automated golden + negative required** |
@@ -267,8 +267,9 @@ M1 acceptance:
 3. Attribution: §1.5.1 axes are named per component, with no false positive on
    an unchanged prefix and `unattributed` reserved for the coverage bug.  
 4. Cumulative counter: §1.5.2 semantics, including the unreported-turn rule.  
-5. Bench: §1.9 threshold. **Landed** — `cache_guard_*` in
-   `crates/dsb-agent/tests/cache_guard.rs`, release wrapper
+5. Bench: §1.9 threshold. **Landed** — overlay `cache_guard_*` in
+   `crates/dsb-agent/tests/cache_guard.rs`, and Path A `cache_guard_path_a_*`
+   beside `spec10_path_a_assembly.rs`. Release wrapper
    `scripts/cache-guard.sh`; §4.4 names the tests.
 
 ### 1.9 Cache regression bench
@@ -306,12 +307,32 @@ Wrapper: `scripts/cache-guard.sh`, release-gated like Reasonix's (env
 `DSB_RELEASE_CACHE_GUARD=1`; skips when unset so it never slows the normal
 suite).
 
-**Landed (2026-09-26).** Harness: `crates/dsb-agent/tests/cache_guard.rs`;
-§4.4 names the tests. It scores the overlay builder and turn loop
-(`dsb-context` + `dsb-agent`, Path B). Path A's assembly is **not covered
-here**: `xai-grok-shell` does not depend on `dsb-context`, so this bench
-cannot see the bytes Path A sends — the `6.1.0` depth board carries that
-wiring (`docs/product/DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md`, U2.2).
+**Landed (2026-09-26), two harnesses.**
+
+* **Path B (overlay).** `crates/dsb-agent/tests/cache_guard.rs`. Scores the
+  overlay builder and turn loop (`dsb-context` + `dsb-agent`), including
+  live tool execution. §4.4 names those tests. `xai-grok-shell` does not
+  depend on `dsb-context`, so this harness cannot see the bytes Path A sends.
+
+* **Path A (vendored).** `spec10_path_a_cache_guard` in `xai-grok-shell`,
+  wired from `spec10_path_a_assembly.rs`. A scenario request is the
+  `messages` array of the `ChatCompletionRequest` produced after
+  `assemble_spec10_path_a_turn` and `place_stable_body` — the placement
+  `apply_spec10_to_conversation_request` writes at `turn.rs` before the
+  sampler's `From` impl calls `conversation_to_chat_messages`. The mock
+  accounts that array message by message (4 bytes = 1 token), same rule as
+  the overlay mock. Distinct epochs are distinct `epoch_sha256_hex` values
+  of those assemblies, cross-checked against the fingerprint of the latest
+  system message on the wire (the effective prompt, §1.10 rule 1). The
+  leading message stays one fingerprint across an append; counting epochs
+  off the leading message would reject the append this contract requires.
+
+Still not covered by either harness: a live API `prompt_cache_hit_tokens` /
+`prompt_cache_miss_tokens` bill (the ratio is the mock's, and identical
+bodies are not token-stable — §1.10), the full TUI turn loop (Path A tool
+rounds are scripted conversation items, not a tool process), and sampler
+fields outside `messages` (`model`, temperature, the `tools[]` array). A
+green Path B run is not Path A evidence.
 
 ### 1.10 In-history stable-body update (Path A assembly)
 
@@ -357,9 +378,11 @@ section writes is a full stable body, not a delta.
 
 A test that claims the append preserves a prefix derives the split from the
 serialized messages: the shared byte-prefix length is the hit, and the
-remainder is the miss. It does not hard-code a token count. The §1.9
-scenario harness is not in this tree; the §1.10 test carries this
-byte-prefix mock itself (`in_history_update_appends_and_head_rewrite_breaks_the_byte_prefix`).
+remainder is the miss. It does not hard-code a token count. The §1.9 Path A
+bench scores the same idea over a scenario (`spec10_path_a_cache_guard`);
+the §1.10 test keeps its own byte-prefix mock
+(`in_history_update_appends_and_head_rewrite_breaks_the_byte_prefix`) so the
+append rule does not depend on the bench.
 ## 2. Non-goals
 
 - Guaranteeing 100% provider cache hits (server policy)  
@@ -382,10 +405,12 @@ byte-prefix mock itself (`in_history_update_appends_and_head_rewrite_breaks_the_
 
 ## 4. Test plan (automated)
 
-Names below are the real test names; `cargo test -p dsb-context -p dsb-agent`
-runs all of them. §4.6's counter tests live in
+Names below are the real test names. `cargo test -p dsb-context -p dsb-agent`
+runs the overlay rows. §4.6's counter tests live in
 `crates/dsb-agent/src/cache_totals.rs`, with the turn-loop and persist→resume
-cases in `crates/dsb-agent/src/loop_.rs`.
+cases in `crates/dsb-agent/src/loop_.rs`. §4.4's Path A rows, §4.5, and §4.7
+run inside `xai-grok-shell` (`cargo test -p xai-grok-shell --lib`, from
+`third_party/grok-build`; the bench filter is `cache_guard_path_a`).
 
 ### 4.1 Pre-existing (unchanged, must stay green)
 
@@ -441,6 +466,27 @@ cases in `crates/dsb-agent/src/loop_.rs`.
 
 Runner: `crates/dsb-agent/tests/cache_guard.rs`; wrapper
 `scripts/cache-guard.sh`.
+
+Path A, same contract, different bytes. The mock reads the Chat Completions
+`messages` produced from `assemble_spec10_path_a_turn` + `place_stable_body`.
+Tool rounds are scripted items, not a live tool process. The release-suite
+test is gated by the same env var; the wrapper runs it only when
+`xai-grok-shell` has already been compiled into the vendored target
+(`libxai_grok_shell-*.rlib`, or the `xai_grok_shell-*` test harness).
+
+| Test | Expect |
+|------|--------|
+| `cache_guard_path_a_mock_accounts_from_request_bytes` | the mock computes the carry from the mapped messages: zero on the first request, the whole previous prompt on an append, zero when the leading message moved, everything on a replay |
+| `cache_guard_path_a_scored_bytes_match_apply_spec10` | the bench's placement matches `apply_spec10_to_conversation_request` on the same workspace |
+| `cache_guard_path_a_tail_window_clamps_and_rejects_a_short_run` | the rate is the integer mean of the last `min(3, requests)` rates; fewer than 3 requests fail |
+| `cache_guard_path_a_unchanged_prefix_is_one_epoch_and_passes` | no §1.1 input changes → exactly 1 epoch, one leading fingerprint, and the last-3 average holds the threshold |
+| `cache_guard_path_a_by_design_change_is_two_epochs` | one §1.1 input changed by design → exactly 2 epochs (latest system message moves, leading message does not) and the tail recovers above the threshold |
+| `cache_guard_path_a_negative_control` | a perturbed prefix lands below the threshold, an unchanged one does not |
+| `cache_guard_path_a_tool_loop_stays_above_threshold` | scripted tool-call / tool-result rounds → exactly 1 epoch and the last-3 average holds |
+| `cache_guard_path_a_mixed_message_sizes_hold_the_threshold` | mixed message sizes move the fresh-tail share without a §1.1 change → exactly 1 epoch and the last-3 average holds |
+| `cache_guard_path_a_release_suite` | the full scenario matrix; gated by `DSB_RELEASE_CACHE_GUARD=1`, skips when unset |
+
+Runner: `third_party/grok-build/crates/codegen/xai-grok-shell/src/session/helpers/spec10_path_a_cache_guard.rs`.
 
 ### 4.5 §1.10 wire placement
 

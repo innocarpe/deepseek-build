@@ -62,7 +62,7 @@ Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** p
 | 2026-08-09 | **`5.5.3`** fix compiled version injection (sccache-proof) and gate shipped tarball | PR #_(fill in)_ |
 | 2026-08-10 | **`5.5.4`** sync Grok Build through `8a14c91` and restore full vendor CI | PR #_(fill in)_ |
 | 2026-09-25 | **`5.6.0`** first-run provider choice (DeepSeek API or OpenRouter) and the agent config that follows it | PR #189 |
-| 2026-09-25 | **`5.7.0`** phone-width layout and Orca pane status | PR #_(fill in)_ |
+| 2026-09-25 | **`5.7.0`** phone-width layout and Orca pane status | PR #201 |
 | 2026-09-25 | **`6.0.0`** Grok Build base ported 1.0.0 to 1.0.41 with the DeepSeek overlay re-derived; sync infrastructure | PR #_(fill in)_ |
 | 2026-09-25 | **`6.0.0`** Grok Build base ported `1.0.0` → `1.0.41` (41 releases, 472 upstream items) with the DeepSeek overlay re-derived by three-way merge; sync infra (`grok-sync` skill, runbook, ledger, inventory) added so the next sync is a procedure rather than a rediscovery | [CHANGELIST_6_0_0.md](../CHANGELIST_6_0_0.md) · [UPSTREAM_SYNC_LEDGER.md](../UPSTREAM_SYNC_LEDGER.md) |
 | 2026-08-07 | **`5.0.1`** widen the DeepSeek whale logo to official terminal proportions | PR #113 |

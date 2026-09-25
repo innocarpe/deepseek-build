@@ -1,8 +1,10 @@
 # Changelog
 
 ## Unreleased
-- A submitted prompt on a phone-width pane is a one-row band. The fold is measured at the width the text actually wraps at, so a long one-line prompt no longer stays expanded and skips the one-row budget. At or below 60 columns the echo also drops its two blank pad rows and the decorative `❯` on both the echo and the input box; `$ `, `↻  `, `? ` and `! ` stay, because those say what kind of turn or mode this is. Widths above 60 keep today's three-line budget, the padding and the arrow, and a prompt folded by a resize unfolds again when the pane widens.
 
+## 6.0.1 — 2026-09-26
+
+- A submitted prompt on a phone-width pane is a one-row band. The fold is measured at the width the text actually wraps at, so a long one-line prompt no longer stays expanded and skips the one-row budget. At or below 60 columns the echo also drops its two blank pad rows and the decorative `❯` on both the echo and the input box; `$ `, `↻  `, `? ` and `! ` stay, because those say what kind of turn or mode this is. Widths above 60 keep today's three-line budget, the padding and the arrow, and a prompt folded by a resize unfolds again when the pane widens.
 - `npm install -g` on npm 12 no longer looks finished when the agent was
   never downloaded. npm 12.0.0 denies dependency install scripts unless the
   installer opts in, and still prints `added 1 package` (this machine: npm
@@ -18,7 +20,6 @@
   run and fails still exits 1. npm 11.20.0 runs the script with or without
   the flag. The READMEs and `docs/user-guide/05-npm.md` show the working
   command.
-
 - A published release no longer prints `[alpha]` because `version.json`
   still names an older stable pointer. `6.0.0` with `stable_version`
   `5.7.0` reported `deepseek-build 6.0.0 (…) [alpha]`. That file is an
@@ -49,7 +50,6 @@
   than guess, and an unchanged prefix logs `none`. The shape is observational:
   `stable_prefix_bytes` and every existing epoch are byte-identical, pinned by
   a golden test that fails loudly when a change would invalidate live caches.
-
 - A session now reports what its cache did over the whole conversation, not
   just the last turn. `dsb run` and the REPL print
   `cache_session=hit=<n>,miss=<n>,rate=<pct>,reported=<n>,unreported=<n>` once

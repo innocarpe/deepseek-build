@@ -5,6 +5,7 @@ Agent-loadable skills (`SKILL.md` directories) live here.
 | Skill | When |
 |-------|------|
 | [`pr-authoring/`](./pr-authoring/SKILL.md) | Opening or writing PRs; enforcing Orca-level narrative bar |
+| [`release/`](./release/SKILL.md) | Cutting a release: bump, CHANGELOG, tag, prebuilt assets, npm publish |
 
 ## How coding agents load these
 

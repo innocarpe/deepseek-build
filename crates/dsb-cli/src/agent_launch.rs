@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
-use dsb_config::BuildHome;
+use dsb_config::{BuildHome, Provider};
 
 /// Env override for the full-screen agent binary.
 pub const ENV_AGENT_BIN: &str = "DEEPSEEK_BUILD_AGENT_BIN";
@@ -117,6 +117,70 @@ fn emit_product_title() {
 /// those models through the Grok CLI proxy (`cli-chat-proxy.grok.com`).
 pub const DEEPSEEK_API_BASE_URL: &str = "https://api.deepseek.com";
 
+/// OpenRouter OpenAI-compatible base URL (first-run provider choice).
+pub const OPENROUTER_API_BASE_URL: &str = "https://openrouter.ai/api/v1";
+
+/// The two product model stanzas (`[model.<slot>]`). Slot keys stay the same
+/// for every provider so routing (`/pro`, subagents, `[models] default`) never
+/// has to know which endpoint is behind them.
+const PRODUCT_MODEL_SLOTS: [&str; 2] = ["deepseek-v4-flash", "deepseek-v4-pro"];
+
+/// `[models]` side-request keys that otherwise fall back to the vendored
+/// default model instead of a product stanza. `prompt_suggestion` is left
+/// out on purpose: unset, the per-turn suggestion call is skipped; pointing
+/// it at Flash would start a new paid request on every turn.
+const PRODUCT_AUX_MODEL_KEYS: [&str; 3] = ["session_summary", "web_search", "image_description"];
+
+/// Base URL the product model stanzas use for `provider`.
+pub fn provider_base_url(provider: Provider) -> &'static str {
+    match provider {
+        Provider::DeepSeek => DEEPSEEK_API_BASE_URL,
+        Provider::OpenRouter => OPENROUTER_API_BASE_URL,
+    }
+}
+
+/// Wire `model` id for a product slot. OpenRouter only accepts the
+/// `provider/model` form, so the same pinned model gets the `deepseek/` prefix.
+fn provider_wire_model(provider: Provider, slot: &str) -> String {
+    match provider {
+        Provider::DeepSeek => slot.to_string(),
+        Provider::OpenRouter => format!("deepseek/{slot}"),
+    }
+}
+
+fn product_slot_display_name(slot: &str) -> &'static str {
+    match slot {
+        "deepseek-v4-pro" => "DeepSeek V4 Pro",
+        _ => "DeepSeek V4 Flash",
+    }
+}
+
+/// One product `[model.<slot>]` stanza for `provider` (leading blank line).
+fn product_model_stanza(slot: &str, provider: Provider, api_key: Option<&str>) -> String {
+    let wire = provider_wire_model(provider, slot);
+    let name = product_slot_display_name(slot);
+    let base_url = provider_base_url(provider);
+    let env_key = provider.env_key();
+    let api_key_line = api_key
+        .map(|k| format!("api_key = \"{}\"\n", escape_toml_basic(k)))
+        .unwrap_or_default();
+    format!(
+        r#"
+[model.{slot}]
+model = "{wire}"
+name = "{name}"
+system_prompt_label = "{PRODUCT_SYSTEM_PROMPT_LABEL}"
+context_window = 128000
+api_backend = "chat_completions"
+base_url = "{base_url}"
+{api_key_line}env_key = "{env_key}"
+# Spec 30 / VC008: Path A chat_completions must stamp reasoning_effort on wire.
+supports_reasoning_effort = true
+reasoning_effort = "high"
+"#
+    )
+}
+
 /// Identity label rendered by the vendored system prompt template
 /// (`You are ${{ system_prompt_label }}.`).
 ///
@@ -129,9 +193,11 @@ pub const PRODUCT_SYSTEM_PROMPT_LABEL: &str = "DeepSeek Build";
 
 /// Prepare product agent config under product home (DeepSeek defaults + theme).
 ///
-/// - Creates `config.toml` when missing (full DeepSeek product seed).
+/// - Creates `config.toml` when missing (full product seed for the provider
+///   chosen in setup; DeepSeek API when nothing was chosen).
 /// - If present: inject missing theme; ensure DeepSeek model `base_url` is set
-///   so live agent turns hit `api.deepseek.com` (not Grok proxy).
+///   so live agent turns hit `api.deepseek.com` (not Grok proxy). Switching an
+///   existing file to another provider is [`apply_provider_to_agent_config`].
 pub fn ensure_product_agent_config(home: &BuildHome) -> Result<()> {
     ensure_product_agent_config_with_theme(home, PRODUCT_THEME)
 }
@@ -152,10 +218,18 @@ pub fn ensure_product_agent_config_with_theme(home: &BuildHome, theme: &str) -> 
         return Ok(());
     }
 
-    let api_key_line = match dsb_config::Credentials::load(home) {
-        Ok(c) => format!("api_key = \"{}\"\n", escape_toml_basic(c.api_key())),
-        Err(_) => String::new(),
-    };
+    let creds = dsb_config::Credentials::load(home).ok();
+    let provider = creds.as_ref().map_or(Provider::DeepSeek, |c| c.provider());
+    let api_key = creds.as_ref().map(|c| c.api_key());
+    let base_url = provider_base_url(provider);
+    let aux_lines: String = PRODUCT_AUX_MODEL_KEYS
+        .iter()
+        .map(|key| format!("{key} = \"deepseek-v4-flash\"\n"))
+        .collect();
+    let stanzas: String = PRODUCT_MODEL_SLOTS
+        .iter()
+        .map(|slot| product_model_stanza(slot, provider, api_key))
+        .collect();
 
     // Chat Completions backend for DeepSeek (not Grok Responses default).
     // `base_url` on each model is load-bearing for OpenAI-compat providers.
@@ -165,33 +239,11 @@ pub fn ensure_product_agent_config_with_theme(home: &BuildHome, theme: &str) -> 
 
 [models]
 default = "deepseek-v4-flash"
-
-[model.deepseek-v4-flash]
-model = "deepseek-v4-flash"
-name = "DeepSeek V4 Flash"
-system_prompt_label = "{PRODUCT_SYSTEM_PROMPT_LABEL}"
-context_window = 128000
-api_backend = "chat_completions"
-base_url = "{DEEPSEEK_API_BASE_URL}"
-{api_key_line}env_key = "DEEPSEEK_API_KEY"
-# Spec 30 / VC008: Path A chat_completions must stamp reasoning_effort on wire.
-supports_reasoning_effort = true
-reasoning_effort = "high"
-
-[model.deepseek-v4-pro]
-model = "deepseek-v4-pro"
-name = "DeepSeek V4 Pro"
-system_prompt_label = "{PRODUCT_SYSTEM_PROMPT_LABEL}"
-context_window = 128000
-api_backend = "chat_completions"
-base_url = "{DEEPSEEK_API_BASE_URL}"
-{api_key_line}env_key = "DEEPSEEK_API_KEY"
-# Spec 30 / VC008: Path A chat_completions must stamp reasoning_effort on wire.
-supports_reasoning_effort = true
-reasoning_effort = "high"
-
+# Side requests (session titles, web search, image description) use the
+# product Flash stanza instead of the vendored default model.
+{aux_lines}{stanzas}
 [endpoints]
-xai_api_base_url = "{DEEPSEEK_API_BASE_URL}"
+xai_api_base_url = "{base_url}"
 
 [ui]
 theme = "{theme}"
@@ -224,6 +276,8 @@ enabled = true
 /// 3. Explicit `yolo = false` when the key is missing (Spec 90 product default)
 /// 4. Spec 30 / VC008: `supports_reasoning_effort` + default `reasoning_effort`
 ///    on DeepSeek model stanzas when those keys are missing
+/// 5. `[models]` side-request keys (session titles, web search, image
+///    description) pointing at the Flash stanza when those keys are missing
 fn repair_product_agent_config(body: &str) -> String {
     repair_product_agent_config_with_theme(body, PRODUCT_THEME)
 }
@@ -259,12 +313,13 @@ fn repair_product_agent_config_with_theme(body: &str, theme: &str) -> String {
     // Drop the leftover so the vendored agent uses its own default fork target.
     next = scrub_grok_fork_secondary_model(next);
 
-    next = ensure_deepseek_model_base_url(next, "deepseek-v4-flash", "DeepSeek V4 Flash");
-    next = ensure_deepseek_model_base_url(next, "deepseek-v4-pro", "DeepSeek V4 Pro");
+    next = ensure_deepseek_model_base_url(next, "deepseek-v4-flash");
+    next = ensure_deepseek_model_base_url(next, "deepseek-v4-pro");
     next = ensure_deepseek_model_reasoning_effort(next, "deepseek-v4-flash");
     next = ensure_deepseek_model_reasoning_effort(next, "deepseek-v4-pro");
     next = ensure_deepseek_model_system_prompt_label(next, "deepseek-v4-flash");
     next = ensure_deepseek_model_system_prompt_label(next, "deepseek-v4-pro");
+    next = ensure_product_aux_models(next);
 
     if !next.contains("xai_api_base_url") {
         if !next.contains("[endpoints]") {
@@ -282,24 +337,11 @@ fn repair_product_agent_config_with_theme(body: &str, theme: &str) -> String {
 }
 
 /// Ensure `[model.<id>]` exists and contains `base_url = api.deepseek.com`.
-fn ensure_deepseek_model_base_url(body: String, model_id: &str, display_name: &str) -> String {
+fn ensure_deepseek_model_base_url(body: String, model_id: &str) -> String {
     let header = format!("[model.{model_id}]");
     if !body.contains(&header) {
         let mut next = body;
-        next.push_str(&format!(
-            r#"
-{header}
-model = "{model_id}"
-name = "{display_name}"
-system_prompt_label = "{PRODUCT_SYSTEM_PROMPT_LABEL}"
-context_window = 128000
-api_backend = "chat_completions"
-base_url = "{DEEPSEEK_API_BASE_URL}"
-env_key = "DEEPSEEK_API_KEY"
-supports_reasoning_effort = true
-reasoning_effort = "high"
-"#
-        ));
+        next.push_str(&product_model_stanza(model_id, Provider::DeepSeek, None));
         return next;
     }
 
@@ -312,6 +354,18 @@ reasoning_effort = "high"
             &format!("base_url = \"{DEEPSEEK_API_BASE_URL}\""),
         )],
     )
+}
+
+/// Point `[models]` side requests at the Flash stanza when the keys are absent.
+///
+/// Only edits an existing `[models]` table; never overwrites a user value.
+fn ensure_product_aux_models(body: String) -> String {
+    let lines: Vec<(&str, String)> = PRODUCT_AUX_MODEL_KEYS
+        .iter()
+        .map(|key| (*key, format!("{key} = \"deepseek-v4-flash\"")))
+        .collect();
+    let keys: Vec<(&str, &str)> = lines.iter().map(|(k, l)| (*k, l.as_str())).collect();
+    inject_model_section_keys_if_missing(body, "[models]", &keys)
 }
 
 /// Spec 30 / VC008: ensure DeepSeek model stanzas enable effort and default high.
@@ -516,6 +570,204 @@ fn inject_model_section_keys_if_missing(
     } else {
         body
     }
+}
+
+/// Point an existing product `config.toml` at `provider` after setup saved
+/// `api_key` for it. No-op when the file does not exist yet (the seed in
+/// [`ensure_product_agent_config`] follows the saved provider).
+///
+/// Returns the product stanzas that were left alone because they are
+/// hand-edited for another endpoint (see [`retarget_product_config`]).
+pub fn apply_provider_to_agent_config(
+    home: &BuildHome,
+    provider: Provider,
+    api_key: &str,
+) -> Result<Vec<&'static str>> {
+    let config_path = home.path().join("config.toml");
+    if !config_path.exists() {
+        return Ok(Vec::new());
+    }
+    let body = std::fs::read_to_string(&config_path)
+        .with_context(|| format!("read {}", config_path.display()))?;
+    let (next, kept_custom) = retarget_product_config(&body, provider, api_key);
+    if next != body {
+        std::fs::write(&config_path, next)
+            .with_context(|| format!("update {}", config_path.display()))?;
+    }
+    Ok(kept_custom)
+}
+
+/// Pure rewrite behind [`apply_provider_to_agent_config`].
+///
+/// Each product stanza (`[model.deepseek-v4-flash]`, `[model.deepseek-v4-pro]`)
+/// is handled as a whole:
+/// - still the *other* provider's product default (`base_url`, `model`,
+///   `env_key`; a missing `base_url` / `model` counts as DeepSeek because
+///   repair and the agent fall back to that) → rewritten to `provider`'s
+///   defaults with the new `api_key`;
+/// - already on `provider`'s product URL (possibly hand-tuned) → only an
+///   inline `api_key` is replaced, so a stale key cannot shadow the new one;
+/// - anything else is hand-edited for another endpoint → left untouched and
+///   returned, so setup can say so instead of half-rewriting it.
+///
+/// A missing stanza is appended for `provider`. `[endpoints]
+/// xai_api_base_url` follows only when no stanza was kept custom.
+fn retarget_product_config(
+    body: &str,
+    provider: Provider,
+    api_key: &str,
+) -> (String, Vec<&'static str>) {
+    let other = match provider {
+        Provider::DeepSeek => Provider::OpenRouter,
+        Provider::OpenRouter => Provider::DeepSeek,
+    };
+    let new_base = provider_base_url(provider);
+    let mut lines: Vec<String> = body.lines().map(str::to_string).collect();
+    let mut appended = String::new();
+    let mut kept_custom = Vec::new();
+    let mut changed = false;
+
+    for slot in PRODUCT_MODEL_SLOTS {
+        let header = format!("[model.{slot}]");
+        let Some(range) = toml_section_range(&lines, &header) else {
+            appended.push_str(&product_model_stanza(slot, provider, Some(api_key)));
+            continue;
+        };
+        let value = |key: &str| {
+            toml_section_key_index(&lines, range, key)
+                .and_then(|i| toml_rhs_string(&lines[i]))
+                .map(str::to_string)
+        };
+        let base = value("base_url").unwrap_or_else(|| DEEPSEEK_API_BASE_URL.to_string());
+        let model = value("model").unwrap_or_else(|| slot.to_string());
+        let env_key = value("env_key");
+        let has_inline_key = value("api_key").is_some();
+        let is_default_for = |p: Provider| {
+            base == provider_base_url(p)
+                && model == provider_wire_model(p, slot)
+                && env_key.as_deref().is_none_or(|e| e == p.env_key())
+        };
+        let wanted: Vec<(&str, String)> = if is_default_for(other) {
+            vec![
+                ("base_url", new_base.to_string()),
+                ("model", provider_wire_model(provider, slot)),
+                ("env_key", provider.env_key().to_string()),
+                ("api_key", api_key.to_string()),
+            ]
+        } else if base == new_base {
+            if has_inline_key {
+                vec![("api_key", api_key.to_string())]
+            } else {
+                Vec::new()
+            }
+        } else {
+            kept_custom.push(slot);
+            continue;
+        };
+        for (key, value) in wanted {
+            let line = format!("{key} = \"{}\"", escape_toml_basic(&value));
+            let range = toml_section_range(&lines, &header).unwrap_or(range);
+            match toml_section_key_index(&lines, range, key) {
+                Some(i) => changed |= set_line(&mut lines, i, line),
+                None => {
+                    lines.insert(range.0, line);
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    if kept_custom.is_empty()
+        && let Some(range) = toml_section_range(&lines, "[endpoints]")
+        && let Some(i) = toml_section_key_index(&lines, range, "xai_api_base_url")
+        && toml_rhs_string(&lines[i]) == Some(provider_base_url(other))
+    {
+        changed |= set_line(&mut lines, i, format!("xai_api_base_url = \"{new_base}\""));
+    }
+
+    if !changed && appended.is_empty() {
+        return (body.to_string(), kept_custom);
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out.push_str(&appended);
+    (out, kept_custom)
+}
+
+/// Replace line `i`; true when the text actually changed.
+fn set_line(lines: &mut [String], i: usize, line: String) -> bool {
+    if lines[i] == line {
+        return false;
+    }
+    lines[i] = line;
+    true
+}
+
+/// True when the default model stanza (`[models] default`) has an `env_key`
+/// whose variable is set — the agent will authenticate from the environment
+/// even without `credentials.json` / `DEEPSEEK_API_KEY` (e.g. a hand-written
+/// OpenRouter stanza with its own variable). Inline `api_key` is ignored on
+/// purpose: after `auth logout` the product-written copy should not
+/// suppress setup.
+pub fn configured_model_env_key_available(home: &BuildHome) -> bool {
+    let Ok(body) = std::fs::read_to_string(home.path().join("config.toml")) else {
+        return false;
+    };
+    configured_model_env_key_available_with(&body, |name| env::var(name).ok())
+}
+
+fn configured_model_env_key_available_with(
+    body: &str,
+    env_lookup: impl Fn(&str) -> Option<String>,
+) -> bool {
+    let lines: Vec<String> = body.lines().map(str::to_string).collect();
+    let default_slot = toml_section_range(&lines, "[models]")
+        .and_then(|r| toml_section_key_index(&lines, r, "default"))
+        .and_then(|i| toml_rhs_string(&lines[i]).map(str::to_string))
+        .unwrap_or_else(|| PRODUCT_MODEL_SLOTS[0].to_string());
+    let Some(range) = toml_section_range(&lines, &format!("[model.{default_slot}]")) else {
+        return false;
+    };
+    let Some(i) = toml_section_key_index(&lines, range, "env_key") else {
+        return false;
+    };
+    let Some((_, rhs)) = lines[i].split_once('=') else {
+        return false;
+    };
+    // `env_key` is a string or an array of strings (vendored config schema).
+    toml_rhs_without_comment(rhs)
+        .split(['"', '\''])
+        .skip(1)
+        .step_by(2)
+        .any(|name| env_lookup(name).is_some_and(|v| !v.trim().is_empty()))
+}
+
+/// `[start, end)` line indices of the body of `header`'s table.
+fn toml_section_range(lines: &[String], header: &str) -> Option<(usize, usize)> {
+    let start = lines.iter().position(|l| l.trim() == header)? + 1;
+    let end = lines[start..]
+        .iter()
+        .position(|l| l.trim_start().starts_with('['))
+        .map_or(lines.len(), |i| start + i);
+    Some((start, end))
+}
+
+/// Index of the exact `key = …` line inside `range` (comments skipped).
+fn toml_section_key_index(lines: &[String], range: (usize, usize), key: &str) -> Option<usize> {
+    (range.0..range.1).find(|&i| {
+        let t = lines[i].trim();
+        !t.starts_with('#') && t.split_once('=').is_some_and(|(k, _)| k.trim() == key)
+    })
+}
+
+/// Unquoted value of a `key = "value"` line (basic or literal string).
+fn toml_rhs_string(line: &str) -> Option<&str> {
+    let (_, rhs) = line.split_once('=')?;
+    let value = toml_rhs_without_comment(rhs).trim();
+    value
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .or_else(|| value.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
 }
 
 fn escape_toml_basic(s: &str) -> String {
@@ -887,9 +1139,13 @@ pub fn exec_agent(args: &[String]) -> Result<()> {
     }
     // Brand the vendored resume hints: `dsb --resume <id>` instead of `grok --resume <id>`.
     cmd.env("GROK_INVOCATION_NAME", crate::invocation_name());
-    if env::var_os(dsb_config::ENV_API_KEY).is_none() {
-        if let Ok(c) = dsb_config::Credentials::load(&home) {
-            cmd.env(dsb_config::ENV_API_KEY, c.api_key());
+    // Hand the saved key to the stanza's `env_key` variable when the shell
+    // did not set it. Keyed by provider so an OpenRouter key is never exported
+    // as DEEPSEEK_API_KEY (and vice versa).
+    if let Ok(c) = dsb_config::Credentials::load(&home) {
+        let var = c.provider().env_key();
+        if env::var_os(var).is_none() {
+            cmd.env(var, c.api_key());
         }
     }
 
@@ -1486,4 +1742,259 @@ fork_secondary_model = "grok-4.5"
         fixed.contains("[custom]\nfork_secondary_model = \"grok-4.5\""),
         "custom grok fork target must be preserved: {fixed}"
     );
+}
+
+#[cfg(test)]
+fn section_of<'a>(body: &'a str, header: &str) -> &'a str {
+    let start = body
+        .find(header)
+        .unwrap_or_else(|| panic!("{header} missing: {body}"));
+    let rest = &body[start + header.len()..];
+    let end = rest.find("\n[").map_or(rest.len(), |i| i + 1);
+    &rest[..end]
+}
+
+#[test]
+fn openrouter_seed_routes_both_stanzas_to_openrouter() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dsb_config::BuildHome::from_path(dir.path());
+    dsb_config::Credentials::save(&home, Provider::OpenRouter, "sk-or-v1-seedkey").unwrap();
+    ensure_product_agent_config(&home).unwrap();
+    let body = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
+    for slot in PRODUCT_MODEL_SLOTS {
+        let sec = section_of(&body, &format!("[model.{slot}]"));
+        assert!(
+            sec.contains(&format!("model = \"deepseek/{slot}\"")),
+            "{sec}"
+        );
+        assert!(
+            sec.contains(&format!("base_url = \"{OPENROUTER_API_BASE_URL}\"")),
+            "{sec}"
+        );
+        assert!(sec.contains("env_key = \"OPENROUTER_API_KEY\""), "{sec}");
+        assert!(sec.contains("api_key = \"sk-or-v1-seedkey\""), "{sec}");
+        assert!(sec.contains("reasoning_effort = \"high\""), "{sec}");
+    }
+    assert!(body.contains(&format!("xai_api_base_url = \"{OPENROUTER_API_BASE_URL}\"")));
+    assert!(!body.contains(DEEPSEEK_API_BASE_URL), "{body}");
+    assert!(!body.contains("DEEPSEEK_API_KEY"), "{body}");
+    assert!(!body.to_ascii_lowercase().contains("grok"), "{body}");
+    // Launch-time repair must not drag an OpenRouter seed back to DeepSeek.
+    ensure_product_agent_config(&home).unwrap();
+    let again = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
+    assert_eq!(body, again);
+}
+
+#[test]
+fn seed_points_side_requests_at_flash_but_not_prompt_suggestion() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dsb_config::BuildHome::from_path(dir.path());
+    ensure_product_agent_config(&home).unwrap();
+    let body = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
+    let models = section_of(&body, "[models]");
+    for key in PRODUCT_AUX_MODEL_KEYS {
+        assert!(
+            models.contains(&format!("{key} = \"deepseek-v4-flash\"")),
+            "{models}"
+        );
+    }
+    // Unset keeps the vendored per-turn suggestion call skipped (no new cost).
+    assert!(!body.contains("prompt_suggestion"), "{body}");
+}
+
+#[test]
+fn repair_injects_aux_models_without_clobber() {
+    let raw = "[models]\ndefault = \"deepseek-v4-flash\"\nsession_summary = \"deepseek-v4-pro\"\n";
+    let fixed = repair_product_agent_config(raw);
+    let models = section_of(&fixed, "[models]");
+    assert!(
+        models.contains("session_summary = \"deepseek-v4-pro\""),
+        "{models}"
+    );
+    assert!(
+        !models.contains("session_summary = \"deepseek-v4-flash\""),
+        "{models}"
+    );
+    assert!(
+        models.contains("web_search = \"deepseek-v4-flash\""),
+        "{models}"
+    );
+    assert!(
+        models.contains("image_description = \"deepseek-v4-flash\""),
+        "{models}"
+    );
+    assert_eq!(fixed, repair_product_agent_config(&fixed));
+    // No [models] table: aux keys are not invented outside one.
+    let bare = repair_product_agent_config("keep=1\n");
+    assert!(!bare.contains("session_summary"), "{bare}");
+}
+
+#[test]
+fn retarget_moves_pristine_seed_to_openrouter_and_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dsb_config::BuildHome::from_path(dir.path());
+    dsb_config::Credentials::save(&home, Provider::DeepSeek, "sk-deepseek-old").unwrap();
+    ensure_product_agent_config(&home).unwrap();
+    let deepseek_seed = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
+
+    let (or_body, kept) =
+        retarget_product_config(&deepseek_seed, Provider::OpenRouter, "sk-or-v1-new");
+    assert!(kept.is_empty());
+    for slot in PRODUCT_MODEL_SLOTS {
+        let sec = section_of(&or_body, &format!("[model.{slot}]"));
+        assert!(
+            sec.contains(&format!("model = \"deepseek/{slot}\"")),
+            "{sec}"
+        );
+        assert!(
+            sec.contains(&format!("base_url = \"{OPENROUTER_API_BASE_URL}\"")),
+            "{sec}"
+        );
+        assert!(sec.contains("env_key = \"OPENROUTER_API_KEY\""), "{sec}");
+        assert_eq!(sec.matches("api_key = ").count(), 1, "{sec}");
+        assert!(sec.contains("api_key = \"sk-or-v1-new\""), "{sec}");
+    }
+    assert!(
+        !or_body.contains("sk-deepseek-old"),
+        "stale key survived: {or_body}"
+    );
+    assert!(!or_body.contains(DEEPSEEK_API_BASE_URL), "{or_body}");
+    // Idempotent, and launch-time repair keeps it on OpenRouter.
+    assert_eq!(
+        retarget_product_config(&or_body, Provider::OpenRouter, "sk-or-v1-new").0,
+        or_body
+    );
+    assert!(!repair_product_agent_config(&or_body).contains(DEEPSEEK_API_BASE_URL));
+
+    let (back, kept) = retarget_product_config(&or_body, Provider::DeepSeek, "sk-deepseek-new");
+    assert!(kept.is_empty());
+    for slot in PRODUCT_MODEL_SLOTS {
+        let sec = section_of(&back, &format!("[model.{slot}]"));
+        assert!(sec.contains(&format!("model = \"{slot}\"")), "{sec}");
+        assert!(
+            sec.contains(&format!("base_url = \"{DEEPSEEK_API_BASE_URL}\"")),
+            "{sec}"
+        );
+        assert!(sec.contains("env_key = \"DEEPSEEK_API_KEY\""), "{sec}");
+        assert!(sec.contains("api_key = \"sk-deepseek-new\""), "{sec}");
+    }
+    assert!(back.contains(&format!("xai_api_base_url = \"{DEEPSEEK_API_BASE_URL}\"")));
+    assert!(!back.contains("openrouter"), "{back}");
+}
+
+#[test]
+fn retarget_keeps_hand_edited_stanzas() {
+    // Shape of a hand-tuned OpenRouter home: custom model id + own env var.
+    let raw = r#"[models]
+default = "deepseek-v4-flash"
+
+[model.deepseek-v4-flash]
+model = "deepseek/deepseek-v4.1-flash"
+base_url = "https://openrouter.ai/api/v1"
+env_key = "OPENROUTER_DEEPSEEK_BUILD_KEY"
+reasoning_effort = "max"
+
+[[model.deepseek-v4-flash.reasoning_efforts]]
+id = "max"
+
+[model.deepseek-v4-pro]
+model = "deepseek/deepseek-v4.1-flash"
+base_url = "https://openrouter.ai/api/v1"
+env_key = "OPENROUTER_DEEPSEEK_BUILD_KEY"
+
+[endpoints]
+xai_api_base_url = "https://openrouter.ai/api/v1"
+"#;
+    // Choosing OpenRouter again: already there, no inline key → untouched.
+    let (same, kept) = retarget_product_config(raw, Provider::OpenRouter, "sk-or-v1-x");
+    assert_eq!(same, raw);
+    assert!(kept.is_empty());
+    // Choosing DeepSeek: never half-rewrite a custom model onto api.deepseek.com.
+    let (same, kept) = retarget_product_config(raw, Provider::DeepSeek, "sk-ds-x");
+    assert_eq!(same, raw);
+    assert_eq!(kept, vec!["deepseek-v4-flash", "deepseek-v4-pro"]);
+}
+
+#[test]
+fn retarget_replaces_stale_inline_key_on_same_provider() {
+    let raw = r#"[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+base_url = "https://api.deepseek.com"
+api_key = "sk-old"
+env_key = "DEEPSEEK_API_KEY"
+
+[model.deepseek-v4-pro]
+model = "deepseek-v4-pro"
+env_key = "DEEPSEEK_API_KEY"
+"#;
+    let (fixed, kept) = retarget_product_config(raw, Provider::DeepSeek, "sk-new");
+    assert!(kept.is_empty());
+    let flash = section_of(&fixed, "[model.deepseek-v4-flash]");
+    assert!(
+        flash.contains("api_key = \"sk-new\"") && !fixed.contains("sk-old"),
+        "{fixed}"
+    );
+    // A stanza that carried no inline key keeps authenticating via env_key.
+    let pro = section_of(&fixed, "[model.deepseek-v4-pro]");
+    assert!(!pro.contains("api_key"), "{pro}");
+}
+
+#[test]
+fn retarget_treats_missing_base_url_as_deepseek_and_appends_missing_stanza() {
+    let raw = "[model.deepseek-v4-flash]\nmodel = \"deepseek-v4-flash\"\n";
+    let (fixed, kept) = retarget_product_config(raw, Provider::OpenRouter, "sk-or-v1-k");
+    assert!(kept.is_empty());
+    let flash = section_of(&fixed, "[model.deepseek-v4-flash]");
+    assert!(
+        flash.contains(&format!("base_url = \"{OPENROUTER_API_BASE_URL}\"")),
+        "{flash}"
+    );
+    assert!(
+        flash.contains("model = \"deepseek/deepseek-v4-flash\""),
+        "{flash}"
+    );
+    assert!(flash.contains("api_key = \"sk-or-v1-k\""), "{flash}");
+    let pro = section_of(&fixed, "[model.deepseek-v4-pro]");
+    assert!(
+        pro.contains("model = \"deepseek/deepseek-v4-pro\""),
+        "{pro}"
+    );
+    assert!(pro.contains("api_key = \"sk-or-v1-k\""), "{pro}");
+    // Repair must not add a DeepSeek base_url next to the OpenRouter one.
+    let repaired = repair_product_agent_config(&fixed);
+    for slot in PRODUCT_MODEL_SLOTS {
+        let sec = section_of(&repaired, &format!("[model.{slot}]"));
+        assert!(!sec.contains(DEEPSEEK_API_BASE_URL), "{sec}");
+    }
+}
+
+#[test]
+fn configured_env_key_follows_default_stanza() {
+    let env = |name: &str| (name == "MY_OR_KEY").then(|| "set".to_string());
+    let custom = r#"[models]
+default = "deepseek-v4-flash"
+
+[model.deepseek-v4-flash]
+env_key = "MY_OR_KEY" # own variable
+"#;
+    assert!(configured_model_env_key_available_with(custom, env));
+    // Array form (vendored schema accepts string or array).
+    let array = "[model.deepseek-v4-flash]\nenv_key = [\"UNSET_A\", \"MY_OR_KEY\"]\n";
+    assert!(configured_model_env_key_available_with(array, env));
+    // Variable unset → setup still needed.
+    let unset = "[model.deepseek-v4-flash]\nenv_key = \"UNSET_A\"\n";
+    assert!(!configured_model_env_key_available_with(unset, env));
+    // Only the default stanza counts, and an inline api_key alone does not.
+    let pro_default = r#"[models]
+default = "deepseek-v4-pro"
+
+[model.deepseek-v4-flash]
+env_key = "MY_OR_KEY"
+
+[model.deepseek-v4-pro]
+api_key = "sk-inline"
+env_key = "UNSET_A"
+"#;
+    assert!(!configured_model_env_key_available_with(pro_default, env));
+    assert!(!configured_model_env_key_available_with("", env));
 }

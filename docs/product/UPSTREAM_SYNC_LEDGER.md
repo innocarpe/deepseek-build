@@ -24,9 +24,12 @@ Companions: [grok-sync-runbook](../contributing/grok-sync-runbook.md) ·
 | PRs | #173 (port completion), #177 / #179 (sync) |
 | Gates | owner-bar green through `5.x` |
 
-Established the layout that still holds: vendored tree at
+Established the layout for that pin: vendored tree at
 `third_party/grok-build/`, `SOURCE_REV` pin, overlay carried partly in-tree and
-partly as `patches/grok-build/`.
+partly as `patches/grok-build/`. Sync 2 is what holds after the port: the
+overlay is in the tree and `patches/grok-build/` has no patch files (git
+drops the directory when the last one is deleted; the apply script treats
+that as exit 0).
 
 ---
 
@@ -89,6 +92,17 @@ sampling types (DeepSeek cache mapping) · shell extension
 third-party vendor claim; encrypted copy regenerated) · seeded product
 changelog preservation · DeepSeek theme skins and their registrations ·
 Path A cache signal + spec-10 assembly helpers · invocation branding.
+
+### Patch directory
+
+`844c7be` removed `0001`–`0013` after none of them re-applied onto `1.0.41`.
+`0014` (OSC 9999 agent status) was cut in the same window and was the only
+file left under `patches/grok-build/`. It applies neither forward nor reverse:
+`agent_status.rs` is already in the tree, and `mod.rs` has moved past the
+hunk. The vendor-patch-gate change deletes `0014` and does not edit those
+sources. A later refresh preserves the overlay by the three-way merge
+(runbook §2) checked against the overlay table in `GROK_VENDOR.md`, not by
+re-applying a series.
 
 ### Gates
 

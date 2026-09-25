@@ -724,6 +724,44 @@ fn set_line(lines: &mut [String], i: usize, line: String) -> bool {
     true
 }
 
+/// Provider the existing agent config is pointed at, read from the product
+/// stanzas' `base_url`.
+///
+/// When `credentials.json` is gone (`auth logout`, a lost file) the choice is
+/// still visible in the config the home was switched to, so a provider-less
+/// `setup --api-key …` keeps that endpoint instead of saving a key for the
+/// *other* provider and rewriting the stanzas to it.
+pub fn configured_provider(home: &BuildHome) -> Option<Provider> {
+    let body = std::fs::read_to_string(home.path().join("config.toml")).ok()?;
+    provider_of_config(&body)
+}
+
+/// The product stanzas that carry a `base_url` must all name the same
+/// provider; no stanza, a mixture, a value that is not a one-line string, or
+/// any other endpoint returns `None` rather than guessing.
+fn provider_of_config(body: &str) -> Option<Provider> {
+    let lines: Vec<String> = body.lines().map(str::to_string).collect();
+    let mut found: Option<Provider> = None;
+    for slot in PRODUCT_MODEL_SLOTS {
+        let Some(range) = toml_section_range(&lines, &format!("[model.{slot}]")) else {
+            continue;
+        };
+        let Some(i) = toml_section_key_index(&lines, range, "base_url") else {
+            continue;
+        };
+        let provider = match toml_rhs_string(&lines[i])? {
+            DEEPSEEK_API_BASE_URL => Provider::DeepSeek,
+            OPENROUTER_API_BASE_URL => Provider::OpenRouter,
+            _ => return None,
+        };
+        match found {
+            Some(seen) if seen != provider => return None,
+            _ => found = Some(provider),
+        }
+    }
+    found
+}
+
 /// True when the default model stanza (`[models] default`) has an `env_key`
 /// whose variable is set — the agent will authenticate from the environment
 /// even without `credentials.json` / `DEEPSEEK_API_KEY` (e.g. a hand-written
@@ -1983,6 +2021,53 @@ env_key = "DEEPSEEK_API_KEY"
     // A stanza that carried no inline key keeps authenticating via env_key.
     let pro = section_of(&fixed, "[model.deepseek-v4-pro]");
     assert!(!pro.contains("api_key"), "{pro}");
+}
+
+#[test]
+fn configured_provider_reads_the_product_stanzas() {
+    let openrouter = format!(
+        "[model.deepseek-v4-flash]\nbase_url = \"{OPENROUTER_API_BASE_URL}\"\n\n\
+         [model.deepseek-v4-pro]\nbase_url = \"{OPENROUTER_API_BASE_URL}\"\n"
+    );
+    assert_eq!(provider_of_config(&openrouter), Some(Provider::OpenRouter));
+    let deepseek = format!("[model.deepseek-v4-pro]\nbase_url = \"{DEEPSEEK_API_BASE_URL}\"\n");
+    assert_eq!(provider_of_config(&deepseek), Some(Provider::DeepSeek));
+    // `auth logout` leaves the stanzas behind: the choice is still readable.
+    let dir = tempfile::tempdir().unwrap();
+    let home = dsb_config::BuildHome::from_path(dir.path());
+    dsb_config::Credentials::save(&home, Provider::OpenRouter, "sk-or-v1-k").unwrap();
+    ensure_product_agent_config(&home).unwrap();
+    dsb_config::Credentials::clear_file(&home).unwrap();
+    assert_eq!(configured_provider(&home), Some(Provider::OpenRouter));
+}
+
+#[test]
+fn configured_provider_refuses_to_guess() {
+    // No product stanza at all.
+    assert_eq!(provider_of_config("[models]\ndefault = \"x\"\n"), None);
+    assert_eq!(provider_of_config(""), None);
+    // Stanzas disagree (half-switched file).
+    let mixed = format!(
+        "[model.deepseek-v4-flash]\nbase_url = \"{OPENROUTER_API_BASE_URL}\"\n\n\
+         [model.deepseek-v4-pro]\nbase_url = \"{DEEPSEEK_API_BASE_URL}\"\n"
+    );
+    assert_eq!(provider_of_config(&mixed), None);
+    // Somebody else's endpoint is neither provider.
+    assert_eq!(
+        provider_of_config("[model.deepseek-v4-flash]\nbase_url = \"https://example.test/v1\"\n"),
+        None
+    );
+    // Not a one-line string: hand-written, not ours to judge.
+    assert_eq!(
+        provider_of_config("[model.deepseek-v4-flash]\nbase_url = [\"a\", \"b\"]\n"),
+        None
+    );
+    // A stanza without base_url does not veto the other one.
+    let partial = format!(
+        "[model.deepseek-v4-flash]\nbase_url = \"{OPENROUTER_API_BASE_URL}\"\n\n\
+         [model.deepseek-v4-pro]\nmodel = \"deepseek/deepseek-v4-pro\"\n"
+    );
+    assert_eq!(provider_of_config(&partial), Some(Provider::OpenRouter));
 }
 
 #[test]

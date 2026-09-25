@@ -193,10 +193,15 @@ pub fn save_provider_key(home: &BuildHome, provider: Provider, key: &str) -> Res
 
 /// Provider recorded in `credentials.json` (env ignored): the user's last
 /// explicit choice, which every provider-less setup path keeps.
+///
+/// When the file is gone (`auth logout`, a lost file) the choice is read from
+/// the agent config the home was pointed at, so rotating a key afterwards
+/// still saves it for that provider instead of flipping the home to DeepSeek.
 pub fn saved_provider(home: &BuildHome) -> Option<Provider> {
     Credentials::load_with(home, None)
         .ok()
         .map(|c| c.provider())
+        .or_else(|| crate::agent_launch::configured_provider(home))
 }
 
 /// First-run gate for the TUI paths: no saved or env key, and the default
@@ -306,6 +311,48 @@ mod tests {
             out: String::from_utf8(out).unwrap(),
             err: String::from_utf8(err).unwrap(),
         }
+    }
+
+    #[test]
+    fn saved_provider_survives_logout_through_the_agent_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = BuildHome::from_path(dir.path());
+        Credentials::save(&home, Provider::OpenRouter, "sk-or-v1-old").unwrap();
+        crate::agent_launch::ensure_product_agent_config(&home).unwrap();
+        crate::agent_launch::apply_provider_to_agent_config(
+            &home,
+            Provider::OpenRouter,
+            "sk-or-v1-old",
+        )
+        .unwrap();
+        // Logout drops the file; the config still says OpenRouter.
+        Credentials::clear_file(&home).unwrap();
+        assert_eq!(saved_provider(&home), Some(Provider::OpenRouter));
+        // Rotating a key without --provider must not flip the home.
+        save_provider_key(&home, saved_provider(&home).unwrap(), "sk-or-v1-new").unwrap();
+        let body = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
+        assert!(body.contains("https://openrouter.ai/api/v1"), "{body}");
+        assert!(!body.contains("api.deepseek.com"), "{body}");
+    }
+
+    #[test]
+    fn saved_provider_prefers_credentials_over_the_config() {
+        // A home whose config was hand-pointed elsewhere but whose saved key
+        // says OpenRouter keeps the saved choice until the user changes it.
+        let dir = tempfile::tempdir().unwrap();
+        let home = BuildHome::from_path(dir.path());
+        std::fs::write(
+            dir.path().join("config.toml"),
+            "[model.deepseek-v4-flash]\nbase_url = \"https://api.deepseek.com\"\n",
+        )
+        .unwrap();
+        Credentials::save(&home, Provider::OpenRouter, "sk-or-v1-k").unwrap();
+        assert_eq!(saved_provider(&home), Some(Provider::OpenRouter));
+        // With no credentials and no recognizable config there is no default
+        // to keep: the wizard asks (its fallback stays DeepSeek).
+        Credentials::clear_file(&home).unwrap();
+        std::fs::remove_file(dir.path().join("config.toml")).unwrap();
+        assert_eq!(saved_provider(&home), None);
     }
 
     #[test]

@@ -81,6 +81,10 @@ deepseek-build auth status   # configured? provider? source? masked key
 deepseek-build auth logout   # deletes credentials file (env unchanged)
 ```
 
+`auth logout` removes the key, not the choice: while `config.toml` still points
+at a provider, a key saved without `--provider` is saved for that provider. Only
+when neither the file nor the config says does the fallback become DeepSeek API.
+
 ## Hand-written config with your own key variable
 
 If the default model stanza in `config.toml` names its own `env_key` and that

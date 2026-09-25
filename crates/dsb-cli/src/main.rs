@@ -185,8 +185,10 @@ enum Commands {
         /// Skip the provider question: `deepseek` or `openrouter`.
         #[arg(long, value_parser = ["deepseek", "openrouter"])]
         provider: Option<String>,
-        /// Non-interactive: write key from this flag. Without `--provider
-        /// openrouter`, falls back to DEEPSEEK_API_KEY (prefer env in CI).
+        /// Non-interactive: write the key from this flag. Without
+        /// `--provider` the provider this home is already set up for is kept
+        /// (DeepSeek API when it is set up for neither). DEEPSEEK_API_KEY is
+        /// only a fallback for DeepSeek (prefer env in CI).
         #[arg(long)]
         api_key: Option<String>,
     },

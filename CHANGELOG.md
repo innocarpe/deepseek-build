@@ -12,7 +12,9 @@
   model. A hand-written config whose default stanza reads its key from its own
   `env_key` no longer triggers the setup wizard. Re-running setup now replaces
   a stale inline key in the agent config, and `setup --help` no longer prints
-  the value of `DEEPSEEK_API_KEY`.
+  the value of `DEEPSEEK_API_KEY`. A key saved without `--provider` keeps the
+  provider the home is already set up for — including after `auth logout`,
+  which deletes the key but not the choice.
 - Fix release binaries shipping with the previous release's compiled version
   (5.5.2 shipped a 5.5.1-labeled agent): the product version is now baked via
   a generated file read with `include_str!`, so sccache keys on the file

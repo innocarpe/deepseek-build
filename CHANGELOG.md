@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- First-run setup now asks for the API provider first — DeepSeek API or
+  OpenRouter — then for that provider's key. The choice is saved with the key
+  and the full-screen agent's model stanzas follow it (OpenRouter uses
+  `deepseek/deepseek-v4-flash` / `deepseek/deepseek-v4-pro` at
+  `https://openrouter.ai/api/v1`). `setup` / `auth login` accept
+  `--provider deepseek|openrouter`. Session titles, web search, and image
+  description are pinned to the Flash stanza instead of a vendored default
+  model. A hand-written config whose default stanza reads its key from its own
+  `env_key` no longer triggers the setup wizard. Re-running setup now replaces
+  a stale inline key in the agent config, and `setup --help` no longer prints
+  the value of `DEEPSEEK_API_KEY`.
 - Fix release binaries shipping with the previous release's compiled version
   (5.5.2 shipped a 5.5.1-labeled agent): the product version is now baked via
   a generated file read with `include_str!`, so sccache keys on the file

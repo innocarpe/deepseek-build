@@ -103,17 +103,20 @@ For the short command, replace `deepseek-build` with `dsb` in any example.
 
 ## Authentication and configuration
 
-Interactive setup stores the API key in
+Interactive setup asks how to reach the DeepSeek models — the DeepSeek API or
+OpenRouter — then stores that provider's API key in
 `~/.deepseek-build/credentials.json` with mode `0600`:
 
 ```bash
 deepseek-build setup
+deepseek-build setup --provider openrouter --api-key "$KEY"   # non-interactive
 deepseek-build auth status
 deepseek-build auth logout
 ```
 
 For CI or another non-interactive environment, set `DEEPSEEK_API_KEY`; the
-environment variable takes precedence over the credentials file. Product
+environment variable takes precedence over a DeepSeek credentials file.
+Line mode (`run` / `chat`) uses the DeepSeek API only. Product
 configuration, credentials, sessions, and user skills live under
 `~/.deepseek-build/` by default.
 

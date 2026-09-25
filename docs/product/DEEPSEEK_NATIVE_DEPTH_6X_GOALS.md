@@ -114,7 +114,10 @@ observed without one, so U2.1 does not survive as a wire change. Cache reads
 are still reported (`prompt_cache_hit_tokens` /
 `prompt_cache_miss_tokens` on the official schema;
 `prompt_tokens_details.cached_tokens` on the OpenRouter route that was
-actually called). Path A keeps the hit and drops the miss. An appended
+actually called). **Limit:** the environment this measurement ran in had no
+credential for `https://api.deepseek.com`, so the official host was not
+called. The official field names are the schema pages fetched that day, not a
+response from that host. Path A keeps the hit and drops the miss. An appended
 system message is expressible; rewriting the leading system measured
 `cached_tokens = 0`. A tool update has no history-event form; it is a full
 `tools` array.
@@ -141,7 +144,7 @@ system message is expressible; rewriting the leading system measured
 |---|---|---|
 | **U2.1** | **Cache-key reachability.** Whatever U0.2 finds: make the product's cache key actually land on its backend, or record why it cannot | U0.2 |
 | **U2.2** | **Cache-miss attribution.** On an epoch change, record which component moved — and make the categories ones that are actually distinguishable, not invented | U0.2 · U2.1 |
-| **U2.3** | **Cumulative session cache surface.** The per-turn chip exists; add the session-level view | U0.2 |
+| **U2.3** | **Cumulative session cache surface.** Path A already sums `cached_read_tokens` on the session ledger and shows that ratio on the status chip. Spec 10 §1.5.2's `hit`/`miss`/`unreported` line is still absent; its named surface is Path B | U0.2 |
 
 > **Coordination note.** A separate session on `feat/cache-attribution` is
 > already working on attribution, the cumulative surface and a bench
@@ -153,6 +156,74 @@ system message is expressible; rewriting the leading system measured
 > not duplicate it. Reconcile before starting: either that session redirects its
 > work into the vendored tree, or it delivers the spec + tests and this board
 > carries the Path A wiring.
+
+#### Coordination for `cache-session-totals` and `cache-regression-bench` (2026-09-25)
+
+Two worktrees are open for the units the spec left pending. Both were clean
+at `1b9bb1c` when this was written (no commit ahead of that pin):
+`feat/cache-session-totals` (spec 10 §1.5.2) and
+`feat/cache-regression-bench` (spec 10 §1.9). Both briefs take the product
+workspace (`crates/`) as the place the cache layer lives. That is the same
+premise as the note above. Re-measured on this tree, it is false for Path A,
+and the two units do not get the same instruction.
+
+**What is already on the overlay, and what Path A runs.** U2.2 landed in PR
+#209 under `crates/dsb-context`, `crates/dsb-agent`, and `crates/dsb-cli`.
+The production log is `report_prefix_change` (`crates/dsb-cli/src/main.rs:603`),
+called from `bind_session` (`main.rs:571`) when `Commands::Run` goes to
+`run_once` (`main.rs:374`, `:764`) or `Commands::Chat` / `Repl` goes to
+`run_repl` (`main.rs:388`). A search of
+`third_party/grok-build/crates/codegen/xai-grok-shell/Cargo.toml` for
+`dsb-context` and `dsb-agent` is empty. The turn Path A sends is
+`apply_spec10_to_conversation_request`
+(`xai-grok-shell/src/session/helpers/spec10_path_a_assembly.rs:430`), called
+from `acp_session_impl/turn.rs:3003`. The overlay
+`assemble_path_a_context` runs only inside `stamp_path_a_prefix_epoch`
+(`crates/dsb-cli/src/agent_launch.rs:949`) and writes an epoch file.
+[OWNER_BAR_ACCEPTANCE.md](./OWNER_BAR_ACCEPTANCE.md) §2.1: the bare
+`deepseek-build` / `dsb` TUI is the only product P0 path. `dsb run`,
+`dsb chat`, and `cargo test -p dsb-agent` / `dsb-context` are Path B and are
+not cut evidence.
+
+**`cache-session-totals` — continue in `crates/` (A), inside the fence the
+spec already drew.** Spec 10 §1.5.2 names the REPL / `run` turn line as its
+surface, and says the full-screen TUI status line is a later unit in the
+vendored tree, which that contract does not govern. `run_once` and
+`run_repl` call `dsb-agent`, so a `cache_session=` line printed there is
+reached by Path B. The TUI does not read it.
+
+Path A already sums cache reads for the session, and the sum is not the
+§1.5.2 line. `UsageLedger::record_main_loop_call`
+(`xai-chat-state/src/usage.rs:120`) folds each call's
+`cached_prompt_tokens` into `cached_read_tokens`.
+`try_get_session_usage` (`xai-chat-state/src/handle.rs:498`) is that session
+bill. `try_get_prompt_usage` (`handle.rs:489`) clears when the prompt index
+increments; the test
+`prompt_usage_ledger_via_handle_resets_and_clears` keeps the session
+`model_calls` after that clear. `x.ai/deepseek/status`
+(`xai-grok-shell/src/extensions/deepseek.rs:81`) returns
+`PromptUsage` built from `try_get_session_usage`. The pager chip passes
+`totals.cached_read_tokens` and `totals.input_tokens` from that response
+into `format_cache_hit_pct`. The ledger has no miss field and no
+unreported-turn count. Chat Completions `TokenUsage` drops
+`prompt_cache_miss_tokens` (U0.2). This session implements the REPL line the
+spec named. It does not reimplement the chip, and a green `crates/` counter
+is not the TUI.
+
+**`cache-regression-bench` — the bytes under test move to the vendored
+assembly (B).** Spec 10 §1.9 scores epoch count and a hit rate from the
+request bytes a mock receives. Its test plan names
+`cargo test -p dsb-context -p dsb-agent`. Those bytes are the overlay
+builder. Path A's bytes are the system body after
+`apply_spec10_to_conversation_request`, with `tools_document()` inlined into
+the leading system message (`spec10_path_a_assembly.rs:83`). U0.2 measured
+that rewriting that leading system returned `cached_tokens = 0` on every
+sample, and that a later system message did not force that zero. A negative
+control that perturbs `dsb-context` inputs does not perturb the body
+`turn.rs` sends, so it stays green when Path A breaks. The rate arithmetic
+can stay a pure function. The scenario's request bytes are the output of
+`assemble_spec10_path_a_turn` and the Chat Completions mapping. A guard that
+only tests `dsb-context` is Path B evidence under OWNER_BAR §2.1.
 
 ### Wave 3 — wire-gated
 

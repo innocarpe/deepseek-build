@@ -1,4 +1,4 @@
-//! `/docs` -- open How-to Guides (in-TUI) or online Build docs.
+//! `/docs` opens How-to Guides (in-TUI) or the online Build docs.
 //!
 //! Bare `/docs` opens the same DocPicker as command-palette "How-to Guides".
 //! `/docs web` opens https://docs.x.ai/build/overview in the browser.
@@ -6,41 +6,24 @@
 
 use crate::app::actions::Action;
 use crate::docs::{all_titles, find_doc};
-use crate::slash::command::{AppCtx, ArgItem, CommandExecCtx, CommandResult, SlashCommand};
+use crate::slash::command::{
+    AppCtx, ArgItem, CommandExecCtx, CommandResult, SlashCommand, slash_meta,
+};
 
-/// Online Build docs landing page (hardcoded like other TUI deep-links; docs.x.ai can redirect if the path moves).
+/// The online Build docs landing page, hardcoded like other TUI deep-links; docs.x.ai can redirect if the path moves.
 pub const BUILD_DOCS_URL: &str = "https://docs.x.ai/build/overview";
 
-/// Open How-to Guides or online Build docs.
 pub struct DocsCommand;
 
 impl SlashCommand for DocsCommand {
-    fn name(&self) -> &str {
-        "docs"
-    }
-
-    fn aliases(&self) -> &[&str] {
-        &["howto", "guides"]
-    }
-
-    fn description(&self) -> &str {
-        "Open How-to Guides or online Build docs"
-    }
-
-    fn usage(&self) -> &str {
-        "/docs [web|title]"
-    }
-
-    fn takes_args(&self) -> bool {
-        true
-    }
-
-    fn args_required(&self) -> bool {
-        false
-    }
-
-    fn arg_placeholder(&self) -> Option<&str> {
-        Some("[web|title]")
+    slash_meta! {
+        name: "docs",
+        aliases: ["howto", "guides"],
+        description: "Open How-to Guides or online Build docs",
+        usage: "/docs [web|title]",
+        takes_args: true,
+        args_required: false,
+        arg_placeholder: "[web|title]",
     }
 
     fn suggest_args(&self, _ctx: &AppCtx, _args_query: &str) -> Option<Vec<ArgItem>> {
@@ -216,7 +199,10 @@ mod tests {
             billing_surface_visible: true,
             usage_command_visible: true,
             workflows_available: true,
+            saved_workflows: &[],
+            workflow_runs: &[],
             screen_mode: crate::app::ScreenMode::Fullscreen,
+            current_title: None,
         };
         let items = DocsCommand.suggest_args(&ctx, "").expect("suggestions");
         assert!(items.iter().any(|i| i.insert_text == "web"));

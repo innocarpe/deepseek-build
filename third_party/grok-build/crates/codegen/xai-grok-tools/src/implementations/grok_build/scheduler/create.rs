@@ -8,7 +8,7 @@ use super::types::{ScheduledTask, SchedulerCommand, SchedulerHandle, scheduler_t
 // Canonical /loop wording lives in the light API crate so other consumers can
 // link it without the tools implementation crate; re-exported to keep paths stable.
 pub use xai_grok_tools_api::slash_commands::{
-    LoopFireMode, SCHEDULER_CREATE_TOOL_NAME, loop_schedule_instruction, loop_usage_message,
+    SCHEDULER_CREATE_TOOL_NAME, loop_schedule_instruction, loop_usage_message,
 };
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -50,17 +50,6 @@ pub struct SchedulerCreateInput {
                        Create-only: ignored with task_id"
     )]
     pub durable: Option<bool>,
-
-    #[serde(
-        default,
-        deserialize_with = "crate::types::schema::deserialize_lenient_option_bool"
-    )]
-    #[schemars(
-        description = "Run each fire as a main-conversation turn instead of a background \
-                       subagent; set true only when runs need the conversation's context. \
-                       Default: false. Create-only: ignored with task_id"
-    )]
-    pub foreground: Option<bool>,
 
     /// Whether to fire immediately on creation. Default false (wait for the
     /// first interval — a "scheduled" task should not run on creation unless
@@ -104,7 +93,13 @@ impl crate::types::tool_metadata::ToolMetadata for SchedulerCreateTool {
     }
 
     fn description_template(&self) -> &str {
-        r#"Create a scheduled task that runs a prompt on a recurring interval, or update an existing one in place.
+        // Formatted once so the TTL copy is derived from RECURRING_TASK_TTL_DAYS instead of
+        // being pinned by a duplicate literal.
+        static DESCRIPTION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+            format!(
+                r#"Create a scheduled task that runs a prompt on a recurring interval, or update an existing one in place.
+
+Use this tool when a user asks you to loop, repeat, or schedule a prompt or a task.
 
 Set fire_immediately: true to also fire once on creation; by default the first run waits for the interval.
 
@@ -113,8 +108,12 @@ To change an existing task, pass its task_id: provided fields replace old values
 Usage notes:
 - Interval format: "5m" (minutes), "2h" (hours), "1d" (days), "60s" (seconds, min 60)
 - Maximum 50 scheduled tasks at once
-- Tasks auto-expire after 7 days
-- For one-time delayed work, run a background terminal command (e.g. `sleep 1800 && <command>`) instead; its completion notifies you"#
+- Tasks auto-expire after {} days
+- For one-time delayed work, run a background terminal command (e.g. `sleep 1800 && <command>`) instead; its completion notifies you"#,
+                super::types::RECURRING_TASK_TTL_DAYS
+            )
+        });
+        &DESCRIPTION
         // TODO: scheduler tools share ToolKind::Other so they can't be template-ized
         // via ${{ tools.by_kind.* }}. If tool name randomization is needed, add
         // dedicated ToolKind variants (SchedulerCreate, SchedulerDelete, SchedulerList).
@@ -125,7 +124,7 @@ Usage notes:
     }
 
     fn requires_expr(&self) -> Expr<ToolRequirement> {
-        Expr::True
+        super::scheduler_bundle_requires_expr()
     }
 }
 
@@ -247,14 +246,13 @@ impl xai_tool_runtime::Tool for SchedulerCreateTool {
         })?;
 
         let durable = input.durable.unwrap_or(false);
-        let mut task = ScheduledTask::with_fire_immediately(
+        let task = ScheduledTask::with_fire_immediately(
             interval_secs,
             prompt,
             true,
             durable,
             input.fire_immediately,
         );
-        task.foreground = input.foreground.unwrap_or(false);
 
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         let created = send_and_wait(
@@ -475,7 +473,7 @@ mod tests {
     #[test]
     fn loop_schedule_instruction_holds_invariants() {
         let args = "every 30 minutes do x";
-        let instr = loop_schedule_instruction(args, LoopFireMode::Detached);
+        let instr = loop_schedule_instruction(args);
         assert!(
             !instr.contains("10m"),
             "instruction must not default: {instr}"

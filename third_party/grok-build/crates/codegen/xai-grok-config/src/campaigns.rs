@@ -1,10 +1,10 @@
-//! `[[campaigns]]` overlays. Priority (first id wins): requirements > remote >
-//! user > managed > system_managed. Applied after layer merge.
+//! `[[campaigns]]` overlays. Priority (first id wins): requirements > remote > user > managed > system_managed.
+//! They apply after the layer merge.
 
 use serde::{Deserialize, Serialize};
 
 use crate::config_override::{
-    ConfigOverrideEntry, PATCH_STRIP_KEYS, PatchPath, apply_patches, patch_touches_any,
+    CAMPAIGN_STRIP_KEYS, ConfigOverrideEntry, PatchPath, apply_patches, patch_touches_any,
     take_patch_array,
 };
 
@@ -22,8 +22,8 @@ pub struct CampaignEntry {
     pub patch: toml::Table,
 }
 
-/// Disk campaigns grouped by source layer. Merged with the remote layer (by
-/// priority, first id wins) in [`crate::loader::ConfigLayers::resolve_campaigns`].
+/// Disk campaigns grouped by source layer.
+/// Merged with the remote layer (by priority, first id wins) in [`crate::config_layers::ConfigLayers::resolve_campaigns`].
 #[derive(Debug, Clone, Default)]
 pub struct CampaignOverrides {
     pub requirements: Vec<CampaignEntry>,
@@ -35,8 +35,10 @@ pub struct CampaignOverrides {
 pub fn take_campaigns(config: &mut toml::Value) -> Vec<ConfigOverrideEntry<CampaignMeta>> {
     match take_patch_array::<CampaignMeta>(config, CAMPAIGNS_KEY) {
         Ok(entries) => entries,
-        Err(e) => {
-            tracing::warn!(error = %e, "campaigns: failed to deserialize; ignoring entries");
+        Err(_) => {
+            // Log only the category: a `toml::de::Error` Display echoes the offending value, so `campaigns = "sk-secret"` would leak into logs
+            // Mirrors `VersionOverrideError::redacted`
+            tracing::warn!("campaigns: failed to deserialize (details omitted); ignoring entries");
             Vec::new()
         }
     }
@@ -97,8 +99,7 @@ pub fn filter_active_campaigns(
         .collect()
 }
 
-/// Ids of `active` campaigns whose patch touches any of `paths` — used to dismiss
-/// campaigns when the user persists a value at one of those paths.
+/// Ids of `active` campaigns whose patch touches any of `paths`, used to dismiss campaigns when the user persists a value at one of those paths.
 pub fn ids_touching_paths(active: &[CampaignEntry], paths: &[PatchPath]) -> Vec<String> {
     active
         .iter()
@@ -107,13 +108,12 @@ pub fn ids_touching_paths(active: &[CampaignEntry], paths: &[PatchPath]) -> Vec<
         .collect()
 }
 
-/// `active` is highest-priority-first; patches apply lowest-first (`.rev()`) so the
-/// highest-priority source wins a leaf conflict.
+/// `active` is highest-priority-first; patches apply lowest-first (`.rev()`) so the highest-priority source wins a leaf conflict.
 pub fn apply_active_campaign_patches(effective: &mut toml::Value, active: &[CampaignEntry]) {
     apply_patches(
         effective,
         active.iter().rev().map(|e| e.patch.clone()),
-        PATCH_STRIP_KEYS,
+        CAMPAIGN_STRIP_KEYS,
     );
 }
 
@@ -156,8 +156,87 @@ mod tests {
         let mut effective =
             parse("[models]\ndefault = \"old-model\"\n[features]\nweb_fetch = false\n");
         apply_active_campaign_patches(&mut effective, &entries);
-        assert_eq!(effective["models"]["default"].as_str(), Some("new-model"));
-        assert_eq!(effective["features"]["web_fetch"].as_bool(), Some(true));
+        assert_eq!(
+            effective
+                .get("models")
+                .and_then(|m| m.get("default"))
+                .and_then(toml::Value::as_str),
+            Some("new-model")
+        );
+        assert_eq!(
+            effective
+                .get("features")
+                .and_then(|f| f.get("web_fetch"))
+                .and_then(toml::Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn campaign_parse_error_is_redacted() {
+        use std::sync::{Arc, Mutex};
+
+        struct CaptureSubscriber {
+            messages: Arc<Mutex<Vec<String>>>,
+        }
+        struct MessageVisitor<'a>(&'a mut Vec<String>);
+        impl tracing::field::Visit for MessageVisitor<'_> {
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                if field.name() == "message" {
+                    self.0.push(format!("{value:?}"));
+                }
+            }
+        }
+        impl tracing::Subscriber for CaptureSubscriber {
+            fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+                true
+            }
+            fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+                tracing::span::Id::from_u64(1)
+            }
+            fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+            fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+            fn event(&self, event: &tracing::Event<'_>) {
+                if let Ok(mut msgs) = self.messages.lock() {
+                    event.record(&mut MessageVisitor(&mut msgs));
+                }
+            }
+            fn enter(&self, _: &tracing::span::Id) {}
+            fn exit(&self, _: &tracing::span::Id) {}
+        }
+
+        // A scalar where an array is expected: the raw toml error echoes the value, so `take_campaigns` must never log it verbatim
+        let secret = "sk-secret-token";
+        let mut cfg = parse(&format!("campaigns = \"{secret}\"\n"));
+
+        // Guard: logging the raw error verbatim would leak the secret.
+        assert!(
+            take_patch_array::<CampaignMeta>(&mut cfg.clone(), CAMPAIGNS_KEY)
+                .unwrap_err()
+                .to_string()
+                .contains(secret),
+            "guard: the raw toml error is expected to carry the value"
+        );
+
+        // Drive the real `take_campaigns` failure path and capture what it logs.
+        let messages = Arc::new(Mutex::new(Vec::new()));
+        let entries = tracing::subscriber::with_default(
+            CaptureSubscriber {
+                messages: messages.clone(),
+            },
+            || take_campaign_entries(&mut cfg, "env_overlay"),
+        );
+        assert!(entries.is_empty());
+
+        let logged = messages.lock().unwrap().join("\n");
+        assert!(
+            logged.contains("campaigns"),
+            "the parse-failure branch must emit its category-only warning: {logged}"
+        );
+        assert!(
+            !logged.contains(secret),
+            "take_campaigns leaked the value into its warning: {logged}"
+        );
     }
 
     #[test]
@@ -172,16 +251,22 @@ mod tests {
         }];
         let merged = merge_campaign_entries(&[&req, &remote]);
         assert_eq!(merged.len(), 1);
+        let Some(first) = merged.first() else {
+            panic!("expected one merged campaign: {merged:?}");
+        };
         assert_eq!(
-            merged[0].patch["models"]["default"].as_str(),
+            first
+                .patch
+                .get("models")
+                .and_then(|m| m.get("default"))
+                .and_then(toml::Value::as_str),
             Some("from-req")
         );
     }
 
     #[test]
     fn apply_highest_priority_wins_on_leaf_conflict() {
-        // Two *distinct* ids both set models.default; the higher-priority source
-        // (earlier in the merged list) must win the leaf.
+        // Two *distinct* ids both set models.default; the higher-priority source (earlier in the merged list) must win the leaf
         let req = [CampaignEntry {
             id: "req".into(),
             patch: models_default_patch("from-req"),
@@ -195,13 +280,18 @@ mod tests {
 
         let mut effective = parse("[models]\ndefault = \"user-old\"\n");
         apply_active_campaign_patches(&mut effective, &merged);
-        assert_eq!(effective["models"]["default"].as_str(), Some("from-req"));
+        assert_eq!(
+            effective
+                .get("models")
+                .and_then(|m| m.get("default"))
+                .and_then(toml::Value::as_str),
+            Some("from-req")
+        );
     }
 
     #[test]
     fn build_campaign_entries_skips_missing_id() {
-        // A `None` id and a whitespace-only id are both dropped (with a warn);
-        // only the entry carrying a real id survives.
+        // A `None` id and a whitespace-only id are both dropped (with a warn); only the entry carrying a real id survives
         let taken = vec![
             ConfigOverrideEntry {
                 meta: CampaignMeta { id: None },
@@ -222,8 +312,18 @@ mod tests {
         ];
         let out = build_campaign_entries(taken, "managed");
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].id, "valid");
-        assert_eq!(out[0].patch["models"]["default"].as_str(), Some("kept"));
+        let Some(first) = out.first() else {
+            panic!("expected one campaign: {out:?}");
+        };
+        assert_eq!(first.id, "valid");
+        assert_eq!(
+            first
+                .patch
+                .get("models")
+                .and_then(|m| m.get("default"))
+                .and_then(toml::Value::as_str),
+            Some("kept")
+        );
     }
 
     #[test]
@@ -235,13 +335,14 @@ mod tests {
             let mut layer = parse(src);
             let entries = take_campaign_entries(&mut layer, "user");
             assert_eq!(entries.len(), 1);
-            assert_eq!(entries[0].id, "c1");
-            // The id key (either spelling) must be consumed by the meta, never
-            // land in the patch — a leaked key would deep-merge a junk top-level
-            // `id` into every effective config.
+            let Some(first) = entries.first() else {
+                panic!("expected one campaign: {entries:?}");
+            };
+            assert_eq!(first.id, "c1");
+            // The id key (either spelling) must be consumed by the meta, never land in the patch
+            // A leaked key would deep-merge a junk top-level `id` into every effective config
             assert!(
-                entries[0].patch.get("id").is_none()
-                    && entries[0].patch.get("campaign_id").is_none(),
+                first.patch.get("id").is_none() && first.patch.get("campaign_id").is_none(),
                 "id keys must not leak into the patch: {src}"
             );
         }
@@ -249,9 +350,10 @@ mod tests {
 
     #[test]
     fn requirements_win_over_campaign() {
-        use crate::loader::ConfigLayers;
-        // A campaign (even from a lower layer) can't override a field the admin
-        // set in requirements: `apply_campaign_overrides` re-merges requirements on top.
+        use crate::config_layers::ConfigLayers;
+        let _env = crate::config_layers::lock_grok_campaigns_env();
+        // A campaign (even from a lower layer) can't override a field the admin set in requirements
+        // `apply_campaign_overrides` re-merges requirements on top
         let mut layers = ConfigLayers {
             user: parse("[models]\ndefault = \"user-old\"\n"),
             user_requirements: Some(parse("[models]\ndefault = \"pinned\"\n")),
@@ -264,7 +366,10 @@ mod tests {
         let effective =
             layers.effective_config_with_campaigns(&[], &std::collections::HashSet::new());
         assert_eq!(
-            effective["models"]["default"].as_str(),
+            effective
+                .get("models")
+                .and_then(|m| m.get("default"))
+                .and_then(toml::Value::as_str),
             Some("pinned"),
             "requirements must beat a campaign for the same field"
         );
@@ -272,7 +377,8 @@ mod tests {
 
     #[test]
     fn effective_config_honors_dismiss() {
-        use crate::loader::ConfigLayers;
+        use crate::config_layers::ConfigLayers;
+        let _env = crate::config_layers::lock_grok_campaigns_env();
         // A dismissed campaign id stops overriding; the user's stored value returns.
         let mut layers = ConfigLayers {
             user: parse("[models]\ndefault = \"user-old\"\n"),
@@ -285,10 +391,21 @@ mod tests {
 
         let none = std::collections::HashSet::new();
         let active = layers.effective_config_with_campaigns(&[], &none);
-        assert_eq!(active["models"]["default"].as_str(), Some("new"));
+        assert_eq!(
+            active
+                .get("models")
+                .and_then(|m| m.get("default"))
+                .and_then(toml::Value::as_str),
+            Some("new")
+        );
 
         let dismissed: std::collections::HashSet<_> = ["c1".into()].into_iter().collect();
         let off = layers.effective_config_with_campaigns(&[], &dismissed);
-        assert_eq!(off["models"]["default"].as_str(), Some("user-old"));
+        assert_eq!(
+            off.get("models")
+                .and_then(|m| m.get("default"))
+                .and_then(toml::Value::as_str),
+            Some("user-old")
+        );
     }
 }

@@ -1,4 +1,4 @@
-//! Display-refresh probe + auto-cadence policy resolve and pure cadence derivation.
+//! Display-refresh probe and auto-cadence policy resolve, plus pure cadence derivation.
 
 use crate::util::config::RemoteSettings;
 use serde::Deserialize;
@@ -12,12 +12,14 @@ pub const ENV_DISPLAY_REFRESH_AUTO_CADENCE: &str = "GROK_DISPLAY_REFRESH_AUTO_CA
 pub const DISPLAY_REFRESH_DEFAULT_CADENCE_MS: u64 = 16;
 
 /// Client defaults for [`DisplayRefreshPolicy`].
+/// Auto on and max_hz 240: `display_refresh_probe` telemetry showed ~0.4% error.
+/// The common 120/144/165/180/240 Hz rates clamp cleanly to 8-16 ms.
 pub const DISPLAY_REFRESH_DEFAULT_PROBE_ENABLED: bool = true;
-pub const DISPLAY_REFRESH_DEFAULT_AUTO_CADENCE_ENABLED: bool = false;
+pub const DISPLAY_REFRESH_DEFAULT_AUTO_CADENCE_ENABLED: bool = true;
 pub const DISPLAY_REFRESH_DEFAULT_FLOOR_MS: u32 = 8;
 pub const DISPLAY_REFRESH_DEFAULT_CEILING_MS: u32 = 16;
 pub const DISPLAY_REFRESH_DEFAULT_MIN_HZ: u32 = 55;
-pub const DISPLAY_REFRESH_DEFAULT_MAX_HZ: u32 = 165;
+pub const DISPLAY_REFRESH_DEFAULT_MAX_HZ: u32 = 240;
 
 /// Same band as env cadence knobs (`GROK_MIN_DRAW_MS` / `GROK_SCROLL_CADENCE_MS`).
 const CADENCE_MS_MIN: u32 = 1;
@@ -50,20 +52,18 @@ impl Default for DisplayRefreshPolicy {
     }
 }
 
-/// Pure auto-cadence decision from policy + probe Hz (ignores env cadence knobs).
+/// Pure auto-cadence decision from policy and probe Hz (ignores env cadence knobs).
 ///
-/// `ms = clamp(round(1000/hz), floor_ms, ceiling_ms)` when
-/// `auto_cadence_enabled` and `hz` is in `[min_hz, max_hz]`; otherwise no auto.
+/// `ms = clamp(round(1000/hz), floor_ms, ceiling_ms)` when `auto_cadence_enabled` and `hz` is in `[min_hz, max_hz]`; otherwise no auto.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AutoCadenceDecision {
     /// Derived cadence when auto applies; `None` when gated off / fail-closed.
     pub ms: Option<u64>,
-    /// Stable reason token for telemetry: `flag_off` | `disabled` |
-    /// `probe_skip` | `hz_out_of_range` | `applied`.
+    /// Stable reason token for telemetry: `flag_off` | `disabled` | `probe_skip` | `hz_out_of_range` | `applied`.
     pub reason: &'static str,
 }
 
-/// Effective min-draw + scroll cadence after auto-cadence + env merge.
+/// Effective min-draw and scroll cadence after merging auto-cadence with env.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MotionCadence {
     pub min_draw_ms: u64,
@@ -74,7 +74,7 @@ pub struct MotionCadence {
     pub reason: &'static str,
 }
 
-/// One TOML layer: nested `[ui.display_refresh]` via canonical tolerant type.
+/// One TOML layer: nested `[ui.display_refresh]` parsed with the tolerant [`DisplayRefreshSettings`] type.
 #[derive(Debug, Clone, Default, PartialEq)]
 struct DisplayRefreshLayer {
     settings: DisplayRefreshSettings,
@@ -130,8 +130,7 @@ fn clamp_cadence_ms(v: u32) -> u32 {
     v.clamp(CADENCE_MS_MIN, CADENCE_MS_MAX)
 }
 
-/// When bounds invert, keep the higher-priority bound and collapse the lower
-/// tier onto it (same-priority invert → compiled defaults).
+/// When bounds invert, keep the higher-priority bound and collapse the lower tier onto it (a same-priority invert falls back to compiled defaults).
 fn order_bounds(lo: Picked, hi: Picked, def_lo: u32, def_hi: u32) -> (u32, u32) {
     if lo.value <= hi.value {
         (lo.value, hi.value)
@@ -144,13 +143,8 @@ fn order_bounds(lo: Picked, hi: Picked, def_lo: u32, def_hi: u32) -> (u32, u32) 
     }
 }
 
-/// Resolve display-refresh probe + auto-cadence policy.
-///
-/// Precedence per field: requirements > env (bools only) > user TOML >
-/// managed > remote `display_refresh` object > compiled defaults.
-///
-/// TOML/remote use tolerant [`DisplayRefreshSettings`]. Floor/ceiling clamp
-/// `1..=100`; inverted bounds keep the higher-priority side.
+/// Resolve display-refresh probe and auto-cadence policy. Precedence per field: requirements > env (bools only) > user TOML > managed > remote `display_refresh` object > compiled defaults.
+/// TOML/remote use tolerant [`DisplayRefreshSettings`]. Floor/ceiling clamp `1..=100`; inverted bounds keep the higher-priority side.
 pub fn resolve_display_refresh(
     requirements: Option<&TomlValue>,
     user: Option<&TomlValue>,
@@ -245,13 +239,8 @@ pub fn resolve_display_refresh(
     }
 }
 
-/// Pure auto-cadence derivation from policy + probe Hz.
-///
-/// - `policy.probe_enabled == false` → reason `disabled` (no Hz, no auto)
-/// - `auto_cadence_enabled == false` → reason `flag_off`
-/// - no `hz` → reason `probe_skip`
-/// - `hz` outside `[min_hz, max_hz]` → reason `hz_out_of_range`
-/// - else `ms = clamp(round(1000/hz), floor, ceiling)`, reason `applied`
+/// Pure auto-cadence derivation from policy and probe Hz.
+/// `policy.probe_enabled == false`: reason `disabled` (no Hz, no auto) `auto_cadence_enabled == false`: reason `flag_off` no `hz`: reason `probe_skip` `hz` outside `[min_hz, max_hz]`: reason `hz_out_of_range` else `ms = clamp(round(1000/hz), floor, ceiling)`, reason `applied`
 pub(crate) fn decide_auto_cadence(
     policy: &DisplayRefreshPolicy,
     probe_hz: Option<u32>,
@@ -290,14 +279,8 @@ pub(crate) fn decide_auto_cadence(
     }
 }
 
-/// Merge auto-cadence with optional env cadence overrides.
-///
-/// Env knobs always win when present (`Some(ms)` even if parse-defaulted).
-/// When env is `None`, auto `ms` is used if `Some`, else `default_ms`.
-///
-/// `reason` is `env_override` when **both** env knobs are set and auto is not
-/// gated off (`flag_off` / `disabled`) — including when the probe was skipped
-/// for cadence because env already pins both clocks.
+/// Merge auto-cadence with optional env cadence overrides. Env knobs always win when present (`Some(ms)` even if parse-defaulted). When env is `None`, auto `ms` is used if `Some`, else `default_ms`.
+/// `reason` is `env_override` when **both** env knobs are set and auto is not gated off (`flag_off` / `disabled`). That includes the case where the probe was skipped for cadence because env already pins both clocks.
 pub(crate) fn merge_motion_cadence(
     auto: AutoCadenceDecision,
     min_draw_env: Option<u64>,
@@ -322,7 +305,6 @@ pub(crate) fn merge_motion_cadence(
     }
 }
 
-/// Decide auto-cadence from policy + probe, then merge optional env overrides.
 pub fn resolve_motion_cadence(
     policy: &DisplayRefreshPolicy,
     probe_hz: Option<u32>,
@@ -365,16 +347,16 @@ mod tests {
     }
 
     #[test]
-    fn defaults_probe_on_auto_off() {
+    fn defaults_probe_on_auto_on() {
         let _g = guard();
         let p = resolve_display_refresh(None, None, None, None);
         assert_eq!(p, DisplayRefreshPolicy::default());
         assert!(p.probe_enabled);
-        assert!(!p.auto_cadence_enabled);
+        assert!(p.auto_cadence_enabled);
         assert_eq!(p.floor_ms, 8);
         assert_eq!(p.ceiling_ms, 16);
         assert_eq!(p.min_hz, 55);
-        assert_eq!(p.max_hz, 165);
+        assert_eq!(p.max_hz, 240);
     }
 
     #[test]
@@ -464,19 +446,19 @@ mod tests {
     #[test]
     fn floor_ceiling_clamp_and_inverted_same_layer_defaults() {
         let _g = guard();
-        // same-layer inverted → compiled defaults
+        // Same-layer inverted bounds fall back to compiled defaults
         let user = toml_nested("floor_ms = 20\nceiling_ms = 10\n");
         let p = resolve_display_refresh(None, Some(&user), None, None);
         assert_eq!(p.floor_ms, DISPLAY_REFRESH_DEFAULT_FLOOR_MS);
         assert_eq!(p.ceiling_ms, DISPLAY_REFRESH_DEFAULT_CEILING_MS);
 
-        // 0 → clamp to 1
+        // Zero clamps to 1
         let zero = toml_nested("floor_ms = 0\nceiling_ms = 0\n");
         let p = resolve_display_refresh(None, Some(&zero), None, None);
         assert_eq!(p.floor_ms, 1);
         assert_eq!(p.ceiling_ms, 1);
 
-        // above env band → clamp to 100
+        // Values above the env band clamp to 100
         let hi = toml_nested("floor_ms = 200\nceiling_ms = 500\n");
         let p = resolve_display_refresh(None, Some(&hi), None, None);
         assert_eq!(p.floor_ms, 100);
@@ -486,7 +468,7 @@ mod tests {
     #[test]
     fn higher_priority_bound_wins_when_inverted() {
         let _g = guard();
-        // requirements min_hz=100 beats remote max_hz=90 → keep 100..=100
+        // Requirements min_hz=100 beats remote max_hz=90, so the range collapses to 100..=100
         let req = toml_nested("min_hz = 100\n");
         let remote = remote_object(DisplayRefreshSettings {
             max_hz: Some(90),
@@ -517,7 +499,7 @@ mod tests {
 
     #[test]
     fn both_env_reports_env_override_without_probe_hz() {
-        let policy = policy_auto_on();
+        let policy = DisplayRefreshPolicy::default();
         let m = resolve_motion_cadence(&policy, None, Some(8), Some(8));
         assert_eq!(m.min_draw_ms, 8);
         assert_eq!(m.scroll_ms, 8);
@@ -525,24 +507,33 @@ mod tests {
         assert_eq!(m.reason, "env_override");
     }
 
-    fn policy_auto_on() -> DisplayRefreshPolicy {
+    fn policy_auto_off() -> DisplayRefreshPolicy {
         DisplayRefreshPolicy {
-            auto_cadence_enabled: true,
+            auto_cadence_enabled: false,
             ..DisplayRefreshPolicy::default()
         }
     }
 
     #[test]
-    fn decide_flag_off_by_default() {
+    fn decide_applied_by_default() {
         let d = decide_auto_cadence(&DisplayRefreshPolicy::default(), Some(120));
+        assert_eq!(d.ms, Some(8));
+        assert_eq!(d.reason, "applied");
+    }
+
+    #[test]
+    fn decide_flag_off_when_auto_disabled() {
+        let d = decide_auto_cadence(&policy_auto_off(), Some(120));
         assert_eq!(d.ms, None);
         assert_eq!(d.reason, "flag_off");
     }
 
     #[test]
     fn decide_disabled_when_probe_off() {
-        let mut p = policy_auto_on();
-        p.probe_enabled = false;
+        let p = DisplayRefreshPolicy {
+            probe_enabled: false,
+            ..DisplayRefreshPolicy::default()
+        };
         let d = decide_auto_cadence(&p, Some(120));
         assert_eq!(d.ms, None);
         assert_eq!(d.reason, "disabled");
@@ -550,32 +541,39 @@ mod tests {
 
     #[test]
     fn decide_probe_skip_without_hz() {
-        let d = decide_auto_cadence(&policy_auto_on(), None);
+        let d = decide_auto_cadence(&DisplayRefreshPolicy::default(), None);
         assert_eq!(d.ms, None);
         assert_eq!(d.reason, "probe_skip");
     }
 
     #[test]
     fn decide_hz_out_of_range() {
-        let d = decide_auto_cadence(&policy_auto_on(), Some(30));
+        let d = decide_auto_cadence(&DisplayRefreshPolicy::default(), Some(30));
         assert_eq!(d.ms, None);
         assert_eq!(d.reason, "hz_out_of_range");
-        let d = decide_auto_cadence(&policy_auto_on(), Some(200));
+        let d = decide_auto_cadence(&DisplayRefreshPolicy::default(), Some(360));
         assert_eq!(d.reason, "hz_out_of_range");
     }
 
     #[test]
     fn decide_applied_clamps_round_1000_over_hz() {
-        let d = decide_auto_cadence(&policy_auto_on(), Some(120));
+        let p = DisplayRefreshPolicy::default();
+        let d = decide_auto_cadence(&p, Some(120));
         assert_eq!(d.ms, Some(8));
         assert_eq!(d.reason, "applied");
-        let d = decide_auto_cadence(&policy_auto_on(), Some(60));
+        let d = decide_auto_cadence(&p, Some(60));
         assert_eq!(d.ms, Some(16));
-        let d = decide_auto_cadence(&policy_auto_on(), Some(144));
+        let d = decide_auto_cadence(&p, Some(144));
         assert_eq!(d.ms, Some(8));
-        let d = decide_auto_cadence(&policy_auto_on(), Some(55));
+        let d = decide_auto_cadence(&p, Some(55));
         assert_eq!(d.reason, "applied");
-        let d = decide_auto_cadence(&policy_auto_on(), Some(165));
+        let d = decide_auto_cadence(&p, Some(165));
+        assert_eq!(d.reason, "applied");
+        let d = decide_auto_cadence(&p, Some(180));
+        assert_eq!(d.ms, Some(8));
+        assert_eq!(d.reason, "applied");
+        let d = decide_auto_cadence(&p, Some(240));
+        assert_eq!(d.ms, Some(8));
         assert_eq!(d.reason, "applied");
     }
 
@@ -630,7 +628,7 @@ mod tests {
 
     #[test]
     fn resolve_motion_cadence_folds_decide_and_merge() {
-        let p = policy_auto_on();
+        let p = DisplayRefreshPolicy::default();
         let c = resolve_motion_cadence(&p, Some(120), None, None);
         assert_eq!(c.min_draw_ms, 8);
         assert_eq!(c.scroll_ms, 8);

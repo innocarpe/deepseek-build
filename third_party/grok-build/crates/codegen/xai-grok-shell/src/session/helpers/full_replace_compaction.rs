@@ -1,24 +1,11 @@
-//! grok-build's L5 wiring onto the shared full-replace engine
-//! (`xai_grok_compaction::code_compaction`).
+//! grok-build's L5 wiring onto the shared full-replace engine (`xai_grok_compaction::code_compaction`).
 //!
-//! The shared engine drives the sample → retry → degenerate/failure
-//! classification loop via [`sample_full_replace_summary`](xai_grok_compaction::sample_full_replace_summary);
-//! this module adapts grok-build's transport and telemetry to its two seams:
+//! The shared engine drives the loop: sample, retry, then classify the result as degenerate or failed.
+//! The loop lives in [`sample_full_replace_summary`](xai_grok_compaction::sample_full_replace_summary).
+//! This module adapts grok-build's transport and telemetry to the engine's two traits: [`ShellCompactionSampler`] and [`ShellFullReplaceObserver`].
 //!
-//! - [`ShellCompactionSampler`] wraps
-//!   [`generate_session_compact`](crate::session::helpers::session_compact::generate_session_compact)
-//!   as the shared [`CompactionSampler`]. It also stashes the full
-//!   [`CompactOutput`] of the last successful call so the L5 loop can still
-//!   record the streaming telemetry (TTFT / stream span / stop reason) that
-//!   the shared [`LlmCompactionOutput`] doesn't model.
-//! - [`ShellFullReplaceObserver`] collects the per-attempt
-//!   [`CompactionAttempt`] rows, rejection counters, and emits the
-//!   `CompactionRetryDegraded` event — preserving the pre-migration telemetry.
-//!
-//! The verbatim → fitted → lossy **input ladder** and auto-compaction
-//! suppression stay in L5 (`compaction.rs`), driven by the
-//! `context_overflow` / `deterministic` flags on
-//! [`FullReplaceError`](xai_grok_compaction::FullReplaceError).
+//! The **input ladder** (verbatim, then fitted, then lossy) and auto-compaction suppression stay in L5 (`compaction.rs`).
+//! Both are driven by the `context_overflow` / `deterministic` flags on [`FullReplaceError`](xai_grok_compaction::FullReplaceError).
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -38,43 +25,46 @@ use xai_chat_state::compaction_utils::{
 };
 
 use crate::sampling::Client as OaiCompatClient;
+use crate::sampling::error::acp_error_message;
+use crate::session::helpers::prepared_compaction_history::{
+    PreparedCompactionHistory, build_compaction_chat_history,
+};
 use crate::session::helpers::session_compact::{
-    CompactFailure, CompactOutput, build_compaction_chat_history, generate_session_compact,
+    COMPACT_FAILED_PREFIX, CompactFailure, CompactOutput, generate_session_compact,
 };
 
-/// Wraps `generate_session_compact` as the shared engine's
-/// [`CompactionSampler`] for grok-build's full-replace pass.
-///
-/// Holds the per-call request context the seam does not carry (tools, client,
-/// session, config) and stashes the last successful [`CompactOutput`] so the
-/// caller can recover the streaming telemetry not modeled by
-/// [`LlmCompactionOutput`].
-///
-/// The summarization prompt is selected here by `use_short_prompt` (the
-/// short-prompt harness uses the short self-summarization prompt; everyone
-/// else the structured grok-build prompt), so the shared `CompactionPrompt`
-/// the engine passes is ignored — the engine builds the grok-build prompt,
-/// which equals what `build_compaction_chat_history(.., false)` appends, and
-/// the short-prompt harness needs its own variant the engine can't produce.
+#[derive(Default)]
+struct SamplerState {
+    last_success: Option<CompactOutput>,
+    last_attempted_items: Option<Vec<ConversationItem>>,
+}
+
+impl SamplerState {
+    fn record_attempt(&mut self, history: &PreparedCompactionHistory) {
+        self.last_attempted_items = Some(history.items.clone());
+    }
+}
+
+/// Wraps `generate_session_compact` as the shared engine's [`CompactionSampler`] for grok-build's full-replace pass.
+/// Holds the per-call request context the trait call does not carry (tools, client, session, config).
+/// The engine's prompt equals what [`build_compaction_chat_history`] appends, and the short-prompt harness needs a variant the engine can't produce.
 pub(crate) struct ShellCompactionSampler {
     use_short_prompt: bool,
     user_context: Option<String>,
     tools: Vec<ToolSpec>,
     hosted_tools: Vec<HostedTool>,
+    compaction_tool_tokens: u64,
     client: OaiCompatClient,
     session_id: acp::SessionId,
     sampling_config: SamplingConfig,
-    /// Per-chunk idle timeout forwarded to `generate_session_compact`: a stalled
-    /// summarizer stream (no model-output chunk for this long) fails instead of
-    /// hanging.
+    /// Per-chunk idle timeout forwarded to `generate_session_compact`.
+    /// A stalled summarizer stream (no model-output chunk for this long) fails instead of hanging.
     idle_timeout: Duration,
-    /// Wall-clock budget (secs) forwarded to `generate_session_compact` as the
-    /// reasoning-runaway backstop; `0` disables it.
+    /// Wall-clock budget (secs) forwarded to `generate_session_compact` as the cap on runaway reasoning; `0` disables it.
     wall_clock_budget_secs: u64,
     tool_choice: crate::util::config::CompactionToolChoice,
     cancel: tokio_util::sync::CancellationToken,
-    /// Full output of the most recent successful sample (for L5 telemetry).
-    last_success: Mutex<Option<CompactOutput>>,
+    state: Mutex<SamplerState>,
 }
 
 impl ShellCompactionSampler {
@@ -84,6 +74,7 @@ impl ShellCompactionSampler {
         user_context: Option<String>,
         tools: Vec<ToolSpec>,
         hosted_tools: Vec<HostedTool>,
+        compaction_tool_tokens: u64,
         client: OaiCompatClient,
         session_id: acp::SessionId,
         sampling_config: SamplingConfig,
@@ -97,6 +88,7 @@ impl ShellCompactionSampler {
             user_context,
             tools,
             hosted_tools,
+            compaction_tool_tokens,
             client,
             session_id,
             sampling_config,
@@ -104,13 +96,17 @@ impl ShellCompactionSampler {
             wall_clock_budget_secs,
             tool_choice,
             cancel,
-            last_success: Mutex::new(None),
+            state: Mutex::new(SamplerState::default()),
         }
     }
 
-    /// Take the [`CompactOutput`] of the most recent successful sample, if any.
     pub(crate) fn take_last_success(&self) -> Option<CompactOutput> {
-        self.last_success.lock().unwrap().take()
+        self.state.lock().unwrap().last_success.take()
+    }
+
+    /// Take the exact image-budgeted items from the latest transport attempt.
+    pub(crate) fn take_last_attempted_items(&self) -> Option<Vec<ConversationItem>> {
+        self.state.lock().unwrap().last_attempted_items.take()
     }
 }
 
@@ -124,17 +120,20 @@ impl CompactionSampler for ShellCompactionSampler {
         _prompt: &CompactionPrompt,
         _timeout: Duration,
     ) -> Result<LlmCompactionOutput, CompactionSampleError> {
-        // Append the harness-selected summarization prompt as the final user
-        // message (compat short vs structured grok-build), ignoring the shared
-        // engine's `_prompt` (see the struct doc).
+        // Append the harness-selected summarization prompt as the final user message (compat short vs structured grok-build)
+        // The shared engine's `_prompt` is ignored (see the struct doc)
         let chat_history = build_compaction_chat_history(
             turns.to_vec(),
             self.user_context.as_deref(),
             self.use_short_prompt,
+            self.sampling_config.max_request_bytes,
+            self.compaction_tool_tokens,
         );
+        self.state.lock().unwrap().record_attempt(&chat_history);
 
         match generate_session_compact(
             chat_history,
+            self.compaction_tool_tokens,
             self.tools.clone(),
             self.hosted_tools.clone(),
             self.client.clone(),
@@ -149,7 +148,7 @@ impl CompactionSampler for ShellCompactionSampler {
         {
             Ok(output) => {
                 let response = output.content.clone();
-                *self.last_success.lock().unwrap() = Some(output);
+                self.state.lock().unwrap().last_success = Some(output);
                 Ok(LlmCompactionOutput {
                     response,
                     thinking: String::new(),
@@ -160,42 +159,29 @@ impl CompactionSampler for ShellCompactionSampler {
     }
 }
 
-/// Map grok-build's [`CompactFailure`] onto the shared engine's
-/// [`CompactionSampleError`] so the shared retry loop classifies it the same
-/// way the in-shell loop did:
-///
-/// - `Deterministic` → [`CompactionSampleError::Build`] (whose
-///   `is_deterministic()` is `true`); a context-length overflow keeps its
-///   message text so the engine's `is_context_length_error` check fires and
-///   sets `context_overflow`.
-/// - `Transient` → [`CompactionSampleError::Other`] (`is_deterministic()` is
-///   `false`), so the engine retries it.
+/// Map grok-build's [`CompactFailure`] onto the shared engine's [`CompactionSampleError`].
+/// `Overflow` → [`CompactionSampleError::ContextOverflow`] — sets the.
+/// `false`), so the engine retries it.
 fn compact_failure_to_sample_error(failure: CompactFailure) -> CompactionSampleError {
-    let (deterministic, err) = match failure {
-        CompactFailure::Deterministic(err) => (true, err),
-        CompactFailure::Transient(err) => (false, err),
-        CompactFailure::Cancelled => (true, CompactFailure::cancelled_error()),
-    };
-    let message = acp_error_message(&err);
-    if deterministic {
-        CompactionSampleError::Build(message)
-    } else {
-        CompactionSampleError::Other(anyhow::anyhow!(message))
+    match failure {
+        CompactFailure::Overflow(err) => {
+            CompactionSampleError::ContextOverflow(acp_error_message(&err))
+        }
+        CompactFailure::Deterministic(err) => CompactionSampleError::Build(acp_error_message(&err)),
+        CompactFailure::Transient(err) => {
+            CompactionSampleError::Other(anyhow::anyhow!(acp_error_message(&err)))
+        }
+        CompactFailure::Cancelled => {
+            CompactionSampleError::Build(acp_error_message(&CompactFailure::cancelled_error()))
+        }
     }
 }
 
-/// Render the human-readable detail an `acp::Error` carries in its `data`
-/// field (where `classify_*` stash `"compact failed: <upstream>"`).
-fn acp_error_message(err: &acp::Error) -> String {
-    err.data
-        .as_ref()
-        .and_then(|d| d.as_str())
-        .unwrap_or("<no data>")
-        .to_string()
-}
+#[cfg(test)]
+#[path = "full_replace_compaction_tests.rs"]
+mod tests;
 
-/// Collected telemetry from a full-replace pass, drained by the L5 loop after
-/// the shared engine returns.
+/// Collected telemetry from a full-replace pass, drained by the L5 loop after the shared engine returns.
 pub(crate) struct FullReplaceTelemetry {
     pub attempts: u32,
     pub attempt_details: Vec<CompactionAttempt>,
@@ -217,10 +203,8 @@ struct ObserverState {
     last_error_msg: Option<String>,
 }
 
-/// [`FullReplaceObserver`] that reproduces grok-build's per-attempt telemetry:
-/// `CompactionAttempt` rows, rejection counters, the `CompactionRetryDegraded`
-/// event, and the warn/error tracing — without the shared engine depending on
-/// a telemetry backend.
+/// [`FullReplaceObserver`] that reproduces grok-build's per-attempt telemetry without the shared engine depending on a telemetry backend.
+/// It records `CompactionAttempt` rows, rejection counters, the `CompactionRetryDegraded` event, and the warn/error tracing.
 pub(crate) struct ShellFullReplaceObserver {
     trigger: CompactionTrigger,
     context_window: u64,
@@ -257,8 +241,7 @@ impl ShellFullReplaceObserver {
         self.state.lock().unwrap().attempts
     }
 
-    /// Whether any attempt so far produced a degenerate summary — lets the L5
-    /// loop distinguish degenerate-exhausted from empty-exhausted.
+    /// Lets the L5 loop tell retries exhausted on degenerate summaries apart from retries exhausted on empty output.
     pub(crate) fn degenerate_seen(&self) -> bool {
         self.state.lock().unwrap().degenerate_rejections > 0
     }
@@ -268,9 +251,7 @@ impl ShellFullReplaceObserver {
         self.state.lock().unwrap().last_error_msg.clone()
     }
 
-    /// Drain the collected telemetry. The cumulative attempt count spans all
-    /// input-ladder stages because the same observer instance is shared across
-    /// every per-stage call.
+    /// The cumulative attempt count spans all input-ladder stages because the same observer instance is shared across every per-stage call.
     pub(crate) fn into_telemetry(self) -> FullReplaceTelemetry {
         let s = self.state.into_inner().unwrap();
         FullReplaceTelemetry {
@@ -287,8 +268,7 @@ impl ShellFullReplaceObserver {
 impl FullReplaceObserver for ShellFullReplaceObserver {
     fn on_attempt(&self, _attempt: u32, outcome: &FullReplaceAttemptOutcome<'_>) {
         let mut s = self.state.lock().unwrap();
-        // The shared `attempt` resets per ladder stage; keep a cumulative count
-        // so artifact rows match the pre-migration numbering.
+        // The shared `attempt` resets per ladder stage; keep a cumulative count so artifact rows match the pre-migration numbering
         s.attempts += 1;
         let attempt = s.attempts;
 
@@ -317,7 +297,7 @@ impl FullReplaceObserver for ShellFullReplaceObserver {
                 });
                 s.last_rejected_summary = Some((*summary).to_string());
                 s.last_error_msg = Some(format!(
-                    "compact failed: degenerate summary \
+                    "{COMPACT_FAILED_PREFIX}degenerate summary \
                      ({summary_chars} chars for ~{} input tokens)",
                     self.estimated_input_tokens
                 ));
@@ -352,11 +332,10 @@ impl FullReplaceObserver for ShellFullReplaceObserver {
                 }
             }
             FullReplaceAttemptOutcome::EmptyResponse { .. } => {
-                // The shell surfaces an empty response as a transient error
-                // (`generate_session_compact` returns `Transient`), so it never
-                // reaches the shared `Ok("")` branch; handle defensively.
+                // The shell reports an empty response as a transient error (`generate_session_compact` returns `Transient`)
+                // It never reaches the shared `Ok("")` branch; handle defensively
                 s.transient_rejections += 1;
-                let msg = "compact failed: model returned empty response".to_string();
+                let msg = format!("{COMPACT_FAILED_PREFIX}model returned empty response");
                 s.attempt_details.push(CompactionAttempt {
                     attempt,
                     outcome: "transient".to_string(),
@@ -372,10 +351,8 @@ impl FullReplaceObserver for ShellFullReplaceObserver {
                 context_overflow,
                 will_retry,
             } => {
-                // A context overflow is recorded as a `deterministic` attempt
-                // (matching the pre-migration row) but does NOT count toward
-                // `deterministic_rejections` — the L5 ladder steps down on it
-                // and tracks its own `input_overflow_rejections`.
+                // A context overflow is recorded as a `deterministic` attempt (matching the pre-migration row)
+                // It does NOT count toward `deterministic_rejections`; the L5 ladder steps down on it and tracks its `input_overflow_rejections`
                 if *deterministic {
                     if !*context_overflow {
                         s.deterministic_rejections += 1;

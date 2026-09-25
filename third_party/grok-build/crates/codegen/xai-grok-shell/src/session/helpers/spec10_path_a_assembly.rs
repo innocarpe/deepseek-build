@@ -670,13 +670,16 @@ mod tests {
             x_grok_req_id: None,
             x_grok_session_id: None,
             x_grok_turn_idx: None,
+            x_grok_transient_retry: None,
             x_grok_agent_id: None,
             x_grok_deployment_id: None,
             x_grok_user_id: None,
             trace: None,
+            traceparent: None,
             reasoning_effort: None,
             json_schema: None,
             prompt_cache_key: None,
+            length_policy: xai_grok_sampling_types::LengthPolicy::Fail,
         };
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(dir.path().join("AGENTS.md"), "project rules").unwrap();

@@ -1,9 +1,8 @@
-//! Persona detail/edit modal — structured view of a persona with inline editing.
+//! Persona detail/edit modal: structured view of a persona with inline editing.
 //!
 //! Opened by pressing Enter on a persona in the `/config-agents` Personas tab.
-//! Renders all persona TOML fields in labeled sections. Editable personas
-//! (user/project scope) support inline field editing; bundled personas are
-//! read-only.
+//! Renders all persona TOML fields in labeled sections.
+//! Editable personas (user/project scope) support inline field editing; bundled personas are read-only.
 
 use std::path::{Path, PathBuf};
 
@@ -18,10 +17,6 @@ use crate::theme::Theme;
 use crate::views::modal_window::{
     self, ModalContentArea, ModalSizing, ModalWindowConfig, ModalWindowState, Shortcut,
 };
-
-// ---------------------------------------------------------------------------
-// Field enum
-// ---------------------------------------------------------------------------
 
 /// Navigable fields in the persona detail view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,12 +55,18 @@ impl PersonaField {
 
     fn next(self) -> Self {
         let idx = Self::ALL.iter().position(|&f| f == self).unwrap_or(0);
-        Self::ALL[(idx + 1) % Self::ALL.len()]
+        Self::ALL
+            .get((idx + 1) % Self::ALL.len())
+            .copied()
+            .unwrap_or(self)
     }
 
     fn prev(self) -> Self {
         let idx = Self::ALL.iter().position(|&f| f == self).unwrap_or(0);
-        Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
+        Self::ALL
+            .get((idx + Self::ALL.len() - 1) % Self::ALL.len())
+            .copied()
+            .unwrap_or(self)
     }
 
     /// True for fields that support inline text editing.
@@ -77,10 +78,6 @@ impl PersonaField {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Mode state machine
-// ---------------------------------------------------------------------------
-
 #[derive(Debug)]
 enum PersonaDetailMode {
     Browse,
@@ -91,13 +88,9 @@ enum PersonaDetailMode {
     },
 }
 
-// ---------------------------------------------------------------------------
-// Outcome
-// ---------------------------------------------------------------------------
-
 #[derive(Debug)]
 pub enum PersonaDetailOutcome {
-    /// Normal handled event.
+    /// The event was handled and the modal changed.
     Changed,
     /// Nothing to do.
     Unchanged,
@@ -107,10 +100,6 @@ pub enum PersonaDetailOutcome {
     EditInEditor { path: PathBuf },
 }
 
-// ---------------------------------------------------------------------------
-// I/O entry
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone)]
 pub struct PersonaIOEntry {
     pub name: String,
@@ -118,10 +107,6 @@ pub struct PersonaIOEntry {
     pub required: bool,
     pub description: String,
 }
-
-// ---------------------------------------------------------------------------
-// State
-// ---------------------------------------------------------------------------
 
 pub struct PersonaDetailState {
     pub window: ModalWindowState,
@@ -338,7 +323,7 @@ impl PersonaDetailState {
             if value.is_empty() {
                 doc.remove(key);
             } else {
-                doc[key] = toml_edit::value(value);
+                doc.insert(key, toml_edit::value(value));
             }
         }
 
@@ -346,10 +331,6 @@ impl PersonaDetailState {
         Ok(())
     }
 }
-
-// ---------------------------------------------------------------------------
-// Rendering
-// ---------------------------------------------------------------------------
 
 fn render_detail_editor(
     buf: &mut Buffer,
@@ -361,12 +342,12 @@ fn render_detail_editor(
     theme: &Theme,
 ) {
     let viewport = editor.viewport(width);
-    let visible = &editor.text()[viewport.visible_byte_range];
+    let visible = editor.text().get(viewport.visible_byte_range).unwrap_or("");
     buf.set_string(x, y, visible, style);
     if width > 0 {
         let cursor_x = x + viewport.cursor_display_column as u16;
         if let Some(cell) = buf.cell_mut((cursor_x, y)) {
-            cell.set_style(Style::default().fg(theme.bg_base).bg(theme.text_primary));
+            cell.set_style(theme.block_cursor_over(theme.bg_base));
         }
     }
 }
@@ -449,7 +430,6 @@ pub fn render_persona_detail(
         let value_x = content_area.x + label_w;
         let value_w = w.saturating_sub(label_w as usize);
 
-        // Check if we're in editing mode for this field.
         if is_selected
             && let PersonaDetailMode::Editing {
                 field: editing_field,
@@ -505,7 +485,7 @@ pub fn render_persona_detail(
                         y += 1;
                         if y < max_y {
                             let hint = format!(
-                                "  ... ({} more lines \u{2014} e to expand, j/k to scroll)",
+                                "  ... ({} more lines: e to expand, j/k to scroll)",
                                 total - max_collapsed
                             );
                             buf.set_string(
@@ -522,7 +502,9 @@ pub fn render_persona_detail(
                         .instructions_scroll
                         .min(total.saturating_sub(viewport_h));
                     state.instructions_scroll = scroll;
-                    let visible = &lines[scroll..total.min(scroll + viewport_h)];
+                    let visible = lines
+                        .get(scroll..total.min(scroll + viewport_h))
+                        .unwrap_or(&[]);
                     for (i, line) in visible.iter().enumerate() {
                         let x_pos = if i == 0 && scroll == 0 {
                             value_x
@@ -561,7 +543,7 @@ pub fn render_persona_detail(
             } else {
                 Style::default().fg(theme.gray_dim)
             };
-            buf.set_string(value_x, y, "\u{2014}", empty_style);
+            buf.set_string(value_x, y, "-", empty_style);
         } else if value.width() <= value_w {
             // Fits on one line.
             let val_style = if let Some(bg) = row_bg {
@@ -722,10 +704,6 @@ fn build_shortcuts(state: &PersonaDetailState) -> Vec<Shortcut<'static>> {
         shortcuts
     }
 }
-
-// ---------------------------------------------------------------------------
-// Input handling
-// ---------------------------------------------------------------------------
 
 pub fn handle_persona_detail_key(
     state: &mut PersonaDetailState,
@@ -893,10 +871,6 @@ pub fn handle_persona_detail_mouse(
         _ => PersonaDetailOutcome::Unchanged,
     }
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 fn word_wrap_lines(text: &str, max_width: usize) -> Vec<String> {
     let mut lines = Vec::new();

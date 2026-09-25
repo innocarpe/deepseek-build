@@ -12,7 +12,7 @@ impl<'a> Cursor<'a> {
     }
 
     pub(super) fn peek(&self) -> Option<char> {
-        self.src[self.pos..].chars().next()
+        self.src.get(self.pos..)?.chars().next()
     }
 
     pub(super) fn bump(&mut self) -> Option<char> {
@@ -21,11 +21,8 @@ impl<'a> Cursor<'a> {
         Some(ch)
     }
 
-    /// Consume `\command` (alphabetic name) or `\<single char>`; the leading
-    /// backslash must already be consumed. Returns the command name.
-    ///
-    /// Unlike TeX we do NOT consume trailing whitespace: the caller's
-    /// whitespace collapsing keeps `\to 0` rendering as `→ 0`.
+    /// Consume `\command` (alphabetic name) or `\<single char>`; the leading backslash must already be consumed. Returns the command name.
+    /// Unlike TeX we do NOT consume trailing whitespace: the caller's whitespace collapsing keeps `\to 0` rendering as `→ 0`.
     pub(super) fn read_command_name(&mut self) -> &'a str {
         let start = self.pos;
         match self.peek() {
@@ -33,11 +30,11 @@ impl<'a> Cursor<'a> {
                 while matches!(self.peek(), Some(c) if c.is_ascii_alphabetic()) {
                     self.bump();
                 }
-                &self.src[start..self.pos]
+                self.src.get(start..self.pos).unwrap_or("")
             }
             Some(_) => {
                 self.bump();
-                &self.src[start..self.pos]
+                self.src.get(start..self.pos).unwrap_or("")
             }
             None => "",
         }
@@ -51,8 +48,7 @@ impl<'a> Cursor<'a> {
     }
 
     /// Read a balanced `{...}` group body, assuming `{` was already consumed.
-    /// Returns the inner source (without braces). Unbalanced input returns
-    /// the remainder of the source.
+    /// Returns the inner source (without braces). Unbalanced input returns the remainder of the source.
     pub(super) fn read_group_body(&mut self) -> &'a str {
         let start = self.pos;
         let mut depth = 1usize;
@@ -66,17 +62,20 @@ impl<'a> Cursor<'a> {
                 '}' => {
                     depth -= 1;
                     if depth == 0 {
-                        return &self.src[start..self.pos - 1];
+                        return self
+                            .pos
+                            .checked_sub(1)
+                            .and_then(|end| self.src.get(start..end))
+                            .unwrap_or("");
                     }
                 }
                 _ => {}
             }
         }
-        &self.src[start..self.pos]
+        self.src.get(start..self.pos).unwrap_or("")
     }
 
-    /// Read the next "atom": a `{...}` group body, a `\command` (returned
-    /// with backslash), or a single char. Skips leading whitespace.
+    /// Read the next "atom": a `{...}` group body, a `\command` (returned with backslash), or a single char. Skips leading whitespace.
     pub(super) fn read_atom(&mut self) -> Option<&'a str> {
         self.skip_ws();
         let start = self.pos;
@@ -88,11 +87,11 @@ impl<'a> Cursor<'a> {
             '\\' => {
                 self.bump();
                 self.read_command_name();
-                Some(&self.src[start..self.pos])
+                Some(self.src.get(start..self.pos).unwrap_or(""))
             }
             _ => {
                 self.bump();
-                Some(&self.src[start..self.pos])
+                Some(self.src.get(start..self.pos).unwrap_or(""))
             }
         }
     }

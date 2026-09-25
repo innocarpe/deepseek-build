@@ -3,18 +3,9 @@
 
     #[test]
     fn goal_updated_ignores_unknown_json_fields_via_serde() {
-        // Serde-side half of the forward-compat story: a payload that
-        // carries an extra JSON field absent on today's
-        // `SessionUpdate::GoalUpdated` (no `deny_unknown_fields` on the
-        // variant) must still deserialize and drive a full
-        // `GoalDisplayState`. This guards against someone later adding
-        // `#[serde(deny_unknown_fields)]` to the variant, which would
-        // silently break wire compatibility with older shells.
-        //
-        // The complementary Rust-level half — that the destructure with
-        // trailing `..` keeps absent additive `Option<T>` fields landing
-        // as `None` in the mapped `GoalDisplayState` — is exercised by
-        // `goal_updated_absent_optional_fields_deserialize_to_none`.
+        // A payload can carry an extra JSON field absent on today's `SessionUpdate::GoalUpdated` (no `deny_unknown_fields` on the variant)
+        // It must still deserialize and drive a full `GoalDisplayState`
+        // That would silently break wire compatibility with older shells
         let mut app = make_app_with_agent("sess-A");
 
         let raw_payload = serde_json::json!({
@@ -45,11 +36,9 @@
                 "last_event": "verify_started",
                 "last_event_detail": "round 2 of 3",
                 "last_event_timestamp": "2026-05-24T00:00:00Z",
-                // Field absent on today's `SessionUpdate::GoalUpdated` — simulates
-                // a future shell adding a new wire field. With trailing `..` in
-                // the destructure and no `deny_unknown_fields` on the variant,
-                // this must parse and the pager must still produce a
-                // GoalDisplayState mapped from the known subset.
+                // Field absent on today's `SessionUpdate::GoalUpdated`; simulates a future shell adding a new wire field
+                // With trailing `..` in the destructure and no `deny_unknown_fields` on the variant, this must parse
+                // The pager must still produce a GoalDisplayState mapped from the known subset
                 "future_field_for_pr5": "ignored-by-todays-pager"
             }
         });
@@ -177,8 +166,7 @@
             "transition to Complete pushes one e2e marker with the goal's total time",
         );
 
-        // A repeat Complete update (e.g. a late notification) must not
-        // duplicate the marker.
+        // A repeat Complete update (e.g. a late notification) must not duplicate the marker.
         send(&mut app, "complete", 620_000);
         assert_eq!(
             goal_markers(&app).len(),
@@ -189,8 +177,7 @@
 
     #[test]
     fn goal_elapsed_is_monotonic_across_updates() {
-        // The displayed elapsed must never tick backward when a notification's
-        // authoritative base is below the already-extrapolated value;
+        // The displayed elapsed must never tick backward when a notification's authoritative base is below the already-extrapolated value
         // `elapsed_floor_ms` clamps it.
         let mut app = make_app_with_agent("sess-A");
         assert!(send_goal_update(&mut app, "g1", "active", 10_000));
@@ -204,8 +191,7 @@
             .live_elapsed_ms();
         assert!(a >= 10_000);
 
-        // Same goal, but a LOWER authoritative base (extrapolation outran the
-        // shell's flush point).
+        // Same goal, but a LOWER authoritative base (extrapolation outran the shell's flush point)
         send_goal_update(&mut app, "g1", "active", 8_000);
         let b = app
             .agents
@@ -221,9 +207,8 @@
 
     #[test]
     fn cleared_goal_is_not_resurrected_by_late_update() {
-        // After a goal is cleared, a late in-flight GoalUpdated for the same
-        // goal_id (queued before the clear) must be dropped so the "Done"
-        // chip / modal stay cleared and don't resurrect.
+        // After a goal is cleared, a late in-flight GoalUpdated for the same goal_id (queued before the clear) must be dropped
+        // The "Done" chip / modal stay cleared and don't resurrect
         let mut app = make_app_with_agent("sess-A");
         send_goal_update(&mut app, "g1", "complete", 5_000);
         assert!(
@@ -249,8 +234,7 @@
 
     #[test]
     fn new_goal_after_clear_is_not_suppressed() {
-        // A genuinely new goal (different id) after a clear must start
-        // normally — the cleared-id guard only drops the SAME id.
+        // A genuinely new goal (different id) after a clear must start normally; the cleared-id guard only drops the SAME id
         let mut app = make_app_with_agent("sess-A");
         send_goal_update(&mut app, "g1", "active", 1_000);
         send_goal_update(&mut app, "", "cleared", 0);
@@ -264,8 +248,7 @@
 
     #[test]
     fn goal_switch_resets_elapsed_floor() {
-        // A NEW goal (different id) must start its own clock and NOT inherit
-        // the prior goal's carried elapsed floor.
+        // A NEW goal (different id) must start its own clock and NOT inherit the prior goal's carried elapsed floor
         let mut app = make_app_with_agent("sess-A");
         send_goal_update(&mut app, "g1", "active", 10_000);
         // Switch directly to a different goal with a small elapsed base.
@@ -286,15 +269,18 @@
 
     #[test]
     fn goal_updated_resolves_details_path_existence_on_receipt() {
-        // The handler resolves last_classifier_details_path's existence ONCE
-        // on receipt into the cached bool (no per-frame stat).
+        // The handler resolves last_classifier_details_path's existence ONCE on receipt into the cached bool (no per-frame stat)
         let mut app = make_app_with_agent("sess-A");
 
-        // A real on-disk path → cached exists = true.
+        // A real on-disk path is cached as existing
         let f = tempfile::NamedTempFile::new().unwrap();
         let real_path = f.path().to_string_lossy().into_owned();
         let mut update = goal_update_value("g1", "active", 0);
-        update["last_classifier_details_path"] = serde_json::json!(real_path);
+        json_set(
+            &mut update,
+            "last_classifier_details_path",
+            serde_json::json!(real_path),
+        );
         dispatch_goal_update(&mut app, update);
         let g = app
             .agents
@@ -312,9 +298,13 @@
             Some(real_path.as_str())
         );
 
-        // A missing path → cached exists = false (modal renders "(unavailable)").
+        // A missing path is cached as not existing (modal renders "(unavailable)")
         let mut update = goal_update_value("g1", "active", 0);
-        update["last_classifier_details_path"] = serde_json::json!("/no/such/details-xyz.md");
+        json_set(
+            &mut update,
+            "last_classifier_details_path",
+            serde_json::json!("/no/such/details-xyz.md"),
+        );
         dispatch_goal_update(&mut app, update);
         let g = app
             .agents
@@ -331,14 +321,9 @@
 
     #[test]
     fn goal_updated_absent_optional_fields_deserialize_to_none() {
-        // Rust-level forward-compat half: every additive
-        // `Option<T>` field on `SessionUpdate::GoalUpdated` is allowed to
-        // be omitted from the wire payload and must surface as `None` in
-        // the destructured arm — i.e. the pager keeps mapping the known
-        // subset cleanly when the shell-side struct grows or when an
-        // older shell omits newer optional fields. Drop a handful of
-        // optional keys from the payload and assert they materialise as
-        // `None` on the resulting `GoalDisplayState`.
+        // Rust-level forward-compat half
+        // Every additive `Option<T>` field on `SessionUpdate::GoalUpdated` may be omitted from the wire payload
+        // Each must land as `None` in the destructured arm
         let mut app = make_app_with_agent("sess-A");
 
         let raw_payload = serde_json::json!({
@@ -349,26 +334,19 @@
                 "objective": "minimal payload",
                 "status": "active",
                 "phase": "idle",
-                // token_budget omitted — Option<i64> must default to None.
+                // token_budget omitted: Option<i64> must default to None
                 "tokens_used": 0,
                 "elapsed_ms": 0,
                 "total_deliverables": 0,
                 "completed_deliverables": 0,
-                // current_deliverable_idx omitted — Option<u32> -> None.
-                // current_deliverable_title omitted — Option<String> -> None.
-                // current_subagent_role omitted — Option<String> -> None.
+                // current_deliverable_idx omitted: Option<u32> defaults to None
+                // current_deliverable_title omitted: Option<String> defaults to None
+                // current_subagent_role omitted: Option<String> defaults to None
                 "total_worker_rounds": 0,
                 "total_verify_rounds": 0,
                 "token_baseline": 0,
                 "finished_subagent_tokens": 0,
-                // live_subagent_tokens omitted — Option<u64> -> None.
-                // live_context_pct omitted — Option<u8> -> None.
-                // live_turn_count omitted — Option<u32> -> None.
-                // live_tool_call_count omitted — Option<u32> -> None.
-                // last_event omitted — Option<String> -> None.
-                // last_event_detail omitted — Option<String> -> None.
-                // last_event_timestamp omitted — Option<String> -> None.
-                // pause_message omitted — Option<String> -> None.
+                // live_subagent_tokens omitted: Option<u64> defaults to None live_context_pct omitted: Option<u8> defaults to None live_turn_count omitted: Option<u32> defaults to None live_tool_call_count omitted: Option<u32> defaults to None last_event omitted: Option<String> defaults to None last_event_detail omitted: Option<String> defaults to None last_event_timestamp omitted: Option<String> defaults to None pause_message omitted: Option<String> defaults to None
             }
         });
         let raw = serde_json::value::to_raw_value(&raw_payload).unwrap();
@@ -405,9 +383,8 @@
         assert_eq!(goal.token_baseline, 0);
         assert_eq!(goal.finished_subagent_tokens, 0);
 
-        // Every omitted Option<T> wire field must surface as None — this
-        // is the property that keeps the destructure stable as the shell
-        // grows additive optional fields.
+        // Every omitted Option<T> wire field must land as None
+        // This property keeps the destructure stable as the shell grows additive optional fields
         assert_eq!(goal.token_budget, None, "token_budget");
         assert_eq!(goal.current_deliverable_id, None, "current_deliverable_id");
         assert_eq!(
@@ -489,7 +466,7 @@
         revision: u64,
     ) -> bool {
         let mut update = workflow_update_value(run_id, name, status, foreground);
-        update["revision"] = serde_json::json!(revision);
+        json_set(&mut update, "revision", serde_json::json!(revision));
         dispatch_goal_update(app, update)
     }
 
@@ -497,8 +474,8 @@
     fn workflow_updated_never_owns_goal_ui() {
         let mut app = make_app_with_agent("sess-A");
         send_workflow_update(&mut app, "wf_goal", "goal", "active", true);
-        assert!(app.agents[&AgentId(0)].goal_state.is_none());
-        assert_eq!(app.agents[&AgentId(0)].workflow_runs.len(), 1);
+        assert!(test_agent(&app, AgentId(0)).goal_state.is_none());
+        assert_eq!(test_agent(&app, AgentId(0)).workflow_runs.len(), 1);
     }
 
     #[test]
@@ -508,7 +485,7 @@
         app.agents.get_mut(&id).unwrap().last_applied_xai_event_seq = Some(100);
 
         let mut update = workflow_update_value("wf", "deep-research", "active", false);
-        update["revision"] = serde_json::json!(1);
+        json_set(&mut update, "revision", serde_json::json!(1));
         let raw_payload = serde_json::json!({
             "sessionId": "sess-A",
             "update": update,
@@ -525,9 +502,15 @@
         );
 
         assert!(affected, "per-run workflow revision must win over the global highwater");
-        assert_eq!(app.agents[&id].workflow_runs[0].run_id, "wf");
-        assert_eq!(app.agents[&id].last_applied_xai_event_seq, Some(100));
-        assert_eq!(app.agents[&id].last_seen_event_id.as_deref(), Some("sess-A-5"));
+        assert_eq!(
+            test_agent(&app, id)
+                .workflow_runs
+                .first()
+                .map(|r| r.run_id.as_str()),
+            Some("wf")
+        );
+        assert_eq!(test_agent(&app, id).last_applied_xai_event_seq, Some(100));
+        assert_eq!(test_agent(&app, id).last_seen_event_id.as_deref(), Some("sess-A-5"));
     }
 
     #[test]
@@ -537,26 +520,42 @@
         assert!(!send_revisioned_workflow_update(
             &mut app, "wf", "deep-research", "active", false, 2,
         ));
-        assert_eq!(app.agents[&AgentId(0)].workflow_runs[0].status, "complete");
+        assert_eq!(
+            test_agent(&app, AgentId(0))
+                .workflow_runs
+                .first()
+                .map(|r| r.status.as_str()),
+            Some("complete")
+        );
         send_revisioned_workflow_update(&mut app, "wf", "", "cleared", false, 4);
         assert!(!send_revisioned_workflow_update(
             &mut app, "wf", "deep-research", "complete", false, 3,
         ));
-        assert!(app.agents[&AgentId(0)].workflow_runs.is_empty());
+        assert!(test_agent(&app, AgentId(0)).workflow_runs.is_empty());
     }
 
     #[test]
     fn workflow_snapshot_derives_active_count_from_roster() {
         let mut app = make_app_with_agent("sess-A");
         let mut update = workflow_update_value("wf", "deep-research", "active", false);
-        update["revision"] = serde_json::json!(1);
-        update["active_agents"] = serde_json::json!(99);
-        update["agents"] = serde_json::json!([
-            { "agent_id": "a1", "label": "one", "state": "running" },
-            { "agent_id": "a2", "label": "two", "state": "done" }
-        ]);
+        json_set(&mut update, "revision", serde_json::json!(1));
+        json_set(&mut update, "active_agents", serde_json::json!(99));
+        json_set(
+            &mut update,
+            "agents",
+            serde_json::json!([
+                { "agent_id": "a1", "label": "one", "state": "running" },
+                { "agent_id": "a2", "label": "two", "state": "done" }
+            ]),
+        );
         dispatch_goal_update(&mut app, update);
-        assert_eq!(app.agents[&AgentId(0)].workflow_runs[0].active_agents, 1);
+        assert_eq!(
+            test_agent(&app, AgentId(0))
+                .workflow_runs
+                .first()
+                .map(|r| r.active_agents),
+            Some(1)
+        );
     }
 
     #[test]
@@ -611,9 +610,9 @@
         let id = AgentId(0);
 
         assert!(send_revisioned_workflow_update(&mut app, "wf", "deep-research", "active", false, 3));
-        assert_eq!(app.agents[&id].workflow_runs.len(), 1);
-        assert_eq!(count_workflow_blocks(&app.agents[&id]), 1);
-        let block_id = *app.agents[&id].workflow_blocks.get("wf").expect("live block id");
+        assert_eq!(test_agent(&app, id).workflow_runs.len(), 1);
+        assert_eq!(count_workflow_blocks(test_agent(&app, id)), 1);
+        let block_id = *test_agent(&app, id).workflow_blocks.get("wf").expect("live block id");
 
         {
             let agent = app.agents.get_mut(&id).unwrap();
@@ -623,12 +622,12 @@
         }
 
         assert_eq!(
-            app.agents[&id].workflow_runs.len(),
+            test_agent(&app, id).workflow_runs.len(),
             1,
             "run list restored after a failed reload"
         );
         assert_eq!(
-            app.agents[&id].workflow_blocks.get("wf").copied(),
+            test_agent(&app, id).workflow_blocks.get("wf").copied(),
             Some(block_id),
             "block map restored, still pointing at the restored scrollback block"
         );
@@ -639,7 +638,7 @@
         );
         assert!(send_revisioned_workflow_update(&mut app, "wf", "deep-research", "complete", false, 4));
         assert_eq!(
-            count_workflow_blocks(&app.agents[&id]),
+            count_workflow_blocks(test_agent(&app, id)),
             1,
             "restored block map prevents a duplicate workflow history block"
         );
@@ -651,19 +650,19 @@
         let id = AgentId(0);
 
         assert!(send_revisioned_workflow_update(&mut app, "wf", "deep-research", "active", false, 5));
-        assert_eq!(app.agents[&id].workflow_runs.len(), 1);
+        assert_eq!(test_agent(&app, id).workflow_runs.len(), 1);
 
         assert!(send_workflow_update(&mut app, "wf", "deep-research", "cleared", false));
         assert!(
-            app.agents[&id].workflow_runs.is_empty(),
+            test_agent(&app, id).workflow_runs.is_empty(),
             "cleared removes the run despite a lower/default revision"
         );
         assert!(
-            !app.agents[&id].workflow_blocks.contains_key("wf"),
+            !test_agent(&app, id).workflow_blocks.contains_key("wf"),
             "cleared drops the live block id"
         );
         assert!(
-            app.agents[&id].cleared_workflow_runs.contains("wf"),
+            test_agent(&app, id).cleared_workflow_runs.contains("wf"),
             "clear tombstone recorded"
         );
     }

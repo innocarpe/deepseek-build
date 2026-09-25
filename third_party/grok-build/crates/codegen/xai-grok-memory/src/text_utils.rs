@@ -1,25 +1,15 @@
-//! Pure text-classification helpers shared by the memory flush
-//! (`session::helpers::memory_flush`) and dream (`session::memory::dream`)
-//! response-processing paths.
+//! Text-classification helpers shared by the [`crate::flush`] and [`crate::dream`] response-processing modules.
 //!
-//! These live here, in the memory subsystem, so `dream` no longer reaches
-//! *up* into `session::helpers::memory_flush` for them — which removes the
-//! `dream` <-> `memory_flush` module dependency cycle and is a prerequisite
-//! for extracting the memory subsystem into its own crate.
+//! Keeping them here lets flush and dream depend on `text_utils` without depending on each other.
 
-/// Check if text contains at least one markdown header (`#` or `##`).
-///
-/// Used by both flush and dream response processing to ensure the model
-/// produced structured output.
+/// Flush and dream response processing call this to check the model produced structured output.
 pub fn has_markdown_headers(text: &str) -> bool {
     text.contains("## ") || text.contains("# ")
 }
 
-/// Check if the response matches the NO_REPLY convention.
+/// True when the response is the NO_REPLY marker in any case or separator variant: `"no reply"`, `"no_reply"`, `"No-Reply"`, `"NO REPLY"`.
 ///
-/// Strips all non-alphanumeric characters, lowercases, and checks if the
-/// remainder is exactly `"noreply"`. This handles common separator variants:
-/// `"no reply"`, `"no_reply"`, `"no-reply"`, `"NO REPLY"`, etc.
+/// Strips all non-alphanumeric characters, lowercases, and checks if the remainder is exactly `"noreply"`.
 pub fn is_no_reply(text: &str) -> bool {
     let normalized: String = text
         .to_lowercase()

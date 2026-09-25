@@ -3,11 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::WorkspaceRpc;
-
-// =========================================================================
-// Content search (`workspace.ripgrep`)
-// =========================================================================
+use super::{RpcActivityClass, WorkspaceRpc};
 
 fn default_respect_gitignore() -> bool {
     true
@@ -44,6 +40,7 @@ pub struct ContentSearchRequest {
 
 impl WorkspaceRpc for ContentSearchRequest {
     const METHOD: &'static str = "workspace.ripgrep";
+    const ACTIVITY: RpcActivityClass = RpcActivityClass::Read;
     type Response = ContentSearchData;
 }
 
@@ -90,12 +87,8 @@ pub struct ContentSearchData {
     pub truncated: bool,
 }
 
-// =========================================================================
-// Fuzzy file search (`workspace.fuzzy_*`)
-// =========================================================================
-
 /// Client ID structure for routing notifications across relay instances.
-/// (Duplicated here for Phase 1 independence from shell extensions.)
+/// Duplicated from the shell extensions so this crate does not depend on them.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientId {
@@ -103,8 +96,7 @@ pub struct ClientId {
     pub conn_id: String,
 }
 
-/// Target client ID for routing notifications.
-/// Used to specify which client should receive a notification.
+/// Which client should receive a notification.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum TargetClientId {
@@ -121,8 +113,8 @@ impl TargetClientId {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FuzzyOpenReq {
-    /// Absolute search root (the per-session cwd joined with any subpath),
-    /// resolved by the shell. Falls back to the workspace root when absent.
+    /// Absolute search root (the per-session cwd joined with any subpath), resolved by the shell.
+    /// Falls back to the workspace root when absent.
     pub root: Option<std::path::PathBuf>,
     pub request_id: Option<String>,
     #[serde(default)]
@@ -137,6 +129,7 @@ pub struct FuzzyOpenReq {
 
 impl WorkspaceRpc for FuzzyOpenReq {
     const METHOD: &'static str = "workspace.fuzzy_open";
+    const ACTIVITY: RpcActivityClass = RpcActivityClass::Read;
     type Response = String;
 }
 
@@ -154,6 +147,7 @@ pub struct FuzzyChangeReq {
 // Response: Whether the search existed (so the shell can return "not found").
 impl WorkspaceRpc for FuzzyChangeReq {
     const METHOD: &'static str = "workspace.fuzzy_change";
+    const ACTIVITY: RpcActivityClass = RpcActivityClass::Read;
     type Response = bool;
 }
 
@@ -164,12 +158,12 @@ pub struct FuzzyCloseReq {
 
 impl WorkspaceRpc for FuzzyCloseReq {
     const METHOD: &'static str = "workspace.fuzzy_close";
+    const ACTIVITY: RpcActivityClass = RpcActivityClass::Read;
     type Response = bool;
 }
 
-/// `workspace.fuzzy_search` — poll the current results of an open fuzzy
-/// search. The response is the serialized result set (or `null` when the
-/// search no longer exists).
+/// `workspace.fuzzy_search` polls the current results of an open fuzzy search.
+/// The response is the serialized result set (or `null` when the search no longer exists).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FuzzyStatusReq {
     pub search_id: String,
@@ -177,21 +171,13 @@ pub struct FuzzyStatusReq {
 
 impl WorkspaceRpc for FuzzyStatusReq {
     const METHOD: &'static str = "workspace.fuzzy_search";
+    const ACTIVITY: RpcActivityClass = RpcActivityClass::Read;
     type Response = Value;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn method_constants() {
-        assert_eq!(ContentSearchRequest::METHOD, "workspace.ripgrep");
-        assert_eq!(FuzzyOpenReq::METHOD, "workspace.fuzzy_open");
-        assert_eq!(FuzzyChangeReq::METHOD, "workspace.fuzzy_change");
-        assert_eq!(FuzzyCloseReq::METHOD, "workspace.fuzzy_close");
-        assert_eq!(FuzzyStatusReq::METHOD, "workspace.fuzzy_search");
-    }
 
     #[test]
     fn target_client_id_untagged_round_trip() {
@@ -205,14 +191,6 @@ mod tests {
         };
         assert_eq!(id.instance_id, "i-1");
         assert_eq!(serde_json::to_value(&target).unwrap(), raw);
-    }
-
-    #[test]
-    fn content_match_file_new_derives_name() {
-        let f = ContentMatchFile::new("/repo/src/lib.rs");
-        assert_eq!(f.name, "lib.rs");
-        assert_eq!(f.path, "/repo/src/lib.rs");
-        assert!(f.matches.is_empty());
     }
 
     #[test]

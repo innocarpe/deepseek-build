@@ -1,9 +1,15 @@
-//! Unit tests for the [`super`] Messages L2 stream transform. Extracted
-//! from `messages.rs` so the implementation reads top-to-bottom; wired in
-//! via `#[path = "messages_tests.rs"] mod tests;` in messages.rs.
+//! These tests live outside `messages.rs` so the implementation reads top-to-bottom.
+//! `#[path = "messages_tests.rs"] mod tests;` in messages.rs wires them in.
 
 use super::*;
 use futures_util::stream;
+
+fn nth<T>(xs: &[T], i: usize) -> &T {
+    let Some(x) = xs.get(i) else {
+        panic!("expected item {i}, got {} items", xs.len());
+    };
+    x
+}
 use std::pin::pin;
 use xai_grok_sampling_types::messages::{
     ContentBlock, MessageDeltaBody, MessageDeltaUsage, MessagesResponse, MessagesUsage,
@@ -70,8 +76,7 @@ fn message_delta_with_stop(stop: messages::StopReason) -> MessageStreamEvent {
     }
 }
 
-/// A refusal `message_delta` carrying a provider `stop_details.explanation`,
-/// mirroring the Anthropic Messages API ToS auto-refusal wire shape.
+/// A refusal `message_delta` carrying a provider `stop_details.explanation`, mirroring the Anthropic Messages API ToS auto-refusal wire shape.
 fn message_delta_refusal_with_explanation(explanation: &str) -> MessageStreamEvent {
     MessageStreamEvent::MessageDelta {
         delta: MessageDeltaBody {
@@ -106,8 +111,11 @@ async fn empty_stream_yields_started_then_completed() {
     let raw = stream::iter(Vec::<Result<MessageStreamEvent, SamplingError>>::new()).boxed();
     let events = collect(stream_messages(raw, None, rid(), Duration::from_secs(60))).await;
     assert_eq!(events.len(), 2);
-    assert!(matches!(events[0], SamplingEvent::StreamStarted { .. }));
-    assert!(matches!(events[1], SamplingEvent::Completed { .. }));
+    assert!(matches!(
+        nth(&events, 0),
+        SamplingEvent::StreamStarted { .. }
+    ));
+    assert!(matches!(nth(&events, 1), SamplingEvent::Completed { .. }));
 }
 
 #[tokio::test]
@@ -143,8 +151,7 @@ async fn text_block_assembles_into_completed_response() {
             assert_eq!(a.content.as_ref(), "Hello, world!");
             assert_eq!(a.model_id.as_deref(), Some("messages-compatible-model"));
             assert_eq!(response.stop_reason, Some(StopReason::Stop));
-            // Provider message id and the verbatim wire stop reason survive
-            // onto the response (collapsed `stop_reason` loses the string).
+            // Provider message id and the verbatim wire stop reason survive onto the response (collapsed `stop_reason` loses the string)
             assert_eq!(response.message_id.as_deref(), Some("msg_1"));
             assert_eq!(response.raw_stop_reason.as_deref(), Some("end_turn"));
             let u = response.usage.as_ref().expect("usage extracted");
@@ -206,7 +213,10 @@ async fn thinking_block_emits_reasoning_channel_and_preserved_in_response() {
                 .reasoning_items()
                 .next()
                 .expect("reasoning sibling preserved");
-            let rs::SummaryPart::SummaryText(t) = &r.summary[0];
+            let Some(part) = r.summary.first() else {
+                panic!("expected a summary part");
+            };
+            let rs::SummaryPart::SummaryText(t) = part;
             assert_eq!(t.text, "let me think...");
             assert_eq!(r.encrypted_content.as_deref(), Some("abc123"));
         }
@@ -214,10 +224,8 @@ async fn thinking_block_emits_reasoning_channel_and_preserved_in_response() {
     }
 }
 
-/// `thinking(sig1) → text → thinking(sig2)` must surface each thinking block's
-/// OWN signature, in order, on its own `ReasoningCompleted` (emitted at that
-/// block's stop) — so the per-index signature reaches the headless reducer and
-/// each block keeps its own signature rather than collapsing to one.
+/// `thinking(sig1) → text → thinking(sig2)` must emit each thinking block's own signature, in order, on its own `ReasoningCompleted`.
+/// The event fires at the block's stop, so per-index signatures reach the headless reducer instead of collapsing to one.
 #[tokio::test]
 async fn multiple_thinking_blocks_emit_per_block_signatures_in_order() {
     let thinking_block = |index: u32, text: &str, sig: &str| {
@@ -305,8 +313,6 @@ async fn tool_use_block_assembles_into_tool_call() {
     let raw = stream::iter(events).boxed();
     let evs = collect(stream_messages(raw, None, rid(), Duration::from_secs(60))).await;
 
-    // Should yield three ToolCallDelta events: id+name, then two
-    // arguments fragments.
     let deltas: Vec<_> = evs
         .iter()
         .filter_map(|e| match e {
@@ -326,29 +332,28 @@ async fn tool_use_block_assembles_into_tool_call() {
         })
         .collect();
     assert_eq!(deltas.len(), 3);
-    assert_eq!(deltas[0].0, 0);
-    assert_eq!(deltas[0].1.as_deref(), Some("call_xyz"));
-    assert_eq!(deltas[0].2.as_deref(), Some("do_thing"));
-    assert_eq!(deltas[0].3, None);
-    assert_eq!(deltas[1].3.as_deref(), Some("{\"x\":"));
-    assert_eq!(deltas[2].3.as_deref(), Some("1}"));
+    assert_eq!(nth(&deltas, 0).0, 0);
+    assert_eq!(nth(&deltas, 0).1.as_deref(), Some("call_xyz"));
+    assert_eq!(nth(&deltas, 0).2.as_deref(), Some("do_thing"));
+    assert_eq!(nth(&deltas, 0).3, None);
+    assert_eq!(nth(&deltas, 1).3.as_deref(), Some("{\"x\":"));
+    assert_eq!(nth(&deltas, 2).3.as_deref(), Some("1}"));
 
     match evs.last().unwrap() {
         SamplingEvent::Completed { response, .. } => {
             let calls = response.tool_calls();
             assert_eq!(calls.len(), 1);
-            assert_eq!(calls[0].id.as_ref(), "call_xyz");
-            assert_eq!(calls[0].name, "do_thing");
-            assert_eq!(calls[0].arguments.as_ref(), "{\"x\":1}");
+            assert_eq!(nth(calls, 0).id.as_ref(), "call_xyz");
+            assert_eq!(nth(calls, 0).name, "do_thing");
+            assert_eq!(nth(calls, 0).arguments.as_ref(), "{\"x\":1}");
             assert_eq!(response.stop_reason, Some(StopReason::ToolCalls));
         }
         other => panic!("expected Completed, got {other:?}"),
     }
 }
 
-/// Regression: a stream whose terminal `message_delta` carries
-/// `stop_reason: "refusal"` must complete cleanly — not error out and
-/// discard the already-streamed response.
+/// Regression: a stream whose terminal `message_delta` carries `stop_reason: "refusal"` must complete cleanly.
+/// Erroring out would discard the already-streamed response.
 #[tokio::test]
 async fn refusal_stop_reason_completes_stream() {
     let events: Vec<Result<MessageStreamEvent, SamplingError>> = vec![
@@ -377,9 +382,8 @@ async fn refusal_stop_reason_completes_stream() {
     }
 }
 
-/// A refusal `stop_details.explanation` on the terminal delta must be
-/// normalized onto the completed `ConversationResponse.stop_message` so the
-/// agent loop can surface the provider's reason (empty-turn silence otherwise).
+/// A refusal `stop_details.explanation` on the terminal delta must land on the completed `ConversationResponse.stop_message`.
+/// The agent loop shows the provider's reason from there; otherwise the turn ends empty and silent.
 #[tokio::test]
 async fn refusal_stop_message_flows_to_response() {
     let explanation = "This request was blocked by the provider's content policy.";
@@ -434,11 +438,108 @@ async fn pause_turn_and_unknown_stop_reasons_complete_as_stop() {
     }
 }
 
-/// Pins the model_context_window_exceeded decision: it stays in the
-/// max_tokens truncation class (fatal, non-retryable), not the
-/// context-length Api class.
+/// A plain `max_tokens` stop with only text completes with `stop_reason=Length` and keeps the partial text.
 #[tokio::test]
-async fn model_context_window_exceeded_fails_as_max_tokens_truncation() {
+async fn max_tokens_text_only_completes_with_length_stop() {
+    let events: Vec<Result<MessageStreamEvent, SamplingError>> = vec![
+        Ok(message_start()),
+        Ok(text_block_start(0)),
+        Ok(text_delta(0, "cut answ")),
+        Ok(block_stop(0)),
+        Ok(message_delta_with_stop(messages::StopReason::MaxTokens)),
+        Ok(MessageStreamEvent::MessageStop),
+    ];
+    let raw = stream::iter(events).boxed();
+    let evs = collect(stream_messages(raw, None, rid(), Duration::from_secs(60))).await;
+
+    match evs.last().unwrap() {
+        SamplingEvent::Completed { response, .. } => {
+            assert_eq!(response.stop_reason, Some(StopReason::Length));
+            assert_eq!(response.assistant_text(), "cut answ");
+        }
+        other => panic!("expected Completed(Length), got {other:?}"),
+    }
+}
+
+/// A max_tokens stop carrying a completed tool_use block keeps `stop_reason=Length`.
+/// The ToolCalls override must not mask the truncation: the block's arguments may be a silently-truncated prefix.
+#[tokio::test]
+async fn max_tokens_with_tool_use_keeps_length_stop() {
+    let tool_start = MessageStreamEvent::ContentBlockStart {
+        index: 0,
+        content_block: ContentBlock::ToolUse {
+            id: "call_cut".into(),
+            name: "do_thing".into(),
+            input: serde_json::json!({}),
+            cache_control: None,
+        },
+    };
+    let arg_delta = MessageStreamEvent::ContentBlockDelta {
+        index: 0,
+        delta: StreamDelta::InputJsonDelta {
+            partial_json: "{\"x\": \"trunc".into(),
+        },
+    };
+    let events: Vec<Result<MessageStreamEvent, SamplingError>> = vec![
+        Ok(message_start()),
+        Ok(tool_start),
+        Ok(arg_delta),
+        Ok(block_stop(0)),
+        Ok(message_delta_with_stop(messages::StopReason::MaxTokens)),
+        Ok(MessageStreamEvent::MessageStop),
+    ];
+    let raw = stream::iter(events).boxed();
+    let evs = collect(stream_messages(raw, None, rid(), Duration::from_secs(60))).await;
+
+    match evs.last().unwrap() {
+        SamplingEvent::Completed { response, .. } => {
+            assert_eq!(response.stop_reason, Some(StopReason::Length));
+            assert_eq!(response.tool_calls().len(), 1, "tool call still carried");
+        }
+        other => panic!("expected Completed(Length), got {other:?}"),
+    }
+}
+
+/// A tool_use block closed with zero argument deltas collects as an empty-arguments tool call.
+/// That is the shape `LengthPolicy::verdict` salvages.
+#[tokio::test]
+async fn max_tokens_tool_use_without_arg_deltas_collects_empty_arguments() {
+    let tool_start = MessageStreamEvent::ContentBlockStart {
+        index: 0,
+        content_block: ContentBlock::ToolUse {
+            id: "call_no_args".into(),
+            name: "do_thing".into(),
+            input: serde_json::json!({}),
+            cache_control: None,
+        },
+    };
+    let events: Vec<Result<MessageStreamEvent, SamplingError>> = vec![
+        Ok(message_start()),
+        Ok(tool_start),
+        Ok(block_stop(0)),
+        Ok(message_delta_with_stop(messages::StopReason::MaxTokens)),
+        Ok(MessageStreamEvent::MessageStop),
+    ];
+    let raw = stream::iter(events).boxed();
+    let evs = collect(stream_messages(raw, None, rid(), Duration::from_secs(60))).await;
+
+    match evs.last().unwrap() {
+        SamplingEvent::Completed { response, .. } => {
+            assert_eq!(response.stop_reason, Some(StopReason::Length));
+            assert_eq!(response.tool_calls().len(), 1);
+            let Some(call) = response.tool_calls().first() else {
+                panic!("expected a tool call");
+            };
+            assert_eq!(call.arguments.as_ref(), "");
+        }
+        other => panic!("expected Completed(Length), got {other:?}"),
+    }
+}
+
+/// Pins the model_context_window_exceeded decision: it maps to the Length stop class and COMPLETES with the partial preserved.
+/// Fail-vs-salvage belongs to `drive_l2`, not this transform.
+#[tokio::test]
+async fn model_context_window_exceeded_completes_with_length_stop() {
     let events: Vec<Result<MessageStreamEvent, SamplingError>> = vec![
         Ok(message_start()),
         Ok(text_block_start(0)),
@@ -452,25 +553,20 @@ async fn model_context_window_exceeded_fails_as_max_tokens_truncation() {
     let raw = stream::iter(events).boxed();
     let evs = collect(stream_messages(raw, None, rid(), Duration::from_secs(60))).await;
 
-    assert!(
-        !evs.iter()
-            .any(|e| matches!(e, SamplingEvent::Completed { .. })),
-        "context-window truncation must not complete: {evs:?}"
-    );
     match evs.last().unwrap() {
-        SamplingEvent::Failed { error, .. } => {
+        SamplingEvent::Completed { response, .. } => {
+            assert_eq!(response.stop_reason, Some(StopReason::Length));
             assert_eq!(
-                error.kind,
-                crate::events::SamplingErrorKind::MaxTokensTruncation
+                response.assistant_text(),
+                "truncated answ",
+                "partial content must be preserved"
             );
-            assert!(!error.is_retryable, "truncation is deterministic");
         }
-        other => panic!("expected Failed(MaxTokensTruncation), got {other:?}"),
+        other => panic!("expected Completed(Length), got {other:?}"),
     }
 }
 
-/// Pins the pre-existing override: completed tool_use blocks beat a terminal
-/// Refusal, so the agent loop still resolves the calls.
+/// Pins the override: completed tool_use blocks beat a terminal Refusal, so the agent loop still resolves the calls.
 #[tokio::test]
 async fn refusal_after_tool_use_blocks_keeps_tool_calls_stop_reason() {
     let tool_start = MessageStreamEvent::ContentBlockStart {
@@ -528,6 +624,8 @@ async fn server_error_event_yields_failed_500() {
             assert_eq!(error.kind, crate::events::SamplingErrorKind::Api);
             assert_eq!(error.status_code, Some(500));
             assert!(error.message.contains("overloaded_error"));
+            // Messages error events have no code slot; a code appearing here would make typed events eligible for a destructive image strip
+            assert_eq!(error.error_code, None);
         }
         other => panic!("expected Failed, got {other:?}"),
     }
@@ -587,8 +685,8 @@ async fn model_metadata_yielded_after_stream_started() {
     ))
     .await;
 
-    assert!(matches!(evs[0], SamplingEvent::StreamStarted { .. }));
-    assert!(matches!(evs[1], SamplingEvent::ModelMetadata { .. }));
+    assert!(matches!(nth(&evs, 0), SamplingEvent::StreamStarted { .. }));
+    assert!(matches!(nth(&evs, 1), SamplingEvent::ModelMetadata { .. }));
 }
 
 #[test]
@@ -647,8 +745,7 @@ fn message_delta_with_cache(
     }
 }
 
-/// Helper: drive a minimal stream with the supplied usage events and
-/// pluck the `TokenUsage` out of the terminal `Completed` event.
+/// Drive a minimal stream with the supplied usage events and pluck the `TokenUsage` out of the terminal `Completed` event.
 async fn usage_from_stream(events: Vec<MessageStreamEvent>) -> TokenUsage {
     let raw = stream::iter(
         events
@@ -669,8 +766,7 @@ async fn usage_from_stream(events: Vec<MessageStreamEvent>) -> TokenUsage {
 
 #[tokio::test]
 async fn prompt_tokens_sums_all_three_anthropic_buckets() {
-    // prompt_tokens = uncached + cache_read + cache_creation;
-    // cached_prompt_tokens = cache_read only (writes aren't a hit).
+    // cached_prompt_tokens counts cache_read only (writes aren't a hit)
     let usage = usage_from_stream(vec![
         message_start_with_cache(100, 5000, 200),
         text_block_start(0),
@@ -690,8 +786,7 @@ async fn prompt_tokens_sums_all_three_anthropic_buckets() {
 
 #[tokio::test]
 async fn message_delta_cache_fields_override_message_start() {
-    // Providers can report zero cache at message_start and emit the real
-    // values on the final delta; honor the delta when present.
+    // Providers can report zero cache at message_start and emit the real values on the final delta; honor the delta when present
     let usage = usage_from_stream(vec![
         message_start_with_cache(10, 0, 0),
         message_delta_with_cache(4, Some(10), Some(900), Some(50)),
@@ -708,7 +803,7 @@ async fn message_delta_cache_fields_override_message_start() {
 #[tokio::test]
 async fn pure_cache_hit_with_zero_uncached_still_emits_usage() {
     // 100% cache hit: Anthropic Messages API reports input_tokens=0 with cache_read>0.
-    // The emit-guard must still fire so callers see the cached cost.
+    // Usage must still be emitted so callers see the cached cost
     let usage = usage_from_stream(vec![
         message_start_with_cache(0, 2500, 0),
         message_delta_with_cache(1, None, None, None),

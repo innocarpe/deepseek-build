@@ -56,13 +56,9 @@ pub struct CodexGrepFilesInput {
 
 // ─── Tool ───────────────────────────────────────────────────────────
 
-/// Codex-namespace grep_files tool — file-path-only regex search.
-///
-/// Shares `ToolKind::Search` with the grok-build `GrepTool`. These tools are
-/// namespace-exclusive — consumers enable either `GrokBuild` or `Codex` search,
-/// never both simultaneously. This follows the same pattern as
-/// `CodexListDirTool`/`ListDirTool` (`ToolKind::ListDir`) and
-/// `CodexReadFileTool`/`ReadFileImpl` (`ToolKind::Read`).
+/// Codex-namespace grep_files tool — file-path-only regex search. Shares `ToolKind::Search` with the grok-build `GrepTool`. These tools are
+/// namespace-exclusive — consumers enable either `GrokBuild` or `Codex` search, never both simultaneously. This follows the same pattern as
+/// `CodexListDirTool`/`ListDirTool` (`ToolKind::ListDir`) and `CodexReadFileTool`/`ReadFileImpl` (`ToolKind::Read`).
 #[derive(Debug, Default)]
 pub struct CodexGrepFilesTool;
 
@@ -78,7 +74,7 @@ async fn run_rg_search(
     limit: usize,
     cwd: &Path,
 ) -> Result<Vec<String>, String> {
-    let rg_exec = rg_path();
+    let rg_exec = rg_path().map_err(|e| e.to_string())?;
     let mut command = Command::new(rg_exec);
     command
         .current_dir(cwd)
@@ -93,8 +89,7 @@ async fn run_rg_search(
     }
 
     command.arg("--").arg(search_path);
-    crate::util::detach_command(&mut command);
-    command.stdin(std::process::Stdio::null());
+    crate::util::detach_search_command(&mut command);
 
     let output = timeout(COMMAND_TIMEOUT, command.output())
         .await
@@ -268,7 +263,11 @@ mod tests {
         ctx
     }
     fn rg_available() -> bool {
-        StdCommand::new("rg")
+        // Probe the resolver the tool uses (hermetic under Bazel), not PATH.
+        let Ok(rg) = rg_path() else {
+            return false;
+        };
+        StdCommand::new(rg)
             .arg("--version")
             .output()
             .map(|output| output.status.success())
@@ -330,7 +329,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
-        assert!(results[0].contains("match.rs"));
+        assert!(results.first().is_some_and(|r| r.contains("match.rs")));
     }
 
     #[tokio::test]
@@ -346,7 +345,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
-        assert!(results[0].contains("alpha.rs"));
+        assert!(results.first().is_some_and(|r| r.contains("alpha.rs")));
     }
 
     #[tokio::test]

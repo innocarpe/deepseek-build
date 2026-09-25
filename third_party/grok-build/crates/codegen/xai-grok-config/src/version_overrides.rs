@@ -1,5 +1,5 @@
-//! Version-aware config layering. A `[[version_overrides]]` array carries
-//! semver-gated patches deep-merged in ascending `minimum_version` order.
+//! Version-aware config layering.
+//! A `[[version_overrides]]` array carries semver-gated patches deep-merged in ascending `minimum_version` order.
 //!
 //! ```toml
 //! [[version_overrides]]
@@ -49,8 +49,25 @@ pub enum VersionOverrideError {
     },
 }
 
-/// Strips `version_overrides` (always) and deep-merges each matching
-/// patch in ascending `minimum_version` order.
+impl VersionOverrideError {
+    /// A log safe summary: entry index, field, and error category only.
+    /// It never includes the raw user supplied value or the offending source line, either of which can carry a secret.
+    pub fn redacted(&self) -> String {
+        match self {
+            Self::Deserialize(_) => {
+                "version_overrides: failed to deserialize (details omitted)".to_owned()
+            }
+            Self::InvalidMinimumVersion { index, .. } => {
+                format!("version_overrides[{index}].minimum_version is not valid semver")
+            }
+            Self::InvalidMaximumVersion { index, .. } => {
+                format!("version_overrides[{index}].maximum_version is not valid semver")
+            }
+        }
+    }
+}
+
+/// Strips `version_overrides` (always) and deep-merges each matching patch in ascending `minimum_version` order.
 pub fn apply_version_overrides(
     config: &mut toml::Value,
     version: &Version,
@@ -58,7 +75,7 @@ pub fn apply_version_overrides(
     let entries = take_patch_array::<VersionOverrideMeta>(config, VERSION_OVERRIDES_KEY)?;
 
     // Parse all bounds upfront so an invalid entry fails before any merge.
-    // Missing minimum_version => Version::new(0, 0, 0) (no lower bound).
+    // A missing minimum_version becomes Version::new(0, 0, 0) (no lower bound)
     let mut parsed: Vec<(Version, Option<Version>, toml::Table)> =
         Vec::with_capacity(entries.len());
     for (index, entry) in entries.into_iter().enumerate() {
@@ -85,8 +102,7 @@ pub fn apply_version_overrides(
         parsed.push((min_v, max_v, entry.patch));
     }
 
-    // Stable sort -- ties on minimum_version keep declared order so later
-    // entries win.
+    // Stable sort: ties on minimum_version keep declared order so later entries win
     parsed.sort_by(|a, b| a.0.cmp(&b.0));
 
     let patches = parsed.into_iter().filter_map(|(min_v, max_v, patch)| {
@@ -117,8 +133,7 @@ mod tests {
         Version::parse(s).unwrap()
     }
 
-    /// Helper asserts the section is stripped on every call, so the
-    /// "stripped even on no match" contract is covered across all 8 cases.
+    /// The helper asserts the section is stripped on every call, so the "stripped even on no match" contract is covered across all 8 cases.
     #[test]
     fn version_match_boundaries() {
         fn applies(min: Option<&str>, max: Option<&str>, cli: &str) -> bool {
@@ -141,7 +156,7 @@ mod tests {
                 cfg.get(VERSION_OVERRIDES_KEY).is_none(),
                 "section must be stripped"
             );
-            cfg["x"].as_integer() == Some(1)
+            cfg.get("x").and_then(toml::Value::as_integer) == Some(1)
         }
         assert!(applies(Some("1.7.0"), None, "1.7.0")); // min inclusive
         assert!(applies(Some("1.0.0"), Some("1.7.0"), "1.7.0")); // max inclusive
@@ -150,7 +165,7 @@ mod tests {
         assert!(applies(Some("1.7.0"), None, "99.0.0")); // unbounded above
         assert!(applies(None, Some("2.0.0"), "1.5.0")); // max-only, within
         assert!(!applies(None, Some("2.0.0"), "2.0.1")); // max-only, above
-        assert!(applies(None, None, "1.0.0")); // unbounded both = always
+        assert!(applies(None, None, "1.0.0")); // unbounded both always applies
     }
 
     #[test]
@@ -173,9 +188,17 @@ mod tests {
             "#,
         );
         apply_version_overrides(&mut cfg, &v("1.8.0")).unwrap();
-        let t = &cfg["features"]["telemetry"];
-        assert_eq!(t["enabled"].as_bool(), Some(true));
-        assert_eq!(t["sample_rate"].as_float(), Some(0.5));
+        let t = cfg.get("features").and_then(|f| f.get("telemetry"));
+        assert_eq!(
+            t.and_then(|t| t.get("enabled"))
+                .and_then(toml::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            t.and_then(|t| t.get("sample_rate"))
+                .and_then(toml::Value::as_float),
+            Some(0.5)
+        );
     }
 
     #[test]
@@ -208,5 +231,21 @@ mod tests {
             err,
             VersionOverrideError::InvalidMaximumVersion { .. }
         ));
+    }
+
+    #[test]
+    fn redacted_summary_omits_the_raw_bound_value() {
+        let mut cfg = parse(
+            r#"
+            [[version_overrides]]
+            minimum_version = "sk-secret-token"
+            x = 1
+            "#,
+        );
+        let err = apply_version_overrides(&mut cfg, &v("1.0.0")).unwrap_err();
+        assert_eq!(
+            err.redacted(),
+            "version_overrides[0].minimum_version is not valid semver"
+        );
     }
 }

@@ -1,8 +1,6 @@
-//! BgTaskBlock — scrollback entries for background task lifecycle.
-//!
-//! Three kinds: Started, Completed, Failed. All render as always-collapsed,
-//! groupable blocks with dimmed colored bullets (same dimming as execute blocks).
-//! Enter / Ctrl-F opens block viewer with stdout from central store.
+//! Three kinds: Started, Completed, Failed.
+//! All render as always-collapsed, groupable blocks with dimmed colored bullets (same dimming as execute blocks).
+//! Enter / Ctrl-F opens the block viewer with stdout from the central store.
 
 use std::time::Duration;
 
@@ -10,13 +8,14 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line, Span, Text};
 
 use crate::appearance::AppearanceConfig;
-use crate::render::color::blend_color;
 use crate::scrollback::block::BlockContent;
 use crate::scrollback::types::{AccentStyle, BlockContext, BlockOutput, DisplayMode};
 use crate::theme::Theme;
 use crate::util::format_duration;
 
-/// What kind of bg task lifecycle event this block represents.
+/// The signal recorded on a task the user stopped.
+pub(crate) const KILLED_SIGNAL: &str = "killed";
+
 #[derive(Debug, Clone)]
 pub enum BgTaskKind {
     /// Task was started (process is running).
@@ -31,24 +30,20 @@ pub enum BgTaskKind {
     },
 }
 
-/// Background task scrollback block.
-///
-/// Always collapsed, not foldable, groupable, selectable.
-/// Enter / Ctrl-F opens block viewer with stdout from the central store.
+/// The block is always collapsed, not foldable, groupable, and selectable.
+/// Enter / Ctrl-F opens the block viewer with stdout from the central store.
 #[derive(Debug, Clone)]
 pub struct BgTaskBlock {
     /// The command that was run.
     pub command: String,
-    /// Background task ID (for looking up stdout in central store).
+    /// Background task ID (for looking up stdout in the central store).
     pub task_id: String,
-    /// Lifecycle kind (started / completed / failed).
     pub kind: BgTaskKind,
     /// Optional description (from the tool call's description field).
     pub description: Option<String>,
 }
 
 impl BgTaskBlock {
-    /// Create a "Task started" block.
     pub fn started(command: impl Into<String>, task_id: impl Into<String>) -> Self {
         Self {
             command: command.into(),
@@ -58,7 +53,6 @@ impl BgTaskBlock {
         }
     }
 
-    /// Create a "Task completed" block.
     pub fn completed(
         command: impl Into<String>,
         task_id: impl Into<String>,
@@ -72,7 +66,6 @@ impl BgTaskBlock {
         }
     }
 
-    /// Create a "Task failed" block.
     pub fn failed(
         command: impl Into<String>,
         task_id: impl Into<String>,
@@ -92,23 +85,21 @@ impl BgTaskBlock {
         }
     }
 
-    /// Set the description (builder pattern).
     pub fn with_description(mut self, description: Option<String>) -> Self {
         self.description = description;
         self
     }
 
-    /// Whether this block represents a running task (Started kind).
     pub fn is_running(&self) -> bool {
         matches!(self.kind, BgTaskKind::Started)
     }
 
-    /// Mark a Started block as completed (called when task finishes).
+    /// Mark a Started block as completed.
     pub fn mark_completed(&mut self, elapsed: Duration) {
         self.kind = BgTaskKind::Completed { elapsed };
     }
 
-    /// Mark a Started block as failed (called when task fails).
+    /// Mark a Started block as failed.
     pub fn mark_failed(
         &mut self,
         elapsed: Duration,
@@ -126,10 +117,9 @@ impl BgTaskBlock {
 impl BlockContent for BgTaskBlock {
     fn output(&self, ctx: &BlockContext) -> BlockOutput {
         let theme = Theme::current();
-        // When selected, lift only the bold "Task" label to `text_primary`
-        // so it reads as undimmed (mirrors `read.rs` / `search.rs`, which
-        // bump only the label and leave the rest at `muted`). The detail
-        // text (verb + description) stays muted in every state.
+        // When selected, lift only the bold "Task" label to `text_primary` so it reads as undimmed
+        // This mirrors `read.rs` / `search.rs`, which bump only the label and leave the rest at `muted`
+        // The detail text (verb and description) stays muted in every state
         let bold = if ctx.is_selected {
             theme.primary().add_modifier(Modifier::BOLD)
         } else {
@@ -137,8 +127,7 @@ impl BlockContent for BgTaskBlock {
         };
         let muted = theme.muted();
 
-        // Collapse newlines for single-line display (ratatui drops '\n' as zero-width,
-        // merging adjacent lines without spacing).
+        // Collapse newlines for single-line display (ratatui drops '\n' as zero-width, merging adjacent lines without spacing)
         let command = self.command.replace('\n', " ");
 
         // Prefer description over raw command for the collapsed one-line display.
@@ -169,7 +158,7 @@ impl BlockContent for BgTaskBlock {
                 // Detect kill signals to show "killed" instead of "failed"
                 let is_killed = signal
                     .as_deref()
-                    .is_some_and(|s| matches!(s, "killed" | "SIGTERM" | "SIGKILL" | "oom"));
+                    .is_some_and(|s| matches!(s, KILLED_SIGNAL | "SIGTERM" | "SIGKILL" | "oom"));
                 let verb = if is_killed { "killed" } else { "failed" };
                 let detail = if is_killed {
                     String::new()
@@ -208,13 +197,7 @@ impl BlockContent for BgTaskBlock {
         match &self.kind {
             BgTaskKind::Started => {
                 if ctx.is_running {
-                    // Animated pulse between bg and dimmed magenta.
-                    // Pre-dim using the same ratio as collapsed execute bullets
-                    // so the peak brightness matches other collapsed blocks.
-                    let dim = ctx.appearance.scrollback.display.dim_accent;
-                    let dimmed = blend_color(theme.bg_base, theme.accent_running, dim)
-                        .unwrap_or(theme.accent_running);
-                    Some(AccentStyle::animated(dimmed))
+                    Some(AccentStyle::animated_running(ctx, &theme))
                 } else {
                     // Normal gray after finish_running() is called
                     None
@@ -257,9 +240,8 @@ impl BlockContent for BgTaskBlock {
         let theme = Theme::current();
         let mut lines = Vec::new();
 
-        // Description first (primary text), then a blank separator, then
-        // the `$ command` with bash syntax highlighting. When there is no
-        // description, the command stands alone with no leading blank row.
+        // Description first (primary text), then a blank separator, then the `$ command` with bash syntax highlighting
+        // When there is no description, the command stands alone with no leading blank row
         let description = self
             .description
             .as_deref()
@@ -267,10 +249,8 @@ impl BlockContent for BgTaskBlock {
             .filter(|s| !s.is_empty());
 
         if let Some(desc) = description {
-            // Trim trailing whitespace per line and collapse runs of blank
-            // lines to a single blank — multi-line descriptions can carry
-            // noisy internal blank rows that would otherwise stretch the
-            // preamble.
+            // Trim trailing whitespace per line and collapse runs of blank lines to a single blank
+            // Multi-line descriptions can carry noisy internal blank rows that would otherwise stretch the preamble
             let mut prev_blank = false;
             for line in desc.lines() {
                 let trimmed = line.trim_end();
@@ -290,19 +270,16 @@ impl BlockContent for BgTaskBlock {
             lines.push(Line::from(""));
         }
 
-        // Multi-line `$ command` must be separate ratatui Lines. A single Line
-        // drops '\n' as zero-width, which smashes `cmd1\ncmd2` into `cmd1cmd2`
-        // (visible when expanding a started bg task in the block viewer).
-        // Match execute / permission-panel soft-wrap so physical newlines and
-        // long lines render the same way as foreground shell tool calls.
+        // Multi-line `$ command` must be separate ratatui Lines: a single Line drops '\n' as zero-width and smashes `cmd1\ncmd2` into `cmd1cmd2`
+        // The smashed form shows when expanding a started bg task in the block viewer
+        // Match execute / permission-panel soft-wrap so physical newlines and long lines render the same way as foreground shell tool calls
         push_shell_command_preamble_lines(&mut lines, &self.command, ctx.width as usize, &theme);
 
         Some(Text::from(lines))
     }
 }
 
-/// Append a soft-wrapped `$ command` block to `lines` (first row prefixed with
-/// `$ `, continuations hang-indented under the command body).
+/// Append a soft-wrapped `$ command` block to `lines` (first row prefixed with `$ `, continuations hang-indented under the command body).
 fn push_shell_command_preamble_lines(
     lines: &mut Vec<Line<'static>>,
     command: &str,
@@ -362,8 +339,11 @@ mod tests {
     }
 
     fn line_text(block: &BgTaskBlock) -> String {
-        block.output(&test_ctx()).lines[0]
-            .content
+        let output = block.output(&test_ctx());
+        let Some(line) = output.lines.first() else {
+            panic!("expected an output line");
+        };
+        line.content
             .spans
             .iter()
             .map(|s| s.content.as_ref())
@@ -428,7 +408,10 @@ mod tests {
     fn completed_multiline_command_collapses_newlines() {
         let block = BgTaskBlock::completed("cmd1\ncmd2", "t1", std::time::Duration::from_secs(1));
         let output = block.output(&test_ctx());
-        let text: String = output.lines[0]
+        let Some(line) = output.lines.first() else {
+            panic!("expected an output line: {output:?}");
+        };
+        let text: String = line
             .content
             .spans
             .iter()
@@ -458,10 +441,10 @@ mod tests {
         let block = BgTaskBlock::started("cargo test --release", "t1")
             .with_description(Some("Run release tests".into()));
         let plain = preamble_plain(&block);
-        assert_eq!(plain.len(), 3, "expected description + blank + command");
-        assert_eq!(plain[0], "Run release tests");
-        assert_eq!(plain[1], "");
-        assert_eq!(plain[2], "$ cargo test --release");
+        assert_eq!(
+            plain.as_slice(),
+            ["Run release tests", "", "$ cargo test --release"]
+        );
     }
 
     #[test]
@@ -472,7 +455,9 @@ mod tests {
             BgTaskBlock::started("ls", "t1").with_description(Some("List the files".into()));
         let text = block.preamble(&test_ctx()).expect("preamble");
         let theme = Theme::current();
-        let span = &text.lines[0].spans[0];
+        let Some(span) = text.lines.first().and_then(|l| l.spans.first()) else {
+            panic!("expected a description span: {text:?}");
+        };
         assert_eq!(span.content.as_ref(), "List the files");
         assert_eq!(span.style.fg, Some(theme.text_primary));
     }
@@ -481,16 +466,14 @@ mod tests {
     fn preamble_without_description_renders_only_command() {
         let block = BgTaskBlock::started("ls -la", "t1");
         let plain = preamble_plain(&block);
-        assert_eq!(plain.len(), 1);
-        assert_eq!(plain[0], "$ ls -la");
+        assert_eq!(plain.as_slice(), ["$ ls -la"]);
     }
 
     #[test]
     fn preamble_blank_description_falls_back_to_command_only() {
         let block = BgTaskBlock::started("ls", "t1").with_description(Some("   \n  ".into()));
         let plain = preamble_plain(&block);
-        assert_eq!(plain.len(), 1);
-        assert_eq!(plain[0], "$ ls");
+        assert_eq!(plain.as_slice(), ["$ ls"]);
     }
 
     #[test]
@@ -498,30 +481,23 @@ mod tests {
         let block = BgTaskBlock::started("ls", "t1")
             .with_description(Some("First line\nSecond line".into()));
         let plain = preamble_plain(&block);
-        assert_eq!(plain.len(), 4);
-        assert_eq!(plain[0], "First line");
-        assert_eq!(plain[1], "Second line");
-        assert_eq!(plain[2], "");
-        assert_eq!(plain[3], "$ ls");
+        assert_eq!(plain.as_slice(), ["First line", "Second line", "", "$ ls"]);
     }
 
     #[test]
     fn preamble_collapses_blank_run_and_trims_trailing_whitespace() {
-        // Runs of blank lines collapse to one; trailing whitespace on a
-        // line is stripped so the rendered row doesn't carry stray spaces.
+        // Runs of blank lines collapse to one; trailing whitespace on a line is stripped so the rendered row doesn't carry stray spaces
         let block = BgTaskBlock::started("ls", "t1")
             .with_description(Some("First   \n\n\n\nSecond  ".into()));
         let plain = preamble_plain(&block);
-        // First, single blank (collapsed from 3 internal blanks), Second,
-        // separator blank, command.
+        // First, single blank (collapsed from 3 internal blanks), Second, separator blank, command
         assert_eq!(plain, vec!["First", "", "Second", "", "$ ls"]);
     }
 
     #[test]
     fn preamble_multiline_command_keeps_separate_lines() {
-        // Regression: a single ratatui Line drops '\n' as zero-width, which
-        // smashed multi-line bg-task commands into one unreadable blob when
-        // expanded in the block viewer.
+        // Regression: a single ratatui Line drops '\n' as zero-width
+        // That smashed multi-line bg-task commands into one unreadable blob when expanded in the block viewer
         let block = BgTaskBlock::started(
             "export XAI_ROOT=/tmp\ncd /tmp\necho start\nprod-run start backend",
             "t1",
@@ -564,7 +540,10 @@ mod tests {
             None,
         );
         let output = block.output(&test_ctx());
-        let text: String = output.lines[0]
+        let Some(line) = output.lines.first() else {
+            panic!("expected an output line: {output:?}");
+        };
+        let text: String = line
             .content
             .spans
             .iter()

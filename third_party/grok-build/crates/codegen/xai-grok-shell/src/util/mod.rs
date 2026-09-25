@@ -1,22 +1,36 @@
 pub mod config;
-pub(crate) mod dual_clock;
-pub mod grok_auth_credentials;
+// Extracted to the `xai-grok-login` crate; re-exported so `crate::util::grok_auth_credentials::*` call sites keep compiling unchanged.
+pub use xai_grok_login::grok_auth_credentials;
 pub mod hooks;
 pub mod limits;
-pub(crate) mod subprocess;
+pub(crate) mod text_sanitize;
 pub(crate) mod user_identity;
 
-// The foundation utilities live in `xai-grok-shell-base` (upstream of this
-// crate so they build in parallel). Re-exported at the original paths so
-// existing `crate::util::…` / `xai_grok_shell::util::…` users compile
-// unchanged.
+// The foundation utilities live in `xai-grok-shell-base` (upstream of this crate so they build in parallel)
+// Re-exported at the original paths so existing `crate::util::…` and `xai_grok_shell::util::…` users compile unchanged
 pub use xai_grok_shell_base::util::*;
+
+/// Parse an env var as a JSON object. Returns `None` if unset or not a valid JSON object.
+pub(crate) fn parse_json_object_env(var: &str) -> Option<serde_json::Value> {
+    let val = std::env::var(var).ok()?;
+    match serde_json::from_str::<serde_json::Value>(&val) {
+        Ok(v) if v.is_object() => Some(v),
+        Ok(_) => {
+            tracing::warn!("{var} is not a JSON object, ignoring");
+            None
+        }
+        Err(e) => {
+            tracing::warn!("{var} is invalid JSON: {e}");
+            None
+        }
+    }
+}
 
 pub(crate) fn is_user_instruction_path(
     path: &std::path::Path,
     grok_home: &std::path::Path,
     vendor_homes: &[(std::path::PathBuf, bool)],
-    workspace_root: Option<&std::path::Path>,
+    workspace_roots: &[&std::path::Path],
 ) -> bool {
     let parent = path.parent();
     let grok_rules = grok_home.join("rules");
@@ -30,7 +44,8 @@ pub(crate) fn is_user_instruction_path(
     if is_exact_home_surface {
         return true;
     }
-    if workspace_root.is_some_and(|root| path.starts_with(root)) {
+    // Both prefixes are workspace because forks mix display-rewritten and on-disk paths.
+    if workspace_roots.iter().any(|root| path.starts_with(root)) {
         return false;
     }
     path.starts_with(grok_home)
@@ -39,74 +54,14 @@ pub(crate) fn is_user_instruction_path(
             .any(|(vendor_home, _)| path.starts_with(vendor_home))
 }
 
-/// Aborts the wrapped tokio task when dropped.
-///
-/// Use to tie a spawned helper task's lifetime to an async scope so that
-/// cancelling the parent future (e.g. a turn abort dropping the tool loop)
-/// also tears down the helper instead of leaving it running detached.
-/// Aborting an already-finished task is a no-op, so this is safe to hold
-/// across normal scope exit too.
+/// Ties a spawned helper task's lifetime to an async scope by aborting it on drop.
+/// Cancelling the parent future (e.g. a turn abort dropping the tool loop) tears down the helper instead of leaving it running detached.
+/// Aborting an already-finished task is a no-op, so this is safe to hold across normal scope exit too.
 pub(crate) struct AbortOnDrop(pub tokio::task::JoinHandle<()>);
 
 impl Drop for AbortOnDrop {
     fn drop(&mut self) {
         self.0.abort();
-    }
-}
-
-/// Expand a leading `~` to the home directory; other paths pass through.
-pub(crate) fn expand_home(s: &str) -> std::path::PathBuf {
-    if let Some(stripped) = s.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(stripped);
-        }
-    } else if s == "~"
-        && let Some(home) = dirs::home_dir()
-    {
-        return home;
-    }
-    std::path::PathBuf::from(s)
-}
-
-#[cfg(test)]
-mod expand_home_tests {
-    use super::expand_home;
-
-    #[test]
-    fn passthrough_for_absolute_path() {
-        assert_eq!(
-            expand_home("/abs/path"),
-            std::path::PathBuf::from("/abs/path")
-        );
-    }
-
-    #[test]
-    fn passthrough_for_relative_path() {
-        assert_eq!(
-            expand_home("rel/path"),
-            std::path::PathBuf::from("rel/path")
-        );
-    }
-
-    #[test]
-    fn bare_tilde() {
-        let home = dirs::home_dir().expect("home_dir required for this test");
-        assert_eq!(expand_home("~"), home);
-    }
-
-    #[test]
-    fn tilde_slash() {
-        let home = dirs::home_dir().expect("home_dir required for this test");
-        assert_eq!(expand_home("~/foo/bar"), home.join("foo/bar"));
-    }
-
-    #[test]
-    fn does_not_handle_user_tilde() {
-        // `~bob/path` is treated as a literal relative path.
-        assert_eq!(
-            expand_home("~bob/path"),
-            std::path::PathBuf::from("~bob/path")
-        );
     }
 }
 
@@ -121,13 +76,13 @@ mod is_user_instruction_path_tests {
             Path::new("/repo/config/AGENTS.md"),
             Path::new("/repo/config"),
             &[],
-            Some(Path::new("/repo")),
+            &[Path::new("/repo")],
         ));
         assert!(!is_user_instruction_path(
             Path::new("/repo/config/src/AGENTS.md"),
             Path::new("/repo/config"),
             &[],
-            Some(Path::new("/repo")),
+            &[Path::new("/repo")],
         ));
     }
 
@@ -137,7 +92,7 @@ mod is_user_instruction_path_tests {
             Path::new("/custom/grok/worktrees/repo/src/AGENTS.md"),
             Path::new("/custom/grok"),
             &[],
-            Some(Path::new("/custom/grok/worktrees/repo")),
+            &[Path::new("/custom/grok/worktrees/repo")],
         ));
     }
 }

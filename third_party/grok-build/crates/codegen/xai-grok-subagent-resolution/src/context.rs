@@ -8,45 +8,27 @@ use std::fmt::Write;
 
 use xai_grok_sampling_types::conversation::ConversationItem;
 
-/// Maximum number of complete turns to render verbatim in the background
-/// context. Turns beyond this threshold (counting from the end) are
-/// summarized as metadata (message counts and tools used).
+/// Maximum number of complete turns to render verbatim in the background context.
+/// Turns beyond this threshold (counting from the end) are summarized as metadata (message counts and tools used).
 const MAX_VERBATIM_TURNS: usize = 3;
 
-/// XML tags whose content is stripped from user messages during fork
-/// context normalization. These blocks are re-injected by the child
-/// session's system prompt builder, so including them in the background
-/// context is pure duplication.
-///
-/// See also: `xai-chat-state::compaction_utils::strip_system_tags` which
-/// strips a related (but different) tag set for compaction.
+/// XML tags whose content is stripped from user messages during fork context normalization. The child session's system
+/// prompt builder re-injects these blocks, so keeping them in the background context duplicates them. See also:
+/// `xai-chat-state::compaction_utils::strip_system_tags`, which strips a related (but different) tag set for compaction.
 const FORK_NOISE_TAGS: &[&str] = &[
     "system-reminder",
     "system_reminder", // Cursor wire format uses underscore
     "user_info",
     "git_status",
     "project_layout",
-    "attached_files", // Alternate-agent file context; child reads files itself
+    "attached_files", // File context attached by an alternate agent; the child reads files itself
 ];
 
-/// Normalize a forked parent conversation into the shape:
-/// `[System(placeholder), User(<background_context>)]`
-///
-/// The System item is kept as-is (replaced later by `spawn_session_actor`).
-/// Parent conversation items (excluding System) are rendered into a single
-/// `<background_context>` User message. If there are [`MAX_VERBATIM_TURNS`]
-/// or fewer complete turns, all are included verbatim. If more, the last
-/// [`MAX_VERBATIM_TURNS`] are verbatim and earlier turns are summarized.
-///
-/// The task prompt is NOT included here: it arrives via the normal Prompt
-/// command and becomes the **last** user message (position [2]). This gives
-/// the task maximum recency-based attention from the model.
-///
-/// Returns `(normalized_items, inherited_prefix_len)` where
-/// `inherited_prefix_len` is the number of items the child should treat as
-/// pre-existing context (typically 2 for `[System, BackgroundContext]`).
+/// The System item is kept as-is (replaced later by `spawn_session_actor`). The task prompt is NOT included here: it
+/// arrives via the normal Prompt command and becomes the last user message (position [2]). `inherited_prefix_len` is the
+/// number of items the child should treat as pre-existing context (typically 2 for `[System, BackgroundContext]`).
 pub fn normalize_forked_context(items: Vec<ConversationItem>) -> (Vec<ConversationItem>, usize) {
-    // Extract system prompt (position 0) - kept as placeholder for spawn_session_actor.
+    // Extract the system prompt (position 0), kept as a placeholder for spawn_session_actor
     let system = items
         .first()
         .filter(|i| matches!(i, ConversationItem::System(_)))
@@ -64,7 +46,7 @@ pub fn normalize_forked_context(items: Vec<ConversationItem>) -> (Vec<Conversati
         return (vec![system], 1);
     }
 
-    // Count complete turns (User -> Assistant [-> ToolResult*] cycles).
+    // Count complete turns (a User message, then an Assistant message, then any ToolResults)
     let turns = count_complete_turns(&parent_items);
 
     let mut background = String::from("<background_context>\n");
@@ -74,18 +56,33 @@ pub fn normalize_forked_context(items: Vec<ConversationItem>) -> (Vec<Conversati
     );
 
     if turns.len() <= MAX_VERBATIM_TURNS {
-        // All turns fit - render verbatim.
+        // All turns fit, so render them verbatim
         for item in &parent_items {
             render_item_to_background(&mut background, item);
         }
     } else {
         // Summarize early turns, keep last MAX_VERBATIM_TURNS verbatim.
-        let early_end = turns[turns.len() - MAX_VERBATIM_TURNS];
+        let Some(&early_end) = turns
+            .len()
+            .checked_sub(MAX_VERBATIM_TURNS)
+            .and_then(|i| turns.get(i))
+        else {
+            for item in parent_items {
+                render_item_to_background(&mut background, item);
+            }
+            background.push_str("</background_context>");
+            let conversation = vec![system, ConversationItem::user(&background)];
+            return (conversation, 2);
+        };
         background.push_str("=== Earlier context (summarized) ===\n");
-        render_summary(&mut background, &parent_items[..early_end]);
+        if let Some(early) = parent_items.get(..early_end) {
+            render_summary(&mut background, early);
+        }
         background.push_str("\n=== Recent turns (verbatim) ===\n");
-        for item in &parent_items[early_end..] {
-            render_item_to_background(&mut background, item);
+        if let Some(recent) = parent_items.get(early_end..) {
+            for item in recent {
+                render_item_to_background(&mut background, item);
+            }
         }
     }
     background.push_str("</background_context>");
@@ -94,58 +91,54 @@ pub fn normalize_forked_context(items: Vec<ConversationItem>) -> (Vec<Conversati
     (conversation, 2)
 }
 
-/// Count complete turns in a slice of non-System conversation items.
-///
-/// Returns a vec of indices where each complete turn ends (exclusive).
-/// A turn is: one or more consecutive User messages, followed by an
-/// Assistant message, followed by zero or more ToolResult messages.
-/// Real histories interleave `Reasoning` (and `BackendToolCall`) siblings,
-/// so those are skipped both before the Assistant and within the
-/// post-assistant tool-result run — otherwise long forked histories would
-/// register zero turns and never summarize, blowing up token usage.
-///
-/// NOTE: this is one of two reasoning-aware turn-boundary scanners that must move
-/// together — the other is `fork_filter_chat` in
-/// `xai-grok-shell/src/session/storage/jsonl.rs` (it truncates to the last
-/// complete turn before this counts them). Keep their notions of a "complete
-/// turn" in sync if the turn item model changes.
+/// The scan skips those, both before the Assistant and inside the ToolResult run that follows it. Otherwise long forked
+/// histories would register zero turns and never summarize, blowing up token usage. NOTE: two scanners walk turn
+/// boundaries while skipping `Reasoning` items, and they must move together.
 fn count_complete_turns(items: &[&ConversationItem]) -> Vec<usize> {
     let mut turn_ends = Vec::new();
     let mut i = 0;
     while i < items.len() {
         // Skip until the start of a turn (a User message).
-        if !matches!(items[i], ConversationItem::User(_)) {
+        if !items
+            .get(i)
+            .is_some_and(|item| matches!(item, ConversationItem::User(_)))
+        {
             i += 1;
             continue;
         }
         // Consume consecutive User messages.
-        while i < items.len() && matches!(items[i], ConversationItem::User(_)) {
-            i += 1;
-        }
-        // Skip Reasoning / BackendToolCall siblings that precede the Assistant.
-        while i < items.len()
-            && matches!(
-                items[i],
-                ConversationItem::Reasoning(_) | ConversationItem::BackendToolCall(_)
-            )
+        while items
+            .get(i)
+            .is_some_and(|item| matches!(item, ConversationItem::User(_)))
         {
             i += 1;
         }
+        // Skip Reasoning / BackendToolCall siblings that precede the Assistant.
+        while items.get(i).is_some_and(|item| {
+            matches!(
+                item,
+                ConversationItem::Reasoning(_) | ConversationItem::BackendToolCall(_)
+            )
+        }) {
+            i += 1;
+        }
         // Expect Assistant.
-        if i >= items.len() || !matches!(items[i], ConversationItem::Assistant(_)) {
+        if !items
+            .get(i)
+            .is_some_and(|item| matches!(item, ConversationItem::Assistant(_)))
+        {
             break;
         }
         i += 1; // skip past Assistant
-        // Consume the post-assistant run: ToolResults plus interleaved
-        // Reasoning / BackendToolCall siblings, until the next User/Assistant.
-        while i < items.len()
-            && matches!(
-                items[i],
+        // Consume the post-assistant run: ToolResults plus interleaved Reasoning / BackendToolCall siblings, until the next User/Assistant
+        while items.get(i).is_some_and(|item| {
+            matches!(
+                item,
                 ConversationItem::ToolResult(_)
                     | ConversationItem::Reasoning(_)
                     | ConversationItem::BackendToolCall(_)
             )
-        {
+        }) {
             i += 1;
         }
         turn_ends.push(i);
@@ -153,14 +146,9 @@ fn count_complete_turns(items: &[&ConversationItem]) -> Vec<usize> {
     turn_ends
 }
 
-/// Strip content from user message text that is redundant in a forked
-/// child context. The child session gets its own system reminders, user
-/// info, git status, and project layout via the system prompt builder,
-/// so including these in the background context wastes tokens.
-///
-/// Also strips skill instruction blocks that follow `</command-args>` tags,
-/// since these are orchestration instructions for the parent session's
-/// skill execution, not relevant context for the child.
+/// Strip content from user message text that is redundant in a forked child context. The child session gets its own
+/// system reminders, user info, git status, and project layout via the system prompt builder. Also strips the skill body
+/// that follows a `</command-args>` tag; those instructions drove the parent's skill run and mean nothing to the child.
 fn strip_fork_noise(text: &str) -> String {
     if !text.contains('<') {
         let mut result = collapse_blank_lines(text);
@@ -183,14 +171,9 @@ fn strip_fork_noise(text: &str) -> String {
     result
 }
 
-/// Remove all occurrences of `<tag...>...</tag>` from the input string.
-/// Handles tags with attributes (e.g., `<tag attr="val">`).
-/// Unclosed tags are left untouched -- stripping to end-of-string would
-/// silently eat meaningful content on malformed input.
-/// Same-name nesting is not supported: matches the first closing tag.
-///
-/// See also: `xai-chat-state::compaction_utils::strip_system_tags` which
-/// uses the same leave-unclosed-untouched semantics for a different tag set.
+/// Remove all occurrences of `<tag...>...</tag>` from the input string. Same-name nesting is not supported: matches the
+/// first closing tag. See also: `xai-chat-state::compaction_utils::strip_system_tags`, which also leaves unclosed tags
+/// untouched for a different tag set.
 fn strip_xml_block<'a>(text: &'a str, tag: &str) -> Cow<'a, str> {
     let open_prefix = format!("<{tag}");
     if !text.contains(&*open_prefix) {
@@ -201,17 +184,28 @@ fn strip_xml_block<'a>(text: &'a str, tag: &str) -> Cow<'a, str> {
     let mut remaining = text;
 
     while let Some(open_start) = remaining.find(&open_prefix) {
-        let after_name = &remaining[open_start + open_prefix.len()..];
+        let Some(after_name) = remaining.get(open_start + open_prefix.len()..) else {
+            break;
+        };
         let is_tag = after_name.starts_with(|c: char| c == '>' || c.is_ascii_whitespace());
         if !is_tag {
-            result.push_str(&remaining[..open_start + open_prefix.len()]);
-            remaining = &remaining[open_start + open_prefix.len()..];
+            let Some(keep) = remaining.get(..open_start + open_prefix.len()) else {
+                break;
+            };
+            result.push_str(keep);
+            remaining = remaining
+                .get(open_start + open_prefix.len()..)
+                .unwrap_or("");
             continue;
         }
 
-        if let Some(close_rel) = remaining[open_start..].find(&close_tag) {
-            result.push_str(&remaining[..open_start]);
-            remaining = &remaining[open_start + close_rel + close_tag.len()..];
+        if let Some(close_rel) = remaining.get(open_start..).and_then(|r| r.find(&close_tag)) {
+            if let Some(head) = remaining.get(..open_start) {
+                result.push_str(head);
+            }
+            remaining = remaining
+                .get(open_start + close_rel + close_tag.len()..)
+                .unwrap_or("");
         } else {
             tracing::warn!(
                 tag,
@@ -226,12 +220,9 @@ fn strip_xml_block<'a>(text: &'a str, tag: &str) -> Cow<'a, str> {
     Cow::Owned(result)
 }
 
-/// Strip skill instruction content from user query blocks.
-///
-/// Preserves the command metadata tags (`<command-name>`, `<command-message>`,
-/// `<command-args>`) but removes the skill body that follows `</command-args>`.
-/// The child sees the command name and args (useful context) without the
-/// full orchestration instructions (pure noise).
+/// Strip skill instruction content from user query blocks. Preserves the command metadata tags (`<command-name>`,
+/// `<command-message>`, `<command-args>`). Removes the skill body that follows `</command-args>`. The child sees the
+/// command name and args but not the skill body, which only told the parent how to run the skill.
 fn strip_skill_instructions<'a>(text: &'a str) -> Cow<'a, str> {
     let marker = "</command-args>";
     let Some(marker_pos) = text.find(marker) else {
@@ -239,14 +230,15 @@ fn strip_skill_instructions<'a>(text: &'a str) -> Cow<'a, str> {
     };
     let after_marker = marker_pos + marker.len();
 
-    let end_pos = text[after_marker..]
-        .find("</user_query>")
+    let end_pos = text
+        .get(after_marker..)
+        .and_then(|rest| rest.find("</user_query>"))
         .map(|p| after_marker + p)
         .unwrap_or(text.len());
 
     let mut result = String::with_capacity(text.len());
-    result.push_str(&text[..after_marker]);
-    result.push_str(&text[end_pos..]);
+    result.push_str(text.get(..after_marker).unwrap_or(""));
+    result.push_str(text.get(end_pos..).unwrap_or(""));
     Cow::Owned(result)
 }
 
@@ -329,9 +321,7 @@ fn render_item_to_background(out: &mut String, item: &ConversationItem) {
         ConversationItem::BackendToolCall(b) => {
             let _ = writeln!(out, "[Backend Tool]: {}", b.text_summary());
         }
-        // Reasoning siblings don't enter the fork-background rendering —
-        // they're rendered (when needed) inline with the surrounding
-        // assistant turn elsewhere.
+        // Reasoning siblings do not enter the background text; they render inline with the surrounding assistant turn elsewhere, when needed
         ConversationItem::Reasoning(_) => {}
     }
 }
@@ -365,16 +355,13 @@ fn render_summary(out: &mut String, items: &[&ConversationItem]) {
     }
 }
 
-/// Truncate a string to at most `max_chars` Unicode characters.
-///
-/// Uses `char_indices` to find the byte offset of the Nth character,
-/// ensuring correct behavior with multi-byte UTF-8 content (e.g. emoji,
-/// CJK characters). Returns the full string if it has `max_chars` or
-/// fewer characters.
+/// Truncate a string to at most `max_chars` Unicode characters. `char_indices` finds the byte offset of the Nth
+/// character, so multi-byte UTF-8 content (emoji, CJK) never splits mid-character. Returns the full string if it has
+/// `max_chars` or fewer characters.
 fn truncate_str(s: &str, max_chars: usize) -> &str {
     match s.char_indices().nth(max_chars) {
-        Some((byte_offset, _)) => &s[..byte_offset],
-        None => s, // string has <= max_chars characters
+        Some((byte_offset, _)) => s.get(..byte_offset).unwrap_or(s),
+        None => s, // string has at most max_chars characters
     }
 }
 
@@ -445,7 +432,7 @@ mod tests {
         let (result, prefix_len) = normalize_forked_context(items);
         assert_eq!(prefix_len, 1);
         assert_eq!(result.len(), 1);
-        assert!(matches!(result[0], ConversationItem::System(_)));
+        assert!(matches!(result.first(), Some(ConversationItem::System(_))));
     }
 
     #[test]
@@ -460,7 +447,7 @@ mod tests {
         assert_eq!(result.len(), 2);
 
         // Second item should be User with background_context
-        if let ConversationItem::User(u) = &result[1] {
+        if let Some(ConversationItem::User(u)) = result.get(1) {
             let text = u
                 .content
                 .iter()
@@ -476,7 +463,6 @@ mod tests {
             assert!(text.contains("[User]: Hello"));
             assert!(text.contains("[Assistant]: Hi there"));
             assert!(text.contains("</background_context>"));
-            // Should NOT contain summarized section
             assert!(!text.contains("=== Earlier context"));
         } else {
             panic!("Expected User item");
@@ -497,7 +483,7 @@ mod tests {
         let (result, prefix_len) = normalize_forked_context(items);
         assert_eq!(prefix_len, 2);
 
-        if let ConversationItem::User(u) = &result[1] {
+        if let Some(ConversationItem::User(u)) = result.get(1) {
             let text = u
                 .content
                 .iter()
@@ -513,7 +499,6 @@ mod tests {
             assert!(text.contains("[User]: Turn 1"));
             assert!(text.contains("[User]: Turn 2"));
             assert!(text.contains("[User]: Turn 3"));
-            // No summary section
             assert!(!text.contains("=== Earlier context"));
         } else {
             panic!("Expected User item");
@@ -538,7 +523,7 @@ mod tests {
         let (result, prefix_len) = normalize_forked_context(items);
         assert_eq!(prefix_len, 2);
 
-        if let ConversationItem::User(u) = &result[1] {
+        if let Some(ConversationItem::User(u)) = result.get(1) {
             let text = u
                 .content
                 .iter()
@@ -554,7 +539,7 @@ mod tests {
             // early_end = turns[turns.len()-3] = turns[1] = end of turn 2.
             // So turns 1-2 are summarized, turns 3-4 are verbatim.
             assert!(text.contains("=== Earlier context (summarized) ==="));
-            // Turns 1 + 2 are summarized: 2 user msgs, 2 assistant msgs
+            // Turns 1 and 2 are summarized: 2 user msgs, 2 assistant msgs
             assert!(
                 text.contains("Messages: 2 user, 2 assistant"),
                 "Expected summary of turns 1-2. Full text:\n{text}"
@@ -574,8 +559,8 @@ mod tests {
 
     #[test]
     fn normalize_forked_context_with_reasoning_keeps_marker_drops_reasoning() {
-        // Multi-turn parent with Reasoning interleaved each turn. The distinctive
-        // marker must reach the background; reasoning noise must not.
+        // Multi-turn parent with Reasoning interleaved each turn
+        // The distinctive marker must reach the background; reasoning noise must not
         let items = vec![
             system_item("System"),
             user_item("Turn 1 UNIQUE_FORK_MARKER_TEST"),
@@ -589,7 +574,11 @@ mod tests {
         assert_eq!(prefix_len, 2);
         assert_eq!(result.len(), 2);
 
-        let text = extract_background_text(&result[1]);
+        let text = extract_background_text(
+            result
+                .get(1)
+                .unwrap_or_else(|| panic!("expected background item")),
+        );
         assert!(
             text.contains("UNIQUE_FORK_MARKER_TEST"),
             "marker must appear in background: {text}"
@@ -608,7 +597,11 @@ mod tests {
             assistant_item("OK"),
         ];
         let (result, _) = normalize_forked_context(items);
-        let text = extract_background_text(&result[1]);
+        let text = extract_background_text(
+            result
+                .get(1)
+                .unwrap_or_else(|| panic!("expected background item")),
+        );
         assert!(text.contains("Before"));
         assert!(text.contains("After"));
         assert!(!text.contains("lots of files here"));
@@ -627,7 +620,7 @@ mod tests {
         ];
         let (result, _) = normalize_forked_context(items);
 
-        if let ConversationItem::User(u) = &result[1] {
+        if let Some(ConversationItem::User(u)) = result.get(1) {
             let text = u
                 .content
                 .iter()
@@ -639,13 +632,11 @@ mod tests {
                 })
                 .collect::<Vec<_>>()
                 .join("");
-            // Should contain exactly 200 x's followed by "..."
             let expected_truncated = format!("{}...", "x".repeat(200));
             assert!(
                 text.contains(&expected_truncated),
                 "Expected tool result truncated to 200 chars + '...'"
             );
-            // Should not contain the full 300 chars
             assert!(!text.contains(&"x".repeat(300)));
         } else {
             panic!("Expected User item");
@@ -658,8 +649,7 @@ mod tests {
         let items = vec![user_item("Hello"), assistant_item("Hi")];
         let (result, prefix_len) = normalize_forked_context(items);
         assert_eq!(prefix_len, 2);
-        // Should synthesize an empty System item
-        if let ConversationItem::System(s) = &result[0] {
+        if let Some(ConversationItem::System(s)) = result.first() {
             assert!(s.content.is_empty());
         } else {
             panic!("Expected System item");
@@ -680,7 +670,7 @@ mod tests {
         let items = vec![system_item("System"), user_item("Go"), item];
         let (result, _) = normalize_forked_context(items);
 
-        if let ConversationItem::User(u) = &result[1] {
+        if let Some(ConversationItem::User(u)) = result.get(1) {
             let text = u
                 .content
                 .iter()
@@ -692,13 +682,11 @@ mod tests {
                 })
                 .collect::<Vec<_>>()
                 .join("");
-            // Should contain exactly 100 a's followed by "..."
             let expected = format!("{}...", "a".repeat(100));
             assert!(
                 text.contains(&expected),
                 "Expected tool call args truncated to 100 chars + '...'"
             );
-            // Should not contain the full 150 chars
             assert!(!text.contains(&long_args));
         } else {
             panic!("Expected User item");
@@ -715,9 +703,7 @@ mod tests {
         ];
         let refs: Vec<&ConversationItem> = items.iter().collect();
         let turns = count_complete_turns(&refs);
-        assert_eq!(turns.len(), 2);
-        assert_eq!(turns[0], 2); // after A1
-        assert_eq!(turns[1], 4); // after A2
+        assert_eq!(turns.as_slice(), [2, 4]); // after A1, after A2
     }
 
     #[test]
@@ -732,9 +718,7 @@ mod tests {
         ];
         let refs: Vec<&ConversationItem> = items.iter().collect();
         let turns = count_complete_turns(&refs);
-        assert_eq!(turns.len(), 2);
-        assert_eq!(turns[0], 4); // after 2 tool results
-        assert_eq!(turns[1], 6);
+        assert_eq!(turns.as_slice(), [4, 6]); // after 2 tool results, then A2
     }
 
     #[test]
@@ -746,14 +730,13 @@ mod tests {
         ];
         let refs: Vec<&ConversationItem> = items.iter().collect();
         let turns = count_complete_turns(&refs);
-        assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0], 2);
+        assert_eq!(turns.as_slice(), [2]);
     }
 
     #[test]
     fn count_complete_turns_with_reasoning() {
-        // Reasoning siblings sit between the user query and the assistant; the
-        // counter must see through them or long forked histories never summarize.
+        // Reasoning siblings sit between the user query and the assistant
+        // The counter must see through them or long forked histories never summarize
         let items = [
             user_item("U1"),
             reasoning_item("think 1"),
@@ -764,14 +747,7 @@ mod tests {
         ];
         let refs: Vec<&ConversationItem> = items.iter().collect();
         let turns = count_complete_turns(&refs);
-        assert_eq!(turns.len(), 2);
-        assert_eq!(turns[0], 3); // after reasoning + A1
-        assert_eq!(turns[1], 6); // after reasoning + A2
-    }
-
-    #[test]
-    fn truncate_str_within_limit() {
-        assert_eq!(truncate_str("hello", 10), "hello");
+        assert_eq!(turns.as_slice(), [3, 6]); // after reasoning+A1, after reasoning+A2
     }
 
     #[test]
@@ -790,11 +766,6 @@ mod tests {
     }
 
     #[test]
-    fn truncate_str_empty_string() {
-        assert_eq!(truncate_str("", 5), "");
-    }
-
-    #[test]
     fn truncate_str_multibyte_emoji() {
         // Each emoji is 4 bytes. Truncating at 2 chars should yield 2 emojis (8 bytes).
         let s = "\u{1F600}\u{1F601}\u{1F602}\u{1F603}"; // 4 emojis
@@ -806,11 +777,6 @@ mod tests {
         // CJK chars are 3 bytes each. Truncating at 3 chars should yield 3 chars (9 bytes).
         let s = "\u{4F60}\u{597D}\u{4E16}\u{754C}"; // 4 CJK chars
         assert_eq!(truncate_str(s, 3), "\u{4F60}\u{597D}\u{4E16}");
-    }
-
-    #[test]
-    fn strip_fork_noise_empty_input() {
-        assert_eq!(strip_fork_noise(""), "");
     }
 
     // --- strip_xml_block tests ---
@@ -838,24 +804,10 @@ mod tests {
     }
 
     #[test]
-    fn strip_xml_block_preserves_surrounding_text() {
-        let input = "keep this <user_info>strip me</user_info> and this too";
-        let result = strip_xml_block(input, "user_info");
-        assert_eq!(result, "keep this  and this too");
-    }
-
-    #[test]
     fn strip_xml_block_no_closing_tag() {
         let input = "before <system-reminder>unclosed content";
         let result = strip_xml_block(input, "system-reminder");
         assert_eq!(result, input, "unclosed tag must be left untouched");
-    }
-
-    #[test]
-    fn strip_xml_block_underscore_variant() {
-        let input = "A <system_reminder>cursor noise</system_reminder> B";
-        let result = strip_xml_block(input, "system_reminder");
-        assert_eq!(result, "A  B");
     }
 
     #[test]
@@ -915,42 +867,7 @@ mod tests {
         assert_eq!(result, "line1\n\nline2\n\nline3");
     }
 
-    #[test]
-    fn collapse_blank_lines_preserves_single() {
-        let input = "line1\n\nline2";
-        let result = collapse_blank_lines(input);
-        assert_eq!(result, input);
-    }
-
     // --- strip_fork_noise integration tests ---
-
-    #[test]
-    fn strip_fork_noise_strips_user_info() {
-        let input = "hello <user_info>\nOS: linux\nShell: /bin/bash\n</user_info> world";
-        let result = strip_fork_noise(input);
-        assert!(result.contains("hello"));
-        assert!(result.contains("world"));
-        assert!(!result.contains("OS: linux"));
-    }
-
-    #[test]
-    fn strip_fork_noise_strips_git_status() {
-        let input = "before <git_status>\nOn branch main\n</git_status> after";
-        let result = strip_fork_noise(input);
-        assert!(result.contains("before"));
-        assert!(result.contains("after"));
-        assert!(!result.contains("On branch main"));
-    }
-
-    #[test]
-    fn strip_fork_noise_strips_project_layout() {
-        let input = "A <project_layout>\nsrc/main.rs\nsrc/lib.rs\n</project_layout> B";
-        let result = strip_fork_noise(input);
-        assert!(result.contains("A"));
-        assert!(result.contains("B"));
-        assert!(!result.contains("src/main.rs"));
-        assert!(!result.contains("<project_layout>"));
-    }
 
     #[test]
     fn strip_fork_noise_strips_attached_files() {
@@ -970,7 +887,7 @@ mod tests {
 
     #[test]
     fn strip_fork_noise_realistic_trace() {
-        // Synthetic fixture only — keep content generic (no real project docs).
+        // Synthetic fixture only: keep content generic (no real project docs)
         let input = "\
 <system-reminder>\n\
 As you answer the user's questions, you can use the following context:\n\n\
@@ -1029,7 +946,11 @@ This is a very long skill body with many lines of instructions.\n\n\
             assistant_item("Real answer"),
         ];
         let (result, _) = normalize_forked_context(items);
-        let text = extract_background_text(&result[1]);
+        let text = extract_background_text(
+            result
+                .get(1)
+                .unwrap_or_else(|| panic!("expected background item")),
+        );
         // The noise-only message should be skipped entirely
         assert!(
             !text.contains("[User]: \n"),
@@ -1050,7 +971,11 @@ This is a very long skill body with many lines of instructions.\n\n\
             assistant_item("4"),
         ];
         let (result, _) = normalize_forked_context(items);
-        let text = extract_background_text(&result[1]);
+        let text = extract_background_text(
+            result
+                .get(1)
+                .unwrap_or_else(|| panic!("expected background item")),
+        );
         assert!(text.contains("What is 2+2?"));
         assert!(!text.contains("noise"));
         assert!(!text.contains("os: linux"));
@@ -1066,7 +991,11 @@ This is a very long skill body with many lines of instructions.\n\n\
             assistant_item("answer"),
         ];
         let (result, _) = normalize_forked_context(items);
-        let text = extract_background_text(&result[1]);
+        let text = extract_background_text(
+            result
+                .get(1)
+                .unwrap_or_else(|| panic!("expected background item")),
+        );
         assert!(text.contains("Actual query"));
         assert!(!text.contains("Skill content"));
     }

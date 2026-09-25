@@ -1,8 +1,5 @@
-//! `pty-bench` — PTY benchmark CLI for `xai-grok-pager`.
-//!
-//! Spawns the real pager binary in a PTY, dispatches named scenarios, and
-//! emits aggregated results as JSON. Supports baseline comparison for CI
-//! regression detection.
+//! Spawns the real pager binary in a PTY, dispatches named scenarios, and emits aggregated results as JSON.
+//! Supports baseline comparison for CI regression detection.
 //!
 //! ## Typical use
 //!
@@ -52,8 +49,8 @@ struct Cli {
     #[arg(long)]
     all: bool,
 
-    /// Path to the pager binary. Defaults to auto-resolve (PAGER_BINARY env
-    /// or a locally-built debug binary).
+    /// Path to the pager binary.
+    /// Defaults to auto-resolve (PAGER_BINARY env or a locally-built debug binary).
     #[arg(long)]
     binary: Option<PathBuf>,
 
@@ -65,8 +62,7 @@ struct Cli {
     #[arg(long, default_value_t = 120)]
     cols: u16,
 
-    /// Compare results against a baseline file and exit non-zero on
-    /// regression (>15% p99 delta by default).
+    /// Compare results against a baseline file and exit non-zero on regression (>15% p99 delta by default).
     #[arg(long, value_name = "PATH")]
     baseline: Option<PathBuf>,
 
@@ -79,7 +75,7 @@ struct Cli {
     threshold: f64,
 
     /// Accepted for `cargo bench` compatibility (libtest-style argument).
-    /// We ignore it — this isn't a libtest harness.
+    /// We ignore it; this isn't a libtest harness.
     #[arg(long, hide = true)]
     #[allow(dead_code)]
     bench: bool,
@@ -125,7 +121,10 @@ async fn run() -> Result<ExitCode> {
 
     let mut results: Vec<BenchResults> = Vec::with_capacity(scenarios.len());
     for scenario in scenarios {
-        tracing::info!(scenario = scenario.as_str(), "running scenario");
+        tracing::info!(
+            scenario = Into::<&'static str>::into(scenario),
+            "running scenario"
+        );
         let content = ContentController::start()
             .await
             .context("start ContentController")?;
@@ -150,9 +149,9 @@ async fn run() -> Result<ExitCode> {
                 results.push(r);
             }
             Err(e) => {
-                tracing::warn!(scenario = scenario.as_str(), error = %e, "scenario failed");
+                tracing::warn!(scenario = Into::<&'static str>::into(scenario), error = %e, "scenario failed");
                 results.push(BenchResults::from_timings(
-                    scenario.as_str(),
+                    Into::<&'static str>::into(scenario),
                     &[],
                     std::time::Duration::ZERO,
                 ));

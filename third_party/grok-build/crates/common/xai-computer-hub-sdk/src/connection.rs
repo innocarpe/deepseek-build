@@ -24,11 +24,15 @@
 //! 3. Re-runs the `hello` handshake.
 //! 4. The ToolServer replays `serve{session_id, tools}` per active
 //!    session via the on_reconnect callback. The server auto-registers
-//!    sessions from `serve` so no separate wire call is needed.
+//!    sessions from `serve` so no separate wire call is needed. A harness
+//!    replays `session_open` and then every `session_bind_server` it last
+//!    succeeded with, so the hub forwards a fresh `session.bind` — stamped
+//!    with its current policy — to each tool server the session was bound
+//!    to (a hub roll drops both sockets and re-stamps nothing by itself).
 //! 5. Drains any outbound frames that buffered during step 1-4.
 use crate::auth::{AuthCredential, AuthProvider, PrincipalKey};
 use crate::demux::Demux;
-use crate::error::ClientError;
+use crate::error::{ClientError, RefusalCode};
 use crate::handshake::send_hello;
 use crate::refcount::RefCountedSet;
 use futures::stream::SplitSink;
@@ -47,11 +51,12 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use url::Url;
 use xai_tool_protocol::{
-    ConnectionId, ConnectionKind, JsonRpcId, JsonRpcRequest, JsonRpcResponse, JsonRpcVersion,
-    Method, PingFrame, PongFrame, ResponseOutcome, SessionId,
+    AuthRefreshParams, AuthRefreshResult, ConnectionId, ConnectionKind, JsonRpcError, JsonRpcId,
+    JsonRpcRequest, JsonRpcResponse, JsonRpcVersion, Method, PingFrame, PongFrame, ResponseOutcome,
+    ServerId, SessionBindServerParams, SessionId,
 };
 /// Outbound mpsc bound. Picked to match the server's per-actor outbound
 /// buffer so a single-process roundtrip never dead-blocks on sender
@@ -96,11 +101,49 @@ const RECONNECT_ATTEMPT_MIN_BUDGET: Duration = Duration::from_secs(30);
 fn reconnect_attempt_budget(liveness_deadline: Duration) -> Duration {
     liveness_deadline.max(RECONNECT_ATTEMPT_MIN_BUDGET)
 }
+/// Per-attempt budget for the initial connect (WebSocket upgrade +
+/// hello/hello_ack). Neither `connect_async` nor the hello_ack wait is
+/// otherwise bounded, so a peer that accepts the socket but never answers
+/// (e.g. a hub instance draining mid-roll) would hang the caller
+/// indefinitely, burning the embedder's own readiness budget on one dead
+/// attempt.
+const INITIAL_CONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Initial-connect attempts before the error surfaces to the caller. Waits
+/// between attempts come from the reconnect backoff schedule (jittered), so
+/// a fleet cold-starting into a degraded hub de-phases its retries.
+const INITIAL_CONNECT_MAX_ATTEMPTS: u32 = 3;
 /// Default WebSocket keepalive ping cadence when a connection does not
 /// override [`ConnectionTuning::ws_ping_interval`].
 const DEFAULT_WS_PING_INTERVAL: Duration = Duration::from_secs(30);
 const SERVE_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(30);
 const SERVE_MAX_ATTEMPTS: u32 = 3;
+/// How often a token-bound tool server asks its provider for a fresher bearer
+/// to present in band ([`AuthRefreshDriver`]) unless
+/// [`ConnectionTuning::auth_refresh_poll`] says otherwise.
+pub(crate) const AUTH_REFRESH_POLL: Duration = Duration::from_secs(30);
+/// Bound on one `auth.refresh` round-trip; the hub answers or refuses well
+/// within this, so a later reply is a stuck socket.
+const AUTH_REFRESH_TIMEOUT: Duration = Duration::from_secs(15);
+/// Unaccepted `auth.refresh` answers in a row on one phase at which the
+/// driver logs once at `warn!`: a refusal that persists means the hub will
+/// still close the socket at the bearer's `exp`.
+const AUTH_REFRESH_WARN_AFTER: u32 = 3;
+/// The hub's `error.data.reason` for a bearer whose `exp` is not later than
+/// the one it already holds.
+const AUTH_REFRESH_NOT_LATER: &str = "not_later";
+/// The `data.reason` values the hub sends with a refused `auth.refresh`.
+const AUTH_REFRESH_KNOWN_REASONS: &[&str] = &[
+    "not_token_bound",
+    "unconfigured",
+    "disabled",
+    "in_flight",
+    "too_soon",
+    "unreadable",
+    AUTH_REFRESH_NOT_LATER,
+    "unverified",
+    "identity_changed",
+    "unavailable",
+];
 const CLOCK_PROBE_INTERVAL: Duration = Duration::from_secs(5);
 const CLOCK_JUMP_ACCUM_MIN_MS: u64 = 100;
 const CLOCK_JUMP_REPORT_MIN_MS: u64 = 2_000;
@@ -290,6 +333,47 @@ impl Drop for WaiterGuard<'_> {
         let _ = self.demux.take_response_waiter(self.request_id);
     }
 }
+/// Allocate a request id on `connection`, wrap `params` in a session-scoped
+/// request under `method`, and serialize to text. The id is returned for
+/// callers that park a response waiter; fire-and-forget callers discard it.
+/// The enqueue (async [`HubConnection::send_outbound`] vs sync
+/// [`HubConnection::try_send_outbound`]) stays with the caller.
+pub(crate) fn build_request_frame<P: serde::Serialize>(
+    connection: &HubConnection,
+    session_id: &SessionId,
+    method: Method,
+    params: P,
+) -> Result<(xai_tool_protocol::RequestId, String), ClientError> {
+    let request_id = connection.try_alloc_request_id()?;
+    let req = JsonRpcRequest {
+        jsonrpc: JsonRpcVersion,
+        id: JsonRpcId::from_request_id(&request_id),
+        session_id: Some(session_id.clone()),
+        method: method.as_wire_str().to_owned(),
+        params,
+    };
+    let text = serde_json::to_string(&req).map_err(ClientError::from)?;
+    Ok((request_id, text))
+}
+/// Best-effort, non-blocking request for drop paths that cannot `.await`.
+/// A full channel drops the frame and logs at debug; a closed one is the
+/// normal shutdown path (the actor closes outbound before exiting) and is
+/// silent. Nobody awaits the reply.
+pub(crate) fn try_send_request_on_drop<P: serde::Serialize>(
+    connection: &HubConnection,
+    session_id: &SessionId,
+    method: Method,
+    params: P,
+    what: &'static str,
+) {
+    let Ok((_request_id, text)) = build_request_frame(connection, session_id, method, params)
+    else {
+        return;
+    };
+    if let Err(ClientError::BackpressureError(_)) = connection.try_send_outbound(text) {
+        tracing::debug!(session_id = %session_id, "{what} dropped (outbound channel full)");
+    }
+}
 /// Process-wide default reconnect schedule, materialised once from
 /// [`RECONNECT_BACKOFF_MS`]. Connections that do not override
 /// [`ConnectionTuning::reconnect_backoff`] share this `Arc` (cheap clone,
@@ -328,6 +412,23 @@ fn resolve_ws_ping_interval(configured: Option<Duration>) -> Duration {
         _ => DEFAULT_WS_PING_INTERVAL,
     }
 }
+/// Resolve the per-attempt initial-connect budget, clamping an unset *or
+/// zero* value to [`INITIAL_CONNECT_ATTEMPT_TIMEOUT`] — a zero budget would
+/// abort every attempt before the upgrade could complete.
+fn resolve_initial_connect_attempt_timeout(configured: Option<Duration>) -> Duration {
+    match configured {
+        Some(timeout) if !timeout.is_zero() => timeout,
+        _ => INITIAL_CONNECT_ATTEMPT_TIMEOUT,
+    }
+}
+/// Whether an initial-connect failure is worth another attempt. Transport
+/// failures (including the per-attempt timeout, which surfaces as
+/// `NetworkError`) and server closes are transient; auth, config, protocol,
+/// and insecure-scheme failures are deterministic and must surface
+/// immediately.
+fn initial_connect_retryable(err: &ClientError) -> bool {
+    matches!(err, ClientError::NetworkError(_) | ClientError::Closed(_))
+}
 /// Resolve the inbound-liveness deadline, clamping an unset *or zero* value
 /// to `min(4× ping, 120s)` — 120s at the default 30s ping, still under the
 /// hub's ~150s idle timeout.
@@ -344,6 +445,16 @@ fn resolve_ws_liveness_deadline(configured: Option<Duration>, ping_interval: Dur
             .saturating_mul(4)
             .min(Duration::from_secs(120)),
     }
+}
+/// Embedder policy for the first connect, before the reconnect loop owns the socket.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InitialConnectPolicy {
+    /// Per-attempt budget for upgrade + hello/hello_ack. `None` or zero ⇒ 10s.
+    pub attempt_timeout: Option<Duration>,
+    /// Start a second transport attempt when the first has not upgraded by then. `None` or zero ⇒ no hedge.
+    pub hedge_after: Option<Duration>,
+    /// Budget for the whole initial connect across attempts. `None` or zero ⇒ the legacy 3-attempt cap.
+    pub deadline: Option<Duration>,
 }
 /// Optional, default-preserving connection-tuning knobs carried from the
 /// pool/builder into [`ConnectionConfig`]. `Default` leaves every value
@@ -371,6 +482,21 @@ pub struct ConnectionTuning {
     /// default cap period). `Some`, including zero, is honored verbatim
     /// (`Some(ZERO)` resets on every outage; tests use this).
     pub reconnect_attempt_reset_after: Option<Duration>,
+    /// Allowlist of 4100–4199 close codes that fire
+    /// [`ConnectionConfig::on_terminal_close`] then re-enter the reconnect
+    /// loop instead of permanently stopping the actor. Empty (default)
+    /// keeps the protocol contract: every terminal close is a one-way door.
+    /// Only codes for a still-restorable session (e.g.
+    /// [`CLOSE_CODE_SANDBOX_TERMINATED`]) belong here; one-way codes
+    /// (force eviction, session expiry, admin disconnect, supersession)
+    /// must not.
+    pub reconnect_after_terminal_close_codes: Vec<u16>,
+    /// Policy for the initial connection before reconnect handling begins.
+    pub initial_connect: InitialConnectPolicy,
+    /// Override for how often a token-bound tool server asks its provider
+    /// for a fresher bearer to present in band (`auth.refresh`). `None` (or
+    /// zero) ⇒ 30 s.
+    pub auth_refresh_poll: Option<Duration>,
 }
 /// Pool dedup key. Two connections are pooled together iff their
 /// `(url, principal)` match.
@@ -411,9 +537,15 @@ pub type ReconnectCallback = Box<dyn Fn(ReconnectEvent) + Send + Sync + 'static>
 /// reconnect attempt) and on a terminal close.
 pub type DisconnectCallback = Box<dyn Fn() + Send + Sync + 'static>;
 /// Boxed terminal-close callback, fired with the WebSocket close code when
-/// the server ends the connection in the 4100–4199 range (no reconnect).
-/// Always followed by [`DisconnectCallback`] so readiness still flips.
+/// the server ends the connection in the 4100–4199 range. Default policy is
+/// no reconnect; [`ConnectionTuning::reconnect_after_terminal_close_codes`]
+/// opts the embedder into recovery after this callback. Always followed by
+/// [`DisconnectCallback`] so readiness still flips.
 pub type TerminalCloseCallback = Box<dyn Fn(u16) + Send + Sync + 'static>;
+/// Boxed callback fired when a *reconnect's* upgrade is answered `401`/`403`, with the status and
+/// the policy code a `403` body names. The actor stops afterwards: the same credential fails the
+/// same way. (The initial connect reports this as [`ClientError::HandshakeAuthFailed`] instead.)
+pub type HandshakeRefusedCallback = Box<dyn Fn(u16, Option<RefusalCode>) + Send + Sync + 'static>;
 /// Boxed connect callback, fired once on the initial successful connect
 /// after the writer keepalive loop has entered (so `/ready` cannot race
 /// the first ping) and before the reader actor task spawns. It therefore
@@ -461,8 +593,13 @@ pub struct ConnectionConfig {
     /// server sends a terminal close.
     pub on_disconnect: Option<Arc<DisconnectCallback>>,
     /// Optional terminal-close callback, fired with the close code on a
-    /// 4100–4199 close, before [`Self::on_disconnect`].
+    /// 4100–4199 close, before [`Self::on_disconnect`]. The actor still
+    /// stops afterwards unless the code is in
+    /// [`ConnectionTuning::reconnect_after_terminal_close_codes`].
     pub on_terminal_close: Option<Arc<TerminalCloseCallback>>,
+    /// Optional callback for a reconnect refused at the upgrade with `401`/`403`; see
+    /// [`HandshakeRefusedCallback`].
+    pub on_handshake_refused: Option<Arc<HandshakeRefusedCallback>>,
     /// Optional connect callback, fired once on the initial successful connect
     /// after the writer task enters its loop (happens-before reader start).
     /// The first keepalive may still be in flight or one scheduler quanta away.
@@ -519,6 +656,7 @@ struct HubConnectionInner {
     on_reconnect: Option<Arc<ReconnectCallback>>,
     on_disconnect: Option<Arc<DisconnectCallback>>,
     on_terminal_close: Option<Arc<TerminalCloseCallback>>,
+    on_handshake_refused: Option<Arc<HandshakeRefusedCallback>>,
     server_id: Option<xai_tool_protocol::ServerId>,
     server_description: Option<String>,
     server_metadata: Option<serde_json::Value>,
@@ -537,6 +675,11 @@ struct HubConnectionInner {
     reconnect_jitter_seed: u64,
     /// Resolved stability dwell before `attempt` resets on a new outage.
     attempt_reset_after: Duration,
+    /// Embedder opt-in: sorted allowlist of 4100–4199 close codes to
+    /// reconnect after instead of exiting. Empty ⇒ never reconnect.
+    reconnect_after_terminal_close_codes: Vec<u16>,
+    /// Cadence of the in-band bearer refresh ([`run_auth_refresh`]).
+    auth_refresh_poll: Duration,
     /// Incremented at the start of each reconnect episode so jitter
     /// re-phases across outages of the same connection.
     outage_seq: AtomicU32,
@@ -548,6 +691,17 @@ struct HubConnectionInner {
     /// Refcounted bound-session set. Used by the reconnect path to
     /// re-issue `register_session` for every still-live session.
     bound_sessions: Arc<RefCountedSet<SessionId>>,
+    /// The last `session_bind_server` that succeeded per session and tool
+    /// server, replayed after `session_open` on reconnect. Kept here rather
+    /// than on the harness because the connection owns the replay and the
+    /// harness only learns of a reconnect after it.
+    last_binds: dashmap::DashMap<SessionId, Vec<SessionBindServerParams>>,
+    /// Serialises a session's refcount edge with the lifecycle frame that
+    /// edge emits. Without it a drop's "decrement to zero" and a concurrent
+    /// build's "increment from zero" can interleave so `session_detach` is
+    /// enqueued after the new borrower's `session_open`, and the hub unbinds
+    /// a session that has a live borrower.
+    session_lifecycle: parking_lot::Mutex<()>,
     /// Cached server-issued `connection_id`. Updated on every (re)connect.
     connection_id: Arc<Mutex<Option<ConnectionId>>>,
     /// Optional capabilities the server advertised in the most recent
@@ -577,7 +731,6 @@ impl HubConnection {
     /// The pool is the canonical caller; outside callers MAY use this
     /// for tests or one-shot programs but lose pool dedup.
     pub async fn connect(config: ConnectionConfig) -> Result<Arc<Self>, ClientError> {
-        let initial_cred = config.credential.current();
         let key = ConnKey {
             url: config.url.as_str().to_owned(),
             principal: config.credential.principal_key(),
@@ -603,24 +756,115 @@ impl HubConnection {
         let bound_sessions = Arc::new(RefCountedSet::<SessionId>::new());
         let connection_id = Arc::new(Mutex::new(None));
         let shutdown = CancellationToken::new();
-        let ws = open_socket(
-            &config.url,
-            &initial_cred,
-            config.kind,
-            config.alpha_test_key.as_deref(),
-            config.allow_insecure_ws,
-        )
-        .await?;
-        let (sink, stream) = ws.split();
-        let (sink, stream, ack) = run_handshake(
-            sink,
-            stream,
-            config.kind,
-            config.server_id.clone(),
-            config.server_description.clone(),
-            config.server_metadata.clone(),
-        )
-        .await?;
+        let policy = config.tuning.initial_connect;
+        let attempt_timeout = resolve_initial_connect_attempt_timeout(policy.attempt_timeout);
+        let deadline = policy.deadline.filter(|deadline| !deadline.is_zero());
+        let deadline_at = deadline.map(|deadline| tokio::time::Instant::now() + deadline);
+        let hedge_after = policy.hedge_after.filter(|delay| !delay.is_zero());
+        if hedge_after.is_some_and(|delay| delay >= attempt_timeout) {
+            warn!(
+                ?hedge_after,
+                ?attempt_timeout,
+                "initial connect hedge delay is not below the attempt timeout; the hedge can never fire"
+            );
+        }
+        let initial_jitter_seed = new_reconnect_jitter_seed();
+        let mut attempt: u32 = 0;
+        let mut last_err = None;
+        let (sink, stream, ack, presented) = loop {
+            let now = tokio::time::Instant::now();
+            let remaining = deadline_at.map(|deadline| deadline.saturating_duration_since(now));
+            let attempt_budget = match remaining {
+                Some(remaining) if remaining.is_zero() => {
+                    return Err(
+                        last_err
+                            .unwrap_or_else(|| ClientError::NetworkError(
+                                match deadline {
+                                    Some(deadline) => {
+                                        format!(
+                                "initial connect attempt timed out after {attempt_timeout:?} (attempt {attempt}, deadline {deadline:?})"
+                            )
+                                    }
+                                    None => {
+                                        format!(
+                                "initial connect attempt timed out after {attempt_timeout:?}"
+                            )
+                                    }
+                                },
+                            )),
+                    );
+                }
+                Some(remaining) => attempt_timeout.min(remaining),
+                None => attempt_timeout,
+            };
+            attempt += 1;
+            let cred = config.credential.current();
+            let attempt_result = match tokio::time::timeout(
+                attempt_budget,
+                Box::pin(async {
+                    let ws = hedged_open_socket(
+                        &config.url,
+                        &cred,
+                        config.kind,
+                        config.alpha_test_key.as_deref(),
+                        config.allow_insecure_ws,
+                        hedge_after.filter(|delay| *delay < attempt_budget),
+                    )
+                    .await?;
+                    let (sink, stream) = ws.split();
+                    run_handshake(
+                        sink,
+                        stream,
+                        config.kind,
+                        config.server_id.clone(),
+                        config.server_description.clone(),
+                        config.server_metadata.clone(),
+                    )
+                    .await
+                }),
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => Err(ClientError::NetworkError(match deadline {
+                    Some(deadline) => {
+                        format!(
+                            "initial connect attempt timed out after {attempt_budget:?} (attempt {attempt}, deadline {deadline:?})"
+                        )
+                    }
+                    None => {
+                        format!("initial connect attempt timed out after {attempt_budget:?}")
+                    }
+                })),
+            };
+            match attempt_result {
+                Ok((sink, stream, ack)) => break (sink, stream, ack, cred),
+                Err(err) => {
+                    if !initial_connect_retryable(&err) {
+                        return Err(err);
+                    }
+                    if deadline_at.is_none() && attempt >= INITIAL_CONNECT_MAX_ATTEMPTS {
+                        return Err(err);
+                    }
+                    let now = tokio::time::Instant::now();
+                    let wait = backoff_for(attempt, &reconnect_backoff, initial_jitter_seed, 0);
+                    let remaining =
+                        deadline_at.map(|deadline| deadline.saturating_duration_since(now));
+                    if remaining.is_some_and(|remaining| remaining <= wait) {
+                        return Err(err);
+                    }
+                    warn!(
+                        url = %config.url,
+                        attempt,
+                        ?wait,
+                        error = %err,
+                        "initial connect attempt failed; retrying"
+                    );
+                    last_err = Some(err);
+                    tokio::time::sleep(wait).await;
+                }
+            }
+        };
         *connection_id.lock().await = Some(ack.connection_id.clone());
         info!(
             url = %config.url,
@@ -639,6 +883,7 @@ impl HubConnection {
             on_reconnect: config.on_reconnect.clone(),
             on_disconnect: config.on_disconnect.clone(),
             on_terminal_close: config.on_terminal_close.clone(),
+            on_handshake_refused: config.on_handshake_refused.clone(),
             server_id: config.server_id,
             server_description: config.server_description,
             server_metadata: config.server_metadata,
@@ -648,10 +893,23 @@ impl HubConnection {
             reconnect_backoff,
             reconnect_jitter_seed: new_reconnect_jitter_seed(),
             attempt_reset_after,
+            reconnect_after_terminal_close_codes: {
+                let mut codes = config.tuning.reconnect_after_terminal_close_codes.clone();
+                codes.sort_unstable();
+                codes.dedup();
+                codes
+            },
+            auth_refresh_poll: config
+                .tuning
+                .auth_refresh_poll
+                .filter(|poll| !poll.is_zero())
+                .unwrap_or(AUTH_REFRESH_POLL),
             outage_seq: AtomicU32::new(0),
             outbound_tx,
             demux: demux.clone(),
             bound_sessions: bound_sessions.clone(),
+            last_binds: dashmap::DashMap::new(),
+            session_lifecycle: parking_lot::Mutex::new(()),
             connection_id,
             hello_capabilities: parking_lot::RwLock::new(ack.capabilities),
             next_request_id: std::sync::atomic::AtomicU64::new(1),
@@ -685,6 +943,7 @@ impl HubConnection {
         tokio::spawn(run_reader_actor(
             reader_inner,
             stream,
+            presented,
             stop_rx,
             reconnect_rx,
             writer_ctl_tx,
@@ -726,11 +985,7 @@ impl HubConnection {
     ///   `capabilities` field are indistinguishable from an empty list, so
     ///   support is unknown and callers should probe per call.
     pub fn supports(&self, capability: &str) -> Option<bool> {
-        let caps = self.inner.hello_capabilities.read();
-        if caps.is_empty() {
-            return None;
-        }
-        Some(caps.iter().any(|c| c == capability))
+        self.inner.supports(capability)
     }
     /// Demux (used by the server-side run loop to register session
     /// inboxes). Cheap to clone (Arc bump).
@@ -763,14 +1018,79 @@ impl HubConnection {
     /// Increment the refcount on `session_id`. The session is tracked
     /// locally for reconnect-replay; the server learns about it via
     /// `serve` (auto-registration on the server side).
+    ///
+    /// Taken under `session_lifecycle` so the increment cannot land between
+    /// a concurrent [`Self::untrack_session_and_detach`]'s decrement and its
+    /// `session_detach` enqueue. The caller's `session_open` may follow
+    /// outside the lock: while it holds a count no detach for the session
+    /// can be enqueued.
     pub fn track_session(&self, session_id: SessionId) {
+        let _lifecycle = self.inner.session_lifecycle.lock();
         self.inner.bound_sessions.increment(session_id);
     }
     /// Decrement the refcount on `session_id`. Removes tracking when
     /// the last borrower drops. Returns the post-decrement count
     /// (`Some(0)` = last borrower; `None` = key was absent).
     pub fn untrack_session(&self, session_id: &SessionId) -> Option<u64> {
-        self.inner.bound_sessions.decrement(session_id)
+        let count = self.inner.bound_sessions.decrement(session_id);
+        if count == Some(0) {
+            self.inner.last_binds.remove(session_id);
+        }
+        count
+    }
+    /// Remember a `session_bind_server` that the hub accepted, so a reconnect
+    /// replays it (one entry per tool server; a rebind of the same server
+    /// replaces its entry).
+    pub(crate) fn record_session_bind(
+        &self,
+        session_id: &SessionId,
+        params: SessionBindServerParams,
+    ) {
+        let mut binds = self.inner.last_binds.entry(session_id.clone()).or_default();
+        binds.retain(|b| b.server_id != params.server_id);
+        binds.push(params);
+    }
+    /// Drop the replay entry for `server_id` after a `session_unbind_server`
+    /// the hub accepted; `None` drops every server of the session (close).
+    pub(crate) fn forget_session_bind(&self, session_id: &SessionId, server_id: Option<&ServerId>) {
+        let Some(server_id) = server_id else {
+            self.inner.last_binds.remove(session_id);
+            return;
+        };
+        if let Some(mut binds) = self.inner.last_binds.get_mut(session_id) {
+            binds.retain(|b| &b.server_id != server_id);
+        }
+        self.inner
+            .last_binds
+            .remove_if(session_id, |_, binds| binds.is_empty());
+    }
+    /// [`Self::untrack_session`] for a harness leaving a pooled connection
+    /// that stays open for other borrowers: when this was the last borrower,
+    /// enqueue a best-effort `session_detach` so the hub does not keep the
+    /// session bound until the socket closes. Returns `true` when this was
+    /// the last borrower.
+    ///
+    /// Runs on drop paths, so the frame is try-enqueued like the
+    /// cancel-on-drop hook and nobody awaits the reply (an unmatched response
+    /// is a demux no-op). Skipped when the hub advertises capabilities but not
+    /// `session_detach`: such a hub would count each frame as
+    /// `invalid_request`.
+    pub(crate) fn untrack_session_and_detach(&self, session_id: &SessionId) -> bool {
+        let _lifecycle = self.inner.session_lifecycle.lock();
+        if self.inner.bound_sessions.decrement(session_id) != Some(0) {
+            return false;
+        }
+        self.inner.last_binds.remove(session_id);
+        if self.supports(Method::SessionDetach.as_wire_str()) != Some(false) {
+            try_send_request_on_drop(
+                self,
+                session_id,
+                Method::SessionDetach,
+                xai_tool_protocol::SessionDetachParams {},
+                "session detach",
+            );
+        }
+        true
     }
     /// Send a JSON-RPC request and await the response.
     ///
@@ -821,52 +1141,16 @@ impl HubConnection {
     where
         P: serde::Serialize,
     {
-        let text =
-            serde_json::to_string(request).map_err(|e| DeadlineCallError::Other(e.into()))?;
-        let (tx, rx) = oneshot::channel();
         self.inner
-            .demux
-            .register_response_waiter(request_id.clone(), tx);
-        let _guard = WaiterGuard {
-            demux: &self.inner.demux,
-            request_id: &request_id,
-        };
-        self.send_outbound(text)
+            .call_request_with_deadline(request_id, request, timeout)
             .await
-            .map_err(DeadlineCallError::Other)?;
-        match tokio::time::timeout(timeout, rx).await {
-            Ok(Ok(result)) => result.map_err(DeadlineCallError::Other),
-            Ok(Err(recv_err)) => Err(DeadlineCallError::Other(recv_err.into())),
-            Err(_elapsed) => Err(DeadlineCallError::TimedOut(timeout)),
-        }
     }
     /// Send a fully-formed JSON text frame onto the outbound channel.
     /// Used by the server-side handler when replying to a
     /// `tool_call_request` (the response flows out without going
     /// through a waiter).
     pub async fn send_outbound(&self, text: String) -> Result<(), ClientError> {
-        match self.inner.outbound_tx.try_send(text) {
-            Ok(()) => Ok(()),
-            Err(mpsc::error::TrySendError::Full(text)) => {
-                match tokio::time::timeout(
-                    Duration::from_millis(250),
-                    self.inner.outbound_tx.send(text),
-                )
-                .await
-                {
-                    Ok(Ok(())) => Ok(()),
-                    Ok(Err(_)) => Err(ClientError::NetworkError(
-                        "outbound channel closed".to_owned(),
-                    )),
-                    Err(_) => Err(ClientError::BackpressureError(
-                        "outbound mpsc full beyond bounded wait".to_owned(),
-                    )),
-                }
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => Err(ClientError::NetworkError(
-                "outbound channel closed".to_owned(),
-            )),
-        }
+        self.inner.send_outbound(text).await
     }
     /// Non-blocking enqueue for synchronous drop paths that cannot
     /// `.await` (e.g. `RemoteCallStream::Drop` cancel-on-drop). A full
@@ -891,11 +1175,7 @@ impl HubConnection {
     /// produce). Callers in non-fallible contexts should propagate
     /// the error rather than panic.
     pub fn try_alloc_request_id(&self) -> Result<xai_tool_protocol::RequestId, ClientError> {
-        let value = self
-            .inner
-            .next_request_id
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        xai_tool_protocol::RequestId::new(format!("c{value}")).map_err(ClientError::from)
+        self.inner.try_alloc_request_id()
     }
     /// Number of sessions currently bound to this connection.
     /// Stable observable for monitoring and tests; not on the hot path.
@@ -969,6 +1249,67 @@ pub(crate) fn host_is_loopback(url: &Url) -> bool {
         None => false,
     }
 }
+/// Hedges the transport only. The hub supersedes a same-`server_id`
+/// registration on a later hello (close 4104), so a connect must send exactly
+/// one hello, after this returns.
+async fn hedged_open_socket(
+    url: &Url,
+    credential: &AuthCredential,
+    kind: ConnectionKind,
+    alpha_test_key: Option<&str>,
+    allow_insecure_ws: bool,
+    hedge_after: Option<Duration>,
+) -> Result<WsStream, ClientError> {
+    let Some(hedge_after) = hedge_after else {
+        return open_socket(url, credential, kind, alpha_test_key, allow_insecure_ws).await;
+    };
+    let started = tokio::time::Instant::now();
+    let first = open_socket(url, credential, kind, alpha_test_key, allow_insecure_ws);
+    tokio::pin!(first);
+    tokio::select! {
+        biased;
+        result = &mut first => return result,
+        _ = tokio::time::sleep(hedge_after) => {}
+    }
+    debug!(url = %url, elapsed = ?started.elapsed(), "launching hedged transport attempt");
+    let second = open_socket(url, credential, kind, alpha_test_key, allow_insecure_ws);
+    tokio::pin!(second);
+    let (result, from_hedge) = tokio::select! {
+        result = &mut first => (result, false),
+        result = &mut second => (result, true),
+    };
+    match result {
+        Ok(ws) => {
+            if from_hedge {
+                info!(url = %url, elapsed = ?started.elapsed(), "hedged transport attempt won");
+            }
+            Ok(ws)
+        }
+        Err(winner_error) if !initial_connect_retryable(&winner_error) => Err(winner_error),
+        Err(winner_error) => {
+            debug!(
+                error = %winner_error,
+                from_hedge,
+                "transport attempt failed while the other leg is pending"
+            );
+            let other = if from_hedge {
+                first.await
+            } else {
+                second.await
+            };
+            match other {
+                Ok(ws) => {
+                    if !from_hedge {
+                        info!(url = %url, elapsed = ?started.elapsed(), "hedged transport attempt won");
+                    }
+                    Ok(ws)
+                }
+                Err(other_error) if !initial_connect_retryable(&other_error) => Err(other_error),
+                Err(_) => Err(winner_error),
+            }
+        }
+    }
+}
 /// Open a fresh `ws://` / `wss://` socket. No handshake yet.
 ///
 /// Refuses to send the credential over `ws://` to any non-loopback host
@@ -994,10 +1335,7 @@ async fn open_socket(
         );
     }
     let mut connect_url = url.clone();
-    let expected_role = match kind {
-        ConnectionKind::Harness => "harness",
-        ConnectionKind::ToolServer => "tool_server",
-    };
+    let expected_role = kind.as_wire_str();
     if let Some(existing) = connect_url
         .query_pairs()
         .find(|(k, _)| k == "role")
@@ -1026,7 +1364,7 @@ async fn open_socket(
     }
     let _ = alpha_test_key;
     xai_tracing::http_client::attach_trace_to_http_request(headers);
-    let (ws, _resp) = connect_async(request)
+    let (ws, _resp) = Box::pin(connect_async(request))
         .await
         .map_err(ClientError::from_handshake_error)?;
     Ok(ws)
@@ -1107,9 +1445,15 @@ fn rearm_liveness(deadline: &mut std::pin::Pin<&mut tokio::time::Sleep>, livenes
         .unwrap_or_else(|| now + Duration::from_secs(86400 * 365 * 30));
     deadline.as_mut().reset(rearm);
 }
+/// Terminal close code for a hibernated-but-restorable sandbox the hub
+/// reaped; the only 4100–4199 code that is safe to reconnect after.
+pub const CLOSE_CODE_SANDBOX_TERMINATED: u16 = 4103;
 /// Map a websocket close frame's code to the connected-phase exit. Close
-/// codes 4100-4199 are terminal (the server intentionally ended the
-/// connection: eviction, session expiry, admin disconnect, rate limit).
+/// codes 4100-4199 are terminal by protocol contract (the server
+/// intentionally ended the connection: eviction, session expiry, admin
+/// disconnect, rate limit). The actor still stops on these unless the
+/// embedder allowlisted the specific code via
+/// [`ConnectionTuning::reconnect_after_terminal_close_codes`].
 /// The range is deliberately wide so new terminal codes added server-side
 /// are recognised without a client update.
 fn exit_for_close_code(code: Option<u16>) -> ConnectedExit {
@@ -1440,6 +1784,177 @@ async fn run_writer<S>(
         }
     }
 }
+/// In-band bearer refresh for a token-bound tool server. The hub closes such
+/// a socket at its bearer's `exp`; presenting the provider's fresher bearer
+/// over the live socket moves that deadline instead. One driver per
+/// connected phase, aborted with it.
+struct AuthRefreshDriver {
+    /// The bearer the hub currently holds for this socket: the one the
+    /// upgrade presented, then each refresh the hub accepted.
+    acknowledged: String,
+    /// Answers since the last acknowledgement that left `acknowledged` as it
+    /// was; the one that reaches [`AUTH_REFRESH_WARN_AFTER`] is logged at
+    /// `warn!`, the rest at `debug!`.
+    unaccepted_in_a_row: u32,
+}
+impl AuthRefreshDriver {
+    /// `None` unless a tool server presented a bearer to a hub that
+    /// advertised `auth.refresh`; a hub that predates the capability, or one
+    /// that does not offer it to this socket, closes at `exp` as before.
+    fn for_phase(
+        kind: ConnectionKind,
+        presented: &AuthCredential,
+        supports_refresh: Option<bool>,
+    ) -> Option<Self> {
+        if kind != ConnectionKind::ToolServer || supports_refresh != Some(true) {
+            return None;
+        }
+        match presented {
+            AuthCredential::Bearer { token } => Some(Self {
+                acknowledged: token.clone(),
+                unaccepted_in_a_row: 0,
+            }),
+            AuthCredential::Headers { .. } => None,
+        }
+    }
+    /// The bearer to present now, if `current` is one the hub has not seen.
+    fn pending(&self, current: AuthCredential) -> Option<String> {
+        match current {
+            AuthCredential::Bearer { token } if token != self.acknowledged => Some(token),
+            AuthCredential::Bearer { .. } | AuthCredential::Headers { .. } => None,
+        }
+    }
+    /// Fold the hub's answer to presenting `token` into what the hub now
+    /// holds. A `not_later` refusal means the hub already holds a bearer at
+    /// least this fresh (an accept whose reply was lost), so it counts as an
+    /// acknowledgement: re-presenting it would be refused for its whole life.
+    fn settle(&mut self, token: String, answer: Result<i64, AuthRefreshError>) {
+        match answer {
+            Ok(exp) => {
+                debug!(exp, "hub accepted the refreshed bearer in band");
+                self.acknowledge(token);
+            }
+            Err(err) => {
+                crate::metrics::auth_refresh_refused(err.reason());
+                if err.is_not_later() {
+                    debug!("hub already holds this bearer or a later one");
+                    self.acknowledge(token);
+                } else {
+                    self.unaccepted_in_a_row += 1;
+                    if self.unaccepted_in_a_row == AUTH_REFRESH_WARN_AFTER {
+                        warn!(
+                            %err,
+                            in_a_row = self.unaccepted_in_a_row,
+                            "auth.refresh keeps being refused; the hub will close this socket at the bearer's exp"
+                        );
+                    } else {
+                        debug!(%err, "auth.refresh not accepted; retrying next tick");
+                    }
+                }
+            }
+        }
+    }
+    fn acknowledge(&mut self, token: String) {
+        self.acknowledged = token;
+        self.unaccepted_in_a_row = 0;
+    }
+}
+/// Why one `auth.refresh` did not move the hub's deadline.
+#[derive(Debug, thiserror::Error)]
+enum AuthRefreshError {
+    /// The hub answered a refusal; `reason` is its `error.data.reason`.
+    #[error("refused ({reason}): {message}")]
+    Refused { reason: String, message: String },
+    /// No usable answer: transport, timeout, or an unreadable reply.
+    #[error(transparent)]
+    Failed(#[from] ClientError),
+}
+impl AuthRefreshError {
+    fn from_jsonrpc_error(err: JsonRpcError) -> Self {
+        match err
+            .data
+            .as_ref()
+            .and_then(|data| data.get("reason"))
+            .and_then(Value::as_str)
+        {
+            Some(reason) => Self::Refused {
+                reason: reason.to_owned(),
+                message: err.message,
+            },
+            None => Self::Failed(ClientError::from_jsonrpc_error(err)),
+        }
+    }
+    fn is_not_later(&self) -> bool {
+        matches!(self, Self::Refused { reason, .. } if reason == AUTH_REFRESH_NOT_LATER)
+    }
+    /// Metric label: the hub's reason when it is one this SDK knows, `other`
+    /// for any other string (the label set stays bounded whatever the hub
+    /// sends), or `failed` when there was no answer.
+    fn reason(&self) -> &'static str {
+        match self {
+            Self::Refused { reason, .. } => AUTH_REFRESH_KNOWN_REASONS
+                .iter()
+                .copied()
+                .find(|known| *known == reason)
+                .unwrap_or("other"),
+            Self::Failed(_) => "failed",
+        }
+    }
+}
+/// Once at phase start and then every `poll`, read the provider's current
+/// credential off the runtime's workers (`current()` may refresh over HTTP)
+/// and present a bearer the hub has not acknowledged. One request at a time;
+/// a refused or timed-out refresh is retried on the next tick with whatever
+/// is current then.
+async fn run_auth_refresh(
+    inner: Arc<HubConnectionInner>,
+    mut driver: AuthRefreshDriver,
+    poll: Duration,
+) {
+    let mut tick = tokio::time::interval(poll);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tick.tick().await;
+        let provider = Arc::clone(&inner.credential);
+        let current = match tokio::task::spawn_blocking(move || provider.current()).await {
+            Ok(current) => current,
+            Err(err) => {
+                warn!(%err, "credential provider did not return; retrying next tick");
+                continue;
+            }
+        };
+        let Some(token) = driver.pending(current) else {
+            continue;
+        };
+        let answer = inner.auth_refresh(&token).await;
+        driver.settle(token, answer);
+    }
+}
+/// Aborts the task on drop so a driver stops with the phase it was spawned
+/// for. Two things outlive the abort: a `current()` already running on the
+/// blocking pool finishes there and its result is dropped, and a frame
+/// already handed to the outbound queue may still be written on the next
+/// phase's socket, where the hub refuses it `not_later` or answers a waiter
+/// that no longer exists.
+struct PhaseTask(tokio::task::JoinHandle<()>);
+impl Drop for PhaseTask {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+fn spawn_auth_refresh(
+    inner: &Arc<HubConnectionInner>,
+    presented: &AuthCredential,
+) -> Option<PhaseTask> {
+    let supports = inner.supports(Method::AuthRefresh.as_wire_str());
+    AuthRefreshDriver::for_phase(inner.kind, presented, supports).map(|driver| {
+        PhaseTask(tokio::spawn(run_auth_refresh(
+            Arc::clone(inner),
+            driver,
+            inner.auth_refresh_poll,
+        )))
+    })
+}
 /// Invoke the optional disconnect callback (best-effort, sync).
 fn fire_on_disconnect(inner: &HubConnectionInner) {
     if let Some(cb) = &inner.on_disconnect {
@@ -1458,6 +1973,7 @@ fn fire_on_terminal_close(inner: &HubConnectionInner, code: u16) {
 async fn run_reader_actor(
     inner: Arc<HubConnectionInner>,
     mut stream: SplitStream<WsStream>,
+    mut presented: AuthCredential,
     mut stop_rx: mpsc::Receiver<()>,
     mut reconnect_rx: mpsc::Receiver<()>,
     writer_ctl_tx: mpsc::Sender<WriterControl<SplitSink<WsStream, Message>>>,
@@ -1470,7 +1986,8 @@ async fn run_reader_actor(
     let mut attempt: u32 = 0;
     let mut connected_at = Instant::now();
     'actor: loop {
-        match run_reader_phase(
+        let auth_refresh = spawn_auth_refresh(&inner, &presented);
+        let exit = run_reader_phase(
             inner.as_ref(),
             &mut stream,
             &mut stop_rx,
@@ -1478,10 +1995,16 @@ async fn run_reader_actor(
             liveness_deadline,
             &priority_tx,
         )
-        .await
-        {
+        .await;
+        drop(auth_refresh);
+        match exit {
             ConnectedExit::Stop => break,
-            ConnectedExit::TerminalClose(code) => {
+            ConnectedExit::TerminalClose(code)
+                if inner
+                    .reconnect_after_terminal_close_codes
+                    .binary_search(&code)
+                    .is_err() =>
+            {
                 info!(code, url = %url, "server sent terminal close; not reconnecting");
                 fire_on_terminal_close(inner.as_ref(), code);
                 fire_on_disconnect(inner.as_ref());
@@ -1491,7 +2014,27 @@ async fn run_reader_actor(
                 inner.demux.drain_progress();
                 break;
             }
-            ConnectedExit::SocketClosed(cause) => {
+            exit => {
+                let (cause, already_notified) = match exit {
+                    ConnectedExit::Stop => {
+                        unreachable!("Stop is handled by the arm above")
+                    }
+                    ConnectedExit::TerminalClose(code) => {
+                        info!(
+                            code,
+                            url = %url,
+                            "server sent terminal close; reconnecting (embedder opt-in)"
+                        );
+                        fire_on_terminal_close(inner.as_ref(), code);
+                        fire_on_disconnect(inner.as_ref());
+                        inner.demux.drain_waiters_with(|| {
+                            ClientError::Closed(format!("server terminal close (code {code})"))
+                        });
+                        inner.demux.drain_progress();
+                        (DisconnectCause::CloseFrame(Some(code)), true)
+                    }
+                    ConnectedExit::SocketClosed(cause) => (cause, false),
+                };
                 let detected_at = Instant::now();
                 let prev_conn_age = detected_at.duration_since(connected_at);
                 let health = inner.health.snapshot();
@@ -1519,7 +2062,9 @@ async fn run_reader_actor(
                     clock_jump_ms = outage.clock_jump_ms,
                     "server connection lost; scheduling reconnect"
                 );
-                fire_on_disconnect(inner.as_ref());
+                if !already_notified {
+                    fire_on_disconnect(inner.as_ref());
+                }
                 if matches!(outage.cause, DisconnectCause::LivenessDeadline)
                     && writer_ctl_tx
                         .send(WriterControl::Close {
@@ -1572,7 +2117,8 @@ async fn run_reader_actor(
                         }),
                     };
                     match outcome {
-                        Ok((new_sink, new_stream)) => {
+                        Ok((new_sink, new_stream, fresh_cred)) => {
+                            presented = fresh_cred;
                             let elapsed = reconnect_start.elapsed().as_secs_f64();
                             crate::metrics::reconnect_succeeded();
                             crate::metrics::reconnect_duration_observe(elapsed);
@@ -1591,13 +2137,16 @@ async fn run_reader_actor(
                             crate::metrics::reconnect_writer_resume();
                             break;
                         }
-                        Err(ClientError::HandshakeAuthFailed { status }) => {
+                        Err(ClientError::HandshakeAuthFailed { status, refusal }) => {
                             warn!(
                                 status,
                                 attempt,
                                 "reconnect rejected with handshake auth failure; evicting pool entry and stopping"
                             );
                             crate::metrics::reconnect_failed("handshake_auth");
+                            if let Some(cb) = &inner.on_handshake_refused {
+                                cb(status, refusal);
+                            }
                             inner.demux.drain_waiters_with(|| {
                                 ClientError::AuthError(format!(
                                     "server rejected reconnect handshake (HTTP {status})"
@@ -1743,6 +2292,61 @@ where
         }
     }
 }
+/// Send one replay request on the fresh socket and wait for *its* reply
+/// (best-effort, bounded; the reconnect must not hang on the hub's reply).
+///
+/// The reader phase is not running yet, so every other frame that arrives
+/// first is handled here the way it would handle it: data frames go to the
+/// demux (a `tools_changed` the hub emits while serving a replayed bind
+/// must reach the session inbox), an app ping is answered on the sink, an
+/// app/WS pong counts as liveness. Discarding "the next frame" as the ack
+/// lost whichever of those the hub wrote first.
+async fn replay_request<P: serde::Serialize>(
+    inner: &HubConnectionInner,
+    sink: &mut SplitSink<WsStream, Message>,
+    stream: &mut SplitStream<WsStream>,
+    request: &xai_tool_protocol::JsonRpcRequest<P>,
+) {
+    let Ok(text) = serde_json::to_string(request) else {
+        return;
+    };
+    let Ok(request_id) = serde_json::to_value(&request.id) else {
+        return;
+    };
+    let _ = SinkExt::send(sink, Message::Text(text.into())).await;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let Ok(next) = tokio::time::timeout_at(deadline, StreamExt::next(stream)).await else {
+            return;
+        };
+        match next {
+            Some(Ok(Message::Text(text))) => {
+                if is_reply_to(text.as_ref(), &request_id) {
+                    return;
+                }
+                match classify_inbound_text(inner, text.as_ref()) {
+                    InboundText::AppPing { pong: Some(pong) } => {
+                        let _ = SinkExt::send(sink, Message::Text(pong.into())).await;
+                    }
+                    InboundText::AppPong => inner.health.record_inbound(),
+                    InboundText::AppPing { pong: None }
+                    | InboundText::Data
+                    | InboundText::Unparseable => {}
+                }
+            }
+            Some(Ok(Message::Pong(_))) => inner.health.record_inbound(),
+            Some(Ok(Message::Close(_))) | Some(Err(_)) | None => return,
+            Some(Ok(_)) => {}
+        }
+    }
+}
+/// Whether `text` is the JSON-RPC response to the request with `id`.
+fn is_reply_to(text: &str, id: &Value) -> bool {
+    serde_json::from_str::<Value>(text).is_ok_and(|frame| {
+        frame.get("id") == Some(id)
+            && (frame.get("result").is_some() || frame.get("error").is_some())
+    })
+}
 /// Reconnect once and replay every session binding + tool registration.
 async fn reconnect_and_replay(
     inner: &HubConnectionInner,
@@ -1750,7 +2354,14 @@ async fn reconnect_and_replay(
     attempt: u32,
     outage: &OutageInfo,
     backoff_total: Duration,
-) -> Result<(SplitSink<WsStream, Message>, SplitStream<WsStream>), ClientError> {
+) -> Result<
+    (
+        SplitSink<WsStream, Message>,
+        SplitStream<WsStream>,
+        AuthCredential,
+    ),
+    ClientError,
+> {
     let fresh_cred = inner.credential.current();
     let ws = open_socket(
         url,
@@ -1771,9 +2382,10 @@ async fn reconnect_and_replay(
     )
     .await?;
     let sessions = inner.bound_sessions.snapshot_keys();
+    let mut binds_replayed = 0usize;
     if inner.kind == ConnectionKind::Harness {
         for sid in &sessions {
-            let req = xai_tool_protocol::JsonRpcRequest {
+            let open = xai_tool_protocol::JsonRpcRequest {
                 jsonrpc: xai_tool_protocol::JsonRpcVersion,
                 id: xai_tool_protocol::JsonRpcId::new_uuid_v7(),
                 session_id: Some(sid.clone()),
@@ -1783,10 +2395,22 @@ async fn reconnect_and_replay(
                     last_seq: None,
                 },
             };
-            if let Ok(text) = serde_json::to_string(&req) {
-                let _ = SinkExt::send(&mut sink, Message::Text(text.into())).await;
-                let _ = tokio::time::timeout(Duration::from_secs(5), StreamExt::next(&mut stream))
-                    .await;
+            replay_request(inner, &mut sink, &mut stream, &open).await;
+            let binds = inner
+                .last_binds
+                .get(sid)
+                .map(|binds| binds.clone())
+                .unwrap_or_default();
+            for params in binds {
+                let bind = xai_tool_protocol::JsonRpcRequest {
+                    jsonrpc: xai_tool_protocol::JsonRpcVersion,
+                    id: xai_tool_protocol::JsonRpcId::new_uuid_v7(),
+                    session_id: Some(sid.clone()),
+                    method: Method::SessionBindServer.as_wire_str().to_owned(),
+                    params,
+                };
+                replay_request(inner, &mut sink, &mut stream, &bind).await;
+                binds_replayed += 1;
             }
         }
     }
@@ -1795,6 +2419,7 @@ async fn reconnect_and_replay(
     info!(
         attempt,
         sessions_replayed,
+        binds_replayed,
         cause = outage.cause.label(),
         close_code = ?outage.cause.close_code(),
         error_detail = ?outage.cause.detail(),
@@ -1823,9 +2448,93 @@ async fn reconnect_and_replay(
             attempt,
         });
     }
-    Ok((sink, stream))
+    Ok((sink, stream, fresh_cred))
 }
 impl HubConnectionInner {
+    fn try_alloc_request_id(&self) -> Result<xai_tool_protocol::RequestId, ClientError> {
+        let value = self
+            .next_request_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        xai_tool_protocol::RequestId::new(format!("c{value}")).map_err(ClientError::from)
+    }
+    async fn call_request_with_deadline<P>(
+        &self,
+        request_id: xai_tool_protocol::RequestId,
+        request: &JsonRpcRequest<P>,
+        timeout: Duration,
+    ) -> Result<JsonRpcResponse, DeadlineCallError>
+    where
+        P: serde::Serialize,
+    {
+        let text =
+            serde_json::to_string(request).map_err(|e| DeadlineCallError::Other(e.into()))?;
+        let (tx, rx) = oneshot::channel();
+        self.demux.register_response_waiter(request_id.clone(), tx);
+        let _guard = WaiterGuard {
+            demux: &self.demux,
+            request_id: &request_id,
+        };
+        self.send_outbound(text)
+            .await
+            .map_err(DeadlineCallError::Other)?;
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(result)) => result.map_err(DeadlineCallError::Other),
+            Ok(Err(recv_err)) => Err(DeadlineCallError::Other(recv_err.into())),
+            Err(_elapsed) => Err(DeadlineCallError::TimedOut(timeout)),
+        }
+    }
+    async fn send_outbound(&self, text: String) -> Result<(), ClientError> {
+        match self.outbound_tx.try_send(text) {
+            Ok(()) => Ok(()),
+            Err(mpsc::error::TrySendError::Full(text)) => {
+                match tokio::time::timeout(Duration::from_millis(250), self.outbound_tx.send(text))
+                    .await
+                {
+                    Ok(Ok(())) => Ok(()),
+                    Ok(Err(_)) => Err(ClientError::NetworkError(
+                        "outbound channel closed".to_owned(),
+                    )),
+                    Err(_) => Err(ClientError::BackpressureError(
+                        "outbound mpsc full beyond bounded wait".to_owned(),
+                    )),
+                }
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => Err(ClientError::NetworkError(
+                "outbound channel closed".to_owned(),
+            )),
+        }
+    }
+    /// Whether the hub advertised `capability` in `hello_ack`; `None` when
+    /// the ack advertised nothing, which a hub predating capabilities also
+    /// does, so support is unknown.
+    fn supports(&self, capability: &str) -> Option<bool> {
+        let caps = self.hello_capabilities.read();
+        (!caps.is_empty()).then(|| caps.iter().any(|c| c == capability))
+    }
+    /// Present `access_token` to the hub as this socket's new bearer; `Ok`
+    /// carries the `exp` the hub now holds.
+    async fn auth_refresh(&self, access_token: &str) -> Result<i64, AuthRefreshError> {
+        let request_id = self.try_alloc_request_id()?;
+        let request = JsonRpcRequest {
+            jsonrpc: JsonRpcVersion,
+            id: JsonRpcId::from_request_id(&request_id),
+            session_id: None,
+            method: Method::AuthRefresh.as_wire_str().to_owned(),
+            params: AuthRefreshParams {
+                access_token: access_token.to_owned(),
+            },
+        };
+        let response = self
+            .call_request_with_deadline(request_id, &request, AUTH_REFRESH_TIMEOUT)
+            .await
+            .map_err(ClientError::from)?;
+        match response.outcome {
+            ResponseOutcome::Result(value) => serde_json::from_value::<AuthRefreshResult>(value)
+                .map(|result| result.exp)
+                .map_err(|e| ClientError::Serde(e.to_string()).into()),
+            ResponseOutcome::Error(err) => Err(AuthRefreshError::from_jsonrpc_error(err)),
+        }
+    }
     fn begin_reconnect_outage(&self) {
         self.outage_seq.fetch_add(1, Ordering::Relaxed);
     }
@@ -1902,2957 +2611,5 @@ fn apply_reconnect_jitter(window: Duration, roll: u64) -> Duration {
     Duration::from_nanos(roll % window_ns)
 }
 #[cfg(test)]
-mod tests {
-    use super::*;
-    /// Window expected for the default table, using *literal* 1 s / 10 s
-    /// so a change to [`RECONNECT_SPREAD_FLOOR`] or the cap is a
-    /// deliberate test edit, not a tautology on the constant.
-    fn expected_default_window(attempt: u32) -> Duration {
-        let slots_ms = [100_u64, 200, 500, 1_000, 2_000, 5_000, 10_000];
-        let idx = (attempt as usize).saturating_sub(1).min(slots_ms.len() - 1);
-        let base = Duration::from_millis(slots_ms[idx]);
-        let floor = Duration::from_secs(1);
-        let cap = Duration::from_secs(10);
-        Duration::from_nanos(
-            duration_nanos_u64(base)
-                .max(duration_nanos_u64(floor))
-                .min(duration_nanos_u64(cap)),
-        )
-    }
-    fn assert_window_is(attempt: u32, schedule: &[Duration], expected: Duration) {
-        let mut max = Duration::ZERO;
-        for seed in 0..256_u64 {
-            let d = backoff_for(attempt, schedule, seed, 1);
-            assert!(
-                d < expected || expected.is_zero(),
-                "attempt {attempt}: {d:?} escapes Uniform[0, {expected:?})"
-            );
-            if d > max {
-                max = d;
-            }
-        }
-        if !expected.is_zero() {
-            assert!(
-                max >= expected * 4 / 5,
-                "attempt {attempt}: max {max:?} never approaches the {expected:?} window"
-            );
-        }
-    }
-    #[test]
-    fn spread_floor_and_reset_dwell_are_the_documented_literals() {
-        assert_eq!(RECONNECT_SPREAD_FLOOR, Duration::from_secs(1));
-        assert_eq!(RECONNECT_ATTEMPT_RESET_AFTER, Duration::from_secs(10));
-        assert_eq!(
-            RECONNECT_BACKOFF_MS,
-            &[100, 200, 500, 1_000, 2_000, 5_000, 10_000]
-        );
-    }
-    #[test]
-    fn backoff_for_follows_exponential_schedule() {
-        let schedule = default_reconnect_backoff();
-        for attempt in 1_u32..=7 {
-            assert_window_is(attempt, &schedule, expected_default_window(attempt));
-        }
-    }
-    #[test]
-    fn backoff_for_caps_at_last_slot() {
-        let schedule = default_reconnect_backoff();
-        let cap = Duration::from_secs(10);
-        for attempt in [8_u32, 50, u32::MAX] {
-            assert_window_is(attempt, &schedule, cap);
-        }
-    }
-    #[test]
-    fn backoff_for_zero_attempt_uses_first_slot_window() {
-        let schedule = default_reconnect_backoff();
-        assert_window_is(0, &schedule, expected_default_window(1));
-    }
-    #[test]
-    fn backoff_for_honors_configured_schedule() {
-        let schedule = resolve_reconnect_backoff(Some(Arc::from([
-            Duration::from_millis(5),
-            Duration::from_millis(15),
-        ])));
-        let cap = Duration::from_millis(15);
-        for attempt in [1_u32, 2, 3, 99] {
-            assert_window_is(attempt, &schedule, cap);
-        }
-    }
-    #[test]
-    fn resolve_attempt_reset_after_none_is_ten_seconds() {
-        assert_eq!(
-            resolve_attempt_reset_after(None),
-            Duration::from_secs(10),
-            "unconfigured (production) path must be the 10s dwell, not ZERO"
-        );
-        assert_eq!(
-            resolve_attempt_reset_after(Some(Duration::ZERO)),
-            Duration::ZERO,
-            "Some(ZERO) is honored verbatim"
-        );
-        assert_eq!(
-            resolve_attempt_reset_after(Some(Duration::from_secs(3))),
-            Duration::from_secs(3)
-        );
-    }
-    #[test]
-    fn backoff_for_empty_schedule_is_zero_not_panic() {
-        assert_eq!(backoff_for(1, &[], 1, 1), Duration::ZERO);
-        assert_eq!(backoff_for(0, &[], 1, 1), Duration::ZERO);
-        assert_eq!(backoff_for(u32::MAX, &[], 1, 1), Duration::ZERO);
-    }
-    #[test]
-    fn resolve_reconnect_backoff_falls_back_when_unset_or_empty() {
-        let from_none = resolve_reconnect_backoff(None);
-        let from_empty = resolve_reconnect_backoff(Some(Arc::from([])));
-        let expected: &[Duration] = &[
-            Duration::from_millis(100),
-            Duration::from_millis(200),
-            Duration::from_millis(500),
-            Duration::from_millis(1_000),
-            Duration::from_millis(2_000),
-            Duration::from_millis(5_000),
-            Duration::from_millis(10_000),
-        ];
-        assert_eq!(&*from_none, expected);
-        assert_eq!(&*from_empty, expected);
-    }
-    #[test]
-    fn apply_reconnect_jitter_is_uniform_half_open() {
-        let one_sec_ns = 1_000_000_000_u64;
-        let one_sec = Duration::from_nanos(one_sec_ns);
-        assert_eq!(apply_reconnect_jitter(one_sec, 0), Duration::ZERO);
-        assert_eq!(
-            apply_reconnect_jitter(one_sec, one_sec_ns - 1),
-            Duration::from_nanos(one_sec_ns - 1)
-        );
-        assert_eq!(apply_reconnect_jitter(one_sec, one_sec_ns), Duration::ZERO);
-        assert_eq!(apply_reconnect_jitter(Duration::ZERO, 99), Duration::ZERO);
-    }
-    #[test]
-    fn first_slot_window_is_one_second_not_relative_dither() {
-        let schedule = default_reconnect_backoff();
-        let mut max = Duration::ZERO;
-        let mut min = Duration::from_secs(10);
-        for seed in 0..256_u64 {
-            let d = backoff_for(1, &schedule, seed, 1);
-            assert!(d < Duration::from_secs(1), "{d:?} escapes the 1s window");
-            if d > max {
-                max = d;
-            }
-            if d < min {
-                min = d;
-            }
-        }
-        assert!(
-            max > Duration::from_millis(125),
-            "max {max:?} fits inside ±25% of 100 ms; spread floor is missing"
-        );
-        assert!(
-            max >= Duration::from_millis(800),
-            "max {max:?} does not reach the top of a 1s window"
-        );
-        assert!(
-            min < Duration::from_millis(200),
-            "min {min:?} should be near 0"
-        );
-    }
-    #[test]
-    fn backoff_jitter_dephases_clients_including_first_attempt() {
-        let schedule = default_reconnect_backoff();
-        for attempt in [0_u32, 1, 7, 8] {
-            let window = expected_default_window(attempt.max(1));
-            let mut seen = std::collections::HashSet::new();
-            for seed in 0..64_u64 {
-                let d = backoff_for(attempt, &schedule, seed, 1);
-                assert!(
-                    d < window || window.is_zero(),
-                    "{d:?} not in Uniform[0, {window:?})"
-                );
-                seen.insert(d.as_nanos());
-            }
-            assert!(
-                seen.len() >= 60,
-                "attempt {attempt}: only {} distinct delays over 64 seeds",
-                seen.len()
-            );
-        }
-    }
-    #[test]
-    fn backoff_jitter_sequences_differ_across_clients_and_attempts() {
-        let schedule = default_reconnect_backoff();
-        let seq = |seed: u64, outage: u32| -> Vec<u128> {
-            (0..=8)
-                .map(|attempt| backoff_for(attempt, &schedule, seed, outage).as_nanos())
-                .collect()
-        };
-        let mut seen = std::collections::HashSet::new();
-        for seed in 0..32_u64 {
-            seen.insert(seq(seed, 1));
-        }
-        assert_eq!(seen.len(), 32, "each seed must produce a unique sequence");
-        assert_eq!(seq(42, 1), seq(42, 1), "same seed+outage is deterministic");
-        let fracs: std::collections::HashSet<u128> = (1..=4)
-            .map(|a| backoff_for(a, &schedule, 42, 1).as_nanos())
-            .collect();
-        assert!(
-            fracs.len() >= 3,
-            "jitter must re-roll per attempt, not once per client (got {})",
-            fracs.len()
-        );
-        let rephased = (0..32_u64)
-            .filter(|&seed| {
-                backoff_for(1, &schedule, seed, 1) != backoff_for(1, &schedule, seed, 2)
-            })
-            .count();
-        assert!(
-            rephased >= 30,
-            "outage index must re-phase delays (only {rephased}/32 moved)"
-        );
-    }
-    #[test]
-    fn backoff_jitter_last_slot_has_no_cap_pileup() {
-        let schedule = default_reconnect_backoff();
-        let cap = Duration::from_secs(10);
-        let mut seen = std::collections::HashSet::new();
-        for seed in 0..128_u64 {
-            let d = backoff_for(7, &schedule, seed, 1);
-            assert!(
-                d < cap,
-                "{d:?} must be in Uniform[0, cap), not piled on cap"
-            );
-            seen.insert(d.as_nanos());
-        }
-        assert!(
-            seen.len() >= 120,
-            "last-slot full jitter collapsed to {} values",
-            seen.len()
-        );
-    }
-    #[test]
-    fn derive_jitter_seed_mixes_counter_pid_and_clock() {
-        assert_ne!(
-            derive_jitter_seed(1, 42, 1_000),
-            derive_jitter_seed(2, 42, 1_000),
-            "counter must de-phase same-instant same-pid constructors"
-        );
-        assert_ne!(
-            derive_jitter_seed(1, 42, 1_000),
-            derive_jitter_seed(1, 43, 1_000),
-            "pid must de-phase counter=1 across processes"
-        );
-        assert_ne!(
-            derive_jitter_seed(1, 42, 1_000),
-            derive_jitter_seed(1, 42, 2_000),
-            "clock nanos must enter the mix"
-        );
-    }
-    #[test]
-    fn new_seed_mixes_in_pid_and_clock_not_just_the_counter() {
-        let before = NEXT_RECONNECT_JITTER_SEED.load(Ordering::Relaxed);
-        let pid = u64::from(std::process::id());
-        let s = new_reconnect_jitter_seed();
-        let after = NEXT_RECONNECT_JITTER_SEED.load(Ordering::Relaxed);
-        let ns = before..after.max(before + 1);
-        assert!(
-            !ns.clone().any(|n| s == derive_jitter_seed(n, 0, 0)),
-            "new_reconnect_jitter_seed must mix pid+clock, not derive(n, 0, 0)"
-        );
-        assert!(
-            !ns.clone().any(|n| s == derive_jitter_seed(n, pid, 0)),
-            "clock nanos must enter the seed; pid alone lock-steps a shared PID namespace"
-        );
-    }
-    /// A zero or unset ping interval must resolve to the default. A zero
-    /// period would otherwise reach `tokio::time::interval`, which panics on
-    /// `Duration::ZERO`; a positive override is honored verbatim.
-    #[test]
-    fn resolve_ws_ping_interval_clamps_zero_and_unset_to_default() {
-        assert_eq!(resolve_ws_ping_interval(None), DEFAULT_WS_PING_INTERVAL);
-        assert_eq!(
-            resolve_ws_ping_interval(Some(Duration::ZERO)),
-            DEFAULT_WS_PING_INTERVAL
-        );
-        let custom = Duration::from_secs(7);
-        assert_eq!(resolve_ws_ping_interval(Some(custom)), custom);
-    }
-    /// Resolving a zero ping interval to a non-zero default means
-    /// `tokio::time::interval` can be constructed without panicking.
-    #[tokio::test]
-    async fn resolved_zero_ping_interval_builds_interval_without_panic() {
-        let resolved = resolve_ws_ping_interval(Some(Duration::ZERO));
-        assert!(!resolved.is_zero());
-        let _interval = tokio::time::interval(resolved);
-    }
-    fn bearer_credential() -> AuthCredential {
-        AuthCredential::bearer("test-token")
-    }
-    #[tokio::test]
-    async fn open_socket_refuses_plaintext_ws_to_remote_host() {
-        let url = Url::parse("ws://hub.example.com:8080/v1/tools").expect("valid url");
-        let credential = bearer_credential();
-        match open_socket(&url, &credential, ConnectionKind::Harness, None, false).await {
-            Err(ClientError::InsecureScheme { url: rejected }) => {
-                assert_eq!(rejected, url);
-            }
-            other => panic!("expected InsecureScheme; got {other:?}"),
-        }
-    }
-    #[tokio::test]
-    async fn open_socket_allows_plaintext_ws_to_loopback() {
-        let url = Url::parse("ws://127.0.0.1:1/").expect("valid url");
-        let credential = bearer_credential();
-        if let Err(ClientError::InsecureScheme { .. }) =
-            open_socket(&url, &credential, ConnectionKind::Harness, None, false).await
-        {
-            panic!("loopback ws:// must not be rejected by the scheme guard")
-        }
-    }
-    #[tokio::test]
-    async fn open_socket_allows_wss_to_remote_host() {
-        let url = Url::parse("wss://hub.example.com/").expect("valid url");
-        let credential = bearer_credential();
-        if let Err(ClientError::InsecureScheme { .. }) =
-            open_socket(&url, &credential, ConnectionKind::Harness, None, false).await
-        {
-            panic!("wss:// must not be rejected by the scheme guard")
-        }
-    }
-    #[tokio::test]
-    async fn open_socket_allows_plaintext_ws_when_insecure_opt_in() {
-        let url = Url::parse("ws://hub.example.com:1/").expect("valid url");
-        let credential = bearer_credential();
-        if let Err(ClientError::InsecureScheme { .. }) =
-            open_socket(&url, &credential, ConnectionKind::Harness, None, true).await
-        {
-            panic!("allow_insecure_ws must bypass the scheme guard")
-        }
-    }
-    #[tokio::test]
-    async fn open_socket_rejects_role_mismatch() {
-        let url = Url::parse("ws://127.0.0.1:1/?role=harness").expect("valid url");
-        let credential = bearer_credential();
-        match open_socket(&url, &credential, ConnectionKind::ToolServer, None, false).await {
-            Err(ClientError::InvalidConfig(msg)) => {
-                assert!(
-                    msg.contains("conflicts with"),
-                    "message should mention conflict; got: {msg}"
-                );
-            }
-            other => panic!("expected InvalidConfig; got {other:?}"),
-        }
-    }
-    #[test]
-    fn host_is_loopback_recognises_canonical_names() {
-        for raw in [
-            "ws://127.0.0.1/",
-            "ws://[::1]/",
-            "ws://localhost/",
-            "ws://LOCALHOST/",
-        ] {
-            let url = Url::parse(raw).expect("valid url");
-            assert!(host_is_loopback(&url), "{raw} must be treated as loopback");
-        }
-        for raw in ["ws://hub.example.com/", "ws://10.0.0.1/", "ws://127.0.0.2/"] {
-            let url = Url::parse(raw).expect("valid url");
-            assert!(
-                !host_is_loopback(&url),
-                "{raw} must NOT be treated as loopback",
-            );
-        }
-    }
-    #[test]
-    fn exit_for_close_code_classifies_terminal_range() {
-        assert!(matches!(
-            exit_for_close_code(Some(4100)),
-            ConnectedExit::TerminalClose(4100)
-        ));
-        assert!(matches!(
-            exit_for_close_code(Some(4199)),
-            ConnectedExit::TerminalClose(4199)
-        ));
-        assert!(matches!(
-            exit_for_close_code(Some(4099)),
-            ConnectedExit::SocketClosed(DisconnectCause::CloseFrame(Some(4099)))
-        ));
-        assert!(matches!(
-            exit_for_close_code(Some(4200)),
-            ConnectedExit::SocketClosed(DisconnectCause::CloseFrame(Some(4200)))
-        ));
-        assert!(matches!(
-            exit_for_close_code(Some(1000)),
-            ConnectedExit::SocketClosed(DisconnectCause::CloseFrame(Some(1000)))
-        ));
-        assert!(matches!(
-            exit_for_close_code(None),
-            ConnectedExit::SocketClosed(DisconnectCause::CloseFrame(None))
-        ));
-    }
-    #[test]
-    fn disconnect_cause_labels_and_fields() {
-        assert_eq!(
-            DisconnectCause::CloseFrame(Some(1006)).label(),
-            "close_frame"
-        );
-        assert_eq!(
-            DisconnectCause::CloseFrame(Some(1006)).close_code(),
-            Some(1006)
-        );
-        assert_eq!(DisconnectCause::Eof.label(), "eof");
-        assert_eq!(DisconnectCause::Eof.close_code(), None);
-        assert_eq!(DisconnectCause::Eof.detail(), None);
-        let read = DisconnectCause::ReadError("reset".to_owned());
-        assert_eq!(read.label(), "transport_read_error");
-        assert_eq!(read.detail(), Some("reset"));
-        let write = DisconnectCause::WriteError("pipe".to_owned());
-        assert_eq!(write.label(), "transport_write_error");
-        assert_eq!(write.detail(), Some("pipe"));
-        assert_eq!(DisconnectCause::Forced.label(), "forced");
-    }
-    #[test]
-    fn classify_transport_detail_is_bounded() {
-        assert_eq!(
-            classify_transport_detail("Connection reset by peer (os error 104)"),
-            "connection_reset"
-        );
-        assert_eq!(classify_transport_detail("Broken pipe"), "broken_pipe");
-        assert_eq!(
-            classify_transport_detail("Unexpected EOF"),
-            "unexpected_eof"
-        );
-        assert_eq!(classify_transport_detail("operation timed out"), "timeout");
-        assert_eq!(
-            classify_transport_detail("Connection aborted"),
-            "connection_aborted"
-        );
-        assert_eq!(classify_transport_detail("something novel"), "other");
-        assert_eq!(
-            DisconnectCause::ReadError("ECONNRESET".to_owned()).detail_class(),
-            Some("connection_reset")
-        );
-        assert!(DisconnectCause::Eof.detail_class().is_none());
-    }
-    #[test]
-    fn conn_health_snapshot_without_clock_skew_reports_zero_jump() {
-        let health = ConnHealth::new();
-        health.record_inbound();
-        health.refresh_clock();
-        let snap = health.snapshot();
-        assert_eq!(snap.clock_jump_ms, 0);
-        assert!(snap.since_last_probe_monotonic_ms < 2_000);
-    }
-    #[test]
-    fn conn_health_snapshot_reports_wall_clock_jump() {
-        let health = ConnHealth::new();
-        {
-            let mut state = health.state.lock();
-            state.wall_ref = SystemTime::now() - Duration::from_secs(10);
-        }
-        let snap = health.snapshot();
-        assert!(snap.since_last_probe_wall_ms >= 9_000);
-        assert!(snap.since_last_probe_monotonic_ms < 2_000);
-        assert!(snap.clock_jump_ms >= 8_000);
-        health.reset();
-        assert_eq!(health.snapshot().clock_jump_ms, 0);
-    }
-    #[test]
-    fn conn_health_accumulates_jump_across_refreshes() {
-        let health = ConnHealth::new();
-        {
-            let mut state = health.state.lock();
-            state.wall_ref = SystemTime::now() - Duration::from_secs(5);
-        }
-        health.refresh_clock();
-        {
-            let mut state = health.state.lock();
-            state.wall_ref = SystemTime::now() - Duration::from_secs(4);
-        }
-        let snap = health.snapshot();
-        assert!(snap.clock_jump_ms >= 8_000);
-    }
-    use std::pin::Pin;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::task::{Context, Poll};
-    /// In-memory [`futures::Sink`] for `run_writer` tests. Records the
-    /// text payload of every `Message::Text` sent and counts every
-    /// `Message::Ping` (keepalive). When the `fail` flag is set, `send`
-    /// errors at `poll_ready`, modelling a dead socket.
-    #[derive(Clone)]
-    struct RecordingSink {
-        recorded: Arc<std::sync::Mutex<Vec<String>>>,
-        pings: Arc<AtomicUsize>,
-        fail: Arc<AtomicBool>,
-    }
-    impl RecordingSink {
-        fn new() -> Self {
-            Self {
-                recorded: Arc::new(std::sync::Mutex::new(Vec::new())),
-                pings: Arc::new(AtomicUsize::new(0)),
-                fail: Arc::new(AtomicBool::new(false)),
-            }
-        }
-        fn recorded(&self) -> Arc<std::sync::Mutex<Vec<String>>> {
-            self.recorded.clone()
-        }
-        fn pings(&self) -> Arc<AtomicUsize> {
-            self.pings.clone()
-        }
-        fn fail_flag(&self) -> Arc<AtomicBool> {
-            self.fail.clone()
-        }
-    }
-    impl futures::Sink<Message> for RecordingSink {
-        type Error = std::io::Error;
-        fn poll_ready(
-            self: Pin<&mut Self>,
-            _cx: &mut Context<'_>,
-        ) -> Poll<Result<(), Self::Error>> {
-            if self.fail.load(Ordering::SeqCst) {
-                Poll::Ready(Err(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    "sink dead",
-                )))
-            } else {
-                Poll::Ready(Ok(()))
-            }
-        }
-        fn start_send(self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
-            match item {
-                Message::Text(text) => {
-                    self.recorded
-                        .lock()
-                        .expect("recorded lock")
-                        .push(text.as_str().to_owned());
-                }
-                Message::Ping(_) => {
-                    self.pings.fetch_add(1, Ordering::SeqCst);
-                }
-                Message::Close(frame) => {
-                    let (code, reason) = frame
-                        .map(|f| (u16::from(f.code), f.reason.to_string()))
-                        .unwrap_or((0, String::new()));
-                    self.recorded
-                        .lock()
-                        .expect("recorded lock")
-                        .push(format!("CLOSE:{code}:{reason}"));
-                }
-                _ => {}
-            }
-            Ok(())
-        }
-        fn poll_flush(
-            self: Pin<&mut Self>,
-            _cx: &mut Context<'_>,
-        ) -> Poll<Result<(), Self::Error>> {
-            Poll::Ready(Ok(()))
-        }
-        fn poll_close(
-            self: Pin<&mut Self>,
-            _cx: &mut Context<'_>,
-        ) -> Poll<Result<(), Self::Error>> {
-            Poll::Ready(Ok(()))
-        }
-    }
-    type TestCtl = WriterControl<RecordingSink>;
-    fn idle_write_error_slot() -> WriteErrorSlot {
-        Arc::new(parking_lot::Mutex::new(None))
-    }
-    fn outbound_data_frames(recorded: &std::sync::Mutex<Vec<String>>) -> Vec<String> {
-        recorded
-            .lock()
-            .expect("lock")
-            .iter()
-            .filter(|f| !(f.contains("\"method\":\"ping\"") && f.contains("ts_ms")))
-            .cloned()
-            .collect()
-    }
-    /// Poll `predicate` every 5ms up to ~2s. Keeps the writer-task tests
-    /// off arbitrary fixed sleeps for the positive assertions.
-    async fn wait_until<F: Fn() -> bool>(predicate: F, label: &str) {
-        for _ in 0..400 {
-            if predicate() {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-        panic!("timed out waiting for: {label}");
-    }
-    #[tokio::test]
-    async fn writer_sends_close_before_pause() {
-        let sink = RecordingSink::new();
-        let recorded = sink.recorded();
-        let (out_tx, out_rx) = mpsc::channel::<String>(8);
-        let (ctl_tx, ctl_rx) = mpsc::channel::<TestCtl>(4);
-        let (stop_tx, stop_rx) = mpsc::channel::<()>(1);
-        let (_prio_tx, prio_rx) = mpsc::channel::<String>(4);
-        let writer = tokio::spawn(run_writer(
-            sink,
-            out_rx,
-            prio_rx,
-            ctl_rx,
-            stop_rx,
-            None,
-            idle_write_error_slot(),
-            None,
-        ));
-        ctl_tx
-            .send(WriterControl::Close {
-                code: 1001,
-                reason: "liveness_deadline".to_owned(),
-            })
-            .await
-            .expect("close");
-        ctl_tx.send(WriterControl::Pause).await.expect("pause");
-        out_tx.send("buffered".to_owned()).await.expect("buffer");
-        wait_until(
-            || {
-                recorded
-                    .lock()
-                    .expect("lock")
-                    .iter()
-                    .any(|f| f == "CLOSE:1001:liveness_deadline")
-            },
-            "close frame written",
-        )
-        .await;
-        assert!(
-            !recorded
-                .lock()
-                .expect("lock")
-                .iter()
-                .any(|f| f == "buffered"),
-            "buffered data must not flush on the old sink after Close+Pause"
-        );
-        let fresh = RecordingSink::new();
-        let fresh_recorded = fresh.recorded();
-        ctl_tx
-            .send(WriterControl::Resume(fresh))
-            .await
-            .expect("resume");
-        wait_until(
-            || {
-                fresh_recorded
-                    .lock()
-                    .expect("lock")
-                    .iter()
-                    .any(|f| f == "buffered")
-            },
-            "buffered data flushes on the fresh sink after Resume",
-        )
-        .await;
-        drop(out_tx);
-        stop_tx.send(()).await.expect("stop");
-        writer.await.expect("writer task joins");
-    }
-    /// Sink whose first non-Close `poll_ready` stays pending until released.
-    /// Models a half-open peer with a full TCP send buffer.
-    struct BlockingSink {
-        recorded: Arc<std::sync::Mutex<Vec<String>>>,
-        block: Arc<AtomicBool>,
-        waker: Arc<std::sync::Mutex<Option<std::task::Waker>>>,
-    }
-    impl Clone for BlockingSink {
-        fn clone(&self) -> Self {
-            Self {
-                recorded: self.recorded.clone(),
-                block: self.block.clone(),
-                waker: self.waker.clone(),
-            }
-        }
-    }
-    impl BlockingSink {
-        fn new() -> Self {
-            Self {
-                recorded: Arc::new(std::sync::Mutex::new(Vec::new())),
-                block: Arc::new(AtomicBool::new(true)),
-                waker: Arc::new(std::sync::Mutex::new(None)),
-            }
-        }
-        fn recorded(&self) -> Arc<std::sync::Mutex<Vec<String>>> {
-            self.recorded.clone()
-        }
-        fn release(&self) {
-            self.block.store(false, Ordering::SeqCst);
-            if let Some(w) = self.waker.lock().expect("waker").take() {
-                w.wake();
-            }
-        }
-    }
-    impl futures::Sink<Message> for BlockingSink {
-        type Error = std::io::Error;
-        fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-            if self.block.load(Ordering::SeqCst) {
-                *self.waker.lock().expect("waker") = Some(cx.waker().clone());
-                Poll::Pending
-            } else {
-                Poll::Ready(Ok(()))
-            }
-        }
-        fn start_send(self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
-            match item {
-                Message::Text(text) => self
-                    .recorded
-                    .lock()
-                    .expect("lock")
-                    .push(text.as_str().to_owned()),
-                Message::Close(frame) => {
-                    let (code, reason) = frame
-                        .map(|f| (u16::from(f.code), f.reason.to_string()))
-                        .unwrap_or((0, String::new()));
-                    self.recorded
-                        .lock()
-                        .expect("lock")
-                        .push(format!("CLOSE:{code}:{reason}"));
-                }
-                _ => {}
-            }
-            Ok(())
-        }
-        fn poll_flush(
-            self: Pin<&mut Self>,
-            _cx: &mut Context<'_>,
-        ) -> Poll<Result<(), Self::Error>> {
-            Poll::Ready(Ok(()))
-        }
-        fn poll_close(
-            self: Pin<&mut Self>,
-            _cx: &mut Context<'_>,
-        ) -> Poll<Result<(), Self::Error>> {
-            Poll::Ready(Ok(()))
-        }
-    }
-    #[tokio::test]
-    async fn writer_preempts_blocked_data_send_for_close() {
-        let sink = BlockingSink::new();
-        let recorded = sink.recorded();
-        let (out_tx, out_rx) = mpsc::channel::<String>(8);
-        let (ctl_tx, ctl_rx) = mpsc::channel::<WriterControl<BlockingSink>>(4);
-        let (stop_tx, stop_rx) = mpsc::channel::<()>(1);
-        let (_prio_tx, prio_rx) = mpsc::channel::<String>(4);
-        let writer = tokio::spawn(run_writer(
-            sink.clone(),
-            out_rx,
-            prio_rx,
-            ctl_rx,
-            stop_rx,
-            None,
-            idle_write_error_slot(),
-            None,
-        ));
-        out_tx.send("stuck".to_owned()).await.expect("data");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        ctl_tx
-            .send(WriterControl::Close {
-                code: 1001,
-                reason: "liveness_deadline".to_owned(),
-            })
-            .await
-            .expect("close");
-        ctl_tx.send(WriterControl::Pause).await.expect("pause");
-        tokio::time::sleep(Duration::from_millis(10)).await;
-        sink.release();
-        wait_until(
-            || {
-                recorded
-                    .lock()
-                    .expect("lock")
-                    .iter()
-                    .any(|f| f == "CLOSE:1001:liveness_deadline")
-            },
-            "close preempts blocked data write",
-        )
-        .await;
-        assert!(
-            !recorded.lock().expect("lock").iter().any(|f| f == "stuck"),
-            "blocked data must not be written after Close preempt"
-        );
-        drop(out_tx);
-        stop_tx.send(()).await.expect("stop");
-        writer.await.expect("writer task joins");
-    }
-    /// Accepts frames (records them) but never completes flush — models a
-    /// half-open TCP sndbuf so Close can be observed then time out.
-    #[tokio::test]
-    async fn writer_close_then_queued_pause_still_writes_close_1001() {
-        let sink = RecordingSink::new();
-        let recorded = sink.recorded();
-        let (out_tx, out_rx) = mpsc::channel::<String>(4);
-        let (ctl_tx, ctl_rx) = mpsc::channel::<TestCtl>(4);
-        let (stop_tx, stop_rx) = mpsc::channel::<()>(1);
-        let (_prio_tx, prio_rx) = mpsc::channel::<String>(4);
-        let writer = tokio::spawn(run_writer(
-            sink,
-            out_rx,
-            prio_rx,
-            ctl_rx,
-            stop_rx,
-            None,
-            idle_write_error_slot(),
-            None,
-        ));
-        ctl_tx
-            .send(WriterControl::Close {
-                code: 1001,
-                reason: "liveness_deadline".to_owned(),
-            })
-            .await
-            .expect("close");
-        ctl_tx.send(WriterControl::Pause).await.expect("pause");
-        wait_until(
-            || {
-                recorded
-                    .lock()
-                    .expect("lock")
-                    .iter()
-                    .any(|f| f.starts_with("CLOSE:1001:"))
-            },
-            "Close 1001 recorded",
-        )
-        .await;
-        let live = RecordingSink::new();
-        let live_log = live.recorded();
-        ctl_tx
-            .send(WriterControl::Resume(live))
-            .await
-            .expect("resume");
-        out_tx.send("after".to_owned()).await.expect("after");
-        wait_until(
-            || outbound_data_frames(&live_log).iter().any(|f| f == "after"),
-            "Resume installs a live sink",
-        )
-        .await;
-        stop_tx.send(()).await.expect("stop");
-        writer.await.expect("join");
-    }
-    #[tokio::test]
-    async fn writer_ctl_preempts_in_flight_blocking_ping_then_resumes() {
-        let sink = RecordingSink::new();
-        let (out_tx, out_rx) = mpsc::channel::<String>(4);
-        let (ctl_tx, ctl_rx) = mpsc::channel::<TestCtl>(4);
-        let (stop_tx, stop_rx) = mpsc::channel::<()>(1);
-        let (_prio_tx, prio_rx) = mpsc::channel::<String>(4);
-        let writer = tokio::spawn(run_writer(
-            sink,
-            out_rx,
-            prio_rx,
-            ctl_rx,
-            stop_rx,
-            Some(Duration::from_millis(1)),
-            idle_write_error_slot(),
-            None,
-        ));
-        ctl_tx
-            .send(WriterControl::Close {
-                code: 1001,
-                reason: "liveness_deadline".to_owned(),
-            })
-            .await
-            .expect("close");
-        ctl_tx.send(WriterControl::Pause).await.expect("pause");
-        let live = RecordingSink::new();
-        let live_log = live.recorded();
-        ctl_tx
-            .send(WriterControl::Resume(live))
-            .await
-            .expect("resume");
-        out_tx.send("resumed".to_owned()).await.expect("send");
-        wait_until(
-            || {
-                outbound_data_frames(&live_log)
-                    .iter()
-                    .any(|f| f == "resumed")
-            },
-            "fresh sink accepts data after close+pause+resume",
-        )
-        .await;
-        stop_tx.send(()).await.expect("stop");
-        writer.await.expect("join");
-    }
-    #[tokio::test]
-    async fn writer_drains_outbound_while_live() {
-        let sink = RecordingSink::new();
-        let recorded = sink.recorded();
-        let (out_tx, out_rx) = mpsc::channel::<String>(8);
-        let (_ctl_tx, ctl_rx) = mpsc::channel::<TestCtl>(2);
-        let (stop_tx, stop_rx) = mpsc::channel::<()>(1);
-        let (_prio_tx, prio_rx) = mpsc::channel::<String>(4);
-        let writer = tokio::spawn(run_writer(
-            sink,
-            out_rx,
-            prio_rx,
-            ctl_rx,
-            stop_rx,
-            None,
-            idle_write_error_slot(),
-            None,
-        ));
-        out_tx.send("a".to_owned()).await.expect("send a");
-        out_tx.send("b".to_owned()).await.expect("send b");
-        wait_until(
-            || outbound_data_frames(&recorded).len() == 2,
-            "two frames drained",
-        )
-        .await;
-        assert_eq!(
-            outbound_data_frames(&recorded),
-            vec!["a".to_owned(), "b".to_owned()],
-            "frames must be written to the live sink in order"
-        );
-        stop_tx.send(()).await.expect("stop");
-        writer.await.expect("writer task joins");
-    }
-    #[tokio::test(start_paused = true)]
-    async fn writer_first_ping_is_immediate() {
-        let sink = RecordingSink::new();
-        let pings = sink.pings();
-        let recorded = sink.recorded();
-        let (_out_tx, out_rx) = mpsc::channel::<String>(4);
-        let (_ctl_tx, ctl_rx) = mpsc::channel::<TestCtl>(2);
-        let (stop_tx, stop_rx) = mpsc::channel::<()>(1);
-        let (_prio_tx, prio_rx) = mpsc::channel::<String>(4);
-        let writer = tokio::spawn(run_writer(
-            sink,
-            out_rx,
-            prio_rx,
-            ctl_rx,
-            stop_rx,
-            Some(Duration::from_secs(30)),
-            idle_write_error_slot(),
-            None,
-        ));
-        tokio::time::advance(Duration::from_millis(1)).await;
-        tokio::task::yield_now().await;
-        assert!(
-            pings.load(Ordering::SeqCst) >= 1,
-            "WS ping must fire immediately after writer spawn"
-        );
-        assert!(
-            recorded
-                .lock()
-                .expect("lock")
-                .iter()
-                .any(|f| f.contains("\"method\":\"ping\"")),
-            "app ping must fire immediately after writer spawn"
-        );
-        stop_tx.send(()).await.expect("stop");
-        writer.await.expect("writer task joins");
-    }
-    #[tokio::test(start_paused = true)]
-    async fn writer_first_ping_after_resume_is_immediate() {
-        let dead = RecordingSink::new();
-        let (_out_tx, out_rx) = mpsc::channel::<String>(4);
-        let (ctl_tx, ctl_rx) = mpsc::channel::<TestCtl>(4);
-        let (stop_tx, stop_rx) = mpsc::channel::<()>(1);
-        let (_prio_tx, prio_rx) = mpsc::channel::<String>(4);
-        let writer = tokio::spawn(run_writer(
-            dead,
-            out_rx,
-            prio_rx,
-            ctl_rx,
-            stop_rx,
-            Some(Duration::from_secs(30)),
-            idle_write_error_slot(),
-            None,
-        ));
-        ctl_tx.send(WriterControl::Pause).await.expect("pause");
-        let fresh = RecordingSink::new();
-        let pings = fresh.pings();
-        let recorded = fresh.recorded();
-        ctl_tx
-            .send(WriterControl::Resume(fresh))
-            .await
-            .expect("resume");
-        tokio::time::advance(Duration::from_millis(1)).await;
-        tokio::task::yield_now().await;
-        assert!(
-            pings.load(Ordering::SeqCst) >= 1,
-            "WS ping must fire immediately after Resume"
-        );
-        assert!(
-            recorded
-                .lock()
-                .expect("lock")
-                .iter()
-                .any(|f| f.contains("\"method\":\"ping\"")),
-            "app ping must fire immediately after Resume"
-        );
-        stop_tx.send(()).await.expect("stop");
-        writer.await.expect("writer task joins");
-    }
-    #[tokio::test]
-    async fn writer_priority_pong_bypasses_full_outbound() {
-        let sink = RecordingSink::new();
-        let recorded = sink.recorded();
-        let (out_tx, out_rx) = mpsc::channel::<String>(1);
-        let (prio_tx, prio_rx) = mpsc::channel::<String>(4);
-        let (_ctl_tx, ctl_rx) = mpsc::channel::<TestCtl>(2);
-        let (stop_tx, stop_rx) = mpsc::channel::<()>(1);
-        out_tx
-            .try_send("blocked".to_owned())
-            .expect("fill outbound");
-        prio_tx
-            .try_send(r#"{"method":"pong","ts_ms":1}"#.to_owned())
-            .expect("priority send before spawn");
-        let writer = tokio::spawn(run_writer(
-            sink,
-            out_rx,
-            prio_rx,
-            ctl_rx,
-            stop_rx,
-            None,
-            idle_write_error_slot(),
-            None,
-        ));
-        wait_until(
-            || {
-                outbound_data_frames(&recorded)
-                    .first()
-                    .is_some_and(|f| f.contains("\"method\":\"pong\""))
-            },
-            "priority pong is the first data frame",
-        )
-        .await;
-        assert!(
-            outbound_data_frames(&recorded)
-                .iter()
-                .any(|f| f.contains("\"method\":\"pong\"")),
-        );
-        assert!(
-            outbound_data_frames(&recorded)
-                .iter()
-                .position(|f| f.contains("\"method\":\"pong\""))
-                < outbound_data_frames(&recorded)
-                    .iter()
-                    .position(|f| f == "blocked"),
-        );
-        stop_tx.send(()).await.expect("stop");
-        writer.await.expect("writer task joins");
-    }
-    #[tokio::test]
-    async fn writer_pause_drops_stale_priority_pongs() {
-        let dead = RecordingSink::new();
-        let (out_tx, out_rx) = mpsc::channel::<String>(4);
-        let (prio_tx, prio_rx) = mpsc::channel::<String>(4);
-        let (ctl_tx, ctl_rx) = mpsc::channel::<TestCtl>(4);
-        let (stop_tx, stop_rx) = mpsc::channel::<()>(1);
-        let writer = tokio::spawn(run_writer(
-            dead,
-            out_rx,
-            prio_rx,
-            ctl_rx,
-            stop_rx,
-            None,
-            idle_write_error_slot(),
-            None,
-        ));
-        ctl_tx.send(WriterControl::Pause).await.expect("pause");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        prio_tx
-            .try_send(r#"{"method":"pong","ts_ms":1}"#.to_owned())
-            .expect("stale pong");
-        let fresh = RecordingSink::new();
-        let recorded = fresh.recorded();
-        ctl_tx
-            .send(WriterControl::Resume(fresh))
-            .await
-            .expect("resume");
-        tokio::time::sleep(Duration::from_millis(30)).await;
-        assert!(
-            !recorded
-                .lock()
-                .expect("lock")
-                .iter()
-                .any(|f| f.contains("pong")),
-            "stale priority pong must be drained on Pause/Resume"
-        );
-        drop(out_tx);
-        stop_tx.send(()).await.expect("stop");
-        writer.await.expect("join");
-    }
-    #[tokio::test]
-    async fn writer_honors_custom_ping_interval() {
-        let sink = RecordingSink::new();
-        let pings = sink.pings();
-        let recorded = sink.recorded();
-        let (_out_tx, out_rx) = mpsc::channel::<String>(4);
-        let (_ctl_tx, ctl_rx) = mpsc::channel::<TestCtl>(2);
-        let (stop_tx, stop_rx) = mpsc::channel::<()>(1);
-        let (_prio_tx, prio_rx) = mpsc::channel::<String>(4);
-        let writer = tokio::spawn(run_writer(
-            sink,
-            out_rx,
-            prio_rx,
-            ctl_rx,
-            stop_rx,
-            Some(Duration::from_millis(20)),
-            idle_write_error_slot(),
-            None,
-        ));
-        wait_until(
-            || pings.load(Ordering::SeqCst) >= 3,
-            "three keepalive pings at the configured cadence",
-        )
-        .await;
-        wait_until(
-            || {
-                recorded.lock().expect("lock").iter().any(|text| {
-                    serde_json::from_str::<serde_json::Value>(text)
-                        .ok()
-                        .and_then(|v| {
-                            v.get("method")
-                                .and_then(serde_json::Value::as_str)
-                                .map(|m| m == "ping")
-                        })
-                        .unwrap_or(false)
-                })
-            },
-            "serialized app ping {\"method\":\"ping\",...} on the sink",
-        )
-        .await;
-        stop_tx.send(()).await.expect("stop");
-        writer.await.expect("writer task joins");
-    }
-    #[tokio::test]
-    async fn writer_re_arms_custom_ping_interval_after_resume() {
-        let dead = RecordingSink::new();
-        let (_out_tx, out_rx) = mpsc::channel::<String>(4);
-        let (ctl_tx, ctl_rx) = mpsc::channel::<TestCtl>(2);
-        let (stop_tx, stop_rx) = mpsc::channel::<()>(1);
-        let (_prio_tx, prio_rx) = mpsc::channel::<String>(4);
-        let writer = tokio::spawn(run_writer(
-            dead,
-            out_rx,
-            prio_rx,
-            ctl_rx,
-            stop_rx,
-            Some(Duration::from_millis(20)),
-            idle_write_error_slot(),
-            None,
-        ));
-        ctl_tx.send(WriterControl::Pause).await.expect("pause");
-        let fresh = RecordingSink::new();
-        let fresh_pings = fresh.pings();
-        ctl_tx
-            .send(WriterControl::Resume(fresh))
-            .await
-            .expect("resume");
-        wait_until(
-            || fresh_pings.load(Ordering::SeqCst) >= 3,
-            "keepalive pings resume on the configured cadence after Resume",
-        )
-        .await;
-        stop_tx.send(()).await.expect("stop");
-        writer.await.expect("writer task joins");
-    }
-    #[tokio::test]
-    async fn writer_buffers_during_pause_and_flushes_on_resume() {
-        let dead = RecordingSink::new();
-        let dead_log = dead.recorded();
-        let (out_tx, out_rx) = mpsc::channel::<String>(16);
-        let (ctl_tx, ctl_rx) = mpsc::channel::<TestCtl>(2);
-        let (stop_tx, stop_rx) = mpsc::channel::<()>(1);
-        let (_prio_tx, prio_rx) = mpsc::channel::<String>(4);
-        let writer = tokio::spawn(run_writer(
-            dead,
-            out_rx,
-            prio_rx,
-            ctl_rx,
-            stop_rx,
-            None,
-            idle_write_error_slot(),
-            None,
-        ));
-        ctl_tx.send(WriterControl::Pause).await.expect("pause");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        for frame in ["g1", "g2", "g3"] {
-            out_tx
-                .send(frame.to_owned())
-                .await
-                .expect("enqueue during gap");
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert!(
-            outbound_data_frames(&dead_log).is_empty(),
-            "paused writer must not drain onto the dead sink; got {:?}",
-            outbound_data_frames(&dead_log)
-        );
-        let fresh = RecordingSink::new();
-        let fresh_log = fresh.recorded();
-        ctl_tx
-            .send(WriterControl::Resume(fresh))
-            .await
-            .expect("resume");
-        wait_until(
-            || outbound_data_frames(&fresh_log).len() == 3,
-            "buffered frames flush after resume",
-        )
-        .await;
-        assert_eq!(
-            outbound_data_frames(&fresh_log),
-            vec!["g1".to_owned(), "g2".to_owned(), "g3".to_owned()],
-            "all gap frames flush, in order, to the fresh sink"
-        );
-        assert!(
-            outbound_data_frames(&dead_log).is_empty(),
-            "no data frame must ever reach the dead sink"
-        );
-        stop_tx.send(()).await.expect("stop");
-        writer.await.expect("writer task joins");
-    }
-    #[tokio::test]
-    async fn writer_send_error_pauses_until_resume_without_multi_frame_loss() {
-        let failing = RecordingSink::new();
-        let failing_log = failing.recorded();
-        let fail_flag = failing.fail_flag();
-        let (out_tx, out_rx) = mpsc::channel::<String>(16);
-        let (ctl_tx, ctl_rx) = mpsc::channel::<TestCtl>(2);
-        let (stop_tx, stop_rx) = mpsc::channel::<()>(1);
-        let write_error = idle_write_error_slot();
-        let (_prio_tx, prio_rx) = mpsc::channel::<String>(4);
-        let writer = tokio::spawn(run_writer(
-            failing,
-            out_rx,
-            prio_rx,
-            ctl_rx,
-            stop_rx,
-            None,
-            write_error.clone(),
-            None,
-        ));
-        out_tx.send("ok".to_owned()).await.expect("send ok");
-        wait_until(
-            || outbound_data_frames(&failing_log).len() == 1,
-            "first frame drained before failure",
-        )
-        .await;
-        fail_flag.store(true, Ordering::SeqCst);
-        out_tx.send("lost".to_owned()).await.expect("enqueue lost");
-        out_tx
-            .send("kept1".to_owned())
-            .await
-            .expect("enqueue kept1");
-        out_tx
-            .send("kept2".to_owned())
-            .await
-            .expect("enqueue kept2");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert_eq!(
-            outbound_data_frames(&failing_log),
-            vec!["ok".to_owned()],
-            "only the pre-failure frame should have been recorded on the dead sink"
-        );
-        assert!(
-            write_error
-                .lock()
-                .as_deref()
-                .is_some_and(|detail| detail.contains("sink dead")),
-            "failed send must record the write-error detail for disconnect classification"
-        );
-        let fresh = RecordingSink::new();
-        let fresh_log = fresh.recorded();
-        ctl_tx
-            .send(WriterControl::Resume(fresh))
-            .await
-            .expect("resume");
-        wait_until(
-            || outbound_data_frames(&fresh_log).len() == 2,
-            "buffered post-failure frames flush after resume",
-        )
-        .await;
-        assert_eq!(
-            outbound_data_frames(&fresh_log),
-            vec!["kept1".to_owned(), "kept2".to_owned()],
-            "post-failure frames survive; only the in-flight 'lost' frame is gone"
-        );
-        stop_tx.send(()).await.expect("stop");
-        writer.await.expect("writer task joins");
-    }
-    #[tokio::test]
-    async fn writer_resume_discards_stale_write_error() {
-        let sink = RecordingSink::new();
-        let (_out_tx, out_rx) = mpsc::channel::<String>(4);
-        let (ctl_tx, ctl_rx) = mpsc::channel::<TestCtl>(2);
-        let (stop_tx, stop_rx) = mpsc::channel::<()>(1);
-        let write_error = idle_write_error_slot();
-        let (_prio_tx, prio_rx) = mpsc::channel::<String>(4);
-        let writer = tokio::spawn(run_writer(
-            sink,
-            out_rx,
-            prio_rx,
-            ctl_rx,
-            stop_rx,
-            None,
-            write_error.clone(),
-            None,
-        ));
-        ctl_tx.send(WriterControl::Pause).await.expect("pause");
-        *write_error.lock() = Some("frame send failed: stale broken pipe".to_owned());
-        ctl_tx
-            .send(WriterControl::Resume(RecordingSink::new()))
-            .await
-            .expect("resume");
-        wait_until(
-            || write_error.lock().is_none(),
-            "Resume must clear a stale write-error left by a late old-sink send",
-        )
-        .await;
-        stop_tx.send(()).await.expect("stop");
-        writer.await.expect("writer task joins");
-    }
-    #[tokio::test]
-    async fn writer_exits_on_stop_signal() {
-        let sink = RecordingSink::new();
-        let (_out_tx, out_rx) = mpsc::channel::<String>(4);
-        let (_ctl_tx, ctl_rx) = mpsc::channel::<TestCtl>(2);
-        let (stop_tx, stop_rx) = mpsc::channel::<()>(1);
-        let (_prio_tx, prio_rx) = mpsc::channel::<String>(4);
-        let writer = tokio::spawn(run_writer(
-            sink,
-            out_rx,
-            prio_rx,
-            ctl_rx,
-            stop_rx,
-            None,
-            idle_write_error_slot(),
-            None,
-        ));
-        stop_tx.send(()).await.expect("stop");
-        tokio::time::timeout(Duration::from_secs(2), writer)
-            .await
-            .expect("writer must exit on the stop signal")
-            .expect("writer task joins");
-    }
-    #[tokio::test]
-    async fn writer_exits_when_outbound_channel_closes() {
-        let sink = RecordingSink::new();
-        let (out_tx, out_rx) = mpsc::channel::<String>(4);
-        let (_ctl_tx, ctl_rx) = mpsc::channel::<TestCtl>(2);
-        let (_stop_tx, stop_rx) = mpsc::channel::<()>(1);
-        let (_prio_tx, prio_rx) = mpsc::channel::<String>(4);
-        let writer = tokio::spawn(run_writer(
-            sink,
-            out_rx,
-            prio_rx,
-            ctl_rx,
-            stop_rx,
-            None,
-            idle_write_error_slot(),
-            None,
-        ));
-        drop(out_tx);
-        tokio::time::timeout(Duration::from_secs(2), writer)
-            .await
-            .expect("writer must exit when outbound closes")
-            .expect("writer task joins");
-    }
-    #[tokio::test]
-    async fn writer_exits_when_control_channel_closes() {
-        let sink = RecordingSink::new();
-        let (_out_tx, out_rx) = mpsc::channel::<String>(4);
-        let (ctl_tx, ctl_rx) = mpsc::channel::<TestCtl>(2);
-        let (_stop_tx, stop_rx) = mpsc::channel::<()>(1);
-        let (_prio_tx, prio_rx) = mpsc::channel::<String>(4);
-        let writer = tokio::spawn(run_writer(
-            sink,
-            out_rx,
-            prio_rx,
-            ctl_rx,
-            stop_rx,
-            None,
-            idle_write_error_slot(),
-            None,
-        ));
-        drop(ctl_tx);
-        tokio::time::timeout(Duration::from_secs(2), writer)
-            .await
-            .expect("writer must exit when the control channel closes")
-            .expect("writer task joins");
-    }
-    /// Socket-less `HubConnection` for tests: observe the sent frame and
-    /// resolve the response waiter without a live server or actor task.
-    fn test_connection() -> (Arc<HubConnection>, Arc<Demux>, mpsc::Receiver<String>) {
-        let (outbound_tx, outbound_rx) = mpsc::channel::<String>(8);
-        let demux = Arc::new(Demux::with_outbound(outbound_tx.clone()));
-        let credential: Arc<dyn AuthProvider> = Arc::new(AuthCredential::bearer("test-token"));
-        let (stop_tx, _stop_rx) = mpsc::channel::<()>(1);
-        let (reconnect_tx, _reconnect_rx) = mpsc::channel::<()>(1);
-        let inner = Arc::new(HubConnectionInner {
-            key: ConnKey {
-                url: "ws://test/v1/tools".to_owned(),
-                principal: credential.principal_key(),
-            },
-            kind: ConnectionKind::ToolServer,
-            credential,
-            on_reconnect: None,
-            on_disconnect: None,
-            on_terminal_close: None,
-            server_id: None,
-            server_description: None,
-            server_metadata: None,
-            alpha_test_key: None,
-            allow_insecure_ws: false,
-            on_fatal: None,
-            reconnect_backoff: resolve_reconnect_backoff(None),
-            reconnect_jitter_seed: 1,
-            attempt_reset_after: resolve_attempt_reset_after(None),
-            outage_seq: AtomicU32::new(0),
-            outbound_tx,
-            demux: demux.clone(),
-            bound_sessions: Arc::new(RefCountedSet::new()),
-            connection_id: Arc::new(Mutex::new(None)),
-            hello_capabilities: parking_lot::RwLock::new(Vec::new()),
-            next_request_id: std::sync::atomic::AtomicU64::new(1),
-            shutdown: CancellationToken::new(),
-            stop_tx,
-            reconnect_tx,
-            early_notif_rx: parking_lot::Mutex::new(Some(demux.subscribe_notifications())),
-            health: ConnHealth::new(),
-            writer_error: Arc::new(parking_lot::Mutex::new(None)),
-        });
-        (Arc::new(HubConnection { inner }), demux, outbound_rx)
-    }
-    #[test]
-    fn classify_stream_end_prefers_recorded_write_error() {
-        let (conn, _demux, _outbound_rx) = test_connection();
-        let inner = conn.inner.as_ref();
-        assert!(matches!(
-            classify_stream_end(inner, None),
-            DisconnectCause::Eof
-        ));
-        assert!(matches!(
-            classify_stream_end(inner, Some("reset by peer".to_owned())),
-            DisconnectCause::ReadError(detail) if detail == "reset by peer"
-        ));
-        *inner.writer_error.lock() = Some("ping send failed: broken pipe".to_owned());
-        assert!(matches!(
-            classify_stream_end(inner, None),
-            DisconnectCause::WriteError(detail) if detail == "ping send failed: broken pipe"
-        ));
-        assert!(
-            inner.writer_error.lock().is_none(),
-            "classification must consume the recorded write error"
-        );
-        *inner.writer_error.lock() = Some("frame send failed: broken pipe".to_owned());
-        assert!(matches!(
-            classify_stream_end(inner, Some("reset".to_owned())),
-            DisconnectCause::WriteError(_)
-        ));
-    }
-    #[test]
-    fn supports_is_unknown_until_capabilities_advertised() {
-        let (conn, _demux, _outbound_rx) = test_connection();
-        assert_eq!(conn.supports("session_attach_server"), None);
-        *conn.inner.hello_capabilities.write() = vec!["session_attach_server".to_owned()];
-        assert_eq!(conn.supports("session_attach_server"), Some(true));
-        assert_eq!(conn.supports("some_other_method"), Some(false));
-    }
-    #[tokio::test]
-    async fn call_request_with_timeout_round_trips_via_demux() {
-        let (conn, demux, mut outbound_rx) = test_connection();
-        let session = SessionId::new("rt_session").expect("valid");
-        let request_id = conn.try_alloc_request_id().expect("request id");
-        let id_str = request_id.to_string();
-        let req = JsonRpcRequest {
-            jsonrpc: JsonRpcVersion,
-            id: JsonRpcId::from_request_id(&request_id),
-            session_id: Some(session.clone()),
-            method: Method::Hook.as_wire_str().to_owned(),
-            params: serde_json::json!({ "k": "v" }),
-        };
-        let call = tokio::spawn(async move {
-            conn.call_request_with_timeout(request_id, &req, Duration::from_secs(5))
-                .await
-        });
-        let sent = tokio::time::timeout(Duration::from_secs(1), outbound_rx.recv())
-            .await
-            .expect("frame sent before deadline")
-            .expect("outbound frame present");
-        let sent_value: Value = serde_json::from_str(&sent).expect("sent frame is valid json");
-        assert_eq!(sent_value["id"].as_str(), Some(id_str.as_str()));
-        assert_eq!(
-            sent_value["method"].as_str(),
-            Some(Method::Hook.as_wire_str())
-        );
-        let outcome = demux.route(serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": id_str,
-            "session_id": session.as_str(),
-            "result": { "ok": true },
-        }));
-        assert_eq!(outcome, crate::demux::RouteOutcome::Response);
-        let resp = call
-            .await
-            .expect("call task joins")
-            .expect("call resolves with a response");
-        let ResponseOutcome::Result(value) = resp.outcome else {
-            panic!("expected a result outcome");
-        };
-        assert_eq!(value, serde_json::json!({ "ok": true }));
-    }
-    #[tokio::test]
-    async fn call_request_reclaims_waiter_on_send_failure() {
-        let (conn, demux, outbound_rx) = test_connection();
-        drop(outbound_rx);
-        let request_id = conn.try_alloc_request_id().expect("request id");
-        let probe_id = request_id.clone();
-        let req = JsonRpcRequest {
-            jsonrpc: JsonRpcVersion,
-            id: JsonRpcId::from_request_id(&request_id),
-            session_id: None,
-            method: Method::Hook.as_wire_str().to_owned(),
-            params: serde_json::json!({}),
-        };
-        let result = conn.call_request(request_id, &req).await;
-        assert!(matches!(result, Err(ClientError::NetworkError(_))));
-        assert!(
-            demux.take_response_waiter(&probe_id).is_none(),
-            "the failed-send waiter is reclaimed so it cannot leak"
-        );
-    }
-    #[tokio::test]
-    async fn serve_send_failure_fails_fast_without_retry() {
-        let (conn, demux, outbound_rx) = test_connection();
-        drop(outbound_rx);
-        let session = SessionId::new("serve_session").expect("valid");
-        let result = tokio::time::timeout(
-            Duration::from_secs(5),
-            conn.serve(session, xai_tool_protocol::ServeParams { tools: vec![] }),
-        )
-        .await
-        .expect("serve must fail bounded, not park");
-        assert!(matches!(result, Err(ClientError::NetworkError(_))));
-        let request_id = xai_tool_protocol::RequestId::new("c1").expect("valid");
-        assert!(
-            demux.take_response_waiter(&request_id).is_none(),
-            "the failed attempt must not leak a waiter"
-        );
-        assert_eq!(
-            conn.try_alloc_request_id().expect("request id").to_string(),
-            "c2",
-            "a non-timeout failure must consume a single attempt, not retry"
-        );
-    }
-    #[tokio::test(start_paused = true)]
-    async fn serve_times_out_bounded_and_reclaims_every_attempt_waiter() {
-        let (conn, demux, mut outbound_rx) = test_connection();
-        let session = SessionId::new("serve_timeout").expect("valid");
-        let result = conn
-            .serve(session, xai_tool_protocol::ServeParams { tools: vec![] })
-            .await;
-        assert!(matches!(result, Err(ClientError::NetworkError(_))));
-        for id in ["c1", "c2", "c3"] {
-            let sent = outbound_rx.try_recv().expect("attempt frame sent");
-            let value: Value = serde_json::from_str(&sent).expect("valid json");
-            assert_eq!(value["id"].as_str(), Some(id));
-            let request_id = xai_tool_protocol::RequestId::new(id).expect("valid");
-            assert!(
-                demux.take_response_waiter(&request_id).is_none(),
-                "attempt {id} must not leak a waiter"
-            );
-        }
-        assert!(
-            outbound_rx.try_recv().is_err(),
-            "exactly SERVE_MAX_ATTEMPTS frames are sent"
-        );
-    }
-    #[tokio::test]
-    async fn call_request_reclaims_waiter_on_caller_cancellation() {
-        let (conn, demux, mut outbound_rx) = test_connection();
-        let request_id = conn.try_alloc_request_id().expect("request id");
-        let probe_id = request_id.clone();
-        let conn_for_call = conn.clone();
-        let call = tokio::spawn(async move {
-            let req = JsonRpcRequest {
-                jsonrpc: JsonRpcVersion,
-                id: JsonRpcId::from_request_id(&request_id),
-                session_id: None,
-                method: Method::Hook.as_wire_str().to_owned(),
-                params: serde_json::json!({}),
-            };
-            conn_for_call.call_request(request_id, &req).await
-        });
-        tokio::time::timeout(Duration::from_secs(1), outbound_rx.recv())
-            .await
-            .expect("frame sent")
-            .expect("outbound frame present");
-        call.abort();
-        let _ = call.await;
-        assert!(
-            demux.take_response_waiter(&probe_id).is_none(),
-            "the cancelled caller's waiter is reclaimed so it cannot leak"
-        );
-    }
-    #[tokio::test]
-    async fn reader_phase_exits_socket_closed_on_forced_reconnect_signal() {
-        let (conn, _demux, _outbound_rx) = test_connection();
-        let (reconnect_tx, mut reconnect_rx) = mpsc::channel::<()>(1);
-        let (_stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
-        reconnect_tx.try_send(()).expect("queue forced reconnect");
-        let mut stream =
-            futures::stream::pending::<Result<Message, tokio_tungstenite::tungstenite::Error>>();
-        let exit = tokio::time::timeout(
-            Duration::from_secs(1),
-            run_reader_phase(
-                conn.inner.as_ref(),
-                &mut stream,
-                &mut stop_rx,
-                &mut reconnect_rx,
-                Duration::from_secs(75),
-                &conn.inner.outbound_tx,
-            ),
-        )
-        .await
-        .expect("forced reconnect must break the reader phase");
-        assert!(
-            matches!(exit, ConnectedExit::SocketClosed(DisconnectCause::Forced)),
-            "a forced reconnect exits as SocketClosed (drives the reconnect path)"
-        );
-    }
-    #[tokio::test]
-    async fn stop_signal_outranks_forced_reconnect() {
-        let (conn, _demux, _outbound_rx) = test_connection();
-        let (reconnect_tx, mut reconnect_rx) = mpsc::channel::<()>(1);
-        let (stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
-        reconnect_tx.try_send(()).expect("queue forced reconnect");
-        stop_tx.try_send(()).expect("queue stop");
-        let mut stream =
-            futures::stream::pending::<Result<Message, tokio_tungstenite::tungstenite::Error>>();
-        let exit = tokio::time::timeout(
-            Duration::from_secs(1),
-            run_reader_phase(
-                conn.inner.as_ref(),
-                &mut stream,
-                &mut stop_rx,
-                &mut reconnect_rx,
-                Duration::from_secs(75),
-                &conn.inner.outbound_tx,
-            ),
-        )
-        .await
-        .expect("stop must break the reader phase");
-        assert!(matches!(exit, ConnectedExit::Stop));
-    }
-    #[tokio::test]
-    async fn drain_reconnect_signals_clears_stale_signal_only() {
-        let (reconnect_tx, mut reconnect_rx) = mpsc::channel::<()>(1);
-        reconnect_tx.try_send(()).expect("queue stale signal");
-        drain_reconnect_signals(&mut reconnect_rx);
-        assert!(
-            reconnect_rx.try_recv().is_err(),
-            "a stale pre-reconnect signal is consumed by the drain"
-        );
-        reconnect_tx.try_send(()).expect("queue fresh signal");
-        assert!(
-            reconnect_rx.try_recv().is_ok(),
-            "the drain must not disable the channel for future signals"
-        );
-    }
-    #[tokio::test]
-    async fn early_subscribed_receiver_buffers_pre_run_connection_notifications() {
-        let (conn, demux, _outbound_rx) = test_connection();
-        let outcome = demux.route(serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": "b1",
-            "method": "session.bind",
-            "params": { "session_id": "s1" },
-        }));
-        assert_eq!(outcome, crate::demux::RouteOutcome::Notification);
-        let mut rx = conn
-            .take_early_notifications()
-            .expect("receiver retained until taken");
-        let frame = rx.try_recv().expect("pre-run frame buffered");
-        assert_eq!(frame["method"], "session.bind");
-        assert!(
-            conn.take_early_notifications().is_none(),
-            "the early receiver is handed off exactly once"
-        );
-    }
-    #[tokio::test]
-    async fn call_request_with_timeout_reclaims_waiter_on_deadline() {
-        let (conn, demux, mut outbound_rx) = test_connection();
-        let session = SessionId::new("to_session").expect("valid");
-        let request_id = conn.try_alloc_request_id().expect("request id");
-        let probe_id = request_id.clone();
-        let req = JsonRpcRequest {
-            jsonrpc: JsonRpcVersion,
-            id: JsonRpcId::from_request_id(&request_id),
-            session_id: Some(session),
-            method: Method::Hook.as_wire_str().to_owned(),
-            params: serde_json::json!({}),
-        };
-        let result = conn
-            .call_request_with_timeout(request_id, &req, Duration::from_millis(50))
-            .await;
-        assert!(matches!(result, Err(ClientError::NetworkError(_))));
-        assert!(
-            outbound_rx.try_recv().is_ok(),
-            "the request frame is sent before the deadline fires"
-        );
-        assert!(
-            demux.take_response_waiter(&probe_id).is_none(),
-            "the timed-out waiter is reclaimed so it cannot leak"
-        );
-    }
-    /// Regression: a *forced* reconnect abandons a still-healthy socket. If
-    /// the first reconnect attempt then fails, the actor must keep retrying
-    /// off the abandoned stream — falling back into the reader phase would
-    /// park in `stream.next()` on the live old connection forever (the
-    /// reconnect signal was already consumed), stalling the retry loop.
-    ///
-    /// Mock: conn #0 (initial) completes the handshake and stays healthy;
-    /// conn #1 (first reconnect) is dropped before the ack (transport
-    /// failure); conn #2 must then be attempted and complete. With the bug,
-    /// upgrade #2 never happens and the test times out.
-    #[tokio::test]
-    async fn forced_reconnect_retries_past_failed_attempt_without_repolling_old_stream() {
-        use futures::{SinkExt as _, StreamExt as _};
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind mock hub");
-        let addr = listener.local_addr().expect("mock addr");
-        let upgrades = Arc::new(AtomicUsize::new(0));
-        let upgrades_srv = upgrades.clone();
-        tokio::spawn(async move {
-            loop {
-                let Ok((tcp, _)) = listener.accept().await else {
-                    return;
-                };
-                let n = upgrades_srv.fetch_add(1, Ordering::SeqCst);
-                tokio::spawn(async move {
-                    let Ok(mut ws) = tokio_tungstenite::accept_async(tcp).await else {
-                        return;
-                    };
-                    if n == 1 {
-                        return;
-                    }
-                    let _ = ws.next().await;
-                    let ack = serde_json::json!({
-                        "connection_id": format!("mock-conn-{n}"),
-                        "user_id": "test",
-                        "computer_hub_version": "test",
-                        "supported_protocol_versions": ["1.0.0"],
-                    });
-                    if ws
-                        .send(tokio_tungstenite::tungstenite::Message::Text(
-                            ack.to_string().into(),
-                        ))
-                        .await
-                        .is_err()
-                    {
-                        return;
-                    }
-                    while let Some(msg) = ws.next().await {
-                        if msg.is_err() {
-                            return;
-                        }
-                    }
-                });
-            }
-        });
-        let credential: Arc<dyn AuthProvider> = Arc::new(AuthCredential::bearer("test-token"));
-        let conn = HubConnection::connect(ConnectionConfig {
-            url: url::Url::parse(&format!("ws://{addr}/v1/tools")).expect("mock url"),
-            credential,
-            kind: ConnectionKind::ToolServer,
-            on_reconnect: None,
-            on_disconnect: None,
-            on_terminal_close: None,
-            on_connect: None,
-            server_id: None,
-            server_description: None,
-            server_metadata: None,
-            outbound_buffer: None,
-            tuning: ConnectionTuning {
-                reconnect_backoff: Some(Arc::from([Duration::from_millis(10)])),
-                ..Default::default()
-            },
-            alpha_test_key: None,
-            allow_insecure_ws: false,
-            on_fatal: None,
-        })
-        .await
-        .expect("initial connect");
-        conn.force_reconnect();
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        while upgrades.load(Ordering::SeqCst) < 3 {
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "retry stalled after a failed forced-reconnect attempt: \
-                 {} upgrades observed (expected 3: initial + failed + successful)",
-                upgrades.load(Ordering::SeqCst)
-            );
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        conn.request_shutdown();
-        conn.await_shutdown().await;
-    }
-    /// After a *stable* connection a new outage starts at attempt 1. A
-    /// failed attempt in the first episode still increments so
-    /// `on_reconnect` reports 2; `reset_after = 0` treats even a brief
-    /// socket as stable so the next episode is 1 again.
-    #[tokio::test]
-    async fn successful_reconnect_resets_attempt_after_stable_dwell() {
-        use futures::{SinkExt as _, StreamExt as _};
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind mock hub");
-        let addr = listener.local_addr().expect("mock addr");
-        let upgrades = Arc::new(AtomicUsize::new(0));
-        let upgrades_srv = upgrades.clone();
-        tokio::spawn(async move {
-            loop {
-                let Ok((tcp, _)) = listener.accept().await else {
-                    return;
-                };
-                let n = upgrades_srv.fetch_add(1, Ordering::SeqCst);
-                tokio::spawn(async move {
-                    let Ok(mut ws) = tokio_tungstenite::accept_async(tcp).await else {
-                        return;
-                    };
-                    if n == 1 {
-                        return;
-                    }
-                    let _ = ws.next().await;
-                    let ack = serde_json::json!({
-                        "connection_id": format!("mock-conn-{n}"),
-                        "user_id": "test",
-                        "computer_hub_version": "test",
-                        "supported_protocol_versions": ["1.0.0"],
-                    });
-                    if ws
-                        .send(tokio_tungstenite::tungstenite::Message::Text(
-                            ack.to_string().into(),
-                        ))
-                        .await
-                        .is_err()
-                    {
-                        return;
-                    }
-                    while let Some(msg) = ws.next().await {
-                        if msg.is_err() {
-                            return;
-                        }
-                    }
-                });
-            }
-        });
-        let (attempt_tx, mut attempt_rx) = mpsc::unbounded_channel();
-        let on_reconnect: Arc<ReconnectCallback> =
-            Arc::new(Box::new(move |event: ReconnectEvent| {
-                let _ = attempt_tx.send(event.attempt);
-            }));
-        let credential: Arc<dyn AuthProvider> = Arc::new(AuthCredential::bearer("test-token"));
-        let conn = HubConnection::connect(ConnectionConfig {
-            url: url::Url::parse(&format!("ws://{addr}/v1/tools")).expect("mock url"),
-            credential,
-            kind: ConnectionKind::ToolServer,
-            on_reconnect: Some(on_reconnect),
-            on_disconnect: None,
-            on_terminal_close: None,
-            on_connect: None,
-            server_id: None,
-            server_description: None,
-            server_metadata: None,
-            outbound_buffer: None,
-            tuning: ConnectionTuning {
-                reconnect_backoff: Some(Arc::from([Duration::from_millis(10)])),
-                reconnect_attempt_reset_after: Some(Duration::ZERO),
-                ..Default::default()
-            },
-            alpha_test_key: None,
-            allow_insecure_ws: false,
-            on_fatal: None,
-        })
-        .await
-        .expect("initial connect");
-        conn.force_reconnect();
-        let first = tokio::time::timeout(Duration::from_secs(5), attempt_rx.recv())
-            .await
-            .expect("first episode reconnect event")
-            .expect("reconnect channel open");
-        assert_eq!(
-            first, 2,
-            "failed attempt then success must report attempt 2 (increment still lives)"
-        );
-        conn.force_reconnect();
-        let second = tokio::time::timeout(Duration::from_secs(5), attempt_rx.recv())
-            .await
-            .expect("second episode reconnect event")
-            .expect("reconnect channel open");
-        assert_eq!(
-            second, 1,
-            "stable (reset_after=0) prior connection must reset so the next outage starts at 1"
-        );
-        conn.request_shutdown();
-        conn.await_shutdown().await;
-    }
-    /// A flap shorter than the dwell must keep climbing: resetting on every
-    /// handshake is the crash-loop / drain-then-immediate-redrop regression.
-    #[tokio::test]
-    async fn flapping_reconnect_does_not_reset_attempt() {
-        use futures::{SinkExt as _, StreamExt as _};
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind mock hub");
-        let addr = listener.local_addr().expect("mock addr");
-        let upgrades = Arc::new(AtomicUsize::new(0));
-        let upgrades_srv = upgrades.clone();
-        tokio::spawn(async move {
-            loop {
-                let Ok((tcp, _)) = listener.accept().await else {
-                    return;
-                };
-                let n = upgrades_srv.fetch_add(1, Ordering::SeqCst);
-                tokio::spawn(async move {
-                    let Ok(mut ws) = tokio_tungstenite::accept_async(tcp).await else {
-                        return;
-                    };
-                    if n == 1 {
-                        return;
-                    }
-                    let _ = ws.next().await;
-                    let ack = serde_json::json!({
-                        "connection_id": format!("mock-conn-{n}"),
-                        "user_id": "test",
-                        "computer_hub_version": "test",
-                        "supported_protocol_versions": ["1.0.0"],
-                    });
-                    if ws
-                        .send(tokio_tungstenite::tungstenite::Message::Text(
-                            ack.to_string().into(),
-                        ))
-                        .await
-                        .is_err()
-                    {
-                        return;
-                    }
-                    while let Some(msg) = ws.next().await {
-                        if msg.is_err() {
-                            return;
-                        }
-                    }
-                });
-            }
-        });
-        let (attempt_tx, mut attempt_rx) = mpsc::unbounded_channel();
-        let on_reconnect: Arc<ReconnectCallback> =
-            Arc::new(Box::new(move |event: ReconnectEvent| {
-                let _ = attempt_tx.send(event.attempt);
-            }));
-        let credential: Arc<dyn AuthProvider> = Arc::new(AuthCredential::bearer("test-token"));
-        let conn = HubConnection::connect(ConnectionConfig {
-            url: url::Url::parse(&format!("ws://{addr}/v1/tools")).expect("mock url"),
-            credential,
-            kind: ConnectionKind::ToolServer,
-            on_reconnect: Some(on_reconnect),
-            on_disconnect: None,
-            on_terminal_close: None,
-            on_connect: None,
-            server_id: None,
-            server_description: None,
-            server_metadata: None,
-            outbound_buffer: None,
-            tuning: ConnectionTuning {
-                reconnect_backoff: Some(Arc::from([Duration::from_millis(10)])),
-                reconnect_attempt_reset_after: Some(Duration::from_secs(60)),
-                ..Default::default()
-            },
-            alpha_test_key: None,
-            allow_insecure_ws: false,
-            on_fatal: None,
-        })
-        .await
-        .expect("initial connect");
-        conn.force_reconnect();
-        let first = tokio::time::timeout(Duration::from_secs(5), attempt_rx.recv())
-            .await
-            .expect("first episode")
-            .expect("channel open");
-        assert_eq!(first, 2);
-        assert_eq!(
-            conn.inner.outage_seq.load(Ordering::Relaxed),
-            1,
-            "first outage must advance outage_seq"
-        );
-        conn.force_reconnect();
-        let second = tokio::time::timeout(Duration::from_secs(5), attempt_rx.recv())
-            .await
-            .expect("second episode")
-            .expect("channel open");
-        assert_eq!(
-            second, 3,
-            "flap inside the dwell must climb, not restart at 1"
-        );
-        assert_eq!(
-            conn.inner.outage_seq.load(Ordering::Relaxed),
-            2,
-            "each outage must advance the jitter phase fed to reconnect_delay"
-        );
-        conn.request_shutdown();
-        conn.await_shutdown().await;
-    }
-    async fn spawn_ack_only_hub() -> std::net::SocketAddr {
-        use futures::{SinkExt as _, StreamExt as _};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind mock hub");
-        let addr = listener.local_addr().expect("mock addr");
-        tokio::spawn(async move {
-            loop {
-                let Ok((tcp, _)) = listener.accept().await else {
-                    return;
-                };
-                tokio::spawn(async move {
-                    let Ok(mut ws) = tokio_tungstenite::accept_async(tcp).await else {
-                        return;
-                    };
-                    let _ = ws.next().await;
-                    let ack = serde_json::json!({
-                        "connection_id": "mock",
-                        "user_id": "test",
-                        "computer_hub_version": "test",
-                        "supported_protocol_versions": ["1.0.0"],
-                    });
-                    if ws
-                        .send(tokio_tungstenite::tungstenite::Message::Text(
-                            ack.to_string().into(),
-                        ))
-                        .await
-                        .is_err()
-                    {
-                        return;
-                    }
-                    while let Some(msg) = ws.next().await {
-                        if msg.is_err() {
-                            return;
-                        }
-                    }
-                });
-            }
-        });
-        addr
-    }
-    async fn connect_tracking_attempts(
-        addr: std::net::SocketAddr,
-        reset_after: Duration,
-        on_disconnect: Option<Arc<DisconnectCallback>>,
-    ) -> (Arc<HubConnection>, mpsc::UnboundedReceiver<u32>) {
-        let (attempt_tx, attempt_rx) = mpsc::unbounded_channel();
-        let on_reconnect: Arc<ReconnectCallback> =
-            Arc::new(Box::new(move |event: ReconnectEvent| {
-                let _ = attempt_tx.send(event.attempt);
-            }));
-        let credential: Arc<dyn AuthProvider> = Arc::new(AuthCredential::bearer("test-token"));
-        let conn = HubConnection::connect(ConnectionConfig {
-            url: url::Url::parse(&format!("ws://{addr}/v1/tools")).expect("mock url"),
-            credential,
-            kind: ConnectionKind::ToolServer,
-            on_reconnect: Some(on_reconnect),
-            on_disconnect,
-            on_terminal_close: None,
-            on_connect: None,
-            server_id: None,
-            server_description: None,
-            server_metadata: None,
-            outbound_buffer: None,
-            tuning: ConnectionTuning {
-                reconnect_backoff: Some(Arc::from([Duration::from_millis(10)])),
-                reconnect_attempt_reset_after: Some(reset_after),
-                ..Default::default()
-            },
-            alpha_test_key: None,
-            allow_insecure_ws: false,
-            on_fatal: None,
-        })
-        .await
-        .expect("initial connect");
-        (conn, attempt_rx)
-    }
-    async fn recv_attempt(rx: &mut mpsc::UnboundedReceiver<u32>) -> u32 {
-        tokio::time::timeout(Duration::from_secs(10), rx.recv())
-            .await
-            .expect("reconnect event")
-            .expect("channel open")
-    }
-    /// 1s dwell so a stalled worker between reconnect-complete and the next
-    /// forced outage cannot look stable.
-    #[tokio::test]
-    async fn attempt_reset_dwell_crosses_a_real_threshold() {
-        let addr = spawn_ack_only_hub().await;
-        let (conn, mut attempt_rx) =
-            connect_tracking_attempts(addr, Duration::from_secs(1), None).await;
-        conn.force_reconnect();
-        assert_eq!(
-            recv_attempt(&mut attempt_rx).await,
-            1,
-            "fresh connect is not yet stable"
-        );
-        conn.force_reconnect();
-        assert_eq!(
-            recv_attempt(&mut attempt_rx).await,
-            2,
-            "immediate flap must climb"
-        );
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        conn.force_reconnect();
-        assert_eq!(
-            recv_attempt(&mut attempt_rx).await,
-            1,
-            "after the dying socket outlived the dwell, attempt must reset"
-        );
-        conn.force_reconnect();
-        assert_eq!(
-            recv_attempt(&mut attempt_rx).await,
-            2,
-            "dwell must use the dying connection's age, not the actor lifetime"
-        );
-        conn.request_shutdown();
-        conn.await_shutdown().await;
-    }
-    /// `on_disconnect` runs after detect-time capture and before the gate.
-    /// Sleeping past the dwell there must not reset.
-    #[tokio::test]
-    async fn attempt_reset_ignores_latency_between_detect_and_gate() {
-        let addr = spawn_ack_only_hub().await;
-        let on_disconnect: Arc<DisconnectCallback> = Arc::new(Box::new(|| {
-            std::thread::sleep(Duration::from_secs(2));
-        }));
-        let (conn, mut attempt_rx) =
-            connect_tracking_attempts(addr, Duration::from_secs(1), Some(on_disconnect)).await;
-        conn.force_reconnect();
-        assert_eq!(
-            recv_attempt(&mut attempt_rx).await,
-            1,
-            "fresh connect is not yet stable"
-        );
-        conn.force_reconnect();
-        assert_eq!(
-            recv_attempt(&mut attempt_rx).await,
-            2,
-            "on_disconnect sleep past the dwell must not reset; detect-time age is still short"
-        );
-        conn.request_shutdown();
-        conn.await_shutdown().await;
-    }
-    /// 4409 is reconnectable (not 41xx terminal). A drain followed by an
-    /// immediate redrop must climb the ladder, not reset to slot 1.
-    #[tokio::test]
-    async fn drain_4409_then_quick_redrop_climbs_attempt() {
-        use futures::{SinkExt as _, StreamExt as _};
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        use tokio_tungstenite::tungstenite::protocol::CloseFrame;
-        use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind mock hub");
-        let addr = listener.local_addr().expect("mock addr");
-        let upgrades = Arc::new(AtomicUsize::new(0));
-        let upgrades_srv = upgrades.clone();
-        tokio::spawn(async move {
-            loop {
-                let Ok((tcp, _)) = listener.accept().await else {
-                    return;
-                };
-                let n = upgrades_srv.fetch_add(1, Ordering::SeqCst);
-                tokio::spawn(async move {
-                    let Ok(mut ws) = tokio_tungstenite::accept_async(tcp).await else {
-                        return;
-                    };
-                    let _ = ws.next().await;
-                    let ack = serde_json::json!({
-                        "connection_id": format!("mock-conn-{n}"),
-                        "user_id": "test",
-                        "computer_hub_version": "test",
-                        "supported_protocol_versions": ["1.0.0"],
-                    });
-                    if ws
-                        .send(tokio_tungstenite::tungstenite::Message::Text(
-                            ack.to_string().into(),
-                        ))
-                        .await
-                        .is_err()
-                    {
-                        return;
-                    }
-                    if n < 2 {
-                        let _ = ws
-                            .send(tokio_tungstenite::tungstenite::Message::Close(Some(
-                                CloseFrame {
-                                    code: CloseCode::from(4409),
-                                    reason: "drain".into(),
-                                },
-                            )))
-                            .await;
-                        return;
-                    }
-                    while let Some(msg) = ws.next().await {
-                        if msg.is_err() {
-                            return;
-                        }
-                    }
-                });
-            }
-        });
-        let (attempt_tx, mut attempt_rx) = mpsc::unbounded_channel();
-        let on_reconnect: Arc<ReconnectCallback> =
-            Arc::new(Box::new(move |event: ReconnectEvent| {
-                let _ = attempt_tx.send(event.attempt);
-            }));
-        let credential: Arc<dyn AuthProvider> = Arc::new(AuthCredential::bearer("test-token"));
-        let conn = HubConnection::connect(ConnectionConfig {
-            url: url::Url::parse(&format!("ws://{addr}/v1/tools")).expect("mock url"),
-            credential,
-            kind: ConnectionKind::ToolServer,
-            on_reconnect: Some(on_reconnect),
-            on_disconnect: None,
-            on_terminal_close: None,
-            on_connect: None,
-            server_id: None,
-            server_description: None,
-            server_metadata: None,
-            outbound_buffer: None,
-            tuning: ConnectionTuning {
-                reconnect_backoff: Some(Arc::from([Duration::from_millis(10)])),
-                reconnect_attempt_reset_after: Some(Duration::from_secs(60)),
-                ..Default::default()
-            },
-            alpha_test_key: None,
-            allow_insecure_ws: false,
-            on_fatal: None,
-        })
-        .await
-        .expect("initial connect");
-        let first = tokio::time::timeout(Duration::from_secs(5), attempt_rx.recv())
-            .await
-            .expect("first 4409 reconnect")
-            .expect("channel open");
-        assert_eq!(first, 1, "4409 must reconnect, not terminate");
-        let second = tokio::time::timeout(Duration::from_secs(5), attempt_rx.recv())
-            .await
-            .expect("second 4409 reconnect")
-            .expect("channel open");
-        assert_eq!(
-            second, 2,
-            "immediate 4409 redrop must climb; a per-success reset would report 1"
-        );
-        conn.request_shutdown();
-        conn.await_shutdown().await;
-    }
-    #[tokio::test]
-    async fn distinct_connections_use_distinct_jitter_seeds() {
-        use futures::{SinkExt as _, StreamExt as _};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind mock hub");
-        let addr = listener.local_addr().expect("mock addr");
-        tokio::spawn(async move {
-            loop {
-                let Ok((tcp, _)) = listener.accept().await else {
-                    return;
-                };
-                tokio::spawn(async move {
-                    let Ok(mut ws) = tokio_tungstenite::accept_async(tcp).await else {
-                        return;
-                    };
-                    let _ = ws.next().await;
-                    let ack = serde_json::json!({
-                        "connection_id": "mock",
-                        "user_id": "test",
-                        "computer_hub_version": "test",
-                        "supported_protocol_versions": ["1.0.0"],
-                    });
-                    if ws
-                        .send(tokio_tungstenite::tungstenite::Message::Text(
-                            ack.to_string().into(),
-                        ))
-                        .await
-                        .is_err()
-                    {
-                        return;
-                    }
-                    while let Some(msg) = ws.next().await {
-                        if msg.is_err() {
-                            return;
-                        }
-                    }
-                });
-            }
-        });
-        let mk = || async {
-            let credential: Arc<dyn AuthProvider> = Arc::new(AuthCredential::bearer("test-token"));
-            HubConnection::connect(ConnectionConfig {
-                url: url::Url::parse(&format!("ws://{addr}/v1/tools")).expect("mock url"),
-                credential,
-                kind: ConnectionKind::ToolServer,
-                on_reconnect: None,
-                on_disconnect: None,
-                on_terminal_close: None,
-                on_connect: None,
-                server_id: None,
-                server_description: None,
-                server_metadata: None,
-                outbound_buffer: None,
-                tuning: ConnectionTuning::default(),
-                alpha_test_key: None,
-                allow_insecure_ws: false,
-                on_fatal: None,
-            })
-            .await
-            .expect("connect")
-        };
-        let a = mk().await;
-        let b = mk().await;
-        let sa = a.inner.reconnect_jitter_seed;
-        let sb = b.inner.reconnect_jitter_seed;
-        assert_ne!(sa, sb, "connect() must call new_reconnect_jitter_seed()");
-        assert_eq!(
-            a.inner.outage_seq.load(Ordering::Relaxed),
-            0,
-            "fresh connection has no reconnect outage yet"
-        );
-        assert_eq!(
-            a.inner.attempt_reset_after,
-            Duration::from_secs(10),
-            "ConnectionTuning::default() must resolve None to the 10s production dwell"
-        );
-        assert_ne!(
-            a.inner.reconnect_delay(1),
-            b.inner.reconnect_delay(1),
-            "seed must reach the delay used by the reader actor"
-        );
-        assert_eq!(
-            a.inner.reconnect_delay(1),
-            backoff_for(1, &a.inner.reconnect_backoff, sa, 0),
-            "actor helper must use the stored seed and outage_seq, not literals"
-        );
-        a.request_shutdown();
-        b.request_shutdown();
-        a.await_shutdown().await;
-        b.await_shutdown().await;
-    }
-    #[tokio::test]
-    async fn call_request_serialization_failure_registers_no_waiter() {
-        struct FailingParams;
-        impl serde::Serialize for FailingParams {
-            fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
-                Err(serde::ser::Error::custom("intentionally unserializable"))
-            }
-        }
-        let (conn, demux, _outbound_rx) = test_connection();
-        let session = SessionId::new("serde_fail_session").expect("valid");
-        let request_id = conn.try_alloc_request_id().expect("request id");
-        let probe_id = request_id.clone();
-        let req = JsonRpcRequest {
-            jsonrpc: JsonRpcVersion,
-            id: JsonRpcId::from_request_id(&request_id),
-            session_id: Some(session),
-            method: Method::Hook.as_wire_str().to_owned(),
-            params: FailingParams,
-        };
-        let result = conn.call_request(request_id, &req).await;
-        assert!(result.is_err(), "serialization failure must surface");
-        assert!(
-            demux.take_response_waiter(&probe_id).is_none(),
-            "no waiter may be registered when serialization fails"
-        );
-    }
-    type WsError = tokio_tungstenite::tungstenite::Error;
-    type InboundTx = futures::channel::mpsc::UnboundedSender<Result<Message, WsError>>;
-    type InboundRx = futures::channel::mpsc::UnboundedReceiver<Result<Message, WsError>>;
-    /// In-memory inbound frame source for `run_reader_phase` tests
-    /// (mirrors `RecordingSink` for the writer half).
-    fn test_inbound() -> (InboundTx, InboundRx) {
-        futures::channel::mpsc::unbounded()
-    }
-    /// A zero or unset liveness deadline resolves to `min(4× ping, 120s)`;
-    /// a positive override is honored verbatim. Mirrors the
-    /// `resolve_ws_ping_interval` clamp semantics.
-    #[test]
-    fn resolve_ws_liveness_deadline_clamps_zero_and_unset_to_default() {
-        let ping = Duration::from_secs(30);
-        assert_eq!(
-            resolve_ws_liveness_deadline(None, ping),
-            Duration::from_secs(120)
-        );
-        assert_eq!(
-            resolve_ws_liveness_deadline(Some(Duration::ZERO), ping),
-            Duration::from_secs(120)
-        );
-        let custom = Duration::from_secs(45);
-        assert_eq!(resolve_ws_liveness_deadline(Some(custom), ping), custom);
-    }
-    /// The per-attempt reconnect budget tracks the liveness deadline above
-    /// the floor and is clamped to the floor below it, so a small liveness
-    /// override can never starve connection establishment.
-    #[test]
-    fn reconnect_attempt_budget_floors_small_deadlines() {
-        assert_eq!(
-            reconnect_attempt_budget(Duration::from_millis(2_500)),
-            RECONNECT_ATTEMPT_MIN_BUDGET
-        );
-        assert_eq!(
-            reconnect_attempt_budget(RECONNECT_ATTEMPT_MIN_BUDGET),
-            RECONNECT_ATTEMPT_MIN_BUDGET
-        );
-        let large = Duration::from_secs(300);
-        assert_eq!(reconnect_attempt_budget(large), large);
-    }
-    #[test]
-    fn resolve_ws_liveness_deadline_scales_with_ping_override() {
-        assert_eq!(
-            resolve_ws_liveness_deadline(None, Duration::from_secs(10)),
-            Duration::from_secs(40)
-        );
-        assert_eq!(
-            resolve_ws_liveness_deadline(None, Duration::from_secs(60)),
-            Duration::from_secs(120),
-            "default liveness is capped below hub idle_timeout",
-        );
-    }
-    #[tokio::test(start_paused = true)]
-    async fn reader_deadline_kills_silently_dead_connection() {
-        let (conn, _demux, _outbound_rx) = test_connection();
-        let (inbound_tx, mut inbound_rx) = test_inbound();
-        let (_stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
-        let (_reconnect_tx, mut reconnect_rx) = mpsc::channel::<()>(1);
-        let liveness = Duration::from_secs(75);
-        let start = tokio::time::Instant::now();
-        let exit = run_reader_phase(
-            &conn.inner,
-            &mut inbound_rx,
-            &mut stop_rx,
-            &mut reconnect_rx,
-            liveness,
-            &conn.inner.outbound_tx,
-        )
-        .await;
-        assert!(matches!(
-            exit,
-            ConnectedExit::SocketClosed(DisconnectCause::LivenessDeadline)
-        ));
-        assert_eq!(
-            start.elapsed(),
-            liveness,
-            "expiry exactly one liveness window after (re)entry"
-        );
-        drop(inbound_tx);
-    }
-    #[tokio::test(start_paused = true)]
-    async fn reader_deadline_rearms_on_rtt_proof_frames() {
-        let (conn, _demux, _outbound_rx) = test_connection();
-        let (inbound_tx, mut inbound_rx) = test_inbound();
-        let (_stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
-        let (_reconnect_tx, mut reconnect_rx) = mpsc::channel::<()>(1);
-        let liveness = Duration::from_secs(75);
-        let phase = run_reader_phase(
-            &conn.inner,
-            &mut inbound_rx,
-            &mut stop_rx,
-            &mut reconnect_rx,
-            liveness,
-            &conn.inner.outbound_tx,
-        );
-        tokio::pin!(phase);
-        let frames = [
-            Message::Pong(Vec::new().into()),
-            Message::Text(r#"{"method":"pong","ts_ms":1}"#.into()),
-            Message::Pong(Vec::new().into()),
-            Message::Text(r#"{"method":"pong","ts_ms":2}"#.into()),
-        ];
-        for frame in frames {
-            tokio::time::advance(liveness * 3 / 4).await;
-            inbound_tx.unbounded_send(Ok(frame)).expect("send frame");
-            assert!(
-                futures::poll!(phase.as_mut()).is_pending(),
-                "phase must stay live while RTT-proof frames keep arriving"
-            );
-        }
-        tokio::time::advance(liveness - Duration::from_millis(1)).await;
-        assert!(
-            futures::poll!(phase.as_mut()).is_pending(),
-            "still inside the window re-armed by the last frame"
-        );
-        tokio::time::advance(Duration::from_millis(1)).await;
-        match futures::poll!(phase.as_mut()) {
-            std::task::Poll::Ready(exit) => {
-                assert!(matches!(
-                    exit,
-                    ConnectedExit::SocketClosed(DisconnectCause::LivenessDeadline)
-                ));
-            }
-            std::task::Poll::Pending => {
-                panic!("deadline must fire one window after the last frame")
-            }
-        }
-    }
-    #[test]
-    fn classify_inbound_hub_ping_is_app_ping_not_data() {
-        let (conn, _demux, _outbound_rx) = test_connection();
-        assert!(
-            matches!(
-                classify_inbound_text(&conn.inner, r#"{"method":"ping","ts_ms":1}"#),
-                InboundText::AppPing { .. }
-            ),
-            "hub app ping must classify as AppPing"
-        );
-        assert!(
-            matches!(
-                classify_inbound_text(&conn.inner, r#"{"method":"pong","ts_ms":1}"#),
-                InboundText::AppPong
-            ),
-            "hub app pong must classify as AppPong"
-        );
-    }
-    #[tokio::test(start_paused = true)]
-    async fn reader_deadline_ignores_inbound_only_hub_pings() {
-        let (conn, _demux, _outbound_rx) = test_connection();
-        let (prio_tx, prio_rx) = mpsc::channel::<String>(4);
-        drop(prio_rx);
-        let (inbound_tx, mut inbound_rx) = test_inbound();
-        let (_stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
-        let (_reconnect_tx, mut reconnect_rx) = mpsc::channel::<()>(1);
-        let liveness = Duration::from_secs(75);
-        let phase = run_reader_phase(
-            &conn.inner,
-            &mut inbound_rx,
-            &mut stop_rx,
-            &mut reconnect_rx,
-            liveness,
-            &prio_tx,
-        );
-        tokio::pin!(phase);
-        assert!(
-            futures::poll!(phase.as_mut()).is_pending(),
-            "phase must start pending"
-        );
-        let pong_dropped_before = crate::metrics::heartbeat_pong_dropped_count();
-        for _ in 0..3 {
-            inbound_tx
-                .unbounded_send(Ok(Message::Text(r#"{"method":"ping","ts_ms":1}"#.into())))
-                .expect("send hub ping");
-            inbound_tx
-                .unbounded_send(Ok(Message::Ping(Vec::new().into())))
-                .expect("send ws ping");
-            assert!(
-                futures::poll!(phase.as_mut()).is_pending(),
-                "inbound-only pings must not kill early"
-            );
-        }
-        tokio::time::advance(liveness * 3 / 4).await;
-        inbound_tx
-            .unbounded_send(Ok(Message::Text(r#"{"method":"ping","ts_ms":2}"#.into())))
-            .expect("late hub ping");
-        assert!(
-            futures::poll!(phase.as_mut()).is_pending(),
-            "late hub ping must not re-arm"
-        );
-        tokio::time::advance(liveness / 4 - Duration::from_millis(1)).await;
-        assert!(
-            futures::poll!(phase.as_mut()).is_pending(),
-            "still inside the original liveness window"
-        );
-        tokio::time::advance(Duration::from_millis(1)).await;
-        let mut exit = None;
-        for _ in 0..16 {
-            match futures::poll!(phase.as_mut()) {
-                std::task::Poll::Ready(e) => {
-                    exit = Some(e);
-                    break;
-                }
-                std::task::Poll::Pending => tokio::task::yield_now().await,
-            }
-        }
-        match exit.expect("deadline should fire on original L") {
-            ConnectedExit::SocketClosed(DisconnectCause::LivenessDeadline) => {}
-            ConnectedExit::SocketClosed(cause) => panic!("wrong cause {}", cause.label()),
-            ConnectedExit::Stop => panic!("stop"),
-            ConnectedExit::TerminalClose(code) => panic!("terminal {code}"),
-        }
-        assert!(
-            crate::metrics::heartbeat_pong_dropped_count() > pong_dropped_before,
-            "dropped priority rx must count heartbeat_pong_dropped"
-        );
-    }
-    #[tokio::test(start_paused = true)]
-    async fn reader_deadline_huge_override_saturates_instead_of_panicking() {
-        let (conn, _demux, _outbound_rx) = test_connection();
-        let (inbound_tx, mut inbound_rx) = test_inbound();
-        let (_stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
-        let (_reconnect_tx, mut reconnect_rx) = mpsc::channel::<()>(1);
-        let phase = run_reader_phase(
-            &conn.inner,
-            &mut inbound_rx,
-            &mut stop_rx,
-            &mut reconnect_rx,
-            Duration::MAX,
-            &conn.inner.outbound_tx,
-        );
-        tokio::pin!(phase);
-        inbound_tx
-            .unbounded_send(Ok(Message::Pong(Vec::new().into())))
-            .expect("send frame");
-        assert!(
-            futures::poll!(phase.as_mut()).is_pending(),
-            "saturating re-arm must neither panic nor fire"
-        );
-    }
-    /// Sink for writer↔reader composition tests: echoes every keepalive
-    /// `Ping` back as a `Pong` on the reader's inbound channel, emulating a
-    /// healthy server whose only traffic is the keepalive exchange.
-    struct PongEchoSink {
-        inbound: InboundTx,
-    }
-    impl futures::Sink<Message> for PongEchoSink {
-        type Error = std::io::Error;
-        fn poll_ready(
-            self: Pin<&mut Self>,
-            _cx: &mut Context<'_>,
-        ) -> Poll<Result<(), Self::Error>> {
-            Poll::Ready(Ok(()))
-        }
-        fn start_send(self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
-            match item {
-                Message::Ping(payload) => {
-                    let _ = self.inbound.unbounded_send(Ok(Message::Pong(payload)));
-                }
-                Message::Text(text) => {
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(text.as_ref())
-                        && v.get("method").and_then(serde_json::Value::as_str) == Some("ping")
-                        && let Ok(pong) = serde_json::to_string(&PongFrame::new(now_unix_millis()))
-                    {
-                        let _ = self.inbound.unbounded_send(Ok(Message::Text(pong.into())));
-                    }
-                }
-                _ => {}
-            }
-            Ok(())
-        }
-        fn poll_flush(
-            self: Pin<&mut Self>,
-            _cx: &mut Context<'_>,
-        ) -> Poll<Result<(), Self::Error>> {
-            Poll::Ready(Ok(()))
-        }
-        fn poll_close(
-            self: Pin<&mut Self>,
-            _cx: &mut Context<'_>,
-        ) -> Poll<Result<(), Self::Error>> {
-            Poll::Ready(Ok(()))
-        }
-    }
-    #[tokio::test(start_paused = true)]
-    async fn default_ping_pong_composition_keeps_idle_connection_alive() {
-        let ping = resolve_ws_ping_interval(None);
-        let deadline = resolve_ws_liveness_deadline(None, ping);
-        let (conn, _demux, _outbound_rx) = test_connection();
-        let (inbound_tx, mut inbound_rx) = test_inbound();
-        let (_out_tx, out_rx) = mpsc::channel::<String>(4);
-        let (ctl_tx, ctl_rx) = mpsc::channel::<WriterControl<PongEchoSink>>(2);
-        let (writer_stop_tx, writer_stop_rx) = mpsc::channel::<()>(1);
-        let (_prio_tx, prio_rx) = mpsc::channel::<String>(4);
-        let writer = tokio::spawn(run_writer(
-            PongEchoSink {
-                inbound: inbound_tx.clone(),
-            },
-            out_rx,
-            prio_rx,
-            ctl_rx,
-            writer_stop_rx,
-            Some(ping),
-            idle_write_error_slot(),
-            None,
-        ));
-        let (_stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
-        let (_reconnect_tx, mut reconnect_rx) = mpsc::channel::<()>(1);
-        {
-            let phase = run_reader_phase(
-                &conn.inner,
-                &mut inbound_rx,
-                &mut stop_rx,
-                &mut reconnect_rx,
-                deadline,
-                &conn.inner.outbound_tx,
-            );
-            tokio::pin!(phase);
-            tokio::select! {
-                _ = phase.as_mut() => panic!("idle-but-healthy connection tripped the deadline"),
-                _ = tokio::time::sleep(deadline * 4) => {}
-            }
-        }
-        ctl_tx.send(WriterControl::Pause).await.expect("pause");
-        let (fresh_tx, mut fresh_rx) = test_inbound();
-        ctl_tx
-            .send(WriterControl::Resume(PongEchoSink { inbound: fresh_tx }))
-            .await
-            .expect("resume");
-        {
-            let phase = run_reader_phase(
-                &conn.inner,
-                &mut fresh_rx,
-                &mut stop_rx,
-                &mut reconnect_rx,
-                deadline,
-                &conn.inner.outbound_tx,
-            );
-            tokio::pin!(phase);
-            tokio::select! {
-                _ = phase.as_mut() => {
-                    panic!("idle connection tripped the deadline after Pause→Resume")
-                }
-                _ = tokio::time::sleep(deadline * 4) => {}
-            }
-        }
-        writer_stop_tx.send(()).await.expect("stop");
-        writer.await.expect("writer task joins");
-    }
-    struct AppPingOnlyEchoSink {
-        inbound: InboundTx,
-    }
-    impl futures::Sink<Message> for AppPingOnlyEchoSink {
-        type Error = std::io::Error;
-        fn poll_ready(
-            self: Pin<&mut Self>,
-            _cx: &mut Context<'_>,
-        ) -> Poll<Result<(), Self::Error>> {
-            Poll::Ready(Ok(()))
-        }
-        fn start_send(self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
-            if let Message::Text(text) = item
-                && text.contains("\"method\":\"ping\"")
-                && text.contains("ts_ms")
-            {
-                let pong = serde_json::to_string(&PongFrame::new(1)).expect("pong");
-                let _ = self.inbound.unbounded_send(Ok(Message::Text(pong.into())));
-            }
-            Ok(())
-        }
-        fn poll_flush(
-            self: Pin<&mut Self>,
-            _cx: &mut Context<'_>,
-        ) -> Poll<Result<(), Self::Error>> {
-            Poll::Ready(Ok(()))
-        }
-        fn poll_close(
-            self: Pin<&mut Self>,
-            _cx: &mut Context<'_>,
-        ) -> Poll<Result<(), Self::Error>> {
-            Poll::Ready(Ok(()))
-        }
-    }
-    #[tokio::test(start_paused = true)]
-    async fn app_ping_only_keeps_idle_connection_alive_without_ws_pongs() {
-        let ping = resolve_ws_ping_interval(None);
-        let deadline = resolve_ws_liveness_deadline(None, ping);
-        let (conn, _demux, _outbound_rx) = test_connection();
-        let (inbound_tx, mut inbound_rx) = test_inbound();
-        let (_out_tx, out_rx) = mpsc::channel::<String>(4);
-        let (_ctl_tx, ctl_rx) = mpsc::channel::<WriterControl<AppPingOnlyEchoSink>>(2);
-        let (writer_stop_tx, writer_stop_rx) = mpsc::channel::<()>(1);
-        let (_prio_tx, prio_rx) = mpsc::channel::<String>(4);
-        let writer = tokio::spawn(run_writer(
-            AppPingOnlyEchoSink {
-                inbound: inbound_tx,
-            },
-            out_rx,
-            prio_rx,
-            ctl_rx,
-            writer_stop_rx,
-            Some(ping),
-            idle_write_error_slot(),
-            None,
-        ));
-        let (_stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
-        let (_reconnect_tx, mut reconnect_rx) = mpsc::channel::<()>(1);
-        let phase = run_reader_phase(
-            &conn.inner,
-            &mut inbound_rx,
-            &mut stop_rx,
-            &mut reconnect_rx,
-            deadline,
-            &conn.inner.outbound_tx,
-        );
-        tokio::pin!(phase);
-        tokio::select! {
-            _ = phase.as_mut() => panic!("app-pong-only keepalive tripped liveness"),
-            _ = tokio::time::sleep(deadline * 4) => {}
-        }
-        writer_stop_tx.send(()).await.expect("stop");
-        writer.await.expect("join");
-    }
-    #[tokio::test]
-    async fn reader_phase_close_frame_classification_unchanged() {
-        use tokio_tungstenite::tungstenite::protocol::CloseFrame;
-        use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
-        let (conn, _demux, _outbound_rx) = test_connection();
-        let (inbound_tx, mut inbound_rx) = test_inbound();
-        let (_stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
-        let (_reconnect_tx, mut reconnect_rx) = mpsc::channel::<()>(1);
-        inbound_tx
-            .unbounded_send(Ok(Message::Close(Some(CloseFrame {
-                code: CloseCode::from(4100),
-                reason: "evicted".into(),
-            }))))
-            .expect("send close");
-        let exit = run_reader_phase(
-            &conn.inner,
-            &mut inbound_rx,
-            &mut stop_rx,
-            &mut reconnect_rx,
-            Duration::from_secs(75),
-            &conn.inner.outbound_tx,
-        )
-        .await;
-        assert!(matches!(exit, ConnectedExit::TerminalClose(4100)));
-    }
-    async fn spawn_hub_close_after_ack(close: Option<u16>) -> std::net::SocketAddr {
-        use futures::{SinkExt as _, StreamExt as _};
-        use tokio_tungstenite::tungstenite::protocol::CloseFrame;
-        use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind mock hub");
-        let addr = listener.local_addr().expect("mock addr");
-        tokio::spawn(async move {
-            let Ok((tcp, _)) = listener.accept().await else {
-                return;
-            };
-            let Ok(mut ws) = tokio_tungstenite::accept_async(tcp).await else {
-                return;
-            };
-            let _ = ws.next().await;
-            let ack = serde_json::json!({
-                "connection_id": "mock",
-                "user_id": "test",
-                "computer_hub_version": "test",
-                "supported_protocol_versions": ["1.0.0"],
-            });
-            if ws
-                .send(tokio_tungstenite::tungstenite::Message::Text(
-                    ack.to_string().into(),
-                ))
-                .await
-                .is_err()
-            {
-                return;
-            }
-            match close {
-                Some(code) => {
-                    let _ = ws
-                        .send(tokio_tungstenite::tungstenite::Message::Close(Some(
-                            CloseFrame {
-                                code: CloseCode::from(code),
-                                reason: "test".into(),
-                            },
-                        )))
-                        .await;
-                }
-                None => drop(ws),
-            }
-        });
-        addr
-    }
-    #[tokio::test]
-    async fn terminal_close_fires_on_terminal_close_then_on_disconnect() {
-        let events = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-        let terminal_events = Arc::clone(&events);
-        let disconnect_events = Arc::clone(&events);
-        let addr = spawn_hub_close_after_ack(Some(4103)).await;
-        let credential: Arc<dyn AuthProvider> = Arc::new(AuthCredential::bearer("test-token"));
-        let conn = HubConnection::connect(ConnectionConfig {
-            url: url::Url::parse(&format!("ws://{addr}/v1/tools")).expect("mock url"),
-            credential,
-            kind: ConnectionKind::ToolServer,
-            on_reconnect: None,
-            on_disconnect: Some(Arc::new(Box::new(move || {
-                disconnect_events
-                    .lock()
-                    .expect("events")
-                    .push("disconnect".into());
-            }))),
-            on_terminal_close: Some(Arc::new(Box::new(move |code| {
-                terminal_events
-                    .lock()
-                    .expect("events")
-                    .push(format!("terminal:{code}"));
-            }))),
-            on_connect: None,
-            server_id: None,
-            server_description: None,
-            server_metadata: None,
-            outbound_buffer: None,
-            tuning: ConnectionTuning::default(),
-            alpha_test_key: None,
-            allow_insecure_ws: false,
-            on_fatal: None,
-        })
-        .await
-        .expect("initial connect");
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        loop {
-            let snapshot = events.lock().expect("events").clone();
-            if snapshot.as_slice() == ["terminal:4103", "disconnect"] {
-                break;
-            }
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "callbacks not observed in order: {snapshot:?}"
-            );
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        conn.request_shutdown();
-        conn.await_shutdown().await;
-    }
-    #[tokio::test]
-    async fn socket_close_does_not_fire_on_terminal_close() {
-        let terminal = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let disconnect = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let terminal_cb = Arc::clone(&terminal);
-        let disconnect_cb = Arc::clone(&disconnect);
-        let addr = spawn_hub_close_after_ack(Some(1000)).await;
-        let credential: Arc<dyn AuthProvider> = Arc::new(AuthCredential::bearer("test-token"));
-        let conn = HubConnection::connect(ConnectionConfig {
-            url: url::Url::parse(&format!("ws://{addr}/v1/tools")).expect("mock url"),
-            credential,
-            kind: ConnectionKind::ToolServer,
-            on_reconnect: None,
-            on_disconnect: Some(Arc::new(Box::new(move || {
-                disconnect_cb.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            }))),
-            on_terminal_close: Some(Arc::new(Box::new(move |_code| {
-                terminal_cb.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            }))),
-            on_connect: None,
-            server_id: None,
-            server_description: None,
-            server_metadata: None,
-            outbound_buffer: None,
-            tuning: ConnectionTuning {
-                reconnect_backoff: Some(Arc::from([Duration::from_secs(60)])),
-                ..Default::default()
-            },
-            alpha_test_key: None,
-            allow_insecure_ws: false,
-            on_fatal: None,
-        })
-        .await
-        .expect("initial connect");
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        while disconnect.load(std::sync::atomic::Ordering::SeqCst) == 0 {
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "on_disconnect must fire on a non-terminal close"
-            );
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        assert_eq!(
-            0,
-            terminal.load(std::sync::atomic::Ordering::SeqCst),
-            "socket close must not invoke on_terminal_close"
-        );
-        conn.request_shutdown();
-        conn.await_shutdown().await;
-    }
-}
+#[path = "connection_tests.rs"]
+mod tests;

@@ -1,9 +1,8 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
     use super::*;
 
-    /// Regression: a machine-wide `x.ai/models/update` broadcast
-    /// carries each model's static catalog-default effort (`high`), not the
-    /// session's chosen `xhigh`, and must not clobber the per-session choice.
+    /// Regression: a machine-wide `x.ai/models/update` broadcast carries each model's static catalog-default effort (`high`).
+    /// It does not carry the session's chosen `xhigh` and must not clobber that per-session choice.
     #[test]
     fn models_update_preserves_user_reasoning_effort() {
         use xai_grok_shell::sampling::types::ReasoningEffort;
@@ -40,7 +39,7 @@
     }
 
     #[test]
-    fn models_update_preserves_active_agent_model() {
+    fn models_update_keeps_session_model_when_removed_from_catalog() {
         let mut app = make_app_with_agent("sess-1");
 
         let agent = app.agents.get_mut(&AgentId(0)).unwrap();
@@ -52,51 +51,9 @@
             .insert(id_3.clone(), make_model_info("grok-3"));
         agent.session.models.current = Some(id_3);
 
-        let notif = make_models_update_notif("grok-4", &["grok-3", "grok-4"]);
-        handle_models_update(&notif, &mut app);
-
-        assert_eq!(
-            app.models.current.as_ref().map(|id| id.0.as_ref()),
-            Some("grok-3"),
-            "app.models.current must preserve active agent's model, not remote settings default"
-        );
-
-        let agent = app.agents.get(&AgentId(0)).unwrap();
-        assert_eq!(
-            agent
-                .session
-                .models
-                .current
-                .as_ref()
-                .map(|id| id.0.as_ref()),
-            Some("grok-3"),
-            "agent's per-session model must be preserved"
-        );
-    }
-
-    #[test]
-    fn models_update_uses_shell_default_when_agent_model_removed() {
-        let mut app = make_app_with_agent("sess-1");
-
-        let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-        let id_3 = acp::ModelId::new(std::sync::Arc::from("grok-3"));
-        agent
-            .session
-            .models
-            .available
-            .insert(id_3.clone(), make_model_info("grok-3"));
-        agent.session.models.current = Some(id_3);
-
-        // grok-3 removed from catalog.
         let notif = make_models_update_notif("grok-4.3", &["grok-4.3", "grok-4.5"]);
         handle_models_update(&notif, &mut app);
 
-        assert_eq!(
-            app.models.current.as_ref().map(|id| id.0.as_ref()),
-            Some("grok-4.3"),
-            "app.models.current must use shell default when agent model removed"
-        );
-
         let agent = app.agents.get(&AgentId(0)).unwrap();
         assert_eq!(
             agent
@@ -105,15 +62,44 @@
                 .current
                 .as_ref()
                 .map(|id| id.0.as_ref()),
-            Some("grok-4.3"),
-            "agent must fall back to shell default when its model is removed"
+            Some("grok-3"),
+            "catalog refresh must not change the displayed session model"
+        );
+        assert!(
+            agent
+                .session
+                .models
+                .available
+                .contains_key(&acp::ModelId::new(std::sync::Arc::from("grok-4.5"))),
+            "the /model list should reflect the new catalog"
         );
     }
 
     #[test]
-    fn models_update_without_active_agent_uses_shell_default() {
+    fn models_update_keeps_app_current_when_still_in_catalog() {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut app = AppView::new(tx, ModelState::default(), Vec::new());
+        let mut app = AppView::new(tx, ModelState::default(), Vec::new(), crate::render::draw::EscapeWriter::disconnected());
+        let id = acp::ModelId::new(std::sync::Arc::from("grok-3"));
+        app.models.available.insert(id.clone(), make_model_info("grok-3"));
+        app.models.current = Some(id);
+
+        let notif = make_models_update_notif("grok-4", &["grok-3", "grok-4"]);
+        handle_models_update(&notif, &mut app);
+
+        assert_eq!(
+            app.models.current.as_ref().map(|id| id.0.as_ref()),
+            Some("grok-3"),
+            "app-level current stays if it is still in the new catalog"
+        );
+    }
+
+    #[test]
+    fn models_update_adopts_broadcast_when_app_current_missing_from_catalog() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = AppView::new(tx, ModelState::default(), Vec::new(), crate::render::draw::EscapeWriter::disconnected());
+        let old = acp::ModelId::new(std::sync::Arc::from("opus"));
+        app.models.available.insert(old.clone(), make_model_info("opus"));
+        app.models.current = Some(old);
 
         let notif = make_models_update_notif("grok-4", &["grok-3", "grok-4"]);
         handle_models_update(&notif, &mut app);
@@ -121,46 +107,12 @@
         assert_eq!(
             app.models.current.as_ref().map(|id| id.0.as_ref()),
             Some("grok-4"),
-            "without an active agent, shell default must be used"
+            "app-level current adopts the broadcast default when dropped from the catalog"
         );
     }
 
     #[test]
-    fn models_update_noop_when_agent_matches_shell_default() {
-        let mut app = make_app_with_agent("sess-1");
-
-        let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-        let id_4 = acp::ModelId::new(std::sync::Arc::from("grok-4"));
-        agent
-            .session
-            .models
-            .available
-            .insert(id_4.clone(), make_model_info("grok-4"));
-        agent.session.models.current = Some(id_4);
-
-        let notif = make_models_update_notif("grok-4", &["grok-3", "grok-4"]);
-        handle_models_update(&notif, &mut app);
-
-        assert_eq!(
-            app.models.current.as_ref().map(|id| id.0.as_ref()),
-            Some("grok-4"),
-            "app.models.current must be grok-4 when agent and shell agree"
-        );
-        let agent = app.agents.get(&AgentId(0)).unwrap();
-        assert_eq!(
-            agent
-                .session
-                .models
-                .current
-                .as_ref()
-                .map(|id| id.0.as_ref()),
-            Some("grok-4"),
-            "agent model must remain grok-4"
-        );
-    }
-
-    #[test]
-    fn models_update_non_active_agent_uses_shell_fallback_not_active_model() {
+    fn models_update_preserves_each_agent_model_independently() {
         let mut app = make_app_with_agent("sess-A");
         insert_agent(&mut app, AgentId(1), Some("sess-B"));
 
@@ -177,23 +129,18 @@
 
         {
             let agent_b = app.agents.get_mut(&AgentId(1)).unwrap();
-            let id_5 = acp::ModelId::new(std::sync::Arc::from("grok-4.5"));
+            let id = acp::ModelId::new(std::sync::Arc::from("grok-4.5"));
             agent_b
                 .session
                 .models
                 .available
-                .insert(id_5.clone(), make_model_info("grok-4.5"));
-            agent_b.session.models.current = Some(id_5);
+                .insert(id.clone(), make_model_info("grok-4.5"));
+            agent_b.session.models.current = Some(id);
         }
 
-        // grok-5 removed from catalog.
         let notif = make_models_update_notif("grok-4", &["grok-3", "grok-4"]);
         handle_models_update(&notif, &mut app);
 
-        assert_eq!(
-            app.models.current.as_ref().map(|id| id.0.as_ref()),
-            Some("grok-3"),
-        );
         let agent_a = app.agents.get(&AgentId(0)).unwrap();
         assert_eq!(
             agent_a
@@ -203,10 +150,9 @@
                 .as_ref()
                 .map(|id| id.0.as_ref()),
             Some("grok-3"),
-            "agent A's model must be preserved"
+            "active agent's model must be preserved"
         );
 
-        // B's grok-5 was removed — must fall back to shell's grok-4, not A's grok-3.
         let agent_b = app.agents.get(&AgentId(1)).unwrap();
         assert_eq!(
             agent_b
@@ -215,15 +161,13 @@
                 .current
                 .as_ref()
                 .map(|id| id.0.as_ref()),
-            Some("grok-4"),
-            "inactive agent must fall back to shell default, not active agent's model"
+            Some("grok-4.5"),
+            "inactive agent must keep its session model when the catalog drops it"
         );
     }
 
-    /// A follower client (no in-flight switch of its own) receives the
-    /// leader's `ModelChanged` broadcast and silently mirrors the new model
-    /// into its local state — no scrollback entry, no toast, just enough
-    /// state for the status bar / `/model` dropdown to render correctly.
+    /// A follower client (no in-flight switch of its own) receives the leader's `ModelChanged` broadcast and silently mirrors the new model.
+    /// It pushes no scrollback entry and no toast; it updates just enough state for the status bar and the `/model` dropdown to render.
     #[test]
     fn model_changed_updates_state_silently_on_follower() {
         let mut app = make_app_with_agent("sess-1");
@@ -263,13 +207,9 @@
         );
     }
 
-    /// A live remote `ModelChanged` (leader-mode fan-out from another client)
-    /// must apply even when this client already has a local
-    /// `user_model_preference` — otherwise the status bar desyncs from the
-    /// gateway session. Preference is updated to track the new live model.
-    /// (History-replay silent-revert is suppressed on the shell side via
-    /// `ReconnectState::user_selected_model`, not by permanently blocking
-    /// remote ModelChanged here.)
+    /// A live remote `ModelChanged` (the leader fanning out another client's switch) must apply even when a local `user_model_preference` is set.
+    /// Otherwise the status bar desyncs from the gateway session; the preference is updated to track the new live model.
+    /// Replayed history would silently revert the model; the shell suppresses that via `ReconnectState::user_selected_model`, not this handler.
     #[test]
     fn model_changed_applies_and_updates_user_model_preference() {
         let mut app = make_app_with_agent("sess-1");
@@ -308,26 +248,15 @@
         );
     }
 
-    /// The invoking client is also a subscriber to its own session and so
-    /// receives the broadcast it triggered. Its in-flight
-    /// `SetSessionModelResponse` is the authority for its local state +
-    /// the single "Switched to X" scrollback entry, so the broadcast handler
-    /// must be a no-op here — gated on `model_switch_pending == true`.
-    ///
-    /// Concretely we verify the broadcast does NOT touch
-    /// `models.current` (preserving the pre-response snapshot) — that
-    /// snapshot is what `SwitchModelComplete`'s `unchanged` check compares
-    /// against to decide whether to render the "Switched to X" message. If
-    /// the broadcast optimistically updated state here, the response
-    /// handler would see `prev == new`, mark it unchanged, and suppress the
-    /// user-facing message entirely.
+    /// The broadcast handler must therefore be a no-op here, gated on `model_switch_pending == true`.
+    /// The test checks the broadcast does not touch `models.current`, preserving the pre-response snapshot.
+    /// If the broadcast updated state here, the response handler would see `prev == new`, mark it unchanged, and suppress the user-facing message.
     #[test]
     fn model_changed_skipped_when_local_switch_in_flight() {
         let mut app = make_app_with_agent("sess-1");
         let agent = app.agents.get_mut(&AgentId(0)).unwrap();
         seed_models(agent, "grok-3", &["grok-3", "grok-4"]);
-        // Invoker: a local switch is in flight (set by Action::SwitchModel /
-        // set_default_model before the SetSessionModelRequest is sent).
+        // Invoker: a local switch is in flight (set by Action::SwitchModel or set_default_model before the SetSessionModelRequest is sent)
         agent.session.model_switch_pending = true;
         let scrollback_before = agent.scrollback.len();
 
@@ -361,11 +290,9 @@
         );
     }
 
-    /// A `ModelChanged` broadcast carrying a model id the local catalog
-    /// doesn't know about must be dropped — applying it would render an
-    /// unresolvable id in the status bar and desync the `/model` dropdown.
-    /// This can happen when leader and a follower client briefly disagree
-    /// on the model catalog (etag drift, custom-model config skew).
+    /// A `ModelChanged` broadcast carrying a model id the local catalog doesn't know about must be dropped.
+    /// Applying it would render an unresolvable id in the status bar and desync the `/model` dropdown.
+    /// This can happen when the leader and a follower briefly disagree on the model catalog (etag drift, or a skewed custom-model config).
     #[test]
     fn model_changed_dropped_when_model_unknown_to_catalog() {
         let mut app = make_app_with_agent("sess-1");
@@ -392,10 +319,8 @@
         );
     }
 
-    /// `reasoning_effort` round-trips through the broadcast: the follower
-    /// applies it alongside the model id so the prompt header / status bar
-    /// show the right effort without waiting for a subsequent
-    /// `x.ai/models/update`.
+    /// `reasoning_effort` round-trips through the broadcast: the follower applies it alongside the model id.
+    /// The prompt header and status bar then show the right effort without waiting for a later `x.ai/models/update`.
     #[test]
     fn model_changed_applies_reasoning_effort_on_follower() {
         use xai_grok_shell::sampling::types::ReasoningEffort;
@@ -414,11 +339,8 @@
         );
     }
 
-    /// `ModelChanged` for a session this client doesn't own / hasn't loaded
-    /// must be dropped — `find_session_match` returns `None`. The bug-flavored
-    /// version of this would be: leader-mode A switches model on session X
-    /// (which this client never opened) and we accidentally apply the change
-    /// to the active agent.
+    /// `ModelChanged` for a session this client doesn't own or hasn't loaded must be dropped; `find_session_match` returns `None`.
+    /// The bug would be: client A switches a model on session X in leader mode, X was never opened here, and the change lands on the active agent.
     #[test]
     fn model_changed_dropped_for_unknown_session_id() {
         let mut app = make_app_with_agent("sess-1");

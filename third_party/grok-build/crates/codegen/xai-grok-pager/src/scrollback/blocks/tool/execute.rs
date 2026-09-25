@@ -1,5 +1,3 @@
-//! ExecuteToolCallBlock - runs shell commands with streaming output.
-
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span, Text};
 
@@ -15,20 +13,20 @@ use crate::theme::Theme;
 
 const EXECUTE_STDOUT_RANGE_BASE: u16 = 1;
 
-/// Execute tool call - runs a shell command.
+/// Execute tool call: runs a shell command.
 #[derive(Debug, Clone)]
 pub struct ExecuteToolCallBlock {
-    /// Full command that was run (search / copy_meta / export source of truth).
+    /// Full command that was run (the source of truth for search, copy_meta, and export).
     pub command: String,
-    /// Error message if the command failed (None = success).
+    /// Error message if the command failed (None means success).
     pub error: Option<String>,
     /// Optional description of what the command does.
     pub description: Option<String>,
     /// The terminal output. Streamed incrementally.
     pub output: Option<String>,
-    /// When the tool started running (Phase 2: time tracking).
+    /// When the tool started running.
     pub started_at: Option<std::time::Instant>,
-    /// Elapsed time in ms after completion (Phase 2: time tracking).
+    /// Elapsed time in ms after completion.
     pub elapsed_ms: Option<i64>,
     /// Whether this is a user-initiated bash-mode (`!`) command.
     /// Streams as a truncated live tail, expands to full output on finish.
@@ -37,11 +35,7 @@ pub struct ExecuteToolCallBlock {
     pub header_display: Option<String>,
 }
 impl ExecuteToolCallBlock {
-    /// Create a new execute block.
-    ///
-    /// `started_at` defaults to `None`. For streaming blocks, timing begins
-    /// when the block enters running UI state (via `start_timing()`).
-    /// Pre-completed blocks never get timing — they show `"—"`.
+    /// Create a new execute block. Pre-completed blocks never get timing; they show `"-"`.
     pub fn new(command: impl Into<String>) -> Self {
         Self {
             command: command.into(),
@@ -83,8 +77,7 @@ impl ExecuteToolCallBlock {
 
     /// Finalize elapsed time from `started_at`.
     ///
-    /// Idempotent: no-op if `started_at` is `None` (pre-completed block)
-    /// or if `elapsed_ms` is already set (already finalized).
+    /// Idempotent: no-op if `started_at` is `None` (pre-completed block) or if `elapsed_ms` is already set (already finalized).
     pub fn finish(&mut self) {
         if self.elapsed_ms.is_some() {
             return;
@@ -94,7 +87,7 @@ impl ExecuteToolCallBlock {
         }
     }
 
-    /// Set error (mutable) — compute elapsed time if not already set (Phase 2).
+    /// Set error (mutable); compute elapsed time if not already set.
     pub fn set_error(&mut self, error: Option<String>) {
         if self.elapsed_ms.is_none()
             && let Some(start) = self.started_at
@@ -109,7 +102,7 @@ impl ExecuteToolCallBlock {
         self.error.is_none()
     }
 
-    /// Get elapsed time in ms. Returns current elapsed if still running, or stored value if finished (Phase 2).
+    /// Get elapsed time in ms. Returns current elapsed if still running, or stored value if finished.
     pub fn elapsed_ms(&self) -> Option<i64> {
         match self.elapsed_ms {
             Some(ms) => Some(ms),
@@ -130,7 +123,6 @@ impl ExecuteToolCallBlock {
     }
 
     /// Display form of the command for the header (may peel `cd &&` prefix).
-    ///
     /// Preserves physical newlines so soft-wrap / copy can keep line structure.
     /// Callers that need a single ratatui line must flatten themselves.
     fn command_display(&self) -> &str {
@@ -138,18 +130,15 @@ impl ExecuteToolCallBlock {
     }
 
     /// Non-empty description for the header title, if the model supplied one.
-    ///
-    /// When `strip_run_prefix` is true (Label style already has a bold `Run `
-    /// prefix), a leading `Run` / `Running` on the description is dropped so
-    /// we never render `Run Run the tests`.
+    /// When `strip_run_prefix` is true (Label style already has a bold `Run ` prefix), a leading `Run` / `Running` on the description is dropped.
+    /// This keeps `Run Run the tests` from ever rendering.
     fn description_display(&self, strip_run_prefix: bool) -> Option<String> {
         self.description.as_ref().and_then(|d| {
             let trimmed = d.trim();
             if trimmed.is_empty() {
                 return None;
             }
-            // Collapse newlines so the title stays one logical line
-            // (`wrap_header_hanging` may still soft-wrap for width).
+            // Collapse newlines so the title stays one logical line (`wrap_header_hanging` may still soft-wrap for width)
             let mut text = trimmed.replace('\n', " ");
             if strip_run_prefix {
                 text = strip_leading_run_word(&text);
@@ -161,11 +150,9 @@ impl ExecuteToolCallBlock {
         })
     }
 
-    /// `$ command` line (shell prompt style). Sole header when there is no
-    /// description; secondary line when there is one.
-    ///
-    /// Flattens newlines for single-line layouts (collapsed truncate). Expanded
-    /// rendering uses soft-wrap via [`Self::push_shell_command_soft_wrap`].
+    /// `$ command` line (shell prompt style). Sole header when there is no description. secondary line when there is
+    /// one. Flattens newlines for single-line layouts (collapsed truncate). Expanded rendering uses soft-wrap via
+    /// [`Self::push_shell_command_soft_wrap`].
     fn shell_command_line(&self, theme: &Theme, muted_command: bool) -> Line<'static> {
         let command = self.command_display().replace('\n', " ");
         let command = if command.trim().is_empty() {
@@ -178,7 +165,7 @@ impl ExecuteToolCallBlock {
         } else {
             crate::views::tasks_pane::highlight_bash_command(&command)
         };
-        // `$` uses gray_dim — dimmer than muted, no bold
+        // `$` uses gray_dim: dimmer than muted, no bold
         let mut spans = vec![Span::styled("$ ", theme.dim())];
         spans.extend(command_spans);
         Line::from(spans)
@@ -186,8 +173,7 @@ impl ExecuteToolCallBlock {
 
     /// Prefix spans for a soft-wrapped command header (`$ ` or `Run [(user) ]`).
     ///
-    /// Returns `(prefix_spans, hang_width)` — hang is the display width of the
-    /// first-row prefix so continuations indent under the command body.
+    /// Returns `(prefix_spans, hang_width)`; hang is the display width of the first-row prefix so continuations indent under the command body.
     fn command_header_prefix(
         &self,
         theme: &Theme,
@@ -220,10 +206,9 @@ impl ExecuteToolCallBlock {
         }
     }
 
-    /// Multi-line command header using permission-panel soft-wrap (operators + quotes).
+    /// Multi-line command header using permission-panel soft-wrap (operators and quotes).
     ///
-    /// Used for both Shell (`$ command`) and Label (`Run [(user) ]command`) so
-    /// physical newlines / `\` continuations match the permission overlay.
+    /// Used for both Shell (`$ command`) and Label (`Run [(user) ]command`) so physical newlines / `\` continuations match the permission overlay.
     fn push_command_soft_wrap(
         &self,
         lines: &mut Vec<BlockLine>,
@@ -290,8 +275,7 @@ impl ExecuteToolCallBlock {
 
     /// Primary title line for Label style: `Run [(user) ]<description|command>`.
     ///
-    /// When `title` is empty (eager placeholder before `raw_input.command`
-    /// arrives), renders `Run …` so we never flash an internal tool id.
+    /// When `title` is empty (eager placeholder before `raw_input.command` arrives), renders `Run …` so we never flash an internal tool id.
     fn label_title_line(
         &self,
         theme: &Theme,
@@ -309,8 +293,7 @@ impl ExecuteToolCallBlock {
             // Same style as session event messages (e.g. "Worked for 2.3s")
             spans.push(Span::styled("(user) ", theme.muted()));
         }
-        // Single ratatui Line — never pass raw newlines (callers that need
-        // multi-line command display use `push_command_soft_wrap`).
+        // Single ratatui Line: never pass raw newlines (callers that need multi-line command display use `push_command_soft_wrap`)
         let title_owned;
         let title = if title.trim().is_empty() {
             "\u{2026}" // …
@@ -331,24 +314,8 @@ impl ExecuteToolCallBlock {
         Line::from(spans)
     }
 
-    /// Header lines for the execute block (description-first when a description exists).
-    ///
-    /// Without description (unchanged):
-    /// - Shell: `$ command`
-    /// - Label: `Run [(user) ]command`
-    ///
-    /// With description:
-    /// - Shell: description title; optionally `$ command` on the next line
-    /// - Label: `Run [(user) ]description`; optionally `$ command` on the next line
-    ///
-    /// Collapsed mode passes `include_command = false` so only the description
-    /// title is shown (density). Expanded/truncated include the command line.
-    ///
-    /// When `muted` is true, command/description body uses muted gray (collapsed).
-    /// Uses precomputed `header_display` when set; `self.command` stays full.
-    ///
-    /// Returns `(line, prefix_span_count)` — prefix spans are not selectable
-    /// (`"Run "` / `"(user) "` / `"$ "`).
+    /// Description-first when a description exists; collapsed mode omits the command line for density.
+    /// When `muted`, command/description body uses muted gray. Prefix spans (`Run `, `(user) `, `$ `) are not selectable.
     fn header_lines(
         &self,
         theme: &Theme,
@@ -385,9 +352,8 @@ impl ExecuteToolCallBlock {
                 }
             }
             None => {
-                // No description: single-line header (callers that soft-wrap the
-                // command as title use `push_command_soft_wrap` instead).
-                // Flatten newlines — raw `\n` is invalid inside one ratatui Line.
+                // No description: single-line header (callers that soft-wrap the command as title use `push_command_soft_wrap` instead)
+                // Flatten newlines; raw `\n` is invalid inside one ratatui Line
                 let line = match header_style {
                     ExecuteHeaderStyle::Shell => self.shell_command_line(theme, muted_command),
                     ExecuteHeaderStyle::Label => {
@@ -410,19 +376,9 @@ impl ExecuteToolCallBlock {
         }
     }
 
-    /// Push header `BlockLine`s, selecting non-prefix spans.
-    ///
-    /// When `truncate_to_width` is true (collapsed one-line budget), each
-    /// logical header line is hard-truncated. Otherwise soft-wraps: **command**
-    /// lines (Shell `$ …` and Label `Run …` when the command is the title, or
-    /// the secondary `$ command` under a description) use permission-panel bash
-    /// soft-wrap; description titles use hanging word-wrap.
-    /// `include_command` is false in collapsed mode so a description title
-    /// alone is shown without the command line.
-    ///
-    /// `width` must already be the block content width (bullet accounted for).
-    /// Do not also pass bullet width as `extra_indent` — hang is only for the
-    /// `$` / `Run` prefix.
+    /// `include_command` is false in collapsed mode so a description title alone is shown without the command line.
+    /// `width` must already be the block content width (bullet accounted for). Do not also pass bullet width as
+    /// `extra_indent`. hang is only for the `$` / `Run` prefix.
     #[allow(clippy::too_many_arguments)]
     fn push_header_lines(
         &self,
@@ -436,7 +392,7 @@ impl ExecuteToolCallBlock {
         include_command: bool,
     ) {
         let strip_run = matches!(header_style, ExecuteHeaderStyle::Label);
-        // Expanded/truncated: command-as-title soft-wrap (Shell + Label).
+        // Expanded/truncated: command-as-title soft-wrap (Shell and Label)
         if !truncate_to_width && include_command && self.description_display(strip_run).is_none() {
             self.push_command_soft_wrap(
                 lines,
@@ -495,8 +451,7 @@ impl ExecuteToolCallBlock {
                     crate::render::wrapping::wrap_header_hanging(line, width, extra_indent);
                 for (i, wrapped_line) in wrapped.into_iter().enumerate() {
                     let total = wrapped_line.spans.len();
-                    // Only the first wrapped segment of each logical header line
-                    // has the prefix (`Run ` / `$ `); continuations are fully selectable.
+                    // Only the first wrapped segment of each logical header line has the prefix (`Run ` / `$ `); continuations are fully selectable
                     let start = if i == 0 { prefix_spans.min(total) } else { 0 };
                     lines.push(BlockLine {
                         selectable: Selectable::Spans(start..total),
@@ -511,7 +466,6 @@ impl ExecuteToolCallBlock {
     }
 
     /// Render with optional truncation.
-    ///
     /// If `truncate` is Some((first, last)), shows first N lines, ellipsis, last M lines.
     /// If `truncate` is None, shows all output lines.
     fn render_with_truncation(
@@ -521,6 +475,7 @@ impl ExecuteToolCallBlock {
         truncate: Option<(usize, usize)>,
         header_style: ExecuteHeaderStyle,
         extra_indent: usize,
+        result_pad: usize,
     ) -> BlockOutput {
         let mut lines: Vec<BlockLine> = Vec::new();
         self.push_header_lines(
@@ -540,9 +495,10 @@ impl ExecuteToolCallBlock {
         {
             lines.push(BlockLine::separator(Line::from("")));
             let error_style = ratatui::style::Style::default().fg(theme.accent_error);
+            let err_pad = " ".repeat(result_pad);
             for line in error.lines() {
                 lines.push(BlockLine::separator(Line::from(Span::styled(
-                    line.to_string(),
+                    format!("{err_pad}{line}"),
                     error_style,
                 ))));
             }
@@ -553,18 +509,28 @@ impl ExecuteToolCallBlock {
         {
             lines.push(BlockLine::separator(Line::from("")));
 
-            // Default foreground for the output body. Under the terminal-native
-            // (minimal) palette, muted used to collapse to ANSI bright black and
-            // washed out on many dark profiles; content must track the terminal's
-            // default fg (`primary` / Reset). Labels / chrome stay on `muted`/`dim`.
+            // Default foreground for the output body
+            // Under the terminal-native (minimal) palette, muted used to collapse to ANSI bright black and washed out on many dark profiles
+            // Content must track the terminal's default fg (`primary` / Reset); labels / chrome stay on `muted`/`dim`
             let styled_lines: Vec<Line<'static>> =
                 crate::render::terminal_output::render_terminal_lines(output, theme.primary())
                     .into_iter()
                     .map(|rl| rl.line)
                     .collect();
 
-            let (wrapped, joiners) =
-                word_wrap_lines_with_joiners(styled_lines, width.saturating_sub(2).max(20));
+            let (wrapped, joiners) = word_wrap_lines_with_joiners(
+                styled_lines,
+                width.saturating_sub(2 + result_pad).max(20),
+            );
+            let pad = " ".repeat(result_pad);
+            let apply_pad = |mut line: BlockLine| -> BlockLine {
+                if result_pad == 0 {
+                    return line;
+                }
+                line.content.spans.insert(0, Span::raw(pad.clone()));
+                crate::scrollback::types::shift_selection_metadata_for_prefix(&mut line, 1);
+                line
+            };
             let total = wrapped.len();
 
             // Apply truncation if specified and content exceeds limits
@@ -573,52 +539,52 @@ impl ExecuteToolCallBlock {
                 if total > threshold {
                     // First N lines: stdout range base
                     for (wrapped_line, joiner) in wrapped.iter().zip(joiners.iter()).take(first) {
-                        lines.push(
+                        lines.push(apply_pad(
                             BlockLine::styled(wrapped_line.clone())
                                 .with_panel_background(theme.bg_dark)
                                 .with_selection_range(Some(EXECUTE_STDOUT_RANGE_BASE))
                                 .with_joiner(joiner.clone()),
-                        );
+                        ));
                     }
                     let hidden = total - threshold;
-                    lines.push(
+                    lines.push(apply_pad(
                         BlockLine::separator(Line::from(Span::styled(
                             format!("\u{2026} +{hidden} lines"),
                             theme.muted(),
                         )))
                         .with_panel_background(theme.bg_dark),
-                    );
+                    ));
                     // Last M lines: range base + 1 (distinct from first chunk)
                     for (wrapped_line, joiner) in
                         wrapped.iter().zip(joiners.iter()).skip(total - last)
                     {
-                        lines.push(
+                        lines.push(apply_pad(
                             BlockLine::styled(wrapped_line.clone())
                                 .with_panel_background(theme.bg_dark)
                                 .with_selection_range(Some(EXECUTE_STDOUT_RANGE_BASE + 1))
                                 .with_joiner(joiner.clone()),
-                        );
+                        ));
                     }
                 } else {
                     // Content fits, show all with same range
                     for (wrapped_line, joiner) in wrapped.into_iter().zip(joiners) {
-                        lines.push(
+                        lines.push(apply_pad(
                             BlockLine::styled(wrapped_line)
                                 .with_panel_background(theme.bg_dark)
                                 .with_selection_range(Some(EXECUTE_STDOUT_RANGE_BASE))
                                 .with_joiner(joiner),
-                        );
+                        ));
                     }
                 }
             } else {
                 // No truncation, show all with same range
                 for (wrapped_line, joiner) in wrapped.into_iter().zip(joiners) {
-                    lines.push(
+                    lines.push(apply_pad(
                         BlockLine::styled(wrapped_line)
                             .with_panel_background(theme.bg_dark)
                             .with_selection_range(Some(EXECUTE_STDOUT_RANGE_BASE))
                             .with_joiner(joiner),
-                    );
+                    ));
                 }
             }
         }
@@ -627,8 +593,7 @@ impl ExecuteToolCallBlock {
     }
 }
 
-/// Drop a leading `Run` / `Running` word (case-insensitive) plus following
-/// whitespace so Label headers do not read `Run Run the tests`.
+/// Drop a leading `Run` / `Running` word (case-insensitive) plus following whitespace so Label headers do not read `Run Run the tests`.
 fn strip_leading_run_word(s: &str) -> String {
     let lower = s.to_ascii_lowercase();
     let rest = if let Some(rest) = lower.strip_prefix("running") {
@@ -645,10 +610,11 @@ fn strip_leading_run_word(s: &str) -> String {
     if !rest.starts_with(|c: char| c.is_whitespace()) {
         return s.to_string();
     }
-    // Map back to original casing via byte length of the prefix consumed
-    // (`to_ascii_lowercase` preserves length for ASCII prefixes).
+    // Map back to original casing via byte length of the prefix consumed (`to_ascii_lowercase` preserves length for ASCII prefixes)
     let prefix_len = s.len() - rest.len();
-    s[prefix_len..].trim_start().to_string()
+    s.get(prefix_len..)
+        .map(|rest| rest.trim_start().to_string())
+        .unwrap_or_else(|| s.to_string())
 }
 
 impl BlockContent for ExecuteToolCallBlock {
@@ -657,16 +623,20 @@ impl BlockContent for ExecuteToolCallBlock {
         let config = &ctx.appearance.scrollback.blocks.execute;
         let header_style = config.header_style;
 
-        // Content width already nets out the bullet; hang indent is only for
-        // `$` / `Run` prefix (not the bullet again — that double-counted).
+        // Content width already nets out the bullet; hang indent is only for `$` / `Run` prefix (adding the bullet again would double-count it)
         let content_width = ctx.content_width();
+        // Minimal drops the accent gutter; pad results by `$ ` so they line up with the command.
+        let result_pad = if ctx.appearance.scrollback.blocks.thinking.rail_under_bullet {
+            2
+        } else {
+            0
+        };
 
         match ctx.mode {
             DisplayMode::Collapsed => {
                 let muted = ctx.mute_when_collapsed(config.muted_command_collapsed);
                 let mut lines = Vec::new();
-                // Collapsed: description title only (no `$ command`) for density;
-                // without description, still show the single-line command header.
+                // Collapsed: description title only (no `$ command`) for density; without description, still show the single-line command header
                 self.push_header_lines(
                     &mut lines,
                     &theme,
@@ -685,10 +655,16 @@ impl BlockContent for ExecuteToolCallBlock {
                 Some((config.first_lines as usize, config.last_lines as usize)),
                 header_style,
                 0,
+                result_pad,
             ),
-            DisplayMode::Expanded => {
-                self.render_with_truncation(&theme, content_width, None, header_style, 0)
-            }
+            DisplayMode::Expanded => self.render_with_truncation(
+                &theme,
+                content_width,
+                None,
+                header_style,
+                0,
+                result_pad,
+            ),
         }
     }
 
@@ -721,31 +697,14 @@ impl BlockContent for ExecuteToolCallBlock {
     }
 
     fn is_foldable(&self) -> bool {
-        // Collapsed with a description hides `$ command`; expand reveals it
-        // (and output/error when present). Use Label-style stripping so a bare
-        // "Run"/"Running" description (stripped to empty) does not claim a
-        // fold when collapsed and expanded headers are identical.
+        // Collapsed with a description hides `$ command`; expand reveals it (and output/error when present)
+        // A bare "Run"/"Running" description strips to empty under Label-style stripping
+        // Its collapsed and expanded headers are then identical, so it must not claim a fold
         self.description_display(true).is_some() || self.output.is_some() || self.error.is_some()
     }
 
-    /// Fold cycle. Agent tools toggle Collapsed <-> Truncated (glanceable
-    /// preview; full output in the viewer). User `!` commands toggle
-    /// Collapsed <-> Expanded: re-expanding must restore the full output,
-    /// never the lossy first/last window.
-    fn next_fold_mode(&self, current: DisplayMode, _is_running: bool) -> DisplayMode {
-        match current {
-            DisplayMode::Collapsed if self.bash_mode => DisplayMode::Expanded,
-            DisplayMode::Collapsed => DisplayMode::Truncated,
-            DisplayMode::Truncated | DisplayMode::Expanded => DisplayMode::Collapsed,
-        }
-    }
-
-    /// Minimum fold mode used by collapse + the running expand chevron.
-    ///
-    /// Agent tools default to Collapsed (title only) — no auto-expand. User
-    /// `!` bash while running uses Truncated so interactive output streams and
-    /// the chevron treats that as min-fold. When finished, Collapsed is always
-    /// the true minimum (user can fold to title-only).
+    /// Minimum fold mode used by collapse and the running expand chevron. Agent tools default to Collapsed (title
+    /// only), no auto-expand. When finished, Collapsed is always the true minimum (user can fold to title-only).
     fn collapse_mode(&self, is_running: bool) -> DisplayMode {
         if self.bash_mode && is_running {
             DisplayMode::Truncated
@@ -754,11 +713,9 @@ impl BlockContent for ExecuteToolCallBlock {
         }
     }
 
-    /// Agent tools start **Collapsed** (no auto-expand of stdout). User `!`
-    /// bash starts Truncated so output streams — errors included: the
-    /// tracker's Completed refinement resets to this default right before
-    /// `finish_running`, so a Collapsed error default would defeat the
-    /// Expanded finish.
+    /// Agent tools start Collapsed (no auto-expand of stdout). User `!` bash defaults to Truncated so a kind-upgrade or
+    /// first materialize lands Truncated. `finish_running` then expands because the mode is not Collapsed. Same-kind
+    /// completion preserves Truncated rather than resetting.
     fn default_display_mode(&self) -> DisplayMode {
         if self.bash_mode {
             DisplayMode::Truncated
@@ -769,14 +726,12 @@ impl BlockContent for ExecuteToolCallBlock {
 
     fn finished_display_mode(&self) -> Option<DisplayMode> {
         if self.bash_mode {
-            // Interactive bash: full output on finish, like a terminal —
-            // the streaming preview would silently drop the middle lines.
+            // Interactive bash: full output on finish, like a terminal; the streaming preview would silently drop the middle lines
             Some(DisplayMode::Expanded)
         } else {
             // Agent tools: do **not** force a mode on finish.
             // - Never auto-expanded at start (default Collapsed).
-            // - If the user manually expanded while running, keep that mode
-            //   (no snap-shut). If they left it collapsed, it stays collapsed.
+            // - If the user manually expanded while running, keep that mode (no snap-shut). If they left it collapsed, it stays collapsed.
             None
         }
     }
@@ -785,11 +740,21 @@ impl BlockContent for ExecuteToolCallBlock {
         let theme = Theme::current();
         let header_style = ctx.appearance.scrollback.blocks.execute.header_style;
 
-        let mut lines: Vec<Line<'static>> = self
-            .header_lines(&theme, header_style, false, true)
-            .into_iter()
-            .map(|(line, _)| line)
-            .collect();
+        // `header_lines` flattens `\n` to spaces, which smashes multi-line commands into one run-on row in the block viewer
+        // The viewer draws no bullet, so `ctx.width` (not `content_width()`) is the row width
+        let mut header_rows = Vec::new();
+        self.push_header_lines(
+            &mut header_rows,
+            &theme,
+            header_style,
+            /*muted_command*/ false,
+            ctx.width as usize,
+            /*extra_indent*/ 0,
+            /*truncate_to_width*/ false,
+            /*include_command*/ true,
+        );
+        let mut lines: Vec<Line<'static>> =
+            header_rows.into_iter().map(|row| row.content).collect();
 
         if self.output.is_none()
             && let Some(error) = &self.error
@@ -815,6 +780,13 @@ mod tests {
         line.spans.iter().map(|s| s.content.as_ref()).collect()
     }
 
+    fn nth<'a, T>(xs: &'a [T], i: usize) -> &'a T {
+        let Some(x) = xs.get(i) else {
+            panic!("expected item {i}, got {} items", xs.len());
+        };
+        x
+    }
+
     #[test]
     fn header_line_uses_header_display_when_set_command_stays_full() {
         let mut block = ExecuteToolCallBlock::new("cd /proj && echo hi");
@@ -823,7 +795,7 @@ mod tests {
         let theme = Theme::current();
         let headers = block.header_lines(&theme, ExecuteHeaderStyle::Label, false, true);
         assert_eq!(headers.len(), 1);
-        let text = line_text(&headers[0].0);
+        let text = line_text(&nth(&headers, 0).0);
         assert!(text.contains("echo hi"), "header={text:?}");
         assert!(
             !text.contains("cd /proj"),
@@ -838,15 +810,15 @@ mod tests {
         let theme = Theme::current();
         let headers = block.header_lines(&theme, ExecuteHeaderStyle::Label, false, true);
         assert_eq!(headers.len(), 2);
-        let title = line_text(&headers[0].0);
-        let cmd = line_text(&headers[1].0);
+        let title = line_text(&nth(&headers, 0).0);
+        let cmd = line_text(&nth(&headers, 1).0);
         // Leading "Run " on the description is stripped (Label already has it).
         assert_eq!(title, "Run the unit test suite");
         assert!(cmd.starts_with("$ "), "cmd={cmd:?}");
         assert!(cmd.contains("cargo test --lib"), "cmd={cmd:?}");
         // Prefix span counts: "Run " only on title; "$ " on command.
-        assert_eq!(headers[0].1, 1);
-        assert_eq!(headers[1].1, 1);
+        assert_eq!(nth(&headers, 0).1, 1);
+        assert_eq!(nth(&headers, 1).1, 1);
     }
 
     #[test]
@@ -856,7 +828,7 @@ mod tests {
         let theme = Theme::current();
         let headers = block.header_lines(&theme, ExecuteHeaderStyle::Label, true, false);
         assert_eq!(headers.len(), 1);
-        assert_eq!(line_text(&headers[0].0), "Run the unit test suite");
+        assert_eq!(line_text(&nth(&headers, 0).0), "Run the unit test suite");
     }
 
     #[test]
@@ -874,9 +846,9 @@ mod tests {
         let theme = Theme::current();
         let headers = block.header_lines(&theme, ExecuteHeaderStyle::Shell, false, true);
         assert_eq!(headers.len(), 2);
-        assert_eq!(line_text(&headers[0].0), "Check git status");
-        assert_eq!(headers[0].1, 0);
-        let cmd = line_text(&headers[1].0);
+        assert_eq!(line_text(&nth(&headers, 0).0), "Check git status");
+        assert_eq!(nth(&headers, 0).1, 0);
+        let cmd = line_text(&nth(&headers, 1).0);
         assert!(cmd.starts_with("$ "), "cmd={cmd:?}");
         assert!(cmd.contains("git status -sb"), "cmd={cmd:?}");
     }
@@ -887,7 +859,7 @@ mod tests {
         let theme = Theme::current();
         let headers = block.header_lines(&theme, ExecuteHeaderStyle::Label, false, false);
         assert_eq!(headers.len(), 1);
-        let text = line_text(&headers[0].0);
+        let text = line_text(&nth(&headers, 0).0);
         assert!(text.starts_with("Run "), "header={text:?}");
         assert!(text.contains("echo hi"), "header={text:?}");
     }
@@ -899,7 +871,7 @@ mod tests {
         let theme = Theme::current();
         let headers = block.header_lines(&theme, ExecuteHeaderStyle::Label, false, true);
         assert_eq!(headers.len(), 1);
-        let text = line_text(&headers[0].0);
+        let text = line_text(&nth(&headers, 0).0);
         assert!(
             !text.contains('\n'),
             "label single-line header must flatten newlines: {text:?}"
@@ -930,7 +902,7 @@ mod tests {
             "expected operator soft-wrap rows, got {}",
             lines.len()
         );
-        let first = line_text(&lines[0].content);
+        let first = line_text(&nth(&lines, 0).content);
         assert!(
             first.starts_with("Run "),
             "Label soft-wrap first row needs Run prefix: {first:?}"
@@ -943,13 +915,13 @@ mod tests {
             !first.contains('\n'),
             "each BlockLine is one visual row: {first:?}"
         );
-        let second = line_text(&lines[1].content);
+        let second = line_text(&nth(&lines, 1).content);
         assert!(
             second.trim_start().starts_with("cargo"),
             "continuation under hang: {second:?}"
         );
         assert_eq!(
-            lines[1].joiner.as_deref(),
+            nth(&lines, 1).joiner.as_deref(),
             Some("\n"),
             "copy must preserve line breaks between soft-wrap rows"
         );
@@ -961,7 +933,7 @@ mod tests {
         let theme = Theme::current();
         let headers = block.header_lines(&theme, ExecuteHeaderStyle::Label, false, false);
         assert_eq!(headers.len(), 1);
-        assert!(line_text(&headers[0].0).contains("echo hi"));
+        assert!(line_text(&nth(&headers, 0).0).contains("echo hi"));
     }
 
     #[test]
@@ -971,9 +943,9 @@ mod tests {
         let theme = Theme::current();
         let headers = block.header_lines(&theme, ExecuteHeaderStyle::Label, false, true);
         assert_eq!(headers.len(), 2);
-        let title = line_text(&headers[0].0);
+        let title = line_text(&nth(&headers, 0).0);
         assert_eq!(title, "Run (user) List files");
-        assert_eq!(headers[0].1, 2); // "Run " + "(user) "
+        assert_eq!(nth(&headers, 0).1, 2); // "Run " and "(user) "
     }
 
     #[test]
@@ -993,7 +965,7 @@ mod tests {
         assert_eq!(agent.default_display_mode(), DisplayMode::Collapsed);
         assert_eq!(agent.collapse_mode(true), DisplayMode::Collapsed);
         assert_eq!(agent.collapse_mode(false), DisplayMode::Collapsed);
-        // Finish does not force open or shut — preserve user choice (None).
+        // Finish does not force open or shut; preserve user choice (None)
         assert_eq!(agent.finished_display_mode(), None);
 
         let mut bash = ExecuteToolCallBlock::new("ls");
@@ -1003,22 +975,12 @@ mod tests {
         assert_eq!(bash.finished_display_mode(), Some(DisplayMode::Expanded));
         assert_eq!(bash.collapse_mode(true), DisplayMode::Truncated);
         assert_eq!(bash.collapse_mode(false), DisplayMode::Collapsed);
-        // Fold cycle for user bash skips the lossy Truncated window.
-        assert_eq!(
-            bash.next_fold_mode(DisplayMode::Collapsed, false),
-            DisplayMode::Expanded
-        );
-        assert_eq!(
-            bash.next_fold_mode(DisplayMode::Expanded, false),
-            DisplayMode::Collapsed
-        );
 
         let failed = ExecuteToolCallBlock::new("false").with_error("exit 1");
         assert_eq!(failed.default_display_mode(), DisplayMode::Collapsed);
         assert_eq!(failed.finished_display_mode(), None);
 
-        // Failed user bash keeps the Truncated default: a Collapsed default
-        // would defeat the finish expand (see default_display_mode).
+        // Failed user bash keeps the Truncated default: a Collapsed default would defeat the finish expand (see default_display_mode)
         let mut failed_bash = ExecuteToolCallBlock::new("pytest").with_error("exit 2");
         failed_bash.bash_mode = true;
         assert_eq!(failed_bash.default_display_mode(), DisplayMode::Truncated);
@@ -1064,5 +1026,34 @@ mod tests {
     fn test_with_output() {
         let block = ExecuteToolCallBlock::new("echo test").with_output("plain text output");
         assert_eq!(block.output, Some("plain text output".to_string()));
+    }
+
+    #[test]
+    fn preamble_multiline_command_keeps_separate_lines() {
+        // Regression: the block viewer preamble flattened `\n` to spaces, smashing multi-line commands into one row
+        let block = ExecuteToolCallBlock::new("export XAI_ROOT=/tmp\ncd /tmp\necho start");
+        let mut appearance = AppearanceConfig::default();
+        appearance.scrollback.blocks.execute.header_style = ExecuteHeaderStyle::Shell;
+        let ctx = BlockContext {
+            mode: DisplayMode::Expanded,
+            is_running: false,
+            width: 120,
+            raw: false,
+            max_lines: None,
+            appearance,
+            is_selected: false,
+            cwd: None,
+        };
+        let plain: Vec<String> = block
+            .preamble(&ctx)
+            .expect("execute preamble is always present")
+            .lines
+            .iter()
+            .map(line_text)
+            .collect();
+        assert_eq!(
+            plain,
+            vec!["$ export XAI_ROOT=/tmp", "  cd /tmp", "  echo start"]
+        );
     }
 }

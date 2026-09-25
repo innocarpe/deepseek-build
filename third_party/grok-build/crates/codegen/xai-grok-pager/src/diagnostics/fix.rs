@@ -215,8 +215,8 @@ pub struct FixOutcome {
     status: FixStatus,
     changed_file: ChangedFile,
     activation: FixActivation,
-    /// Shell used to plan/apply SSH-wrap. Post-apply verification must use this
-    /// rather than re-reading `$SHELL`, which may be missing or different.
+    /// Shell used to plan/apply SSH-wrap.
+    /// Post-apply verification must use this rather than re-reading `$SHELL`, which may be missing or different.
     shell: Option<ShellKind>,
 }
 
@@ -280,8 +280,8 @@ impl FixOutcome {
         self.shell
     }
 
-    /// Whether the SSH-wrap managed alias is present for the shell that applied
-    /// this outcome. Uses the planned shell, not the current `$SHELL`.
+    /// Whether the SSH-wrap managed alias is present for the shell that applied this outcome.
+    /// Uses the planned shell, not the current `$SHELL`.
     pub fn managed_alias_is_configured(&self) -> bool {
         self.shell
             .is_some_and(|shell| managed_alias_configured(&self.changed_file.path, shell))
@@ -411,16 +411,13 @@ enum TmuxEvidence {
     ColorPassthrough,
 }
 
-/// How a tmux remedy reaches its healthy state, which decides whether an
-/// existing line elsewhere in the config can defeat Grok's managed block.
+/// How a tmux remedy reaches its healthy state, which decides whether an existing line elsewhere in the config can defeat Grok's managed block.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TmuxRemedy {
-    /// `set -g <option> <value>`: the last assignment wins, so a direct
-    /// assignment in the user's own config must be classified before writing.
+    /// `set -g <option> <value>`: the last assignment wins, so a direct assignment in the user's own config must be classified before writing.
     Assignment,
-    /// `set -as <option> …`: tmux accumulates these and Grok appends its block
-    /// at the end of the file, so earlier lines add to the fix rather than
-    /// override it and are never a conflict.
+    /// `set -as <option> …`: tmux accumulates these and Grok appends its block at the end of the file.
+    /// Earlier lines add to the fix rather than override it and are never a conflict.
     Accumulating,
 }
 
@@ -429,8 +426,8 @@ struct TmuxOptionSpec {
     id: DiagnosticId,
     option: &'static str,
     line: &'static str,
-    /// Values that already satisfy the fix. Empty for an accumulating remedy,
-    /// whose health comes from the attached client, not from one option value.
+    /// Values that already satisfy the fix.
+    /// Empty for an accumulating remedy, whose health comes from the attached client, not from one option value.
     healthy_values: &'static [&'static str],
     remedy: TmuxRemedy,
     evidence: TmuxEvidence,
@@ -809,8 +806,7 @@ fn tmux_caveats(remedy: TmuxRemedy) -> Vec<&'static str> {
             "The live tmux server is unchanged until you reload this config or restart it.",
             TMUX_SCANNER_CAVEAT,
         ],
-        // Reloading is not enough on its own: tmux fixes a client's feature set
-        // when that client attaches.
+        // Reloading is not enough on its own: tmux fixes a client's feature set when that client attaches
         TmuxRemedy::Accumulating => vec![
             "Reloading alone is not enough: the attached client keeps its current color depth until it reattaches.",
             "Terminals that cannot render 24-bit color ignore the extra escape sequence.",
@@ -1027,9 +1023,8 @@ fn shell_quote_path(path: &Path) -> Option<String> {
     Some(format!("'{}'", value.replace('\'', "'\\''")))
 }
 
-/// An accumulating remedy needs both steps: the server reads the new option
-/// only on reload, and a client resolves its feature set only at attach, so
-/// neither reloading nor reattaching alone changes anything.
+/// An accumulating remedy needs both steps: the server reads the new option only on reload, and a client resolves its feature set only at attach.
+/// Neither reloading nor reattaching alone changes anything.
 fn tmux_activation_instruction(spec: &TmuxOptionSpec, path: &Path) -> String {
     match spec.remedy {
         TmuxRemedy::Assignment => reload_instruction(path),
@@ -1155,7 +1150,9 @@ fn tmux_top_level_commands(
     let chars = text.chars().collect::<Vec<_>>();
     let mut index = 0;
     while index < chars.len() {
-        let character = chars[index];
+        let Some(&character) = chars.get(index) else {
+            break;
+        };
         if escaped {
             if character == '\n' {
                 // tmux removes escaped newlines exactly; it does not insert a space.
@@ -1191,14 +1188,15 @@ fn tmux_top_level_commands(
         if character == '#'
             && (line_start || current.chars().last().is_some_and(char::is_whitespace))
         {
-            while index < chars.len() && chars[index] != '\n' {
+            while chars.get(index).is_some_and(|&c| c != '\n') {
                 index += 1;
             }
             continue;
         }
         if line_start && character == '%' {
-            let directive = chars[index..]
+            let directive = chars
                 .iter()
+                .skip(index)
                 .take_while(|character| **character != '\n')
                 .collect::<String>();
             let directive = directive.trim();
@@ -1207,7 +1205,7 @@ fn tmux_top_level_commands(
             } else if directive.starts_with("%endif") {
                 conditional_depth = conditional_depth.saturating_sub(1);
             }
-            while index < chars.len() && chars[index] != '\n' {
+            while chars.get(index).is_some_and(|&c| c != '\n') {
                 index += 1;
             }
             line_start = true;
@@ -1255,7 +1253,7 @@ fn tokenize_tmux_command<'a>(
     let mut tokens = Vec::new();
     let mut index = 0;
     while index < bytes.len() {
-        while bytes[index..].first().is_some_and(u8::is_ascii_whitespace) {
+        while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
             index += 1;
             if index == bytes.len() {
                 return Ok(tokens);
@@ -1265,7 +1263,9 @@ fn tokenize_tmux_command<'a>(
         let mut quote = None;
         let mut quoted = false;
         while index < bytes.len() {
-            let byte = bytes[index];
+            let Some(&byte) = bytes.get(index) else {
+                break;
+            };
             if let Some(active) = quote {
                 if byte == active {
                     quote = None;
@@ -1291,7 +1291,9 @@ fn tokenize_tmux_command<'a>(
                 "unterminated quoted tmux token",
             ));
         }
-        let raw = &command[start..index];
+        let Some(raw) = command.get(start..index) else {
+            break;
+        };
         let value = raw
             .strip_prefix(['\'', '"'])
             .and_then(|value| value.strip_suffix(['\'', '"']))
@@ -1354,7 +1356,10 @@ fn classify_tmux_assignment(
             index += 1;
             break;
         }
-        let flags = &token.value[1..];
+        let Some(flags) = token.value.get(1..) else {
+            index += 1;
+            continue;
+        };
         is_global |= flags.contains('g');
         if flags.contains('s') {
             explicit_scope = Some(TmuxOptionScope::Server);
@@ -1369,8 +1374,8 @@ fn classify_tmux_assignment(
                 return TmuxAssignment::Ambiguous("missing tmux target argument".to_owned());
             }
         }
-        // -F, -f, -t and similar flags take one following argument. Unknown
-        // flags on a possible target fail closed instead of shifting tokens.
+        // -F, -f, -t and similar flags take one following argument
+        // Unknown flags on a possible target fail closed instead of shifting tokens
         if flags.chars().any(|flag| matches!(flag, 'F' | 'f')) {
             index += 1;
             if tokens.get(index).is_none() {
@@ -1398,8 +1403,8 @@ fn classify_tmux_assignment(
     let effective_scope = explicit_scope.unwrap_or(spec.scope);
     match spec.scope {
         TmuxOptionScope::Server => {
-            // tmux resolves known server options by option scope even when a
-            // window flag is supplied. A target is nonsensical/ambiguous here.
+            // tmux resolves known server options by option scope even when a window flag is supplied
+            // A target is nonsensical/ambiguous here
             if has_target {
                 return TmuxAssignment::Ambiguous(format!(
                     "targeted server assignment may affect `{}`",
@@ -1415,13 +1420,19 @@ fn classify_tmux_assignment(
             }
         }
     }
-    if tokens.len() != index + 2 || tokens[index + 1].quoted {
+    let Some(value_token) = tokens.get(index + 1) else {
+        return TmuxAssignment::Ambiguous(format!(
+            "ambiguous direct assignment of `{}`",
+            spec.option
+        ));
+    };
+    if tokens.len() != index + 2 || value_token.quoted {
         return TmuxAssignment::Ambiguous(format!(
             "ambiguous direct assignment of `{}`",
             spec.option
         ));
     }
-    let value = tokens[index + 1].value;
+    let value = value_token.value;
     if spec.healthy_values.contains(&value) {
         TmuxAssignment::Healthy
     } else {
@@ -1535,7 +1546,10 @@ fn is_posix_ssh_function_declaration(line: &str) -> bool {
     };
     let after_name = after_name.trim_start();
     after_name.starts_with("()")
-        || (after_name.starts_with('(') && after_name[1..].trim_start().starts_with(')'))
+        || (after_name.starts_with('(')
+            && after_name
+                .get(1..)
+                .is_some_and(|s| s.trim_start().starts_with(')')))
 }
 
 fn token_is_exact_name(text: &str, name: &str) -> bool {
@@ -1581,8 +1595,7 @@ fn detect_fish_ssh_customization(text: &str) -> Option<String> {
 }
 
 fn actual_home() -> Option<PathBuf> {
-    #[allow(deprecated)]
-    std::env::home_dir()
+    xai_dirs::home_dir()
 }
 
 pub fn configured_report(mut report: DiagnosticReport, configured: bool) -> DiagnosticReport {

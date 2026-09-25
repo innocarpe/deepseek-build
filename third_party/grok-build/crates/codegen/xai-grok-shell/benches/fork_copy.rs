@@ -1,6 +1,5 @@
-//! Throughput benchmark for `StorageAdapter::copy_session_data` over a
-//! synthesized production-shaped session; the peak-RSS bound lives in
-//! `tests/test_fork_copy_memory.rs`.
+//! Measures the throughput of `StorageAdapter::copy_session_data` over a synthesized session shaped like production data.
+//! The bound on peak RSS is checked in `tests/test_fork_copy_memory.rs`.
 //!
 //! Run: `cargo bench -p xai-grok-shell --bench fork_copy`
 //! Size override: `FORK_BENCH_MB=64 cargo bench ...` (default 16 MB).
@@ -15,7 +14,7 @@ use criterion::{
 use tempfile::TempDir;
 use xai_grok_shell::session::info::Info;
 use xai_grok_shell::session::storage::{CopySessionOptions, JsonlStorageAdapter, StorageAdapter};
-use xai_grok_shell::session::testkit::synth::synthesize_to_target_bytes;
+use xai_grok_shell::session::testkit::synth::make_session_with_size_blocking;
 
 fn bench_fork_copy(c: &mut Criterion) {
     let target_mb: u64 = std::env::var("FORK_BENCH_MB")
@@ -23,7 +22,7 @@ fn bench_fork_copy(c: &mut Criterion) {
         .and_then(|v| v.parse().ok())
         .unwrap_or(16);
     let root = TempDir::new().expect("tempdir");
-    let source = synthesize_to_target_bytes(root.path(), target_mb * 1024 * 1024);
+    let source = make_session_with_size_blocking(root.path(), target_mb * 1024 * 1024);
     let adapter = JsonlStorageAdapter::with_root(root.path().to_path_buf());
     let updates_len = std::fs::metadata(adapter.updates_file_path(&source).expect("updates path"))
         .expect("updates.jsonl")

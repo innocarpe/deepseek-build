@@ -10,6 +10,14 @@ pub struct WebSearchClient {
     http: reqwest::Client,
     base_url: String,
     model: String,
+    /// Authoritative domain allowlist from `[toolset.web_search] allowed_domains`. When set it
+    /// governs the search and the model's per-call `allowed_domains` is ignored (see
+    /// [`Self::resolve_filters`]). Mutually exclusive with `default_excluded_domains`.
+    default_allowed_domains: Option<Vec<String>>,
+    /// Authoritative domain blocklist from `[toolset.web_search] excluded_domains`.
+    /// The model cannot un-set it by naming a blocked domain in its own
+    /// `allowed_domains`. Mutually exclusive with `default_allowed_domains`.
+    default_excluded_domains: Option<Vec<String>>,
     api_key_provider: Option<SharedApiKeyProvider>,
     /// Optional 401-attribution hook. Callers can wire this so a 401
     /// from the Responses API emits an `auth_401_attribution` event
@@ -30,6 +38,8 @@ impl WebSearchClient {
             model,
             extra_headers,
             alpha_test_key,
+            allowed_domains,
+            excluded_domains,
         } = config
         else {
             return Err(xai_tool_runtime::ToolError::execution(
@@ -64,10 +74,12 @@ impl WebSearchClient {
             headers.insert(header_name, header_value);
         }
         let _ = alpha_test_key;
-        let http = xai_grok_extra_ca::with_extra_root_certificates(
-            reqwest::Client::builder().default_headers(headers),
-        )
-        .build()
+        let key = crate::util::shared_http::cache_key("web_search", &headers);
+        let http = crate::util::shared_http::cached_client(key, || {
+            xai_grok_extra_ca::build_reqwest_client(|builder| {
+                builder.default_headers(headers.clone())
+            })
+        })
         .map_err(|e| {
             xai_tool_runtime::ToolError::execution(
                 xai_tool_protocol::ToolId::new("web_search").expect("valid"),
@@ -78,9 +90,81 @@ impl WebSearchClient {
             http,
             base_url: base_url.clone(),
             model: model.clone(),
+            default_allowed_domains: allowed_domains.clone(),
+            default_excluded_domains: excluded_domains.clone(),
             api_key_provider,
             attribution_callback: None,
         })
+    }
+    /// Resolve the effective domain filters for a request. This is required for `excluded_domains` to be a real block. Otherwise the model could
+    /// bypass the user's blocklist simply by naming the blocked domain in its own `allowed_domains`. Only when no config policy is set does the
+    /// model's per-call allowlist apply. The two lists are mutually exclusive, so at most one of the returned options is `Some`.
+    fn resolve_filters(
+        &self,
+        model_allowed: Option<Vec<String>>,
+    ) -> (Option<Vec<String>>, Option<Vec<String>>) {
+        if let Some(allowed) = self
+            .default_allowed_domains
+            .clone()
+            .filter(|d| !d.is_empty())
+        {
+            return (Some(allowed), None);
+        }
+        if let Some(excluded) = self
+            .default_excluded_domains
+            .clone()
+            .filter(|d| !d.is_empty())
+        {
+            return (None, Some(excluded));
+        }
+        (model_allowed.filter(|d| !d.is_empty()), None)
+    }
+    /// Build the serialized `/responses` request body for a single web search. The request always
+    /// carries exactly one tool (`web_search`) at index 0.
+    fn build_request_json(
+        &self,
+        query: &str,
+        allowed_domains: Option<Vec<String>>,
+        excluded_domains: Option<Vec<String>>,
+    ) -> Result<serde_json::Value, xai_tool_runtime::ToolError> {
+        let err = |msg: String| {
+            xai_tool_runtime::ToolError::execution(
+                xai_tool_protocol::ToolId::new("web_search").expect("valid"),
+                msg,
+            )
+        };
+        let web_search = rs::WebSearchToolArgs::default()
+            .filters(rs::WebSearchToolFilters { allowed_domains })
+            .build()
+            .map_err(|e| err(format!("Failed to build web search tool: {e}")))?;
+        let request = rs::CreateResponseArgs::default()
+            .model(self.model.clone())
+            .input(query.to_string())
+            .tools(vec![rs::Tool::WebSearch(web_search)])
+            .store(false)
+            .temperature(0.1)
+            .top_p(0.95)
+            .max_output_tokens(8192u32)
+            .build()
+            .map_err(|e| err(format!("Failed to build request: {e}")))?;
+        let mut body = serde_json::to_value(&request)
+            .map_err(|e| err(format!("Failed to serialize request: {e}")))?;
+        if let Some(excluded) = excluded_domains.filter(|d| !d.is_empty()) {
+            let tool = body
+                .get_mut("tools")
+                .and_then(|t| t.as_array_mut())
+                .and_then(|arr| arr.first_mut())
+                .and_then(|t| t.as_object_mut());
+            if let Some(tool) = tool {
+                let filters = tool
+                    .entry("filters")
+                    .or_insert_with(|| serde_json::json!({}));
+                if let Some(obj) = filters.as_object_mut() {
+                    obj.insert("excluded_domains".to_owned(), serde_json::json!(excluded));
+                }
+            }
+        }
+        Ok(body)
     }
     /// Wire a 401-attribution callback into this client. Idempotent;
     /// safe to call before or after the first request.
@@ -101,39 +185,16 @@ impl WebSearchClient {
             sent_bearer,
         );
     }
-    /// Perform a web search query using the Responses API.
-    ///
-    /// Returns `(content, citations)` where content is the assistant's text
-    /// and citations are unique URLs found in the response annotations.
+    /// Perform a web search query using the Responses API. Returns `(content, citations)` where
+    /// content is the assistant's text and citations are unique URLs found in the response
+    /// annotations.
     pub async fn search(
         &self,
         query: &str,
         allowed_domains: Option<Vec<String>>,
     ) -> Result<(String, Vec<String>), xai_tool_runtime::ToolError> {
-        let web_search = rs::WebSearchToolArgs::default()
-            .filters(rs::WebSearchToolFilters { allowed_domains })
-            .build()
-            .map_err(|e| {
-                xai_tool_runtime::ToolError::execution(
-                    xai_tool_protocol::ToolId::new("web_search").expect("valid"),
-                    format!("Failed to build web search tool: {e}"),
-                )
-            })?;
-        let request = rs::CreateResponseArgs::default()
-            .model(self.model.clone())
-            .input(query.to_string())
-            .tools(vec![rs::Tool::WebSearch(web_search)])
-            .store(false)
-            .temperature(0.1)
-            .top_p(0.95)
-            .max_output_tokens(8192u32)
-            .build()
-            .map_err(|e| {
-                xai_tool_runtime::ToolError::execution(
-                    xai_tool_protocol::ToolId::new("web_search").expect("valid"),
-                    format!("Failed to build request: {e}"),
-                )
-            })?;
+        let (allowed, excluded) = self.resolve_filters(allowed_domains);
+        let request = self.build_request_json(query, allowed, excluded)?;
         let url = format!("{}/responses", self.base_url.trim_end_matches('/'));
         let sent_bearer = self.current_bearer().await;
         let mut req = self.http.post(&url).json(&request);
@@ -189,42 +250,16 @@ impl WebSearchClient {
         let citations = extract_citations(&response_obj);
         Ok((content, citations))
     }
-    /// Same as [`Self::search`] but also extracts per-citation titles when
-    /// the Responses API surfaces them. Returns `(content, citations_with_titles)`
-    /// where each citation is `(title, url)`. Empty `title` strings indicate
-    /// the upstream didn't supply one for that URL.
-    ///
-    /// Used by the cursor-compat `WebSearch` adapter to render a
-    /// `Links:\n1. [title](url)` list instead of the LLM synthesis text.
+    /// Same as [`Self::search`] but also extracts per-citation titles when the Responses API surfaces them. Returns `(content,
+    /// citations_with_titles)` where each citation is `(title, url)`. Empty `title` strings indicate the upstream didn't supply one for that URL.
+    /// Used by the cursor-compat `WebSearch` adapter to render a `Links:\n1. [title](url)` list instead of the LLM synthesis text.
     pub async fn search_with_titles(
         &self,
         query: &str,
         allowed_domains: Option<Vec<String>>,
     ) -> Result<(String, Vec<(String, String)>), xai_tool_runtime::ToolError> {
-        let web_search = rs::WebSearchToolArgs::default()
-            .filters(rs::WebSearchToolFilters { allowed_domains })
-            .build()
-            .map_err(|e| {
-                xai_tool_runtime::ToolError::execution(
-                    xai_tool_protocol::ToolId::new("web_search").expect("valid"),
-                    format!("Failed to build web search tool: {e}"),
-                )
-            })?;
-        let request = rs::CreateResponseArgs::default()
-            .model(self.model.clone())
-            .input(query.to_string())
-            .tools(vec![rs::Tool::WebSearch(web_search)])
-            .store(false)
-            .temperature(0.1)
-            .top_p(0.95)
-            .max_output_tokens(8192u32)
-            .build()
-            .map_err(|e| {
-                xai_tool_runtime::ToolError::execution(
-                    xai_tool_protocol::ToolId::new("web_search").expect("valid"),
-                    format!("Failed to build request: {e}"),
-                )
-            })?;
+        let (allowed, excluded) = self.resolve_filters(allowed_domains);
+        let request = self.build_request_json(query, allowed, excluded)?;
         let url = format!("{}/responses", self.base_url.trim_end_matches('/'));
         let sent_bearer = self.current_bearer().await;
         let mut req = self.http.post(&url).json(&request);
@@ -306,11 +341,9 @@ fn extract_citations(response: &rs::Response) -> Vec<String> {
     citations.retain(|url| seen.insert(url.clone()));
     citations
 }
-/// Extract `(title, url)` pairs from the Responses API annotations.
-///
-/// `title` may be an empty string when upstream doesn't supply one. URLs
-/// are deduplicated while preserving the first-seen order so the rendered
-/// `Links:` list is stable and free of duplicates.
+/// Extract `(title, url)` pairs from the Responses API annotations. `title` may be an empty string
+/// when upstream doesn't supply one. URLs are deduplicated while preserving the first-seen order so
+/// the rendered `Links:` list is stable and free of duplicates.
 fn extract_citation_pairs(response: &rs::Response) -> Vec<(String, String)> {
     let mut pairs: Vec<(String, String)> = Vec::new();
     for output_item in &response.output {
@@ -349,6 +382,93 @@ mod tests {
     fn response_from_json(json: serde_json::Value) -> rs::Response {
         serde_json::from_value(json).expect("Failed to parse test Response JSON")
     }
+    /// Build a client with the given configured domain defaults.
+    fn client_with_defaults(
+        allowed: Option<Vec<String>>,
+        excluded: Option<Vec<String>>,
+    ) -> WebSearchClient {
+        let config = WebSearchConfig::Enabled {
+            api_key: "test-key".to_string(),
+            base_url: "https://api.x.ai/v1".to_string(),
+            model: "test-model".to_string(),
+            extra_headers: IndexMap::new(),
+            alpha_test_key: None,
+            allowed_domains: allowed,
+            excluded_domains: excluded,
+        };
+        WebSearchClient::new(&config, None).expect("client should build")
+    }
+    fn v(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+    #[test]
+    fn resolve_filters_config_allowlist_wins_over_model() {
+        let client = client_with_defaults(Some(v(&["config.com"])), None);
+        let (allowed, excluded) = client.resolve_filters(Some(v(&["model.com"])));
+        assert_eq!(allowed, Some(v(&["config.com"])));
+        assert!(excluded.is_none());
+    }
+    #[test]
+    fn resolve_filters_uses_config_allowlist_when_model_silent() {
+        let client = client_with_defaults(Some(v(&["config.com"])), None);
+        let (allowed, excluded) = client.resolve_filters(None);
+        assert_eq!(allowed, Some(v(&["config.com"])));
+        assert!(excluded.is_none());
+    }
+    #[test]
+    fn resolve_filters_config_blocklist_applies_when_no_allowlist() {
+        let client = client_with_defaults(None, Some(v(&["reddit.com"])));
+        let (allowed, excluded) = client.resolve_filters(None);
+        assert!(allowed.is_none());
+        assert_eq!(excluded, Some(v(&["reddit.com"])));
+    }
+    #[test]
+    fn resolve_filters_config_blocklist_cannot_be_bypassed_by_model() {
+        let client = client_with_defaults(None, Some(v(&["github.com"])));
+        let (allowed, excluded) = client.resolve_filters(Some(v(&["github.com"])));
+        assert!(
+            allowed.is_none(),
+            "model allowlist must not override the block"
+        );
+        assert_eq!(excluded, Some(v(&["github.com"])));
+    }
+    #[test]
+    fn resolve_filters_no_config_honors_model_allowlist() {
+        let client = client_with_defaults(None, None);
+        let (allowed, excluded) = client.resolve_filters(Some(v(&["model.com"])));
+        assert_eq!(allowed, Some(v(&["model.com"])));
+        assert!(excluded.is_none());
+    }
+    #[test]
+    fn build_request_json_injects_excluded_domains() {
+        let client = client_with_defaults(None, None);
+        let body = client
+            .build_request_json("q", None, Some(v(&["reddit.com"])))
+            .expect("request json builds");
+        let Some(filters) = body.pointer("/tools/0/filters") else {
+            panic!("missing tools[0].filters: {body}");
+        };
+        assert_eq!(
+            filters.get("excluded_domains"),
+            Some(&serde_json::json!(["reddit.com"]))
+        );
+        assert!(filters.get("allowed_domains").is_none());
+    }
+    #[test]
+    fn build_request_json_allowlist_only_has_no_excluded_key() {
+        let client = client_with_defaults(None, None);
+        let body = client
+            .build_request_json("q", Some(v(&["docs.x.ai"])), None)
+            .expect("request json builds");
+        let Some(filters) = body.pointer("/tools/0/filters") else {
+            panic!("missing tools[0].filters: {body}");
+        };
+        assert_eq!(
+            filters.get("allowed_domains"),
+            Some(&serde_json::json!(["docs.x.ai"]))
+        );
+        assert!(filters.get("excluded_domains").is_none());
+    }
     #[test]
     fn test_new_client_uses_configured_model() {
         let config = WebSearchConfig::Enabled {
@@ -357,6 +477,8 @@ mod tests {
             model: "custom-enterprise-model".to_string(),
             extra_headers: IndexMap::new(),
             alpha_test_key: None,
+            allowed_domains: None,
+            excluded_domains: None,
         };
         let client = WebSearchClient::new(&config, None).expect("client should build");
         assert_eq!(client.model, "custom-enterprise-model");
@@ -387,6 +509,8 @@ mod tests {
             model: "test-model".to_string(),
             extra_headers: IndexMap::new(),
             alpha_test_key: None,
+            allowed_domains: None,
+            excluded_domains: None,
         };
         let client = WebSearchClient::new(&config, None)
             .expect("client should build")
@@ -394,10 +518,13 @@ mod tests {
         client.record_401_attribution(Some("bearer-with-long-tail-aaaadistinct"));
         let calls = cb.invocations.lock().unwrap();
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].0, ToolConsumer::WebSearch);
-        assert_eq!(calls[0].1.as_deref(), Some("aaaadistinct"));
+        let Some(call) = calls.first() else {
+            panic!("expected one attribution call");
+        };
+        assert_eq!(call.0, ToolConsumer::WebSearch);
+        assert_eq!(call.1.as_deref(), Some("aaaadistinct"));
         assert_eq!(
-            calls[0].1.as_deref().map(str::len),
+            call.1.as_deref().map(str::len),
             Some(crate::attribution::BEARER_SUFFIX_LEN),
         );
     }
@@ -411,6 +538,8 @@ mod tests {
             model: "test-model".to_string(),
             extra_headers: IndexMap::new(),
             alpha_test_key: None,
+            allowed_domains: None,
+            excluded_domains: None,
         };
         let client = WebSearchClient::new(&config, None).expect("client should build");
         client.record_401_attribution(Some("any-bearer"));
@@ -470,8 +599,11 @@ mod tests {
         }));
         let citations = extract_citations(&response);
         assert_eq!(citations.len(), 2);
-        assert_eq!(citations[0], "https://www.rust-lang.org/");
-        assert_eq!(citations[1], "https://docs.rs/");
+        let [first, second] = citations.as_slice() else {
+            panic!("expected 2 citations: {citations:?}");
+        };
+        assert_eq!(first, "https://www.rust-lang.org/");
+        assert_eq!(second, "https://docs.rs/");
     }
     #[test]
     fn test_extract_citations_deduplicates() {
@@ -521,8 +653,11 @@ mod tests {
         }));
         let citations = extract_citations(&response);
         assert_eq!(citations.len(), 2);
-        assert_eq!(citations[0], "https://example.com/page1");
-        assert_eq!(citations[1], "https://example.com/page2");
+        let [first, second] = citations.as_slice() else {
+            panic!("expected 2 citations: {citations:?}");
+        };
+        assert_eq!(first, "https://example.com/page1");
+        assert_eq!(second, "https://example.com/page2");
     }
     #[test]
     fn test_extract_citations_multiple_messages() {
@@ -579,8 +714,11 @@ mod tests {
         }));
         let citations = extract_citations(&response);
         assert_eq!(citations.len(), 2);
-        assert_eq!(citations[0], "https://first.com/");
-        assert_eq!(citations[1], "https://second.com/");
+        let [first, second] = citations.as_slice() else {
+            panic!("expected 2 citations: {citations:?}");
+        };
+        assert_eq!(first, "https://first.com/");
+        assert_eq!(second, "https://second.com/");
     }
     #[test]
     fn test_extract_citations_ignores_non_url_annotations() {
@@ -616,7 +754,10 @@ mod tests {
         }));
         let citations = extract_citations(&response);
         assert_eq!(citations.len(), 1);
-        assert_eq!(citations[0], "https://valid.com/");
+        assert_eq!(
+            citations.first().map(String::as_str),
+            Some("https://valid.com/")
+        );
     }
     /// A provider that always returns `None`, simulating an API-key user
     /// whose token has aged past the client-side TTL.
@@ -626,10 +767,9 @@ mod tests {
             None
         }
     }
-    /// When the dynamic provider returns `None`, the static `api_key`
-    /// from config must still be sent as the Authorization header.
-    /// This is a regression scenario: API-key users
-    /// past the 30-day client TTL saw 401 because no auth was sent.
+    /// When the dynamic provider returns `None`, the static `api_key` from config must still be
+    /// sent as the Authorization header. This is a regression scenario: API-key users past the
+    /// 30-day client TTL saw 401 because no auth was sent.
     #[tokio::test]
     async fn static_api_key_is_fallback_when_provider_returns_none() {
         use wiremock::matchers::{header, method, path};
@@ -664,6 +804,8 @@ mod tests {
             model: "test-model".to_string(),
             extra_headers: IndexMap::new(),
             alpha_test_key: None,
+            allowed_domains: None,
+            excluded_domains: None,
         };
         let provider: SharedApiKeyProvider = std::sync::Arc::new(NoneProvider);
         let client = WebSearchClient::new(&config, Some(provider)).expect("client should build");
@@ -714,6 +856,8 @@ mod tests {
             model: "test-model".to_string(),
             extra_headers: IndexMap::new(),
             alpha_test_key: None,
+            allowed_domains: None,
+            excluded_domains: None,
         };
         let provider: SharedApiKeyProvider = std::sync::Arc::new(FreshProvider);
         let client = WebSearchClient::new(&config, Some(provider)).expect("client should build");

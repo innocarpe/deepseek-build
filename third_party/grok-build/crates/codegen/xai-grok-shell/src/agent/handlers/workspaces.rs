@@ -61,9 +61,7 @@ pub(crate) async fn handle(
         .map_err(|e| acp::Error::invalid_params().data(format!("invalid params: {e}")))?;
 
     let q = WsQuery {
-        // Clamp to a sane positive page size: a missing, zero, or negative
-        // `pageSize` falls back to the default rather than being forwarded
-        // verbatim to `/rest/workspaces`.
+        // A missing, zero, or negative `pageSize` falls back to the default instead of being forwarded verbatim to `/rest/workspaces`
         page_size: match req.page_size {
             Some(n) if n > 0 => n,
             _ => DEFAULT_PAGE_SIZE,
@@ -77,8 +75,7 @@ pub(crate) async fn handle(
         Ok(page) => success_response(page),
         Err(WsError::NoOauth) => degraded_response("no_oauth"),
         Err(e) => {
-            // Degrade to a partial result, but don't silently swallow the
-            // cause — log it so field failures are diagnosable.
+            // Degrade to a partial result, but log the cause so failures in the field stay diagnosable
             tracing::warn!("workspaces/list fetch failed: {e}");
             degraded_response("error")
         }
@@ -155,20 +152,53 @@ mod tests {
             next_page_token: Some("tok2".into()),
         };
         let value = serde_json::to_value(success_response(page)).unwrap();
-        assert_eq!(value["workspaces"][0]["id"], "ws_1");
-        assert_eq!(value["workspaces"][0]["name"], "Research");
-        assert_eq!(value["workspaces"][0]["kind"], "WORKSPACE_KIND_IMAGINE");
-        assert_eq!(value["workspaces"][0]["createTime"], "2026-06-18T17:30:00Z");
-        assert_eq!(value["nextPageToken"], "tok2");
+        let Some(ws) = value
+            .get("workspaces")
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first())
+        else {
+            panic!("expected one workspace: {value:?}");
+        };
+        assert_eq!(ws.get("id").and_then(|v| v.as_str()), Some("ws_1"));
+        assert_eq!(ws.get("name").and_then(|v| v.as_str()), Some("Research"));
+        assert_eq!(
+            ws.get("kind").and_then(|v| v.as_str()),
+            Some("WORKSPACE_KIND_IMAGINE")
+        );
+        assert_eq!(
+            ws.get("createTime").and_then(|v| v.as_str()),
+            Some("2026-06-18T17:30:00Z")
+        );
+        assert_eq!(
+            value.get("nextPageToken").and_then(|v| v.as_str()),
+            Some("tok2")
+        );
         assert!(value.get("_meta").is_none());
     }
 
     #[test]
     fn degraded_response_carries_partial_reason() {
         let value = serde_json::to_value(degraded_response("no_oauth")).unwrap();
-        assert_eq!(value["workspaces"].as_array().unwrap().len(), 0);
+        assert_eq!(
+            value
+                .get("workspaces")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len()),
+            Some(0)
+        );
         assert!(value.get("nextPageToken").is_none());
-        assert_eq!(value["_meta"]["x.ai/partial"]["workspaces"], true);
-        assert_eq!(value["_meta"]["x.ai/partial"]["reason"], "no_oauth");
+        let partial = value.get("_meta").and_then(|m| m.get("x.ai/partial"));
+        assert_eq!(
+            partial
+                .and_then(|p| p.get("workspaces"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            partial
+                .and_then(|p| p.get("reason"))
+                .and_then(|v| v.as_str()),
+            Some("no_oauth")
+        );
     }
 }

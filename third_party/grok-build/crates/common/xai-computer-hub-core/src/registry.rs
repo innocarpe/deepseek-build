@@ -17,7 +17,7 @@
 //! The concrete in-memory implementation is intentionally **out of scope**
 //! for this crate — it requires a concurrency story (sharded maps, an
 //! actor, etc.) that belongs alongside the registry's collision matrix and
-//! generation handling. Tests exercise the trait via per-test mock impls.
+//! generation handling.
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -221,6 +221,10 @@ pub trait ToolRegistry: Send + Sync + std::fmt::Debug {
     }
 }
 
+/// Bind-time policy keys on the stamped [`ServerRecord::host_kind`]; the
+/// type lives in the protocol crate because `servers.list` carries it.
+pub use xai_tool_protocol::HostKind;
+
 /// Server identity captured at `register_server` time.
 #[derive(Debug, Clone)]
 pub struct ServerRecord {
@@ -233,6 +237,9 @@ pub struct ServerRecord {
     /// Monotonic registration stamp ([`next_registration_seq`]) — the
     /// stale-vs-revived discriminator for newest-wins (`registered_at` is display-only).
     pub registration_seq: u64,
+    /// Resolved from the credential's minter at upgrade; `None` for a minter
+    /// the hub does not know. Stamped right after registration.
+    pub host_kind: Option<HostKind>,
 }
 
 /// Process-global hybrid logical clock: per-process strictly-increasing (no ties,
@@ -242,13 +249,30 @@ pub struct ServerRecord {
 /// The recency key for bind newest-wins and strictly-older eviction.
 static REGISTRATION_CLOCK: AtomicU64 = AtomicU64::new(0);
 
+/// Bits reserved below the wall-clock milliseconds in a registration seq:
+/// the per-process HLC bump space. Single source of truth for the layout;
+/// encode/decode via [`seq_from_wall_ms`] / [`seq_wall_ms`].
+pub const REGISTRATION_SEQ_SHIFT: u32 = 10;
+
+/// Encode a wall-clock millisecond reading as a registration seq (before
+/// the HLC bump applied by [`next_registration_seq`]).
+pub fn seq_from_wall_ms(wall_ms: u64) -> u64 {
+    wall_ms << REGISTRATION_SEQ_SHIFT
+}
+
+/// Decode the wall-clock milliseconds a registration seq was issued at
+/// (inverse of [`seq_from_wall_ms`], dropping the HLC bump bits).
+pub fn seq_wall_ms(seq: u64) -> u64 {
+    seq >> REGISTRATION_SEQ_SHIFT
+}
+
 /// Issue the next monotonic registration stamp. See [`REGISTRATION_CLOCK`].
 pub fn next_registration_seq() -> u64 {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
-    let candidate = now_ms << 10;
+    let candidate = seq_from_wall_ms(now_ms);
     let mut prev = REGISTRATION_CLOCK.load(Ordering::Relaxed);
     loop {
         let next = candidate.max(prev + 1);
@@ -261,45 +285,5 @@ pub fn next_registration_seq() -> u64 {
             Ok(_) => return next,
             Err(actual) => prev = actual,
         }
-    }
-}
-
-#[cfg(test)]
-mod seq_tests {
-    use super::next_registration_seq;
-
-    fn now_ms() -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0)
-    }
-
-    #[test]
-    fn next_registration_seq_is_monotonic_and_epoch_seeded_under_burst() {
-        let before_ms = now_ms();
-        let first = next_registration_seq();
-        let mut prev = first;
-        const N: u64 = 50_000;
-        for _ in 0..N {
-            let s = next_registration_seq();
-            assert!(s > prev, "must be strictly increasing: {prev} -> {s}");
-            prev = s;
-        }
-        let after_ms = now_ms();
-
-        assert!(
-            prev - first >= N,
-            "burst must advance by at least one per call: {first} -> {prev}",
-        );
-        let high = prev >> 10;
-        assert!(
-            high >= before_ms,
-            "high bits ({high}) must be epoch-seeded (>= {before_ms})",
-        );
-        assert!(
-            high <= after_ms + 1_000,
-            "high bits ({high}) must track wall clock (<= {after_ms} + slack)",
-        );
     }
 }

@@ -186,7 +186,11 @@ pub fn encode_ulid_crockford(timestamp_ms: u64, entropy10: &[u8; 10]) -> String 
     let mut value = u128::from_be_bytes(bytes);
     let mut chars = [0u8; 26];
     for i in (0..26).rev() {
-        chars[i] = CROCKFORD[(value & 0x1f) as usize];
+        let idx = (value & 0x1f) as usize;
+        let digit = CROCKFORD.get(idx).copied().unwrap_or(b'0');
+        if let Some(slot) = chars.get_mut(i) {
+            *slot = digit;
+        }
         value >>= 5;
     }
     // SAFETY: CROCKFORD is ASCII.
@@ -432,21 +436,21 @@ fn command_has_file_writing_redirect(command: &str) -> bool {
     let bytes = command.as_bytes();
     let mut i = 0usize;
     while i < bytes.len() {
-        if bytes[i] != b'>' {
+        if bytes.get(i) != Some(&b'>') {
             i += 1;
             continue;
         }
         // `N>` forms: optional leading digits already before `>`.
         let mut j = i + 1;
-        if j < bytes.len() && bytes[j] == b'>' {
+        if bytes.get(j) == Some(&b'>') && j < bytes.len() {
             // `>>`
             j += 1;
-        } else if j < bytes.len() && bytes[j] == b'&' {
+        } else if j < bytes.len() && bytes.get(j) == Some(&b'&') {
             // `>&1` / `2>&1` — fd dup, not a file write.
             i = j + 1;
             continue;
         }
-        while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+        while j < bytes.len() && bytes.get(j).is_some_and(u8::is_ascii_whitespace) {
             j += 1;
         }
         if let Some((tok, _next)) = take_shell_token(&command[j..]) {
@@ -482,16 +486,16 @@ pub fn extract_bash_touched_paths(command: &str, cwd: &Path) -> Vec<PathBuf> {
     let bytes = command.as_bytes();
     let mut i = 0usize;
     while i < bytes.len() {
-        if bytes[i] == b'>' {
+        if bytes.get(i) == Some(&b'>') {
             let mut j = i + 1;
-            if j < bytes.len() && bytes[j] == b'>' {
+            if j < bytes.len() && bytes.get(j) == Some(&b'>') {
                 j += 1;
-            } else if j < bytes.len() && bytes[j] == b'&' {
+            } else if j < bytes.len() && bytes.get(j) == Some(&b'&') {
                 // fd dup — skip
                 i = j + 1;
                 continue;
             }
-            while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+            while j < bytes.len() && bytes.get(j).is_some_and(u8::is_ascii_whitespace) {
                 j += 1;
             }
             if let Some((tok, next)) = take_shell_token(&command[j..]) {
@@ -615,15 +619,16 @@ fn take_shell_token(s: &str) -> Option<(&str, usize)> {
         return None;
     }
     let bytes = s_trim_start.as_bytes();
-    if bytes[0] == b'\'' || bytes[0] == b'"' {
-        let quote = bytes[0];
+    let first = bytes.first().copied()?;
+    if first == b'\'' || first == b'"' {
+        let quote = first;
         let mut i = 1;
         while i < bytes.len() {
-            if bytes[i] == quote {
+            if bytes.get(i) == Some(&quote) {
                 let tok = &s_trim_start[1..i];
                 return Some((tok, lead + i + 1));
             }
-            if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            if bytes.get(i) == Some(&b'\\') && i + 1 < bytes.len() {
                 i += 2;
                 continue;
             }
@@ -634,7 +639,7 @@ fn take_shell_token(s: &str) -> Option<(&str, usize)> {
     }
     let mut i = 0;
     while i < bytes.len() {
-        let c = bytes[i];
+        let Some(&c) = bytes.get(i) else { break };
         if c.is_ascii_whitespace() || matches!(c, b'|' | b';' | b'&' | b'>' | b'<') {
             break;
         }
@@ -643,7 +648,10 @@ fn take_shell_token(s: &str) -> Option<(&str, usize)> {
     if i == 0 {
         // operator token
         let mut j = 1;
-        while j < bytes.len() && matches!(bytes[j], b'|' | b'&' | b'>' | b'<') {
+        while bytes
+            .get(j)
+            .is_some_and(|c| matches!(c, b'|' | b'&' | b'>' | b'<'))
+        {
             j += 1;
         }
         return Some((&s_trim_start[..j], lead + j));

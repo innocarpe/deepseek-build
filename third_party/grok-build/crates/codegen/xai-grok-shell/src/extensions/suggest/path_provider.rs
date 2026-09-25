@@ -14,8 +14,7 @@ pub(crate) struct PathProvider;
 
 impl PathProvider {
     pub(crate) async fn suggest(&self, ctx: &SuggestContext) -> Vec<RankedSuggestion> {
-        // shell_token quoting is POSIX-only: cmd/pwsh would misparse the
-        // escaped line, so Windows serves no deterministic completions.
+        // shell_token quoting is POSIX-only: cmd/pwsh would misparse the escaped line, so Windows serves no deterministic completions
         if cfg!(windows) {
             return Vec::new();
         }
@@ -32,10 +31,9 @@ impl PathProvider {
     }
 }
 
-/// The command token being typed, via the canonical tokenizer: quotes hide
-/// separators (`echo "a | gr` is quoted data, not a command position), the
-/// cursor must sit in the segment's first word, and — mirroring the file
-/// provider — flag-looking tokens never complete.
+/// The command token being typed, via the canonical tokenizer.
+/// Quotes hide separators (`echo "a | gr` is quoted data, not a command position) and the cursor must sit in the segment's first word.
+/// Mirroring the file provider, flag-looking tokens never complete.
 fn extract_command_token(prefix: &str) -> Option<CurrentToken> {
     let tok = parse_current_token(prefix);
     if tok.tokens_before != 0 || tok.after_redirect || tok.value.is_empty() {
@@ -58,10 +56,10 @@ fn filter_executables(
 
     let mut results: Vec<RankedSuggestion> = Vec::new();
     let mut truncated = false;
-    for exe in executables[start..]
-        .iter()
-        .take_while(|exe| exe.starts_with(prefix))
-    {
+    let Some(tail) = executables.get(start..) else {
+        return results;
+    };
+    for exe in tail.iter().take_while(|exe| exe.starts_with(prefix)) {
         if results.len() == MAX_RESULTS {
             // An uncapped match remains: the set is not exhaustive.
             truncated = true;
@@ -69,8 +67,7 @@ fn filter_executables(
         }
         results.push(RankedSuggestion {
             display: exe.clone(),
-            // Re-quoted like filenames: an executable named `zz;echo PWNED`
-            // must insert as ONE word, never a second command.
+            // Re-quoted like filenames: an executable named `zz;echo PWNED` must insert as ONE word, never a second command
             insert_text: build_insert_token(tok, "", exe, false),
             description: String::new(),
             source: SuggestionSource::Path,
@@ -225,8 +222,8 @@ mod tests {
         assert_eq!(cmd("   "), None);
     }
 
-    /// A separator inside quotes is data, not a command position — the old
-    /// naive segment scan offered executables inside quoted strings.
+    /// A separator inside quotes is data, not a command position.
+    /// The old naive segment scan offered executables inside quoted strings.
     #[test]
     fn none_inside_quoted_data() {
         assert_eq!(cmd("echo \"x | gr"), None);
@@ -256,7 +253,10 @@ mod tests {
         ];
         let results = filter_executables(&tok("gr"), (0, 2), &exes);
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].insert_text, "grep");
+        assert_eq!(
+            results.first().map(|r| r.insert_text.as_str()),
+            Some("grep")
+        );
     }
 
     #[test]
@@ -277,13 +277,15 @@ mod tests {
     fn filter_path_suggestions_are_not_ghost() {
         let exes = vec!["git".into()];
         let results = filter_executables(&tok("g"), (0, 1), &exes);
-        assert!(!results[0].is_ghost_candidate);
-        assert_eq!(results[0].source, SuggestionSource::Path);
-        assert_eq!(results[0].priority, 0);
+        let Some(r) = results.first() else {
+            panic!("expected one result: {results:?}");
+        };
+        assert!(!r.is_ghost_candidate);
+        assert_eq!(r.source, SuggestionSource::Path);
+        assert_eq!(r.priority, 0);
     }
 
-    /// Capped sets mark every row truncated so the pager keeps
-    /// dropdown-only semantics (an unshown match could disprove an LCP).
+    /// Capped sets mark every row truncated so the pager keeps dropdown-only behavior (an unshown match could disprove an LCP).
     #[test]
     fn filter_caps_at_max_and_marks_truncated() {
         let exes: Vec<String> = (0..20).map(|i| format!("test_{i:03}")).collect();
@@ -297,25 +299,29 @@ mod tests {
         assert!(results.iter().all(|s| !s.truncated));
     }
 
-    /// The segment-after-pipe token range: accepting `grep` for `ls | gr`
-    /// must target only the `gr` token, never the whole line.
+    /// The segment-after-pipe token range: accepting `grep` for `ls | gr` must target only the `gr` token, never the whole line.
     #[test]
     fn filter_stamps_segment_token_range() {
         let t = extract_command_token("ls | gr").unwrap();
         let exes = vec!["grep".into()];
         let results = filter_executables(&t, (t.start, 7), &exes);
-        assert_eq!(results[0].replace_range, Some((5, 7)));
-        assert_eq!(results[0].insert_text, "grep");
+        let Some(r) = results.first() else {
+            panic!("expected one result: {results:?}");
+        };
+        assert_eq!(r.replace_range, Some((5, 7)));
+        assert_eq!(r.insert_text, "grep");
     }
 
-    /// Metacharacter executable names insert as ONE word — accepting
-    /// `zz;echo PWNED` must never put a second command on the line.
+    /// Metacharacter executable names insert as ONE word: accepting `zz;echo PWNED` must never put a second command on the line.
     #[test]
     fn filter_escapes_metacharacter_executable_names() {
         let exes = vec!["zz;echo PWNED".into()];
         let results = filter_executables(&tok("zz"), (0, 2), &exes);
-        assert_eq!(results[0].display, "zz;echo PWNED");
-        assert_eq!(results[0].insert_text, "zz\\;echo\\ PWNED");
+        let Some(r) = results.first() else {
+            panic!("expected one result: {results:?}");
+        };
+        assert_eq!(r.display, "zz;echo PWNED");
+        assert_eq!(r.insert_text, "zz\\;echo\\ PWNED");
     }
 
     /// A quoted command prefix completes inside its quote style.
@@ -323,7 +329,10 @@ mod tests {
     fn filter_requotes_quoted_command_prefix() {
         let exes = vec!["grep".into()];
         let results = filter_executables(&tok("\"gr"), (0, 3), &exes);
-        assert_eq!(results[0].insert_text, "\"grep\"");
+        assert_eq!(
+            results.first().map(|r| r.insert_text.as_str()),
+            Some("\"grep\"")
+        );
     }
 
     // --- scan_path_from ---

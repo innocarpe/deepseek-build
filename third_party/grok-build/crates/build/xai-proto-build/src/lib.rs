@@ -37,7 +37,9 @@ pub struct XaiProtoBuilder {
     gen_pbjson: bool,
     pbjson_ignore_unknown_fields: bool,
     pbjson_preserve_proto_field_names: bool,
+    pbjson_exclude: Vec<String>,
     honor_debug_redact: bool,
+    btree_map_paths: Vec<String>,
 }
 
 impl XaiProtoBuilder {
@@ -51,12 +53,20 @@ impl XaiProtoBuilder {
         }
     }
 
-    pub fn btree_map<S: AsRef<str>>(self, paths: impl IntoIterator<Item = S>) -> Self {
+    pub fn btree_map<S: AsRef<str>>(mut self, paths: impl IntoIterator<Item = S>) -> Self {
+        // Recorded so the pbjson builder gets them too; otherwise JSON map keys
+        // serialize in HashMap order and generated files are not byte-stable.
+        let paths: Vec<String> = paths.into_iter().map(|s| s.as_ref().to_owned()).collect();
+        self.btree_map_paths.extend(paths.iter().cloned());
         self.map_builder(|b| paths.into_iter().fold(b, |b, path| b.btree_map(path)))
     }
 
     pub fn bytes<S: AsRef<str>>(self, paths: impl IntoIterator<Item = S>) -> Self {
         self.map_builder(|b| paths.into_iter().fold(b, |b, path| b.bytes(path)))
+    }
+
+    pub fn boxed(self, path: impl AsRef<str>) -> Self {
+        self.map_builder(|b| b.boxed(path))
     }
 
     pub fn extern_path(self, proto_path: impl AsRef<str>, rust_path: impl AsRef<str>) -> Self {
@@ -84,6 +94,21 @@ impl XaiProtoBuilder {
     /// camelCase documents.
     pub fn pbjson_preserve_proto_field_names(mut self) -> Self {
         self.pbjson_preserve_proto_field_names = true;
+        self
+    }
+
+    /// Skip pbjson serde generation for these fully-qualified proto type
+    /// prefixes (e.g. `.model_config.RateLimit`). Use when a type is
+    /// `extern_path`'d into another crate that already provides its pbjson serde
+    /// impls, but the enclosing package's serde is still generated here —
+    /// otherwise pbjson would emit an orphan `impl Serialize for <foreign type>`.
+    /// Matching is segment-based, so `.pkg.Foo` does not match `.pkg.FooBar`.
+    pub fn pbjson_exclude<S: Into<String>>(
+        mut self,
+        prefixes: impl IntoIterator<Item = S>,
+    ) -> Self {
+        self.pbjson_exclude
+            .extend(prefixes.into_iter().map(Into::into));
         self
     }
 
@@ -207,7 +232,9 @@ impl XaiProtoBuilder {
             file_descriptor_set_path,
             pbjson_ignore_unknown_fields,
             pbjson_preserve_proto_field_names,
+            pbjson_exclude,
             honor_debug_redact,
+            btree_map_paths,
         } = self;
         let mut config = prost_build::Config::new();
         config.enable_type_names();
@@ -302,6 +329,12 @@ impl XaiProtoBuilder {
             if pbjson_preserve_proto_field_names {
                 builder.preserve_proto_field_names();
             }
+            if !pbjson_exclude.is_empty() {
+                builder.exclude(pbjson_exclude);
+            }
+            if !btree_map_paths.is_empty() {
+                builder.btree_map(&btree_map_paths);
+            }
             builder
                 .build(&["."])
                 .context("Failed to build descriptor set")?;
@@ -322,7 +355,9 @@ pub fn configure() -> XaiProtoBuilder {
         gen_pbjson: false,
         pbjson_ignore_unknown_fields: false,
         pbjson_preserve_proto_field_names: false,
+        pbjson_exclude: Vec::new(),
         file_descriptor_set_path: None,
         honor_debug_redact: false,
+        btree_map_paths: Vec::new(),
     }
 }

@@ -1,24 +1,15 @@
-//! Match-highlight overlay shared by the list pane and other search surfaces.
+//! Match-highlight overlay shared by the list pane and other views that show search matches.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
+use crate::render::bidi::{is_enabled, logical_cols_to_visual, needs_bidi};
 use crate::render::wrapping::{
     byte_offset_to_display_col, byte_range_to_row_cols, wrap_byte_ranges_matching,
 };
 
-/// Invert (REVERSED) the buffer cells covering every match of `re` in `text`.
-///
-/// Run as a post-pass after a line has been drawn, so matches are highlighted
-/// regardless of the underlying colors.
-///
-/// - `area`: the pane area; `area.x` / `area.width` bound painting horizontally.
-/// - `row_y`: buffer row of the line's first visible row.
-/// - `viewport_bottom`: exclusive bottom row; wrapped rows at or below it stop.
-/// - `skip`: leading wrapped rows of this line clipped above the viewport.
-/// - `prefix_w`: display column where `text` begins (e.g. a line-number gutter).
-/// - `text`: the plain text the regex runs against.
-/// - `single_row`: the line occupies one buffer row (NoWrap, or any 1-row item).
+/// Post-pass invert so matches show regardless of underlying colors. Stops at `viewport_bottom`.
+/// Remap match columns to visual cells only when the caller painted bidi-reordered; logical painters must pass `map_visual = false`.
 #[allow(clippy::too_many_arguments)]
 pub fn paint_match_highlights(
     buf: &mut Buffer,
@@ -30,19 +21,30 @@ pub fn paint_match_highlights(
     text: &str,
     re: &regex::Regex,
     single_row: bool,
+    map_visual: bool,
 ) {
     if text.is_empty() {
         return;
     }
 
     if single_row {
+        let map_bidi = map_visual && is_enabled() && needs_bidi(text);
         for m in re.find_iter(text) {
-            let col_start = prefix_w as usize + byte_offset_to_display_col(text, m.start());
-            let col_end = prefix_w as usize + byte_offset_to_display_col(text, m.end());
-            for col in col_start..col_end {
-                let x = area.x + col as u16;
-                if x < area.x + area.width {
-                    invert_cell(&mut buf[(x, row_y)]);
+            let log_start = byte_offset_to_display_col(text, m.start());
+            let log_end = byte_offset_to_display_col(text, m.end());
+            let ranges = if map_bidi {
+                logical_cols_to_visual(text, log_start, log_end)
+            } else {
+                vec![(log_start, log_end)]
+            };
+            for (col_start, col_end) in ranges {
+                for col in col_start..col_end {
+                    let x = area.x + prefix_w + col as u16;
+                    if x < area.x + area.width
+                        && let Some(cell) = buf.cell_mut((x, row_y))
+                    {
+                        invert_cell(cell);
+                    }
                 }
             }
         }
@@ -60,18 +62,32 @@ pub fn paint_match_highlights(
             if y >= viewport_bottom {
                 break;
             }
-            for col in seg.col_start..seg.col_end {
-                let x = area.x + prefix_w + col as u16;
-                if x < area.x + area.width {
-                    invert_cell(&mut buf[(x, y)]);
+            let Some(row_range) = ranges.get(seg.row) else {
+                continue;
+            };
+            let Some(row_text) = text.get(row_range.start..row_range.end) else {
+                continue;
+            };
+            let visual_ranges = if map_visual && is_enabled() && needs_bidi(row_text) {
+                logical_cols_to_visual(row_text, seg.col_start, seg.col_end)
+            } else {
+                vec![(seg.col_start, seg.col_end)]
+            };
+            for (col_start, col_end) in visual_ranges {
+                for col in col_start..col_end {
+                    let x = area.x + prefix_w + col as u16;
+                    if x < area.x + area.width
+                        && let Some(cell) = buf.cell_mut((x, y))
+                    {
+                        invert_cell(cell);
+                    }
                 }
             }
         }
     }
 }
 
-/// Apply the terminal's REVERSED attribute so the fg/bg swap is native and
-/// respects the user's theme.
+/// Apply the terminal's REVERSED attribute so the fg/bg swap is native and respects the user's theme.
 fn invert_cell(cell: &mut ratatui::buffer::Cell) {
     cell.modifier.insert(ratatui::style::Modifier::REVERSED);
 }

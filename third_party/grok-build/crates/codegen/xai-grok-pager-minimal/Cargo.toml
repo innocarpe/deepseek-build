@@ -33,9 +33,16 @@ tracing = { workspace = true }
 # `[package.metadata.cargo-shear]` note above.
 xai-ratatui-inline = { workspace = true }
 
+# `DiffLine` hunk fixtures for the committed-edit render tests. A normal (not
+# dev) dependency because gazelle lists `src/commit_tests.rs` in the library
+# `srcs` and so attributes its imports to the library target; a
+# `[dev-dependencies]` entry here would fail `just gazelle --check`.
+xai-grok-pager-diff = { path = "../xai-grok-pager-diff" }
+
 # Misc used by the commit/live/full-view paths.
 chrono = { workspace = true }
 similar = { workspace = true }
+unicode-width = { workspace = true }
 xai-grok-shell = { workspace = true }
 xai-grok-version = { workspace = true }
 xai-token-estimation = { workspace = true }
@@ -45,5 +52,8 @@ xai-token-estimation = { workspace = true }
 # (`test_agent_view`, yolo/auto setters), gated behind its test-only
 # helpers.
 xai-grok-pager = { path = "../xai-grok-pager", features = ["test-support"] }
+# The feedback-form render tests flip the pager's process-global embedded
+# modal flag and must not interleave.
+serial_test = { workspace = true }
 
 [features]

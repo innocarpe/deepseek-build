@@ -21,11 +21,9 @@ use crate::register_resource;
 
 // ── ACP wire-format types ────────────────────────────────────────────────
 
-/// Annotation on a single question's answer.
-///
-/// Carried inside the `accepted` response alongside the selected label.
-/// - `preview`: verbatim `Option.preview` of the selected option (single-select only).
-/// - `notes`: free-text the user typed in the freeform input.
+/// Annotation on a single question's answer. Carried inside the `accepted` response alongside the
+/// selected label. `preview`: verbatim `Option.preview` of the selected option (single-select
+/// only). `notes`: free-text the user typed in the freeform input.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct QuestionAnnotation {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -34,10 +32,8 @@ pub struct QuestionAnnotation {
     pub notes: Option<String>,
 }
 
-/// Mode context for the question UI.
-///
-/// Sent as part of the ACP `ext_method` request so the pager knows whether
-/// to show plan-mode-only actions (Chat about this / Skip interview).
+/// Mode context for the question UI. Sent as part of the ACP `ext_method` request so the pager
+/// knows whether to show plan-mode-only actions (Chat about this / Skip interview).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AskUserQuestionMode {
@@ -85,10 +81,9 @@ where
         .collect())
 }
 
-/// ACP `ext_method` response payload (client/pager returns to shell coordinator).
-///
-/// Internally tagged on `"outcome"` with `snake_case` variant names so the
-/// JSON looks like `{ "outcome": "accepted", "answers": { ... } }`.
+/// ACP `ext_method` response payload (client/pager returns to shell coordinator). Internally tagged
+/// on `"outcome"` with `snake_case` variant names so the JSON looks like `{ "outcome": "accepted",
+/// "answers": { ... } }`.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum AskUserQuestionExtResponse {
@@ -122,18 +117,13 @@ pub enum AskUserQuestionExtResponse {
 
 // ── In-process types (coordinator <-> tool) ──────────────────────────────
 
-/// In-process result: coordinator -> tool.
-///
-/// Uses `Result` so the tool can distinguish user actions from infrastructure
-/// failures:
-/// - `Ok(UserQuestionResponse)` for all 4 user paths (accepted, chat, skip, cancel).
-/// - `Err(UserQuestionError)` for transport failures or malformed responses.
+/// In-process result: coordinator -> tool. `Ok(UserQuestionResponse)` for all 4 user paths
+/// (accepted, chat, skip, cancel). `Err(UserQuestionError)` for transport failures or malformed
+/// responses.
 pub type UserQuestionResult = Result<UserQuestionResponse, UserQuestionError>;
 
-/// Successful user response (all 4 user paths).
-///
-/// Every variant here produces `Ok(UserAnswered { message })` at the tool
-/// level with `ToolCall` status `Completed`.
+/// Successful user response (all 4 user paths). Every variant here produces `Ok(UserAnswered {
+/// message })` at the tool level with `ToolCall` status `Completed`.
 #[derive(Debug, Clone)]
 pub enum UserQuestionResponse {
     /// User accepted and submitted answers (Path A).
@@ -158,10 +148,8 @@ pub enum UserQuestionResponse {
     Cancelled,
 }
 
-/// Infrastructure failure (NOT a user action).
-///
-/// These produce `Err(ToolError::ExecutionError { .. })` at the tool level
-/// with `ToolCall` status `Failed`.
+/// Infrastructure failure (NOT a user action). These produce `Err(ToolError::ExecutionError { ..
+/// })` at the tool level with `ToolCall` status `Failed`.
 #[derive(Debug, Clone)]
 pub enum UserQuestionError {
     /// ACP `ext_method` call failed (client disconnect, timeout, etc.).
@@ -171,10 +159,9 @@ pub enum UserQuestionError {
     MalformedResponse(String),
 }
 
-/// In-process request: tool -> coordinator (carries oneshot for reply).
-///
-/// Sent over the `mpsc` channel. The coordinator receives this, performs the
-/// ACP `ext_method` round-trip, and sends the result back on `result_tx`.
+/// In-process request: tool -> coordinator (carries oneshot for reply). Sent over the `mpsc`
+/// channel. The coordinator receives this, performs the ACP `ext_method` round-trip, and sends the
+/// result back on `result_tx`.
 #[derive(Educe)]
 #[educe(Debug)]
 pub struct UserQuestionRequest {
@@ -186,11 +173,9 @@ pub struct UserQuestionRequest {
 
 // ── Resource type ────────────────────────────────────────────────────────
 
-/// Resource: `mpsc` sender injected into `SharedResources`.
-///
-/// Same injection pattern as `SubagentEventSender`. Cloned into each
-/// session so that any `AskUserQuestionTool` invocation can emit a
-/// `UserQuestionRequest` to the session's coordinator.
+/// Resource: `mpsc` sender injected into `SharedResources`. Same injection pattern as
+/// `SubagentEventSender`. Cloned into each session so that any `AskUserQuestionTool` invocation can
+/// emit a `UserQuestionRequest` to the session's coordinator.
 #[derive(Clone, Educe)]
 #[educe(Debug)]
 pub struct UserQuestionSender(
@@ -202,12 +187,9 @@ register_resource!("grok_build", "UserQuestionSender", UserQuestionSender);
 // ── Conversion helper ────────────────────────────────────────────────────
 
 impl AskUserQuestionExtResponse {
-    /// Convert the wire-format ACP response into the in-process response type.
-    ///
-    /// Called by the shell coordinator after deserializing the client's JSON.
-    /// The `questions` parameter carries the original question list so that
-    /// `ChatAboutThis` and `SkipInterview` responses can iterate all questions
-    /// (answered and unanswered) when formatting the tool result.
+    /// Convert the wire-format ACP response into the in-process response type. Called by the shell coordinator after deserializing the client's
+    /// JSON. The `questions` parameter carries the original question list so that `ChatAboutThis` and `SkipInterview` responses can iterate all
+    /// questions (answered and unanswered) when formatting the tool result.
     pub fn into_response(self, questions: Vec<Question>) -> UserQuestionResponse {
         match self {
             Self::Accepted {
@@ -318,7 +300,7 @@ mod tests {
         // camelCase field names
         assert!(json.get("sessionId").is_some());
         assert!(json.get("toolCallId").is_some());
-        assert_eq!(json["mode"], "plan");
+        assert_eq!(json.get("mode").and_then(|v| v.as_str()), Some("plan"));
     }
 
     #[test]
@@ -358,9 +340,12 @@ mod tests {
             annotations: Some(annotations),
         };
         let json = serde_json::to_value(&resp).unwrap();
-        assert_eq!(json["outcome"], "accepted");
-        assert!(json["answers"].is_object());
-        assert!(json["annotations"].is_object());
+        assert_eq!(
+            json.get("outcome").and_then(|v| v.as_str()),
+            Some("accepted")
+        );
+        assert!(json.get("answers").is_some_and(|v| v.is_object()));
+        assert!(json.get("annotations").is_some_and(|v| v.is_object()));
     }
 
     #[test]
@@ -373,7 +358,10 @@ mod tests {
             annotations: None,
         };
         let json = serde_json::to_value(&resp).unwrap();
-        assert_eq!(json["outcome"], "accepted");
+        assert_eq!(
+            json.get("outcome").and_then(|v| v.as_str()),
+            Some("accepted")
+        );
         assert!(json.get("annotations").is_none());
     }
 
@@ -386,8 +374,11 @@ mod tests {
             partial_answers: partial,
         };
         let json = serde_json::to_value(&resp).unwrap();
-        assert_eq!(json["outcome"], "chat_about_this");
-        assert!(json["partial_answers"].is_object());
+        assert_eq!(
+            json.get("outcome").and_then(|v| v.as_str()),
+            Some("chat_about_this")
+        );
+        assert!(json.get("partial_answers").is_some_and(|v| v.is_object()));
     }
 
     #[test]
@@ -396,14 +387,20 @@ mod tests {
             partial_answers: HashMap::new(),
         };
         let json = serde_json::to_value(&resp).unwrap();
-        assert_eq!(json["outcome"], "skip_interview");
+        assert_eq!(
+            json.get("outcome").and_then(|v| v.as_str()),
+            Some("skip_interview")
+        );
     }
 
     #[test]
     fn ext_response_cancelled_serializes() {
         let resp = AskUserQuestionExtResponse::Cancelled;
         let json = serde_json::to_value(&resp).unwrap();
-        assert_eq!(json["outcome"], "cancelled");
+        assert_eq!(
+            json.get("outcome").and_then(|v| v.as_str()),
+            Some("cancelled")
+        );
     }
 
     #[test]
@@ -554,8 +551,8 @@ mod tests {
             notes: Some("note".to_string()),
         };
         let json = serde_json::to_value(&ann).unwrap();
-        assert_eq!(json["preview"], "prev");
-        assert_eq!(json["notes"], "note");
+        assert_eq!(json.get("preview").and_then(|v| v.as_str()), Some("prev"));
+        assert_eq!(json.get("notes").and_then(|v| v.as_str()), Some("note"));
     }
 
     // -- Backwards-compatible deserialization (string -> vec) --
@@ -570,8 +567,8 @@ mod tests {
         match resp {
             AskUserQuestionExtResponse::Accepted { answers, .. } => {
                 assert_eq!(
-                    answers["Which cache?"],
-                    vec!["Only hot-path caches".to_string()]
+                    answers.get("Which cache?"),
+                    Some(&vec!["Only hot-path caches".to_string()])
                 );
             }
             other => panic!("Expected Accepted, got {:?}", other),
@@ -587,8 +584,8 @@ mod tests {
         let resp: AskUserQuestionExtResponse = serde_json::from_str(raw).unwrap();
         match resp {
             AskUserQuestionExtResponse::Accepted { answers, .. } => {
-                assert_eq!(answers["Q1?"], vec!["old-style".to_string()]);
-                assert_eq!(answers["Q2?"], vec!["new-style".to_string()]);
+                assert_eq!(answers.get("Q1?"), Some(&vec!["old-style".to_string()]));
+                assert_eq!(answers.get("Q2?"), Some(&vec!["new-style".to_string()]));
             }
             other => panic!("Expected Accepted, got {:?}", other),
         }
@@ -613,13 +610,20 @@ mod tests {
                 answers,
                 annotations,
             } => {
-                assert_eq!(answers["Which database?"], vec!["Redis".to_string()]);
+                assert_eq!(
+                    answers.get("Which database?"),
+                    Some(&vec!["Redis".to_string()])
+                );
                 let ann = annotations.unwrap();
                 assert_eq!(
-                    ann["Which database?"].preview.as_deref(),
+                    ann.get("Which database?")
+                        .and_then(|a| a.preview.as_deref()),
                     Some("<div>redis preview</div>")
                 );
-                assert!(ann["Which database?"].notes.is_none());
+                assert!(
+                    ann.get("Which database?")
+                        .is_some_and(|a| a.notes.is_none())
+                );
             }
             other => panic!("Expected Accepted, got {:?}", other),
         }

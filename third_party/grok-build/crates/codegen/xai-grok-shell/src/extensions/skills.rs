@@ -1,10 +1,12 @@
 use agent_client_protocol as acp;
 use serde::{Deserialize, Serialize};
 
+use crate::extensions::agent_runtime::AgentRuntime;
 use crate::util::config as cli_config;
 use xai_grok_agent::prompt::skills::{
-    CompatConfig, SkillInfo, SkillsConfig, list_skills_with_plugins,
+    CompatConfig, SkillInfo, SkillsConfig, collect_config_skills, list_skills_with_plugins,
 };
+use xai_grok_telemetry::events::{HarnessChangeOp, HarnessChanged, HarnessSurfaceKind};
 
 use super::ExtResult;
 
@@ -14,6 +16,15 @@ use super::ExtResult;
 struct CwdParams {
     #[serde(default)]
     cwd: Option<String>,
+}
+
+/// The `cwd` a skills request is scoped to, if it names one (every request shape carries the field
+/// under the same name; unknown fields are ignored).
+pub(crate) fn request_cwd(args: &acp::ExtRequest) -> Option<std::path::PathBuf> {
+    serde_json::from_str::<CwdParams>(args.params.get())
+        .ok()
+        .and_then(|p| p.cwd)
+        .map(std::path::PathBuf::from)
 }
 
 #[derive(Debug, Deserialize)]
@@ -37,7 +48,6 @@ pub struct SkillsAddResponse {
     pub path: String,
     /// Full updated skill list after reload.
     pub skills: Vec<SkillInfo>,
-    /// Human-readable message.
     pub message: String,
 }
 
@@ -54,11 +64,9 @@ pub struct SkillsRemoveRequest {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillsRemoveResponse {
-    /// The path that was removed.
     pub path: String,
     /// Full updated skill list after reload.
     pub skills: Vec<SkillInfo>,
-    /// Human-readable message.
     pub message: String,
 }
 
@@ -67,16 +75,13 @@ pub struct SkillsRemoveResponse {
 pub struct SkillsResetResponse {
     /// Full updated skill list after reload.
     pub skills: Vec<SkillInfo>,
-    /// Human-readable message.
     pub message: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SkillsToggleRequest {
-    /// Skill name to toggle.
     pub name: String,
-    /// Whether to enable (`true`) or disable (`false`) the skill.
     pub enabled: bool,
     /// Working directory for skill discovery context.
     #[serde(default)]
@@ -99,7 +104,6 @@ struct WorkflowsListRequest {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillsListResponse {
-    /// All discovered skills.
     pub skills: Vec<SkillInfo>,
 }
 
@@ -110,11 +114,8 @@ pub struct SkillsConfigResponse {
     pub paths: Vec<String>,
     /// Ignored paths from `[skills].ignore`.
     pub ignore: Vec<String>,
-    /// Total loaded skill count.
     pub total_skills: usize,
-    /// Human-readable summary.
     pub message: String,
-    /// Full updated skill list.
     pub skills: Vec<SkillInfo>,
 }
 
@@ -126,7 +127,10 @@ async fn reload_skills(
     compat: CompatConfig,
 ) -> Vec<SkillInfo> {
     let config = cli_config::load_config().await.skills;
-    let discovery = list_skills_with_plugins(Some(cwd), &config, plugin_registry, compat);
+    let project_trusted =
+        crate::agent::folder_trust::project_scope_allowed(std::path::Path::new(cwd));
+    let discovery =
+        list_skills_with_plugins(Some(cwd), &config, plugin_registry, compat, project_trusted);
     match tokio::time::timeout(std::time::Duration::from_secs(5), discovery).await {
         Ok(skills) => skills,
         Err(_) => {
@@ -142,24 +146,66 @@ fn count_skills_from(skills: &[SkillInfo], dir: &std::path::Path) -> usize {
     skills.iter().filter(|s| s.path.starts_with(prefix)).count()
 }
 
-/// Resolve a skill path to an absolute path.
-///
+/// The skills one `[skills].paths` entry contributes, classified exactly as the loader will classify them
+/// (`Repo` inside the cwd's git root, else `User`), so `harness_changed` and `skill_dispatched` agree on `skill_source`.
+/// Scanned directly rather than diffed from a reload, so the names are known before the config write and still
+/// known once a removed path leaves the list.
+async fn skills_at_config_path(resolved: &str, cwd: &str) -> Vec<SkillInfo> {
+    let paths = vec![resolved.to_owned()];
+    let cwd = std::path::PathBuf::from(cwd);
+    // Same bound as `reload_skills`: a slow or huge tree must not stall the runtime; the per-item
+    // telemetry is best-effort and the count-only events still fire when this gives up.
+    let scan = tokio::task::spawn_blocking(move || {
+        let git_root = xai_grok_agent::repo::RepoDirChain::resolve(&cwd).git_root;
+        collect_config_skills(&paths, git_root.as_deref())
+    });
+    match tokio::time::timeout(std::time::Duration::from_secs(5), scan).await {
+        Ok(Ok(skills)) => skills,
+        Ok(Err(join_error)) => {
+            tracing::warn!(%join_error, "skill path scan panicked");
+            vec![]
+        }
+        Err(_) => {
+            tracing::warn!("skill path scan timed out");
+            vec![]
+        }
+    }
+}
+
+/// Bounds the per-item fan-out of one add/remove; a path holding more skills than this reports only the first ones.
+const HARNESS_CHANGED_MAX_ITEMS: usize = 100;
+
+fn log_harness_changed(skills: &[SkillInfo], op: HarnessChangeOp, success: bool) {
+    for skill in skills.iter().take(HARNESS_CHANGED_MAX_ITEMS) {
+        xai_grok_telemetry::session_ctx::log_event(HarnessChanged {
+            kind: HarnessSurfaceKind::Skill,
+            op,
+            name: skill.name.clone(),
+            skill_source: crate::session::telemetry::skill_source(
+                skill.scope,
+                skill.plugin_name.as_deref(),
+            )
+            .to_owned(),
+            origin: skill.origin.clone(),
+            // None here: a `[skills].paths` entry is never a plugin skill
+            plugin_source: skill.plugin_name.clone(),
+            success,
+        });
+    }
+}
+
 /// Handles `~` expansion and relative path resolution against `cwd`.
 /// Falls back to the original string if canonicalization fails.
 fn resolve_skill_path(raw: &str, cwd: &str) -> String {
     use std::path::PathBuf;
 
-    // Expand ~ to $HOME
+    // Expand ~ to the home directory
     let expanded = if let Some(rest) = raw.strip_prefix("~/") {
-        std::env::var_os("HOME")
-            .or_else(|| std::env::var_os("USERPROFILE"))
-            .map(|home| PathBuf::from(home).join(rest))
+        xai_dirs::home_dir()
+            .map(|home| home.join(rest))
             .unwrap_or_else(|| PathBuf::from(raw))
     } else if raw == "~" {
-        std::env::var_os("HOME")
-            .or_else(|| std::env::var_os("USERPROFILE"))
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(raw))
+        xai_dirs::home_dir().unwrap_or_else(|| PathBuf::from(raw))
     } else {
         PathBuf::from(raw)
     };
@@ -172,8 +218,7 @@ fn resolve_skill_path(raw: &str, cwd: &str) -> String {
         PathBuf::from(cwd).join(&expanded)
     };
 
-    // canonicalize resolves symlinks and `..` — fall back to the joined path if it fails
-    // (e.g. path doesn't exist yet)
+    // canonicalize resolves symlinks and `..`; fall back to the joined path if it fails (e.g. the path doesn't exist yet)
     dunce::canonicalize(&absolute)
         .unwrap_or(absolute)
         .to_string_lossy()
@@ -188,9 +233,9 @@ fn discover_auto_sources(cwd: &str, skills: &[SkillInfo]) -> Vec<(String, usize)
         .ok()
         .and_then(|repo| repo.workdir().map(|p| p.to_path_buf()));
 
-    // Once the user has imported, stop scanning hardcoded
-    // .claude/skills/ paths. Equivalent locations should be opted in via
-    // [paths] extra_skill_dirs in config.toml (written by /import-claude).
+    // After /import-claude, do not list hardcoded .claude/skills/ paths.
+    // Import writes those dirs to [paths] extra_skill_dirs for the source UI.
+    // list_skills_with_plugins still does not read extra_skill_dirs.
     let imported = crate::claude_import::is_claude_import_marked();
     let local_dir_names: &[&str] = if imported {
         &[".grok", ".agents"]
@@ -231,9 +276,7 @@ fn discover_auto_sources(cwd: &str, skills: &[SkillInfo]) -> Vec<(String, usize)
         try_add_source(grok_home.join(subdir), None);
     }
 
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
-    if let Some(ref h) = home {
-        let home_path = std::path::PathBuf::from(h);
+    if let Some(home_path) = xai_dirs::home_dir() {
         for subdir in &subdirs {
             try_add_source(home_path.join(".agents").join(subdir), None);
         }
@@ -244,9 +287,8 @@ fn discover_auto_sources(cwd: &str, skills: &[SkillInfo]) -> Vec<(String, usize)
         }
     }
 
-    // [paths] extra_skill_dirs from config.toml. These supplement the built-in
-    // scan locations. Used both standalone and as the migration target after
-    // /import-claude when the runtime .claude/skills/ scan is disabled.
+    // [paths] extra_skill_dirs appear as source folders after /import-claude.
+    // Discovery does not load them. Extra injection dirs belong in [skills] paths.
     for dir in extra_skill_dirs_from_config() {
         let path = crate::util::expand_home(&dir);
         if path.is_dir()
@@ -264,8 +306,8 @@ fn discover_auto_sources(cwd: &str, skills: &[SkillInfo]) -> Vec<(String, usize)
     sources
 }
 
-/// Read `[paths] extra_skill_dirs` from the effective config. Returns empty
-/// on any read/parse failure so misconfiguration never breaks listing.
+/// Read `[paths] extra_skill_dirs` from the effective config.
+/// Returns empty on any read/parse failure so misconfiguration never breaks listing.
 fn extra_skill_dirs_from_config() -> Vec<String> {
     let Ok(root) = crate::config::load_effective_config() else {
         return Vec::new();
@@ -283,7 +325,7 @@ fn extra_skill_dirs_from_config() -> Vec<String> {
 
 #[tracing::instrument(skip_all, fields(method = %args.method))]
 pub async fn handle(
-    agent: &crate::agent::mvp_agent::MvpAgent,
+    agent: &dyn AgentRuntime,
     args: &acp::ExtRequest,
     plugin_registry: Option<&xai_grok_agent::plugins::PluginRegistry>,
     compat: CompatConfig,
@@ -295,6 +337,7 @@ pub async fn handle(
 
             // Resolve to absolute path so config entries work from any cwd.
             let resolved = resolve_skill_path(&req.path, cwd);
+            let changed = skills_at_config_path(&resolved, cwd).await;
 
             let p = resolved.clone();
             if let Err(e) = cli_config::update_config(|cfg| {
@@ -314,6 +357,7 @@ pub async fn handle(
                         success: false,
                     },
                 );
+                log_harness_changed(&changed, HarnessChangeOp::Added, false);
                 return super::to_ext_response(Err::<SkillsAddResponse, _>(anyhow::anyhow!(
                     "Failed to save config: {e}"
                 )));
@@ -338,6 +382,7 @@ pub async fn handle(
                 total_skills: total as u32,
                 success: true,
             });
+            log_harness_changed(&changed, HarnessChangeOp::Added, true);
             super::to_ext_response(Ok(SkillsAddResponse {
                 added_count,
                 total,
@@ -353,6 +398,7 @@ pub async fn handle(
 
             // Resolve so relative/tilde paths match what was saved by add.
             let resolved = resolve_skill_path(&req.path, cwd);
+            let changed = skills_at_config_path(&resolved, cwd).await;
 
             let p = resolved.clone();
             if let Err(e) = cli_config::update_config(|cfg| {
@@ -363,6 +409,7 @@ pub async fn handle(
                 xai_grok_telemetry::session_ctx::log_event(
                     xai_grok_telemetry::events::SkillRemoved { success: false },
                 );
+                log_harness_changed(&changed, HarnessChangeOp::Removed, false);
                 return super::to_ext_response(Err::<SkillsRemoveResponse, _>(anyhow::anyhow!(
                     "Failed to save config: {e}"
                 )));
@@ -380,6 +427,7 @@ pub async fn handle(
             xai_grok_telemetry::session_ctx::log_event(xai_grok_telemetry::events::SkillRemoved {
                 success: true,
             });
+            log_harness_changed(&changed, HarnessChangeOp::Removed, true);
             super::to_ext_response(Ok(SkillsRemoveResponse {
                 path: resolved,
                 skills,
@@ -411,6 +459,9 @@ pub async fn handle(
         "x.ai/skills/list" => {
             let req: SkillsListRequest = serde_json::from_str(args.params.get())?;
             let skills = reload_skills(&req.cwd, plugin_registry, compat).await;
+            // Sessions otherwise learn about disk changes only from inotify,
+            // which misses writes made through another NFS client.
+            agent.refresh_skill_baseline_for_all_sessions();
             super::to_ext_response(Ok(SkillsListResponse { skills }))
         }
 
@@ -525,8 +576,7 @@ pub async fn handle(
                 )));
             }
 
-            // Re-apply disabled marking against the already-loaded skills
-            // to reflect the config change without a second full discovery.
+            // Re-apply disabled marking against the already-loaded skills to reflect the config change without a second full discovery
             let config = cli_config::load_config().await.skills;
             let disabled_set: std::collections::HashSet<&str> =
                 config.disabled.iter().map(|s| s.as_str()).collect();
@@ -547,6 +597,29 @@ pub async fn handle(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn request_cwd_reads_the_field_from_any_request_shape() {
+        let req = |json: &str| {
+            acp::ExtRequest::new(
+                "x.ai/skills/list",
+                serde_json::value::to_raw_value(
+                    &serde_json::from_str::<serde_json::Value>(json).unwrap(),
+                )
+                .unwrap()
+                .into(),
+            )
+        };
+        assert_eq!(
+            request_cwd(&req(r#"{"cwd": "/project"}"#)),
+            Some(std::path::PathBuf::from("/project"))
+        );
+        assert_eq!(
+            request_cwd(&req(r#"{"path": "/skills", "cwd": "/project"}"#)),
+            Some(std::path::PathBuf::from("/project"))
+        );
+        assert_eq!(request_cwd(&req(r#"{}"#)), None);
+    }
 
     #[test]
     fn test_add_request_with_cwd() {
@@ -589,9 +662,9 @@ mod tests {
             message: "ok".to_string(),
         };
         let json = serde_json::to_value(&resp).unwrap();
-        assert_eq!(json["addedCount"], 3);
-        assert_eq!(json["total"], 10);
-        assert_eq!(json["path"], "/test");
+        assert_eq!(json.get("addedCount"), Some(&serde_json::json!(3)));
+        assert_eq!(json.get("total"), Some(&serde_json::json!(10)));
+        assert_eq!(json.get("path"), Some(&serde_json::json!("/test")));
     }
 
     #[test]
@@ -627,31 +700,19 @@ mod tests {
         );
     }
 
-    /// Hermetic tilde expansion: pin HOME to a temp dir so remote sandboxes
-    /// (missing HOME, symlink-resolved homes, pre-existing ~/my-skills) cannot
-    /// make `starts_with($HOME)` fail spuriously. Serial because env mutation
-    /// is process-global.
+    /// Pin both HOME and USERPROFILE to the temp dir; `xai_dirs::home_dir()` prefers USERPROFILE on Windows.
+    /// Remote sandboxes (missing HOME, symlink-resolved homes, a pre-existing ~/my-skills) can make `starts_with($HOME)` fail spuriously.
+    /// Serial because env mutation is process-global.
     #[test]
     #[serial_test::serial]
     fn test_resolve_tilde_path() {
+        use xai_grok_test_support::env::EnvGuard;
+
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path().to_path_buf();
-        let prev_home = std::env::var_os("HOME");
-        let prev_userprofile = std::env::var_os("USERPROFILE");
-        // SAFETY: serial test; restored in the same scope below.
-        unsafe {
-            std::env::set_var("HOME", &home);
-            std::env::remove_var("USERPROFILE");
-        }
+        let _home = EnvGuard::set("HOME", &home);
+        let _userprofile = EnvGuard::set("USERPROFILE", &home);
         let resolved = resolve_skill_path("~/my-skills", "/ignored");
-        match prev_home {
-            Some(v) => unsafe { std::env::set_var("HOME", v) },
-            None => unsafe { std::env::remove_var("HOME") },
-        }
-        match prev_userprofile {
-            Some(v) => unsafe { std::env::set_var("USERPROFILE", v) },
-            None => unsafe { std::env::remove_var("USERPROFILE") },
-        }
         let expected = home.join("my-skills");
         assert_eq!(
             std::path::PathBuf::from(&resolved),
@@ -670,7 +731,7 @@ mod tests {
             skills: vec![],
         };
         let json = serde_json::to_value(&resp).unwrap();
-        assert_eq!(json["totalSkills"], 5);
-        assert!(json["paths"].is_array());
+        assert_eq!(json.get("totalSkills"), Some(&serde_json::json!(5)));
+        assert!(json.get("paths").is_some_and(|p| p.is_array()));
     }
 }

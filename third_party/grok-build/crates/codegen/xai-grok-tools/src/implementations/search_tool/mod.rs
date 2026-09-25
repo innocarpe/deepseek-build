@@ -8,6 +8,11 @@ use crate::types::output::{SearchToolOutput, ToolOutput};
 use crate::types::tool::{ToolKind, ToolNamespace};
 use crate::types::tool_index::ToolIndex;
 
+/// Wire name of the MCP discovery tool (see [`USE_TOOL_NAME`]).
+///
+/// [`USE_TOOL_NAME`]: crate::implementations::use_tool::USE_TOOL_NAME
+pub const SEARCH_TOOL_NAME: &str = "search_tool";
+
 /// Maximum length for MCP tool/server descriptions. Matches the common
 /// `MAX_MCP_DESCRIPTION_LENGTH` constant. Descriptions exceeding this are truncated.
 pub const MAX_MCP_DESCRIPTION_LENGTH: usize = 2048;
@@ -29,11 +34,9 @@ pub fn truncate_description(s: &str) -> String {
 /// Fingerprint for change detection: `(tool_count, description_hash, tool_names_hash)`.
 pub type ServerFingerprint = (usize, u64, u64);
 
-/// Deterministic, portable hash for change detection.
-///
-/// Uses FNV-1a which is stable across Rust versions, build profiles, and
-/// CPU architectures.  Safe to persist (used by `announcement_state.json`
-/// for MCP server fingerprints).
+/// Deterministic, portable hash for change detection. Uses FNV-1a which is stable across Rust
+/// versions, build profiles, and CPU architectures. Safe to persist (used by
+/// `announcement_state.json` for MCP server fingerprints).
 fn hash_value<H: std::hash::Hash>(val: &H) -> u64 {
     use std::hash::Hasher;
 
@@ -98,10 +101,8 @@ pub fn build_server_reminder(
     Some(text)
 }
 
-/// Build a delta system-reminder noting only what changed.
-///
-/// `old` is the previously-announced fingerprint map; `new_summaries` is the
-/// current server list. Returns `None` if nothing changed.
+/// Build a delta system-reminder noting only what changed. `old` is the previously-announced
+/// fingerprint map; `new_summaries` is the current server list. Returns `None` if nothing changed.
 pub fn build_delta_reminder(
     old: &std::collections::HashMap<String, ServerFingerprint>,
     new_summaries: &[crate::types::tool_index::ServerSummary],
@@ -179,12 +180,9 @@ fn format_server_line(server: &crate::types::tool_index::ServerSummary) -> Strin
     format_server_line_inner(&server.name, server.tool_count, &desc)
 }
 
-/// Format a server line for the compaction system-reminder.
-///
-/// Takes pre-processed fields instead of a `ServerSummary`, since
-/// compaction stores data in a different shape (already sanitized/truncated).
-/// Tool names are not included (discover via `search_tool`); they remain on
-/// `ServerSummary` only for change-detection fingerprints.
+/// Format a server line for the compaction system-reminder. Takes pre-processed fields instead of a `ServerSummary`,
+/// since compaction stores data in a different shape (already sanitized/truncated). Tool names are not included
+/// (discover via `search_tool`); they remain on `ServerSummary` only for change-detection fingerprints.
 pub fn format_compaction_server_line(name: &str, count: usize, desc: &Option<String>) -> String {
     format_server_line_inner(name, count, desc)
 }
@@ -227,7 +225,7 @@ impl xai_tool_runtime::Tool for SearchTool {
     type Output = ToolOutput;
 
     fn id(&self) -> xai_tool_protocol::ToolId {
-        xai_tool_protocol::ToolId::new("search_tool").expect("valid tool id")
+        xai_tool_protocol::ToolId::new(SEARCH_TOOL_NAME).expect("valid tool id")
     }
 
     fn description(
@@ -235,7 +233,7 @@ impl xai_tool_runtime::Tool for SearchTool {
         _ctx: &::xai_tool_runtime::ListToolsContext,
     ) -> xai_tool_types::ToolDescription {
         xai_tool_types::ToolDescription::new(
-            "search_tool",
+            SEARCH_TOOL_NAME,
             crate::types::tool_metadata::ToolMetadata::sanitized_description_template(self),
         )
     }
@@ -284,10 +282,9 @@ impl xai_tool_runtime::Tool for SearchTool {
             "search_tool.search"
         );
 
-        // Group results by server, preserving BM25 score order within each
-        // group. Groups are sorted by highest score (best-matching server first).
-        // snapshot.results is sorted by BM25 score descending, so the first
-        // tool per server is the highest-scoring — used as the group score.
+        // Group results by server, preserving BM25 score order within each group. Groups are sorted by highest score
+        // (best-matching server first). snapshot.results is sorted by BM25 score descending, so the first tool per server is
+        // the highest-scoring — used as the group score.
         let mut groups: Vec<(String, f32, Vec<serde_json::Value>)> = Vec::new();
         for r in &snapshot.results {
             let tool_json = serde_json::json!({
@@ -416,14 +413,17 @@ mod tests {
             panic!("expected search tool output");
         };
         let json: serde_json::Value = serde_json::from_str(&output.content).unwrap();
-        assert_eq!(json["results"][0]["server"], "Grafana");
         assert_eq!(
-            json["results"][0]["tools"][0]["tool_name"],
-            "grafana__search_dashboards"
+            json.pointer("/results/0/server"),
+            Some(&serde_json::json!("Grafana"))
         );
         assert_eq!(
-            json["results"][0]["tools"][0]["input_schema"]["properties"]["query"]["type"],
-            "string"
+            json.pointer("/results/0/tools/0/tool_name"),
+            Some(&serde_json::json!("grafana__search_dashboards"))
+        );
+        assert_eq!(
+            json.pointer("/results/0/tools/0/input_schema/properties/query/type"),
+            Some(&serde_json::json!("string"))
         );
     }
 
@@ -458,11 +458,16 @@ mod tests {
             panic!("expected search tool output");
         };
         let json: serde_json::Value = serde_json::from_str(&output.content).unwrap();
-        assert_eq!(json["status"], "ready");
-        assert_eq!(json["total_hidden_tools"], 0);
-        assert!(json["results"].as_array().unwrap().is_empty());
-        let note = json["note"]
-            .as_str()
+        assert_eq!(json.get("status"), Some(&serde_json::json!("ready")));
+        assert_eq!(json.get("total_hidden_tools"), Some(&serde_json::json!(0)));
+        assert!(
+            json.get("results")
+                .and_then(|v| v.as_array())
+                .is_some_and(|a| a.is_empty())
+        );
+        let note = json
+            .get("note")
+            .and_then(|v| v.as_str())
             .expect("empty ready catalog should set note");
         assert!(
             note.contains("Connect MCP servers") && note.contains("mcpInheritance"),

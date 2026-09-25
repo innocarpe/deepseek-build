@@ -1,7 +1,6 @@
-//! Reducer test suite. A child module of `messages` so it can reach
-//! `MessagesReducer`'s private state directly (and the coordinator's re-exported
-//! `wire`/`state` items via `use super::*`), while pulling the shared
-//! transport/`acp` reducer items in from the crate root.
+//! Reducer test suite.
+//! A child module of `messages` so it can reach `MessagesReducer`'s private state directly.
+//! The coordinator's re-exported `wire`/`state` items arrive via `use super::*`; the shared transport/`acp` reducer items come from the crate root.
 
 use super::usage::messages_model_usage;
 use super::wire::ModelUsage;
@@ -26,8 +25,8 @@ fn tool_call_ev() -> ToolCallEvent {
     }
 }
 
-/// A backend `web_search` `ToolCall`, as `tool_call_event` classifies it from
-/// the shell's `_meta.backend == true` + `raw_input.variant == "WebSearch"`.
+/// A backend `web_search` `ToolCall`.
+/// `tool_call_event` classifies it from the shell's `_meta.backend == true` and `raw_input.variant == "WebSearch"`.
 fn web_search_call(id: &str) -> ToolCallEvent {
     ToolCallEvent {
         tool_call_id: id.into(),
@@ -42,8 +41,7 @@ fn web_search_call(id: &str) -> ToolCallEvent {
     }
 }
 
-/// A terminal backend `web_search` `ToolCallUpdate` carrying Grok's nested
-/// `WebSearchCall` `raw_output` (`action.query` + `action.sources[].url`).
+/// A terminal backend `web_search` `ToolCallUpdate` carrying Grok's nested `WebSearchCall` `raw_output` (`action.query` and `action.sources[].url`).
 fn web_search_done(id: &str) -> ToolCallUpdateEvent {
     ToolCallUpdateEvent {
         tool_call_id: id.into(),
@@ -94,9 +92,8 @@ fn messages(partials: bool) -> MessagesReducer {
     r
 }
 
-/// A skill command carries `_meta.scope` + `_meta.path`; a workflow carries
-/// `workflowPath`/`workflowSource`; a builtin carries no `_meta`. Only the
-/// skill is projected into `init.skills`.
+/// A skill command carries `_meta.scope` and `_meta.path`; a workflow carries `workflowPath`/`workflowSource`; a builtin carries no `_meta`.
+/// Only the skill is projected into `init.skills`.
 fn skill_command(name: &str) -> acp::AvailableCommand {
     let meta = serde_json::json!({"scope": "user", "path": "/skills/foo.md"})
         .as_object()
@@ -115,9 +112,27 @@ fn builtin_command(name: &str) -> acp::AvailableCommand {
     acp::AvailableCommand::new(name.to_string(), "a builtin".to_string())
 }
 
+fn json_str<'a>(value: &'a Value, pointer: &str) -> Option<&'a str> {
+    value.pointer(pointer).and_then(Value::as_str)
+}
+
+fn msg_type(value: &Value) -> Option<&str> {
+    value.get("type").and_then(Value::as_str)
+}
+
+fn event_type(value: &Value) -> Option<&str> {
+    json_str(value, "/event/type")
+}
+
+fn delta_type(value: &Value) -> Option<&str> {
+    json_str(value, "/event/delta/type")
+}
+
 fn stream_delta(out: &[Value]) -> &Value {
     out.iter()
-        .find(|m| m["type"] == "stream_event" && m["event"]["type"] == "content_block_delta")
+        .find(|m| {
+            msg_type(m) == Some("stream_event") && event_type(m) == Some("content_block_delta")
+        })
         .expect("a content_block_delta stream_event")
 }
 
@@ -132,8 +147,7 @@ fn web_search_failed(id: &str) -> ToolCallUpdateEvent {
     }
 }
 
-/// A completed backend `WebSearch` update for a NON-search action (e.g.
-/// open_page): the `raw_output` carries no `action.query`/`action.sources`.
+/// A completed backend `WebSearch` update for a NON-search action (e.g. open_page): the `raw_output` carries no `action.query`/`action.sources`.
 fn web_search_non_search(id: &str) -> ToolCallUpdateEvent {
     ToolCallUpdateEvent {
         tool_call_id: id.into(),

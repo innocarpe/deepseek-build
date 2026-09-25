@@ -1,7 +1,8 @@
-//! System prompt assembly — template rendering, AGENTS.md, and skills.
 pub mod agents_md;
+pub mod browser_verification;
 pub mod context;
 pub mod ignore;
+pub mod paths;
 pub mod skills;
 pub mod subagent_prompts;
 pub mod template;

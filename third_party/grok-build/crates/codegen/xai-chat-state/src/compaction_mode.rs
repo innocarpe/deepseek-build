@@ -2,21 +2,26 @@
 //! lossy summary dropped. In `xai-chat-state` so flag resolution and the
 //! transcript-hint builder share one definition.
 
-use crate::compaction_transcript::CompactionDetail;
+use xai_compaction_transcript::CompactionDetail;
 
 /// How compaction exposes pre-compaction history to the model afterwards.
 /// `Segments` carries its verbatim detail level inline, since detail is
 /// meaningful only there.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, strum::Display)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, strum::Display)]
 #[strum(serialize_all = "snake_case")]
 pub enum CompactionMode {
-    /// Summary only — no pointer back to pre-compaction history. Default.
-    #[default]
+    /// Summary only — no pointer back to pre-compaction history.
     Summary,
     /// Summary + pointer to the full raw `updates.jsonl`.
     Transcript,
-    /// Summary + a `compaction/` folder of clean per-segment markdown.
+    /// Summary + a `compaction/` folder of clean per-segment markdown. Default.
     Segments(CompactionDetail),
+}
+
+impl Default for CompactionMode {
+    fn default() -> Self {
+        Self::Segments(CompactionDetail::default())
+    }
 }
 
 impl CompactionMode {
@@ -57,7 +62,7 @@ impl CompactionMode {
     /// at (raw transcript path or `compaction/` folder). `None` if the mode adds
     /// no pointer (`Summary`) or the location is absent.
     pub fn transcript_hint(self, location: Option<&str>) -> Option<String> {
-        use crate::compaction_transcript::INDEX_FILE;
+        use xai_compaction_transcript::INDEX_FILE;
         let loc = location?;
         Some(match self {
             Self::Summary => return None,
@@ -100,7 +105,10 @@ mod tests {
             Some(CompactionMode::Segments(CompactionDetail::default()))
         );
         assert_eq!(CompactionMode::parse("nonsense"), None);
-        assert_eq!(CompactionMode::default(), CompactionMode::Summary);
+        assert_eq!(
+            CompactionMode::default(),
+            CompactionMode::Segments(CompactionDetail::default())
+        );
     }
 
     /// Detail is only attached to `Segments`; other modes ignore the override.

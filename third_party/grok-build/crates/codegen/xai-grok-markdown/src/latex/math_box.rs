@@ -2,27 +2,17 @@
 
 use crate::buffers::unicode_display_width;
 
-/// Two-dimensional text box with an anchor row where horizontal flow
-/// attaches.
-///
-/// Multi-row content (matrix-family environments) extends above/below the
-/// anchor row; subsequent output continues on the anchor row. This keeps a
-/// prefix, a matrix, and a suffix aligned:
-///
-/// ```text
-/// A = ⎛1  2⎞,   det(A) = −2
-///     ⎝3  4⎠
-/// ```
+/// Two-dimensional text box with an anchor row where horizontal flow attaches.
+/// Multi-row content (matrix-family environments) extends above/below the anchor row; subsequent output continues on the anchor row.
+/// This keeps a prefix, a matrix, and a suffix aligned:
 pub(super) struct MathBox {
     lines: Vec<String>,
     /// Row index that horizontal flow currently appends to.
     anchor: usize,
-    /// First row belonging to the current visual line. Rows before `floor`
-    /// are completed lines from earlier `\\` breaks and must never be
-    /// touched by box attachment.
+    /// First row belonging to the current visual line.
+    /// Rows before `floor` are completed lines from earlier `\\` breaks and must never be touched by box attachment.
     floor: usize,
-    /// Flat mode (inline math): vertical layout is impossible, so row breaks
-    /// render as `; ` and environments render single-row.
+    /// Flat mode (inline math): vertical layout is impossible, so row breaks render as `; ` and environments render single-row.
     pub(super) flat: bool,
 }
 
@@ -36,41 +26,44 @@ impl MathBox {
         }
     }
 
-    fn cur(&mut self) -> &mut String {
-        &mut self.lines[self.anchor]
+    fn cur(&mut self) -> Option<&mut String> {
+        self.lines.get_mut(self.anchor)
     }
 
     /// `true` when nothing has been emitted on the current flow row yet.
     pub(super) fn at_line_start(&self) -> bool {
-        self.lines[self.anchor].is_empty()
+        self.lines.get(self.anchor).is_none_or(|s| s.is_empty())
     }
 
     pub(super) fn ends_with_space(&self) -> bool {
-        self.lines[self.anchor].ends_with(' ')
+        self.lines
+            .get(self.anchor)
+            .is_some_and(|s| s.ends_with(' '))
     }
 
     pub(super) fn push(&mut self, c: char) {
         if c == '\n' {
             self.vbreak();
-        } else {
-            self.cur().push(c);
+        } else if let Some(cur) = self.cur() {
+            cur.push(c);
         }
     }
 
     pub(super) fn push_str(&mut self, s: &str) {
         if s.contains('\n') {
             self.hcat_rows(s.split('\n').map(str::to_string).collect());
-        } else {
-            self.cur().push_str(s);
+        } else if let Some(cur) = self.cur() {
+            cur.push_str(s);
         }
     }
 
-    /// End the current visual line; flow continues on a fresh row below all
-    /// existing rows. Flat mode renders the break as `; `.
+    /// End the current visual line; flow continues on a fresh row below all existing rows.
+    /// Flat mode renders the break as `; `.
     fn vbreak(&mut self) {
         if self.flat {
-            if !self.at_line_start() {
-                let cur = self.cur();
+            if !self.at_line_start()
+                && let Some(cur) = self.cur()
+            {
                 while cur.ends_with(' ') {
                     cur.pop();
                 }
@@ -83,9 +76,8 @@ impl MathBox {
         }
     }
 
-    /// Attach `rows` as a box at the current flow position, anchored at the
-    /// box's upper-middle row. All box rows start at the same column; flow
-    /// resumes on the anchor row past the box's widest row.
+    /// Attach `rows` as a box at the current flow position, anchored at the box's upper-middle row.
+    /// All box rows start at the same column; flow resumes on the anchor row past the box's widest row.
     pub(super) fn hcat_rows(&mut self, rows: Vec<String>) {
         if rows.is_empty() {
             return;
@@ -95,12 +87,17 @@ impl MathBox {
                 if i > 0 {
                     self.vbreak();
                 }
-                self.cur().push_str(row);
+                if let Some(cur) = self.cur() {
+                    cur.push_str(row);
+                }
             }
             return;
         }
         let box_anchor = (rows.len() - 1) / 2;
-        let attach_col = unicode_display_width(&self.lines[self.anchor]);
+        let attach_col = self
+            .lines
+            .get(self.anchor)
+            .map_or(0, |s| unicode_display_width(s));
         let box_width = rows
             .iter()
             .map(|r| unicode_display_width(r))
@@ -127,7 +124,9 @@ impl MathBox {
         // Place the box rows, left-padded to the attach column.
         for (i, row) in rows.iter().enumerate() {
             let target = self.anchor - box_anchor + i;
-            let line = &mut self.lines[target];
+            let Some(line) = self.lines.get_mut(target) else {
+                continue;
+            };
             let cur_w = unicode_display_width(line);
             if cur_w < attach_col {
                 line.push_str(&" ".repeat(attach_col - cur_w));
@@ -136,10 +135,12 @@ impl MathBox {
         }
         // Flow resumes past the box's widest row.
         let frontier = attach_col + box_width;
-        let cur_w = unicode_display_width(&self.lines[self.anchor]);
-        if cur_w < frontier {
-            let pad = frontier - cur_w;
-            self.lines[self.anchor].push_str(&" ".repeat(pad));
+        if let Some(line) = self.lines.get_mut(self.anchor) {
+            let cur_w = unicode_display_width(line);
+            if cur_w < frontier {
+                let pad = frontier - cur_w;
+                line.push_str(&" ".repeat(pad));
+            }
         }
     }
 

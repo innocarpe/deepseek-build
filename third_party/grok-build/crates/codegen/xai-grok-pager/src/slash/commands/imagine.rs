@@ -3,39 +3,21 @@ use xai_grok_tools::implementations::grok_build::{
     IMAGE_GEN_TOOL_NAME, IMAGINE_COMMAND_NAME, imagine_instruction, imagine_usage_message,
 };
 
-use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
+use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand, slash_meta};
 
 const REQUIRED_TOOLS: &[&str] = &[IMAGE_GEN_TOOL_NAME];
 
 pub struct ImagineCommand;
 
 impl SlashCommand for ImagineCommand {
-    fn name(&self) -> &str {
-        IMAGINE_COMMAND_NAME
-    }
-
-    fn description(&self) -> &str {
-        "Generate an image from a text description"
-    }
-
-    fn usage(&self) -> &str {
-        "/imagine <description>"
-    }
-
-    fn takes_args(&self) -> bool {
-        true
-    }
-
-    fn args_required(&self) -> bool {
-        true
-    }
-
-    fn arg_placeholder(&self) -> Option<&str> {
-        Some("description of the image to generate")
-    }
-
-    fn required_tools(&self) -> &[&str] {
-        REQUIRED_TOOLS
+    slash_meta! {
+        name: IMAGINE_COMMAND_NAME,
+        description: "Generate an image from a text description",
+        usage: "/imagine <description>",
+        takes_args: true,
+        args_required: true,
+        arg_placeholder: "description of the image to generate",
+        required_tools: REQUIRED_TOOLS,
     }
 
     fn run(&self, _ctx: &mut CommandExecCtx, args: &str) -> CommandResult {
@@ -95,10 +77,10 @@ mod tests {
                 assert_eq!(display_text, "/imagine a golden sunset");
                 assert!(!display_as_skill);
                 assert_eq!(prompt_blocks.len(), 1);
-                let text = match &prompt_blocks[0] {
-                    acp::ContentBlock::Text(t) => &t.text,
-                    _ => panic!("expected Text block"),
+                let [acp::ContentBlock::Text(t)] = prompt_blocks.as_slice() else {
+                    panic!("expected Text block, got {prompt_blocks:?}");
                 };
+                let text = &t.text;
                 assert!(text.contains("image_gen"));
                 assert!(text.contains("a golden sunset"));
             }

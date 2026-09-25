@@ -67,7 +67,7 @@ fn use_instead_refusal_names_the_substitute_not_a_relaunch() {
         .expect("minimal-only command is refused in fullscreen");
     assert_eq!(
         refusal,
-        "/expand isn't available in fullscreen mode — press → on the block."
+        "/expand isn't available in fullscreen mode: press → on the block."
     );
     assert!(
         !refusal.contains("/minimal"),
@@ -87,8 +87,7 @@ fn already_in_mode_refusal_is_a_plain_statement() {
     );
 }
 
-/// Pinned on the composed sentence, not the variant, so a remedy that reads
-/// wrong to a user lands in the diff rather than only in the code.
+/// Pinned on the composed sentence, not the variant, so a remedy that reads wrong to a user lands in the diff rather than only in the code.
 #[test]
 fn mode_specific_builtin_refusals_are_pinned() {
     let commands = crate::slash::commands::builtin_commands();
@@ -113,21 +112,14 @@ fn mode_specific_builtin_refusals_are_pinned() {
                     .to_string()
             ),
             (
-                "edit-prompt",
-                "/edit-prompt isn't available in fullscreen mode (the full TUI has no \
-                 external-editor path — Ctrl+G is the tasks pane there). \
-                 Run /minimal to switch this session."
-                    .to_string()
-            ),
-            (
                 "expand",
-                "/expand isn't available in fullscreen mode — press Tab to focus the \
+                "/expand isn't available in fullscreen mode: press Tab to focus the \
                  scrollback, then → on the block."
                     .to_string()
             ),
             (
                 "find",
-                "/find isn't available in minimal mode (minimal has no scrollback pane — \
+                "/find isn't available in minimal mode (minimal has no scrollback pane: \
                  use your terminal's own search). Run /fullscreen to switch this session."
                     .to_string()
             ),
@@ -161,13 +153,6 @@ fn mode_specific_builtin_refusals_are_pinned() {
                 "tutorial",
                 "/tutorial isn't available in minimal mode \
                  (the tutorial overlay needs fullscreen). \
-                 Run /fullscreen to switch this session."
-                    .to_string()
-            ),
-            (
-                "workflows",
-                "/workflows isn't available in minimal mode \
-                 (the workflow run pane needs fullscreen). \
                  Run /fullscreen to switch this session."
                     .to_string()
             ),

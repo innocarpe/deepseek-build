@@ -1,12 +1,10 @@
-//! Minimal-mode live region: the small pinned viewport holding the running-turn
-//! tail (model B), optional todos / `/btw` panels, a one-line status indicator,
-//! and the always-focused prompt.
+//! Minimal-mode live region: the small pinned viewport.
+//! It holds the running-turn tail, the optional todos and `/btw` panels, a one-line status indicator, and the always-focused prompt.
 //!
-//! Layout (top → bottom): live tail · todos · `/btw` · status · prompt ·
-//! overlay/info. The tail shows the bottom of the uncommitted run (streaming
-//! message / running tool) so output is visible as it generates; finished blocks
-//! scroll up into native scrollback via [`super::commit`]. When idle the tail is
-//! empty and only status + prompt (+ optional panels) show.
+//! Layout (top to bottom): live tail · todos · `/btw` · status · prompt · overlay/info · the `[ui.status_line]` row.
+//! The tail shows the bottom of the uncommitted run (streaming message / running tool) so output is visible as it generates.
+//! Finished blocks scroll up into native scrollback via [`super::commit`].
+//! When idle the tail is empty and only the status row, the prompt, and any optional panels show.
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
@@ -18,19 +16,13 @@ use xai_grok_pager::minimal_api;
 use xai_grok_pager::render::Renderable;
 use xai_grok_pager::scrollback::state::ScrollbackState;
 use xai_grok_pager::scrollback::wrappers::EntryRenderer;
+use xai_grok_pager::terminal::TerminalContext;
 use xai_grok_pager::theme::Theme;
 use xai_grok_pager::views::prompt_widget::{PromptBg, PromptStyle};
 use xai_grok_pager::views::turn_status;
-/// Left inset (columns) for every auxiliary live-region row: the status row,
-/// the info bar, the exit hint, and the todo panel — and the prompt's
-/// `chrome_pad_left`.
-///
-/// Minimal is flush-left: committed/tail blocks zero block pads via
-/// [`super::commit::committed_appearance`] and reclaim the accent column via
-/// `hide_accent`, so content glyphs (`◆` / `$` / message text) start at column
-/// 0, matching the welcome card's outer edge. The prompt and auxiliary rows
-/// share that left edge (no chrome pad) so nothing sits ragged against the
-/// welcome box.
+/// Left inset (columns) for every auxiliary live-region row and the prompt's `chrome_pad_left`. Minimal is
+/// flush-left. Content glyphs (`◆` / `$` / message text) thus start at column 0, matching the welcome card's outer
+/// edge.
 pub(super) fn live_left_inset(_appearance: &xai_grok_pager::appearance::AppearanceConfig) -> u16 {
     0
 }
@@ -43,8 +35,7 @@ fn inset_left(area: Rect, inset: u16) -> Rect {
         ..area
     }
 }
-/// Drop cached `/btw` geometry so minimal input cannot scroll an invisible
-/// panel after a modal host path skipped painting it.
+/// Drop cached `/btw` geometry so minimal input cannot scroll an invisible panel after a modal host path skipped painting it.
 fn clear_btw_geometry(agent: &mut xai_grok_pager::app::agent_view::AgentView) {
     agent.last_btw_selection_model =
         xai_grok_pager::scrollback::text_selection::ResolvedSelectionModel::default();
@@ -59,14 +50,8 @@ fn paintable_btw_area(frame_area: Rect, area: Rect) -> Option<Rect> {
         && area.y.saturating_add(area.height) <= frame_area.y.saturating_add(frame_area.height))
     .then_some(area)
 }
-/// The prompt style used by the minimal live region.
-///
-/// Shared with [`super::overlay::sync_viewport`] so viewport sizing measures the
-/// prompt's height exactly as the live region will draw it.
-///
-/// `input_mode` wires special composer modes (bash `! `, feedback `~ `,
-/// remember `# `) the same way the full TUI does — without this, `!` on an
-/// empty prompt would flip mode invisibly (key consumed, default `❯` remains).
+/// The prompt style used by the minimal live region. Without it, `!` on an empty prompt would flip mode invisibly
+/// (key consumed, default `❯` remains).
 pub(super) fn prompt_style(
     appearance: &xai_grok_pager::appearance::AppearanceConfig,
     input_mode: xai_grok_pager::app::agent_view::PromptInputMode,
@@ -94,7 +79,7 @@ pub(super) fn prompt_style(
     }
 }
 /// Draw the pinned live region (tail + status + prompt) into the inline viewport.
-pub fn draw_live(app: &mut AppView, terminal: &mut PagerTerminal) {
+pub fn draw_live(app: &mut AppView, terminal: &mut PagerTerminal, ctx: &TerminalContext) {
     let force_todos = minimal_api::minimal_show_todos(app);
     let auth_hint = crate::auth::minimal_auth_hint(
         &app.auth_state,
@@ -109,6 +94,7 @@ pub fn draw_live(app: &mut AppView, terminal: &mut PagerTerminal) {
         "/transcript"
     };
     let transcript_progress = minimal_api::minimal_transcript_progress(app);
+    let status_line_frame = minimal_api::status_line_frame(app);
     let AppView {
         cursor,
         agents,
@@ -136,61 +122,179 @@ pub fn draw_live(app: &mut AppView, terminal: &mut PagerTerminal) {
     {
         clear_btw_geometry(agent);
     }
-    xai_grok_pager::render::draw::draw_frame(terminal, cursor, |frame, _link_spans| {
-        let area = frame.area();
-        if area.height == 0 || area.width < 4 {
-            return (None, None);
-        }
-        Clear.render(area, frame.buffer_mut());
-        let agent = agent_id.and_then(|id| agents.get_mut(&id));
-        let Some(agent) = agent else {
-            crate::auth::render_auth(frame.buffer_mut(), area, &theme, &auth_hint);
-            return (None, None);
-        };
-        agent.active_pane = xai_grok_pager::app::agent_view::AgentPane::Prompt;
-        let status_activity = minimal_advance_phase_timer(agent);
-        let show_todos = crate::todo::todo_panel_visible(agent, force_todos);
-        let queued = agent.session.pending_prompts.len() + agent.shared_queue.len();
-        if let Some(kind) = super::panel::active(agent) {
-            let cursor = super::panel::render(frame.buffer_mut(), area, agent, kind, &theme);
-            return (cursor, None);
-        }
-        if super::overlay::app_modal_active(agent) {
-            super::overlay::render_app_modal(frame.buffer_mut(), area, agent, compact);
-            return (None, None);
-        }
-        if minimal_api::extensions_modal(agent).is_some() {
-            let tick = (now_millis() / 100) as u64;
-            if let Some(state) = minimal_api::extensions_modal_mut(agent) {
-                xai_grok_pager::views::extensions_modal::render_extensions_modal(
-                    frame.buffer_mut(),
-                    area,
-                    state,
-                    None,
-                    compact,
-                    tick,
-                );
+    xai_grok_pager::render::draw::draw_frame_at_adopted_size(
+        terminal,
+        cursor,
+        ctx,
+        |frame, _link_spans| {
+            let area = frame.area();
+            if area.height == 0 || area.width < 4 {
+                return (None, None);
             }
-            return (None, None);
-        }
-        if let Some(modal) = super::overlay::active_modal(agent) {
+            Clear.render(area, frame.buffer_mut());
+            let agent = agent_id.and_then(|id| agents.get_mut(&id));
+            let Some(agent) = agent else {
+                crate::auth::render_auth(frame.buffer_mut(), area, &theme, &auth_hint);
+                return (None, None);
+            };
+            agent.active_pane = xai_grok_pager::app::agent_view::AgentPane::Prompt;
+            let status_activity = minimal_advance_phase_timer(agent);
+            let show_todos = crate::todo::todo_panel_visible(agent, force_todos);
+            let queued = agent.session.pending_prompts.len() + agent.shared_queue.len();
+            if let Some(kind) = super::panel::active(agent) {
+                let cursor = super::panel::render(frame.buffer_mut(), area, agent, kind, &theme);
+                return (cursor, None);
+            }
+            if super::overlay::app_modal_active(agent) {
+                super::overlay::render_app_modal(frame.buffer_mut(), area, agent, compact);
+                return (None, None);
+            }
+            if let Some(modal) = minimal_api::feedback_modal_mut(agent) {
+                return super::feedback::render(frame.buffer_mut(), area, modal, &theme, compact);
+            }
+            if minimal_api::extensions_modal(agent).is_some() {
+                let tick = (now_millis() / 100) as u64;
+                if let Some(state) = minimal_api::extensions_modal_mut(agent) {
+                    xai_grok_pager::views::extensions_modal::render_extensions_modal(
+                        frame.buffer_mut(),
+                        area,
+                        state,
+                        None,
+                        compact,
+                        tick,
+                    );
+                }
+                return (None, None);
+            }
+            if let Some(modal) = super::overlay::active_modal(agent) {
+                let status_h = 1u16.min(area.height);
+                let sl_h = status_line_frame
+                    .height()
+                    .min(area.height.saturating_sub(status_h + 1));
+                let content_w = area.width as usize;
+                let modal_h = super::overlay::modal_height(modal, agent, term_h, content_w)
+                    .min(area.height.saturating_sub(status_h + sl_h))
+                    .max(1);
+                let tail_h = area.height.saturating_sub(status_h + modal_h + sl_h);
+                let tick = (now_millis() / 100) as u64;
+                if tail_h > 0 {
+                    let turn_running = minimal_api::is_turn_or_wake_running(agent);
+                    draw_tail(
+                        frame.buffer_mut(),
+                        Rect {
+                            x: area.x,
+                            y: area.y,
+                            width: area.width,
+                            height: tail_h,
+                        },
+                        &agent.scrollback,
+                        turn_running,
+                        &theme,
+                        &commit_app,
+                        &agent.session.cwd,
+                        tick,
+                    );
+                }
+                render_minimal_status(
+                    frame.buffer_mut(),
+                    inset_left(
+                        Rect {
+                            x: area.x,
+                            y: area.y + tail_h,
+                            width: area.width,
+                            height: status_h,
+                        },
+                        row_inset,
+                    ),
+                    agent,
+                    &status_activity,
+                    transcript_progress,
+                    &theme,
+                );
+                let modal_area = Rect {
+                    x: area.x,
+                    y: area.y + tail_h + status_h,
+                    width: area.width,
+                    height: modal_h,
+                };
+                if sl_h > 0 {
+                    render_config_status_line(
+                        frame.buffer_mut(),
+                        Rect {
+                            x: area.x,
+                            y: modal_area.y + modal_h,
+                            width: area.width,
+                            height: sl_h,
+                        },
+                        agent,
+                        &status_line_frame,
+                        &theme,
+                    );
+                }
+                let cursor = super::overlay::render_modal(
+                    frame.buffer_mut(),
+                    modal_area,
+                    modal,
+                    agent,
+                    &theme,
+                    term_h,
+                );
+                return (cursor, None);
+            }
             let status_h = 1u16.min(area.height);
-            let content_w = area.width as usize;
-            let modal_h = super::overlay::modal_height(modal, agent, term_h, content_w)
-                .min(area.height.saturating_sub(status_h))
+            let sl_h = status_line_frame
+                .height()
+                .min(area.height.saturating_sub(status_h + 1));
+            let overlay_h = super::overlay::overlay_rows(&agent.prompt, area.width)
+                .min(area.height.saturating_sub(status_h + sl_h + 1));
+            let info_h = if overlay_h == 0 {
+                1u16.min(area.height.saturating_sub(status_h + sl_h + 1))
+            } else {
+                0
+            };
+            let below_h = overlay_h + info_h + sl_h;
+            let avail = area.height.saturating_sub(status_h + below_h);
+            let prompt_h = agent
+                .prompt
+                .desired_height(area.width, &style, false, avail)
+                .min(avail)
                 .max(1);
-            let tail_h = area.height.saturating_sub(status_h + modal_h);
-            let tick = (now_millis() / 100) as u64;
+            let rest = avail.saturating_sub(prompt_h);
+            let raw_btw = if minimal_api::minimal_btw_surface_available(agent) {
+                xai_grok_pager::views::btw_overlay::btw_panel_height(
+                    agent.btw_state.as_ref(),
+                    area.width,
+                )
+            } else {
+                0
+            };
+            let btw_desired = minimal_api::minimal_btw_visible_height(raw_btw, area.width, rest);
+            let after_btw = rest.saturating_sub(btw_desired);
+            let todos_cap = if force_todos {
+                after_btw
+            } else {
+                after_btw.min(crate::todo::MAX_TODO_ROWS)
+            };
+            let todo_lines = if show_todos {
+                crate::todo::todo_panel_lines(agent, todos_cap, force_todos)
+            } else {
+                Vec::new()
+            };
+            let todos_h = (todo_lines.len() as u16).min(after_btw);
+            let btw_h = btw_desired;
+            let tail_h = rest.saturating_sub(todos_h + btw_h);
+            let tick = agent.scrollback.animation_tick();
             if tail_h > 0 {
-                let turn_running = agent.session.state.is_turn_running();
+                let tail_area = Rect {
+                    x: area.x,
+                    y: area.y,
+                    width: area.width,
+                    height: tail_h,
+                };
+                let turn_running = minimal_api::is_turn_or_wake_running(agent);
                 draw_tail(
                     frame.buffer_mut(),
-                    Rect {
-                        x: area.x,
-                        y: area.y,
-                        width: area.width,
-                        height: tail_h,
-                    },
+                    tail_area,
                     &agent.scrollback,
                     turn_running,
                     &theme,
@@ -199,203 +303,133 @@ pub fn draw_live(app: &mut AppView, terminal: &mut PagerTerminal) {
                     tick,
                 );
             }
+            if todos_h > 0 {
+                crate::todo::render_todo_panel(
+                    frame.buffer_mut(),
+                    inset_left(
+                        Rect {
+                            x: area.x,
+                            y: area.y + tail_h,
+                            width: area.width,
+                            height: todos_h,
+                        },
+                        row_inset,
+                    ),
+                    &theme,
+                    &todo_lines,
+                );
+            }
+            let btw_area = paintable_btw_area(
+                area,
+                Rect {
+                    x: area.x,
+                    y: area.y.saturating_add(tail_h).saturating_add(todos_h),
+                    width: area.width,
+                    height: btw_h,
+                },
+            );
+            if let (Some(btw), Some(btw_area)) = (agent.btw_state.as_ref(), btw_area) {
+                let focused = minimal_api::btw_focused(agent);
+                xai_grok_pager::views::btw_overlay::render_btw_panel(
+                    frame.buffer_mut(),
+                    btw,
+                    btw_area,
+                    tick,
+                    focused,
+                    None,
+                    &mut agent.last_btw_selection_model,
+                    None,
+                    &[],
+                    None,
+                );
+                agent.last_btw_area = btw_area;
+            }
+            let status_area = inset_left(
+                Rect {
+                    x: area.x,
+                    y: area.y + tail_h + todos_h + btw_h,
+                    width: area.width,
+                    height: status_h,
+                },
+                row_inset,
+            );
             render_minimal_status(
                 frame.buffer_mut(),
-                inset_left(
-                    Rect {
-                        x: area.x,
-                        y: area.y + tail_h,
-                        width: area.width,
-                        height: status_h,
-                    },
-                    row_inset,
-                ),
+                status_area,
                 agent,
                 &status_activity,
                 transcript_progress,
                 &theme,
             );
-            let modal_area = Rect {
+            let prompt_area = Rect {
                 x: area.x,
-                y: area.y + tail_h + status_h,
+                y: area.y + tail_h + todos_h + btw_h + status_h,
                 width: area.width,
-                height: modal_h,
+                height: prompt_h,
             };
-            let cursor = super::overlay::render_modal(
-                frame.buffer_mut(),
-                modal_area,
-                modal,
-                agent,
-                &theme,
-                term_h,
-            );
-            return (cursor, None);
-        }
-        let status_h = 1u16.min(area.height);
-        let overlay_h = super::overlay::overlay_rows(&agent.prompt, area.width)
-            .min(area.height.saturating_sub(status_h + 1));
-        let info_h = if overlay_h == 0 {
-            1u16.min(area.height.saturating_sub(status_h + 1))
-        } else {
-            0
-        };
-        let below_h = overlay_h + info_h;
-        let avail = area.height.saturating_sub(status_h + below_h);
-        let prompt_h = agent
-            .prompt
-            .desired_height(area.width, &style, false, avail)
-            .min(avail)
-            .max(1);
-        let rest = avail.saturating_sub(prompt_h);
-        let raw_btw = if minimal_api::minimal_btw_surface_available(agent) {
-            xai_grok_pager::views::btw_overlay::btw_panel_height(
-                agent.btw_state.as_ref(),
-                area.width,
-            )
-        } else {
-            0
-        };
-        let btw_desired = minimal_api::minimal_btw_visible_height(raw_btw, area.width, rest);
-        let after_btw = rest.saturating_sub(btw_desired);
-        let todos_cap = if force_todos {
-            after_btw
-        } else {
-            after_btw.min(crate::todo::MAX_TODO_ROWS)
-        };
-        let todo_lines = if show_todos {
-            crate::todo::todo_panel_lines(agent, todos_cap, force_todos)
-        } else {
-            Vec::new()
-        };
-        let todos_h = (todo_lines.len() as u16).min(after_btw);
-        let btw_h = btw_desired;
-        let tail_h = rest.saturating_sub(todos_h + btw_h);
-        let tick = agent.scrollback.animation_tick();
-        if tail_h > 0 {
-            let tail_area = Rect {
-                x: area.x,
-                y: area.y,
-                width: area.width,
-                height: tail_h,
-            };
-            let turn_running = agent.session.state.is_turn_running();
-            draw_tail(
-                frame.buffer_mut(),
-                tail_area,
-                &agent.scrollback,
-                turn_running,
-                &theme,
-                &commit_app,
-                &agent.session.cwd,
-                tick,
-            );
-        }
-        if todos_h > 0 {
-            crate::todo::render_todo_panel(
-                frame.buffer_mut(),
-                inset_left(
+            if overlay_h > 0 {
+                let overlay_area = Rect {
+                    height: area.height.saturating_sub(sl_h),
+                    ..area
+                };
+                super::overlay::render(
+                    frame.buffer_mut(),
+                    overlay_area,
+                    prompt_area,
+                    &mut agent.prompt,
+                    layout_cfg,
+                    compact,
+                    &theme,
+                );
+            } else if info_h > 0 {
+                let info_area = inset_left(
                     Rect {
                         x: area.x,
-                        y: area.y + tail_h,
+                        y: prompt_area.y + prompt_h,
                         width: area.width,
-                        height: todos_h,
+                        height: info_h,
                     },
                     row_inset,
-                ),
-                &theme,
-                &todo_lines,
-            );
-        }
-        let btw_area = paintable_btw_area(
-            area,
-            Rect {
-                x: area.x,
-                y: area.y.saturating_add(tail_h).saturating_add(todos_h),
-                width: area.width,
-                height: btw_h,
-            },
-        );
-        if let (Some(btw), Some(btw_area)) = (agent.btw_state.as_ref(), btw_area) {
-            let focused = minimal_api::btw_focused(agent);
-            xai_grok_pager::views::btw_overlay::render_btw_panel(
-                frame.buffer_mut(),
-                btw,
-                btw_area,
-                tick,
-                focused,
-                None,
-                &mut agent.last_btw_selection_model,
-                None,
-                &[],
-            );
-            agent.last_btw_area = btw_area;
-        }
-        let status_area = inset_left(
-            Rect {
-                x: area.x,
-                y: area.y + tail_h + todos_h + btw_h,
-                width: area.width,
-                height: status_h,
-            },
-            row_inset,
-        );
-        render_minimal_status(
-            frame.buffer_mut(),
-            status_area,
-            agent,
-            &status_activity,
-            transcript_progress,
-            &theme,
-        );
-        let prompt_area = Rect {
-            x: area.x,
-            y: area.y + tail_h + todos_h + btw_h + status_h,
-            width: area.width,
-            height: prompt_h,
-        };
-        if overlay_h > 0 {
-            super::overlay::render(
-                frame.buffer_mut(),
-                area,
-                prompt_area,
-                &mut agent.prompt,
-                layout_cfg,
-                compact,
-                &theme,
-            );
-        } else if info_h > 0 {
-            let info_area = inset_left(
-                Rect {
-                    x: area.x,
-                    y: prompt_area.y + prompt_h,
-                    width: area.width,
-                    height: info_h,
-                },
-                row_inset,
-            );
-            if let Some(hint) = &pending_hint {
-                render_exit_hint(frame.buffer_mut(), info_area, &theme, hint);
-            } else {
-                render_prompt_info(
+                );
+                if let Some(hint) = &pending_hint {
+                    render_warning_hint(frame.buffer_mut(), info_area, &theme, hint);
+                } else {
+                    render_prompt_info(
+                        frame.buffer_mut(),
+                        info_area,
+                        agent,
+                        queued,
+                        transcript_hint,
+                        &theme,
+                    );
+                }
+            }
+            if sl_h > 0 {
+                render_config_status_line(
                     frame.buffer_mut(),
-                    info_area,
+                    Rect {
+                        x: area.x,
+                        y: prompt_area.y + prompt_h + overlay_h + info_h,
+                        width: area.width,
+                        height: sl_h,
+                    },
                     agent,
-                    queued,
-                    transcript_hint,
+                    &status_line_frame,
                     &theme,
                 );
             }
-        }
-        let result = agent
-            .prompt
-            .draw(frame.buffer_mut(), prompt_area, None, &style, None, None);
-        (
-            result.cursor_pos,
-            result
-                .post_flush_escapes
-                .map(xai_grok_pager::terminal::overlay::PostFlush::from),
-        )
-    });
+            let result =
+                agent
+                    .prompt
+                    .draw(frame.buffer_mut(), prompt_area, None, &style, None, None);
+            (
+                result.cursor_pos,
+                result
+                    .post_flush_escapes
+                    .map(xai_grok_pager::terminal::overlay::PostFlush::from),
+            )
+        },
+    );
 }
 fn live_tail_renderer<'a>(
     entry: &'a xai_grok_pager::scrollback::entry::ScrollbackEntry,
@@ -406,13 +440,9 @@ fn live_tail_renderer<'a>(
 ) -> EntryRenderer<'a> {
     super::commit::minimal_renderer(entry, theme, appearance.clone(), cwd, tick)
 }
-/// Render the uncommitted tail (entries past the commit frontier), bottom-anchored
-/// so the most recent output is always visible; the topmost visible entry is
-/// clipped via `with_skip_rows` when the run is taller than the tail area.
-///
-/// Starts at the shared [`super::commit::scan_frontier`] stop point so it renders
-/// exactly the entries [`tail_height`] measured (the viewport was sized to that —
-/// any disagreement makes the prompt jump on commit).
+/// Render the uncommitted tail (entries past the commit frontier), bottom-anchored so the most recent output is
+/// always visible. Starts at the shared [`super::commit::scan_frontier`] stop point so it renders exactly the
+/// entries [`tail_height`] measured.
 #[allow(clippy::too_many_arguments)]
 fn draw_tail(
     buf: &mut Buffer,
@@ -486,11 +516,8 @@ fn draw_tail(
         }
     }
 }
-/// Resolve the current turn activity and advance the phase timer when it
-/// changes. The full TUI runs this inside its own `draw` (reset
-/// `activity_started_at` on every phase transition); minimal has a separate
-/// draw path, so it must drive the same logic or the phase timer would never
-/// reset. Returns the resolved activity for [`render_minimal_status`].
+/// Resolve the current turn activity and advance the phase timer when it changes. Minimal has a separate draw path,
+/// so it must drive the same logic or the phase timer would never reset.
 fn minimal_advance_phase_timer(
     agent: &mut xai_grok_pager::app::agent_view::AgentView,
 ) -> Option<xai_grok_pager::acp::tracker::TurnActivity> {
@@ -501,17 +528,9 @@ fn minimal_advance_phase_timer(
     }
     activity
 }
-/// Render the one-line minimal status indicator above the prompt.
-///
-/// Reuses the full-TUI [`turn_status::render_turn_status`] widget so minimal
-/// surfaces the same rich activity detail (`Run …` / `Thinking…` /
-/// `Waiting on subagent…` / `Retrying (attempt N)…` / `Cancelling…`), the
-/// per-phase + turn timers, and the "… still running" cue (running commands /
-/// monitors / loops / background subagents) — instead of collapsing
-/// everything to "working…". Keyboard-only, so the mouse `[stop]` / `[↓]`
-/// buttons are suppressed (`None`), and `flat_background` keeps the row
-/// transparent like the rest of the live region. When the widget would draw
-/// nothing a small `minimal · /help` hint is shown instead.
+/// Reuses the full-TUI [`turn_status::render_turn_status`] widget instead of collapsing everything to "working…".
+/// Keyboard-only, so the mouse `[stop]` / `[↓]` buttons are suppressed (`None`). When the widget would draw nothing
+/// a small `minimal · /help` hint is shown instead.
 fn render_minimal_status(
     buf: &mut Buffer,
     area: Rect,
@@ -540,7 +559,7 @@ fn render_minimal_status(
     if !turn_status::should_show(
         &agent.session.state,
         drain_blocked,
-        minimal_api::mcp_init_progress(agent),
+        minimal_api::session_starting_since(agent),
         watchers,
         parked,
     ) {
@@ -566,7 +585,7 @@ fn render_minimal_status(
             buttons: None,
             has_running_execute: false,
             total_tokens: agent.context_state.as_ref().map(|c| c.used),
-            mcp_init_progress: minimal_api::mcp_init_progress(agent),
+            session_starting_since: minimal_api::session_starting_since(agent),
             is_bash_turn: agent.bash_turn,
             is_pending_user_input,
             goal_verifying,
@@ -578,7 +597,33 @@ fn render_minimal_status(
         },
     );
 }
-/// Idle status: `minimal · [/fullscreen to go back ·] /help` (+ auto-set note).
+/// A `Reserved` frame paints nothing but must still record the size a command script is told (`COLUMNS`/`LINES`): it sizes the script's first run.
+fn render_config_status_line(
+    buf: &mut Buffer,
+    area: Rect,
+    agent: &mut xai_grok_pager::app::agent_view::AgentView,
+    frame: &xai_grok_pager::views::status_line::StatusLineFrame,
+    theme: &Theme,
+) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+    let Some(padding) = frame.padding() else {
+        return;
+    };
+    if let Some(width) = minimal_api::status_line_inner_width(area.width, padding) {
+        agent.last_status_line_size = Some(xai_grok_pager::views::status_line::RowSize {
+            cols: width,
+            lines: area.height,
+        });
+    }
+    if let Some(display) = frame.display() {
+        let _ = xai_grok_pager::views::status_line::render_status_line(
+            buf, area, display, padding, theme,
+        );
+    }
+}
+/// Idle status: `minimal · [/fullscreen to go back ·] /help`, plus the auto-set note.
 fn render_idle_hint(buf: &mut Buffer, area: Rect, theme: &Theme) {
     let style = theme.dim().bg(Color::Reset);
     buf.set_style(area, style);
@@ -597,20 +642,9 @@ fn render_idle_hint(buf: &mut Buffer, area: Rect, theme: &Theme) {
     };
     buf.set_span(area.x, area.y, &Span::styled(hint, style), area.width);
 }
-/// Render the one-line info bar directly below the prompt: the selected model,
-/// the active session mode (the Shift+Tab cycle: plan / always-approve / auto),
-/// context usage (absolute + percentage), an `N queued` count when prompts
-/// are waiting behind a running turn, and the full-transcript shortcut hint
-/// (`transcript_hint`: "ctrl+o transcript", or "/transcript" where Ctrl+O is
-/// the interject chord — Apple Terminal). Mirrors the regular TUI's model
-/// label, mode flags, and context bar; the transcript hint stands in for the
-/// full TUI's shortcuts bar, which minimal never renders — without it the
-/// folded conversation has no visible way back to the full view. The mode flag
-/// keeps its accent color so the Shift+Tab cycle — otherwise invisible in
-/// minimal mode — is always shown. Drawn only when no menu/dropdown owns the
-/// band below the prompt (the caller gates on that). The elapsed-time / token
-/// count lives in the turn-status row above the prompt (see
-/// [`render_minimal_status`]), so it is not repeated here.
+/// Without it the folded conversation has no visible way back to the full view. The mode flag keeps its accent
+/// color so the Shift+Tab cycle, otherwise invisible in minimal mode, stays visible. Drawn only when no
+/// menu/dropdown owns the band below the prompt (the caller gates on that).
 fn render_prompt_info(
     buf: &mut Buffer,
     area: Rect,
@@ -681,10 +715,9 @@ fn render_prompt_info(
     }
     buf.set_line(area.x, area.y, &Line::from(spans), area.width);
 }
-/// The double-press confirmation hint to show under the prompt (e.g. "press
-/// Ctrl+q again to quit"), or `None` when nothing is armed / it has expired or
-/// is a silent arm (no label). Mirrors the full-TUI shortcuts-bar `PendingHint`,
-/// which minimal does not render.
+/// The double-press confirmation hint to show under the prompt (e.g. "press Ctrl+q again to quit").
+/// `None` when nothing is pending, the hint expired, or the pending action has no label (silent).
+/// Mirrors the full-TUI shortcuts-bar `PendingHint`, which minimal does not render.
 fn minimal_pending_hint(
     pending: &Option<xai_grok_pager::app::app_view::PendingAction>,
 ) -> Option<String> {
@@ -698,9 +731,8 @@ fn minimal_pending_hint(
         pending.shortcut.display()
     ))
 }
-/// Render the one-line double-press confirmation hint under the prompt, in the
-/// warning color so it stands out from the model/context info row.
-fn render_exit_hint(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &str) {
+/// One-row warning-color hint (double-press confirmation, too-small feedback band).
+pub(super) fn render_warning_hint(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &str) {
     let style = Style::default().fg(theme.warning).bg(Color::Reset);
     buf.set_style(area, style);
     buf.set_span(
@@ -710,20 +742,9 @@ fn render_exit_hint(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &str) {
         area.width,
     );
 }
-/// Height (rows) of the tail that will REMAIN after this frame's commit pass —
-/// i.e. the entries `commit_active` will NOT consume, from the first
-/// non-committable entry (past the scan cursor) onward.
-///
-/// The overlay host sizes the live viewport to this *post-commit* tail so the
-/// prompt sits right after the streaming output (no fixed gap while a turn is
-/// "thinking" with nothing streamed yet). Sizing to the post-commit tail
-/// (rather than the current tail) is load-bearing: because `sync_viewport` runs
-/// just *before* `commit_active`, the viewport is already at its post-commit
-/// height when the commit's `insert_before` prints finalized blocks — so it can
-/// reposition the correctly-sized viewport to sit directly after them
-/// (content-anchored). Sizing to the tall streaming tail instead left the
-/// viewport oversized at commit time, and the following collapse stranded the
-/// prompt at the top of the screen (the "snaps to top" bug).
+/// Height (rows) of the tail that will REMAIN after this frame's commit pass. The overlay host sizes the live
+/// viewport to this *post-commit* tail so the prompt sits right after the streaming output. Sizing to the
+/// post-commit tail (rather than the current tail) matters: `sync_viewport` runs just *before* `commit_active`.
 pub(super) fn tail_height(
     agent: &xai_grok_pager::app::agent_view::AgentView,
     width: u16,
@@ -731,7 +752,7 @@ pub(super) fn tail_height(
 ) -> u16 {
     let theme = Theme::current();
     let sb = &agent.scrollback;
-    let turn_running = agent.session.state.is_turn_running();
+    let turn_running = minimal_api::is_turn_or_wake_running(agent);
     let gap = super::commit::MINIMAL_BLOCK_GAP;
     let mut i = super::commit::scan_frontier(sb, turn_running).tail_start;
     let mut total = 0u16;
@@ -769,6 +790,54 @@ mod tests {
         assert!(paintable_btw_area(frame, Rect::new(0, 4, 80, 2)).is_none());
         assert!(paintable_btw_area(frame, Rect::new(0, 19, 80, 3)).is_none());
         assert!(paintable_btw_area(frame, Rect::new(79, 4, 2, 3)).is_none());
+    }
+    #[test]
+    fn config_status_line_paints_and_records_the_script_size() {
+        use std::sync::Arc;
+        use xai_grok_pager::views::status_line::{
+            RowSize, SanitizedText, StatusLineDisplay, StatusLineFrame,
+        };
+        let theme = Theme::current();
+        let area = Rect::new(0, 0, 40, 1);
+        let row_text = |buf: &Buffer| -> String {
+            (0..area.width)
+                .filter_map(|x| buf.cell((x, 0)).map(|c| c.symbol().to_string()))
+                .collect()
+        };
+        let mut painted = agent();
+        let mut buf = Buffer::empty(area);
+        let frame = StatusLineFrame::On {
+            display: Arc::new(StatusLineDisplay::Text(SanitizedText::new("demo row"))),
+            padding: 2,
+        };
+        render_config_status_line(&mut buf, area, &mut painted, &frame, &theme);
+        assert_eq!(
+            painted.last_status_line_size,
+            Some(RowSize { cols: 36, lines: 1 }),
+            "a script's COLUMNS excludes the padding on both sides"
+        );
+        assert!(
+            row_text(&buf).contains("demo row"),
+            "the row must paint the script's text"
+        );
+        let mut reserved = agent();
+        let mut buf = Buffer::empty(area);
+        render_config_status_line(
+            &mut buf,
+            area,
+            &mut reserved,
+            &StatusLineFrame::Reserved { padding: 0 },
+            &theme,
+        );
+        assert_eq!(
+            reserved.last_status_line_size,
+            Some(RowSize { cols: 40, lines: 1 })
+        );
+        assert_eq!(
+            row_text(&buf).trim(),
+            "",
+            "a reserved row holds space but paints nothing"
+        );
     }
     #[test]
     fn tail_height_uses_owning_session_cwd_for_tool_paths() {
@@ -809,8 +878,7 @@ mod tests {
             painted_height.saturating_add(super::super::commit::MINIMAL_BLOCK_GAP)
         );
     }
-    /// The tail and the committed footprint are one builder with a different
-    /// tick; this is the net for anyone tempted to fork them again.
+    /// The tail and the committed footprint are one builder with a different tick; this test catches anyone forking them again.
     #[test]
     fn the_animation_tick_never_changes_a_blocks_height() {
         use xai_grok_pager::scrollback::RenderBlock;
@@ -901,6 +969,7 @@ mod tests {
                 attempt: 2,
                 max_retries: 3,
                 reason: "transient error".to_string(),
+                error_type: None,
             }),
             None,
             &theme,
@@ -1018,8 +1087,7 @@ mod tests {
             "transcript hint still trails: {text:?}"
         );
     }
-    /// Where Ctrl+O is the interject chord (Apple Terminal) the caller passes
-    /// the `/transcript` fallback, and the info row advertises that instead.
+    /// Where Ctrl+O is the interject chord (Apple Terminal) the caller passes the `/transcript` fallback, and the info row advertises that instead.
     #[test]
     fn prompt_info_shows_slash_transcript_fallback_hint() {
         let a = agent();

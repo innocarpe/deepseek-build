@@ -3253,10 +3253,15 @@ impl PromptWidget {
             }
             // A blank info line still writes its padding spaces, which would punch holes in the divider it sits on.
             if let Some(info) = info.filter(|i| !i.is_blank()) {
+                // Reserve one cell per corner so the label starts on a blank pad
+                // rather than on the divider rule. `content_area` begins
+                // `chrome_pad_left` cells in, which left `─` painted directly
+                // after `╰` and cost the label a column — visible on a
+                // phone-width pane, where the model label fills the row.
                 let info_rect = Rect {
-                    x: content_area.x,
+                    x: area.x + 1,
                     y: div_y,
-                    width: content_area.width,
+                    width: area.width.saturating_sub(2),
                     height: 1,
                 };
                 self.render_info_line(buf, info_rect, info, bg, &theme, style.focused);

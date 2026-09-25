@@ -357,6 +357,7 @@ impl ToolExecutor {
             "start_line": snip.start_line,
             "end_line": snip.end_line,
             "scope": snip.scope,
+            "line_ending": snip.line_ending.as_str(),
             "preview": snip.preview,
             "content": content,
         });

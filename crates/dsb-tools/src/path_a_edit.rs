@@ -158,19 +158,22 @@ fn replace_all_in_snippet(
     new: &str,
 ) -> Result<String, PathAEditError> {
     let snippet = store.get(snippet_id).cloned().ok_or(EditError::NotFound)?;
-    let content =
-        std::fs::read_to_string(&snippet.path).map_err(|e| EditError::Io(e.to_string()))?;
     let current = file_version(&snippet.path)?;
     if current != snippet.version {
         return Err(PathAEditError::Snippet(EditError::Stale));
     }
-    // Count matches in full file scope of snippet via store.edit with expected_count.
+    // Count matches in the snippet's scope the way the store will see it —
+    // LF-normalized (spec 45 §1.9), so a CRLF file counts the same as an LF one.
     let n = {
+        let raw =
+            std::fs::read_to_string(&snippet.path).map_err(|e| EditError::Io(e.to_string()))?;
+        let content = snippet.line_ending.normalize(&raw).into_owned();
+        let old = snippet.line_ending.normalize(old).into_owned();
         let lines: Vec<&str> = content.split('\n').collect();
         let start = snippet.start_line.saturating_sub(1).min(lines.len());
         let end = snippet.end_line.min(lines.len());
         let scope = lines[start..end].join("\n");
-        scope.matches(old).count()
+        scope.matches(old.as_str()).count()
     };
     if n == 0 {
         return Err(PathAEditError::Snippet(EditError::NoMatch));
@@ -284,6 +287,47 @@ mod tests {
         let err =
             apply_path_a_edit(&mut store, PathAEditPolicy::product_default(), &req).unwrap_err();
         assert!(matches!(err, PathAEditError::Snippet(EditError::Ambiguous)));
+    }
+
+    #[test]
+    fn h45_9_replace_all_counts_crlf_file_with_lf_old_string() {
+        let dir = tempdir().unwrap();
+        let path = write_file(dir.path(), "a.rs", "alpha\r\nbeta\r\nalpha\r\n");
+        let mut store = SnippetStore::new();
+        let (snip, _) = store.issue_for_file(&path, None, None).unwrap();
+        let req = GrokPathEditRequest {
+            file_path: path.clone(),
+            old_string: "alpha".into(),
+            new_string: "ALPHA".into(),
+            replace_all: true,
+            snippet_id: Some(snip.snippet_id),
+            file_version: None,
+        };
+        apply_path_a_edit(&mut store, PathAEditPolicy::product_default(), &req).unwrap();
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(after, "ALPHA\r\nbeta\r\nALPHA\r\n");
+        assert!(!after.replace("\r\n", "").contains('\n'));
+    }
+
+    #[test]
+    fn h45_9_multiline_edit_on_crlf_file() {
+        let dir = tempdir().unwrap();
+        let path = write_file(dir.path(), "a.rs", "one\r\ntwo\r\nthree\r\n");
+        let mut store = SnippetStore::new();
+        let (snip, _) = store.issue_for_file(&path, None, None).unwrap();
+        let req = GrokPathEditRequest {
+            file_path: path.clone(),
+            old_string: "one\ntwo".into(),
+            new_string: "ONE\nTWO".into(),
+            replace_all: false,
+            snippet_id: Some(snip.snippet_id),
+            file_version: None,
+        };
+        apply_path_a_edit(&mut store, PathAEditPolicy::product_default(), &req).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "ONE\r\nTWO\r\nthree\r\n"
+        );
     }
 
     #[test]

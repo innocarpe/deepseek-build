@@ -119,6 +119,10 @@ Many agent sessions work on this repo at once. They are opened in the
 **primary checkout** (the clone the maintainer works from), which acts as a
 control tower: it directs, and **worktrees change code.**
 
+This applies when sessions run in parallel through Orca worktrees. With a
+single clone and no Orca, work as usual: branch, commit, PR
+([`docs/contributing/`](docs/contributing/)).
+
 | Place | Role | Writes |
 |-------|------|--------|
 | Primary checkout | Read, plan, review, dispatch, merge | **None.** Stays on `main`, clean; only `git pull --ff-only origin main` |
@@ -138,7 +142,7 @@ control tower: it directs, and **worktrees change code.**
   |------|----------------|
   | `git` | `git -C "$WT" …` |
   | `cargo`, `scripts/*.sh`, `npm` | subshell: `(cd "$WT" && cargo test -p dsb-cli)` |
-  | `gh` | `--repo innocarpe/deepseek-build` — `gh` has no `-C` and otherwise reads the repo from cwd |
+  | `gh` | `--repo innocarpe/deepseek-build` — `gh` has no `-C` and otherwise reads the repo from cwd. `gh pr create` also takes its head branch from cwd, so add `--head <branch>` |
 
 - **GitHub credentials per command.** When more than one `gh` account is logged
   in on the machine, pass the token of the account that can push here (for the
@@ -149,10 +153,11 @@ control tower: it directs, and **worktrees change code.**
 - **Vendored Grok builds run one at a time.** Each worktree has its own
   `target/`, and a cold build of `third_party/grok-build` takes 30–60+ min
   ([release-cycle.md](docs/contributing/release-cycle.md)); parallel builds
-  starve each other. Units that touch `third_party/grok-build/**` or
-  `patches/grok-build/**`, or run `scripts/build-grok-pager.sh`,
-  `scripts/install.sh` or `scripts/package-release-binaries.sh`, go serially
-  across all worktrees. Units limited to `crates/` can run in parallel.
+  starve each other. Anything that runs `cargo` in `third_party/grok-build` —
+  directly or through a script (`build-grok-pager.sh`, `install.sh`,
+  `test-grok-vendor-offline.sh`, the `test-path-a-*` scripts, …; check with
+  `rg -l grok-build scripts/`) — goes serially across all worktrees. Units that
+  only build and test `crates/` can run in parallel.
 - **Leave other sessions' worktrees alone** — their files, branches and
   terminals. Ask the owning session or report instead.
 

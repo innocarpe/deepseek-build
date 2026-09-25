@@ -76,13 +76,14 @@ async fn bracketed_image_path_attaches_on_an_ssh_host() {
 /// `decode_image_dimensions`) — so a hand-rolled header is not enough. Written
 /// with zlib "stored" blocks so the test needs no encoder dependency.
 fn png_bytes(width: u32, height: u32) -> Vec<u8> {
-    let mut raw = Vec::with_capacity((height * (1 + width * 4)) as usize);
-    for _ in 0..height {
-        raw.push(0); // filter: none
-        for _ in 0..width {
-            raw.extend_from_slice(&[0x80, 0x40, 0x20, 0xff]);
-        }
-    }
+    const PIXEL: [u8; 4] = [0x80, 0x40, 0x20, 0xff];
+
+    // One scanline: the filter byte, then `width` RGBA pixels. Built once and
+    // repeated, so no line pushes the same item in a loop.
+    let mut row = Vec::with_capacity(1 + (width as usize) * 4);
+    row.push(0); // filter: none
+    row.extend(std::iter::repeat_n(PIXEL, width as usize).flatten());
+    let raw: Vec<u8> = (0..height).flat_map(|_| row.iter().copied()).collect();
 
     let mut png = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
     let mut ihdr = Vec::new();

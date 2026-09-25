@@ -7,6 +7,9 @@
 | `check-semver.sh` | Fail-close: workspace version must be full SemVer `MAJOR.MINOR.PATCH` |
 | `release.sh` | Release orchestrator (bump → PR → merge → tag → assets → CI publish → verify) |
 | `npm-emergency-publish.sh` | **Emergency** local npm publish; drives the interactive login + emailed code through `aside` (ADR 0012) |
+| `verify-npm-version.sh` | Wait (bounded retry) until the registry serves a published version — the post-publish read shared by `release.sh`, `npm-emergency-publish.sh` and `publish-npm.yml` |
+| `test-npm-verify-retry.sh` | Hermetic regression test for that retry (local mock registry; no network, no credentials) |
+| `lib/mock_npm_registry.py` | Mock npm packument server used by the test above |
 | `check-pr-title.sh` | **Optional** local Conventional Commits title check (not CI) |
 | `sync-labels.sh` | Push `.github/labels.json` to GitHub labels |
 | `smoke-dogfood.sh` | Quick offline smoke (+ optional thin live if key set) |

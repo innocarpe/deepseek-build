@@ -8,11 +8,18 @@
 
 ## Product chain status
 
+**Next (proposed, not yet accepted):** `deepseek-native-depth-6x` — the
+DeepSeek-native depth train, a **continuation of the `6.x` line**
+([PRD-v6 §7](./PRD-v6.md)), not a new major. Its board is a proposal until that
+PR merges and the owner accepts it; `main` carries **`5.7.0`**, and the
+**`6.0.0` base port** (PR #200) owns the vendor tree until it lands.
+
 **Active:** none. The **`vision-complete-5x`** train is complete on `main` at
 **`5.5.0`**; npm/GitHub Latest publication remains a separate release lane.
 
 | Order | Plan / stage | Role | Prompt / board |
 |-------|--------------|------|----------------|
+| **next** | **`deepseek-native-depth-6x`** → **`6.1.0`** | **Proposed** — cache-preserving context lifecycle, cache attribution + measurement, runtime invariants, spill | [PRD-v6.md](./PRD-v6.md) §7 · [DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md](./DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md) · [research/dsh-deepseek-harness.md](../research/dsh-deepseek-harness.md) |
 | **1** | **`vision-complete-5x`** | **Complete on `main` at `5.5.0`** — release publish pending | [VISION_COMPLETE_5X_GOALS.md](./VISION_COMPLETE_5X_GOALS.md) · [WAVE_5x_VISION_PR_DAG.md](./WAVE_5x_VISION_PR_DAG.md) · [VISION.md](./VISION.md) |
 | — | **`owner-bar-5x`** | **Complete** owner-bar product cut **`5.0.0`** | [CUT_5_0_0_2026-08-07.md](./evidence/CUT_5_0_0_2026-08-07.md) · [OWNER_BAR_5X_GOALS.md](./OWNER_BAR_5X_GOALS.md) · [PRD-v5.md](./PRD-v5.md) |
 

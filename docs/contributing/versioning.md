@@ -38,12 +38,16 @@ is not.
 | Line | Meaning | PRD |
 |------|---------|-----|
 | **1.x** | Scaffold / legacy thin agent | [PRD-v1.md](../product/PRD-v1.md) |
-| **2.x** | Grok base + DeepSeek product shell (current ship) | [PRD-v2.md](../product/PRD-v2.md) |
-| **3.x** | Heart fusion L1+L2 under Grok shell (next major) | [PRD-v3.md](../product/PRD-v3.md) |
-| **4.x** | L3 productization (later) | [PRD-v4.md](../product/PRD-v4.md) |
+| **2.x** | Grok base + DeepSeek product shell | [PRD-v2.md](../product/PRD-v2.md) |
+| **3.x** | Heart fusion L1+L2 under Grok shell — **owner-bar NOT MET** | [PRD-v3.md](../product/PRD-v3.md) |
+| **4.x** | L3 productization — **owner-bar NOT MET** | [PRD-v4.md](../product/PRD-v4.md) |
+| **5.x** | **Owner-bar complete product** (`5.0.0`) + vision-complete (`5.5.0`) — **current shipped line** | [PRD-v5.md](../product/PRD-v5.md) |
+| **6.x** | **Base refresh**: Grok Build `1.0.0` → `1.0.41`, overlay re-derived; continuation `6.1.0` = DeepSeek-native depth | [PRD-v6.md](../product/PRD-v6.md) |
 
 Index: [docs/product/versions/README.md](../product/versions/README.md).  
 New majors require a **PRD-vN** + versions index update **before** coding the train.
+Minors do **not** get a new PRD unless behavior identity shifts — they extend the
+line's existing PRD (§Rules 1 of the index).
 
 ## 2. Where the version lives
 

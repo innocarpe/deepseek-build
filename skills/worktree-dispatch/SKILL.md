@@ -36,6 +36,30 @@ Variables used below:
   `orca worktree list --repo path:"$TOWER" --json` shows every worktree with its
   branch and card comment. Do not open a second worktree for a unit that has
   one, and do not touch another session's worktree.
+
+- **Never decide another worktree is abandoned from a tool that only sees Orca
+  tabs.** `orca terminal list --worktree <id>` and the whole-list `worktreeId`
+  match both returned **0 terminals** for a worktree whose agent was mid-build
+  at that moment (2026-09-25, Orca `1.4.210`): that session ran in a plain
+  terminal on another tty, not an Orca tab. A zero there means *you cannot see
+  it*, not *nobody is there*. Reading activity from it has already produced a
+  wrong report that another session's in-flight work was abandoned.
+
+  Use a signal that reads the machine, in this order:
+
+  | Signal | Reads | Weakness |
+  |---|---|---|
+  | `pgrep -fl "/deepseek-build/<slug>"` | live processes whose argv or cwd names the tree | an idle agent waiting on the model may hold no matching child |
+  | `git -C "$WT" log -1 --format=%ad` + `git -C "$WT" status --short` | last commit time and uncommitted work | a session can be thinking for minutes with no new commit |
+  | `orca worktree list … .workspaceStatus` | Orca's own card state | reads `in-progress` even for trees nobody has touched since creation |
+  | `orca terminal list --worktree <id>` | Orca tabs only | **misses sessions outside Orca** |
+
+  **Treat "no signal" as unknown, not as idle.** When two of the four disagree,
+  or when the last commit is recent, **ask the owning session** — a question
+  costs a minute; deleting or rebasing under a live session destroys work with
+  no undo. This is the same fail-close rule as everywhere else in the harness:
+  an unmeasurable state is not a passing one.
+
 - **Does this unit build vendored Grok?** It does if anything it runs calls
   `cargo` in `third_party/grok-build` — directly, or through a script
   (`rg -l grok-build scripts/` lists them: `build-grok-pager.sh`,
@@ -333,7 +357,9 @@ stop every refresh. `pull --ff-only` already refuses by itself if an incoming
 file would overwrite an untracked one.
 
 Never remove a worktree another session created or is still using, even when
-it looks finished — ask its session first.
+it looks finished — ask its session first. If "it looks finished" came from
+`orca terminal list` showing nothing, re-read §0: that command returned 0 for a
+worktree whose agent was mid-build (2026-09-25).
 
 ## Anti-patterns
 
@@ -347,4 +373,5 @@ it looks finished — ask its session first.
 | `gh auth switch` | Flips the active account for every session on the machine |
 | Two vendored Grok builds at once | 30–60+ min cold each; parallel builds starve each other |
 | `--name feat/x` | Becomes `feat-x`; name the worktree by slug and rename the branch |
+| Report a worktree as "no active session" from `orca terminal list` alone | It returned 0 for a live, mid-build worktree (§0); that report tells the owner to abandon in-flight work |
 | `worktree rm --force` on a tree you did not read | Deletes uncommitted work with no undo |

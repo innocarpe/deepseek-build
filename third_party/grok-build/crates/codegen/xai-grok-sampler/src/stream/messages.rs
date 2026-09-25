@@ -494,6 +494,8 @@ pub fn stream_messages<'a>(
                 reasoning_tokens: 0,
                 cached_prompt_tokens: final_cache_read_input_tokens,
                 cache_creation_prompt_tokens: final_cache_creation_input_tokens,
+                cache_hit_tokens: Some(final_cache_read_input_tokens),
+                cache_miss_tokens: None,
             })
         } else {
             None

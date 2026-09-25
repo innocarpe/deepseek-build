@@ -230,9 +230,10 @@ Two consequences, both load-bearing:
   rounds moves those counters by three. The line is still printed once per
   turn, after its rounds have been counted.
 - A provider that sends only one half of the pair (a hit with no miss, as
-  Path A's mapping does today) adds only what it sent. The missing half stays
-  missing rather than defaulting to `0`, which would read as a measured value
-  in the rate.
+  OpenRouter did) adds only what it sent. The missing half stays missing
+  rather than defaulting to `0`, which would read as a measured value in
+  the rate. Path A keeps `prompt_cache_miss_tokens` on `Usage` when the
+  official host sends it, and leaves the field absent when the payload did.
 
 **When the line is emitted.** The gate is "the session has any evidence" — once
 `reported > 0`, every later turn logs, including its unreported ones, because
@@ -242,8 +243,12 @@ with `reported=0` on every turn is not a measurement, and printing it would
 read like one.
 
 Surface: the REPL / `run` turn line (spec 20 routing line already prints there).
-The full-screen TUI status line is a later unit (it lands in the vendored tree,
-which this contract does not govern).
+Path A logs the same line once per turn from its in-memory session ledger
+(`shell.turn.cache_session`), after that turn's main-loop responses have been
+counted. The pager's hit-percentage chip is unchanged. The Path A counter is
+not written to the session file; a new process starts it at zero, the same
+way Path A's existing hit sum does. The persisted counter remains the overlay
+record on the REPL / `run` path.
 
 ### 1.6 Session replay
 
@@ -500,8 +505,8 @@ persist→resume cases in `crates/dsb-agent/src/loop_.rs`.
   the prefix shape. It is folded in at the model response and printed once per
   turn, after that turn's rounds. Storing it is what makes "reset on a new
   session" true of a *conversation*: a resume continues the count.  
-- Path A does not read this counter. Path A's turn is assembled in the vendored
-  tree (`apply_spec10_to_conversation_request`), and `xai-grok-shell` does not
-  depend on `dsb-agent`. Path A already sums `cached_read_tokens` on its own
-  session ledger; §1.5.2's line is the overlay surface the contract named, and
-  the vendored chip is a separate unit.
+- Path A does not call `dsb-agent`. It keeps its own §1.5.2 counter on the
+  in-memory session ledger (`xai-chat-state` `CacheSessionTotals`) and logs
+  the line from `emit_turn_completed`. `prompt_cache_miss_tokens` is a field
+  on Chat Completions `Usage`, so serde no longer drops it. The pager chip
+  still reads `cached_read_tokens` / `input_tokens`.

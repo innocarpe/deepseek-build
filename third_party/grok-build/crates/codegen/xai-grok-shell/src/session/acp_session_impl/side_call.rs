@@ -205,6 +205,8 @@ mod tests {
             prompt_tokens: 1_000,
             cached_prompt_tokens: 700,
             cache_creation_prompt_tokens: 200,
+            cache_hit_tokens: None,
+            cache_miss_tokens: None,
             ..Default::default()
         });
 
@@ -219,6 +221,8 @@ mod tests {
             prompt_tokens: 144_860,
             cached_prompt_tokens: 141_663,
             cache_creation_prompt_tokens: 3_195,
+            cache_hit_tokens: None,
+            cache_miss_tokens: None,
             ..Default::default()
         });
         assert_eq!(rounded.cache_read_rate, 0.978);
@@ -231,6 +235,8 @@ mod tests {
             prompt_tokens: 0,
             cached_prompt_tokens: 10,
             cache_creation_prompt_tokens: 20,
+            cache_hit_tokens: None,
+            cache_miss_tokens: None,
             ..Default::default()
         });
 

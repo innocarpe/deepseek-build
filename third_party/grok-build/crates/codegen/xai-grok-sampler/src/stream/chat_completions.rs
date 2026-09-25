@@ -767,6 +767,7 @@ mod tests {
             completion_tokens_details: None,
             cost_in_usd_ticks: None,
             prompt_cache_hit_tokens: None,
+            prompt_cache_miss_tokens: None,
         });
 
         let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> = vec![
@@ -807,6 +808,7 @@ mod tests {
             completion_tokens_details: None,
             cost_in_usd_ticks: None,
             prompt_cache_hit_tokens: Some(80),
+            prompt_cache_miss_tokens: Some(20),
         });
 
         let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> = vec![
@@ -831,6 +833,8 @@ mod tests {
                     u.cached_prompt_tokens, 80,
                     "DeepSeek prompt_cache_hit_tokens must map to cached_prompt_tokens"
                 );
+                assert_eq!(u.cache_hit_tokens, Some(80));
+                assert_eq!(u.cache_miss_tokens, Some(20));
             }
             other => panic!("expected Completed, got {other:?}"),
         }
@@ -849,6 +853,7 @@ mod tests {
                 completion_tokens_details: None,
                 cost_in_usd_ticks: wire,
                 prompt_cache_hit_tokens: None,
+                prompt_cache_miss_tokens: None,
             });
             let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> = vec![
                 Ok(text_chunk("ok")),
@@ -883,6 +888,7 @@ mod tests {
             completion_tokens_details: None,
             cost_in_usd_ticks: Some(99),
             prompt_cache_hit_tokens: None,
+            prompt_cache_miss_tokens: None,
         });
         let mut second = make_chunk(vec![ChatChunkDelta::default()]);
         second.usage = Some(Usage {
@@ -893,6 +899,7 @@ mod tests {
             completion_tokens_details: None,
             cost_in_usd_ticks: Some(0),
             prompt_cache_hit_tokens: None,
+            prompt_cache_miss_tokens: None,
         });
         let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> = vec![
             Ok(text_chunk("ok")),

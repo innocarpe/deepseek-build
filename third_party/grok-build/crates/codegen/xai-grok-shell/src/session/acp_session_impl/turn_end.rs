@@ -404,6 +404,19 @@ impl SessionActor {
     ) {
         let (stop_reason, agent_result, error_kind) =
             crate::sampling::error::prompt_complete_fields(mapped);
+        // Spec 10 §1.5.2, once per turn, after the rounds have been counted
+        // into the session ledger. A session with no cache fields logs nothing.
+        if let Ok(ledger) = self.chat_state_handle.try_get_session_usage().await
+            && ledger.cache_session.has_evidence()
+        {
+            let line = ledger.cache_session.log_label();
+            tracing::info!("{line}");
+            xai_grok_telemetry::unified_log::info(
+                "shell.turn.cache_session",
+                Some(self.session_info.id.0.as_ref()),
+                Some(serde_json::json!({ "line": line })),
+            );
+        }
         let mut extra = serde_json::Map::new();
         if let Some(t) = cancel_trigger {
             extra.insert("cancelTrigger".to_string(), serde_json::json!(t));

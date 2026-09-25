@@ -475,6 +475,8 @@ mod tests {
                 reasoning_tokens: 0,
                 cached_prompt_tokens: 0,
                 cache_creation_prompt_tokens: 0,
+                cache_hit_tokens: None,
+                cache_miss_tokens: None,
             },
             None,
             Some(10),

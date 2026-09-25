@@ -536,6 +536,12 @@ pub struct Usage {
     /// OpenAI responses, so it defaults to `None` and stays backward compatible.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_cache_hit_tokens: Option<u32>,
+    /// DeepSeek official Chat Completions sends this beside the hit count.
+    /// Absent on routes that only report `prompt_tokens_details.cached_tokens`.
+    /// `None` is "not sent", not a measured zero — serde must keep the field
+    /// or the miss is discarded before it can be summed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_miss_tokens: Option<u32>,
     /// xAI extension: request price in USD ticks (1 USD = 1e10 ticks).
     /// The REST mapper backfills `0` for unbilled requests; capture sites normalize `0` to "unreported" (see `stream/chat_completions.rs`).
     #[serde(default, skip_serializing_if = "Option::is_none")]

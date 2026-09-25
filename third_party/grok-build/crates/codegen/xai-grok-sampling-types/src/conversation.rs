@@ -786,6 +786,14 @@ pub struct TokenUsage {
     /// Part of `prompt_tokens` but distinct from cache reads; 0 on backends without a cache-write signal.
     #[serde(default)]
     pub cache_creation_prompt_tokens: u32,
+    /// `Some` when a cache-hit field was on the payload. `None` means the
+    /// provider did not report a hit. That is not the same as `Some(0)`.
+    #[serde(default)]
+    pub cache_hit_tokens: Option<u32>,
+    /// `Some` when `prompt_cache_miss_tokens` was on the payload. A route that
+    /// only sends `cached_tokens` leaves this `None`. Never defaulted to 0.
+    #[serde(default)]
+    pub cache_miss_tokens: Option<u32>,
 }
 
 impl TokenUsage {
@@ -802,11 +810,14 @@ impl From<Usage> for TokenUsage {
         // DeepSeek surfaces cache hits as a top-level `prompt_cache_hit_tokens`
         // field instead of OpenAI-style `prompt_tokens_details.cached_tokens`;
         // prefer the nested detail when present, fall back to the DeepSeek field.
-        let cached_prompt_tokens = u
+        // Details win when that object is present, including a measured zero.
+        // Otherwise the top-level hit field. `None` only when neither was sent.
+        let cache_hit_tokens = u
             .prompt_tokens_details
             .as_ref()
             .map(|d| d.cached_tokens)
-            .unwrap_or_else(|| u.prompt_cache_hit_tokens.unwrap_or(0));
+            .or(u.prompt_cache_hit_tokens);
+        let cached_prompt_tokens = cache_hit_tokens.unwrap_or(0);
         Self {
             prompt_tokens: u.prompt_tokens,
             completion_tokens: u.completion_tokens,
@@ -817,6 +828,8 @@ impl From<Usage> for TokenUsage {
                 .map_or(0, |d| d.reasoning_tokens),
             cached_prompt_tokens,
             cache_creation_prompt_tokens: 0,
+            cache_hit_tokens,
+            cache_miss_tokens: u.prompt_cache_miss_tokens,
         }
     }
 }
@@ -2279,10 +2292,49 @@ mod tests {
             prompt_tokens_details: None,
             completion_tokens_details: None,
             prompt_cache_hit_tokens: Some(60),
+            prompt_cache_miss_tokens: None,
             cost_in_usd_ticks: None,
         };
         let tu: TokenUsage = usage.into();
         assert_eq!(tu.cached_prompt_tokens, 60);
+        assert_eq!(tu.cache_hit_tokens, Some(60));
+        assert_eq!(tu.cache_miss_tokens, None);
+    }
+
+    #[test]
+    fn deepseek_prompt_cache_miss_tokens_stay_optional() {
+        let usage = Usage {
+            prompt_tokens: 1508,
+            completion_tokens: 8,
+            total_tokens: 1516,
+            prompt_tokens_details: Some(PromptTokensDetails {
+                cached_tokens: 1280,
+                audio_tokens: 0,
+            }),
+            completion_tokens_details: None,
+            prompt_cache_hit_tokens: Some(1280),
+            prompt_cache_miss_tokens: Some(228),
+            cost_in_usd_ticks: None,
+        };
+        let tu: TokenUsage = usage.into();
+        assert_eq!(tu.cached_prompt_tokens, 1280);
+        assert_eq!(tu.cache_hit_tokens, Some(1280));
+        assert_eq!(tu.cache_miss_tokens, Some(228));
+
+        let bare = Usage {
+            prompt_tokens: 12,
+            completion_tokens: 1,
+            total_tokens: 13,
+            prompt_tokens_details: None,
+            completion_tokens_details: None,
+            prompt_cache_hit_tokens: None,
+            prompt_cache_miss_tokens: None,
+            cost_in_usd_ticks: None,
+        };
+        let tu: TokenUsage = bare.into();
+        assert_eq!(tu.cache_hit_tokens, None);
+        assert_eq!(tu.cache_miss_tokens, None);
+        assert_eq!(tu.cached_prompt_tokens, 0);
     }
 
     /// OpenAI-style `prompt_tokens_details.cached_tokens` still wins when both
@@ -2299,6 +2351,7 @@ mod tests {
             }),
             completion_tokens_details: None,
             prompt_cache_hit_tokens: Some(60),
+            prompt_cache_miss_tokens: None,
             cost_in_usd_ticks: None,
         };
         let tu: TokenUsage = nested.into();
@@ -2311,6 +2364,7 @@ mod tests {
             prompt_tokens_details: None,
             completion_tokens_details: None,
             prompt_cache_hit_tokens: None,
+            prompt_cache_miss_tokens: None,
             cost_in_usd_ticks: None,
         };
         let tu: TokenUsage = bare.into();

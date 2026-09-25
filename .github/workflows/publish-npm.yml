@@ -186,6 +186,7 @@ jobs:
           fi
 
       - name: Publish with trusted publishing (OIDC)
+        id: publish
         if: steps.live.outputs.already == ''
         env:
           VERSION: ${{ steps.release.outputs.version }}
@@ -197,12 +198,20 @@ jobs:
           npm publish --access public --provenance
           echo "published ${VERSION}"
 
+      # The publish having returned does not make the version readable: on the
+      # 5.7.0 release this step read the registry 1 s after publish and got
+      # `E404`, while the registry's own metadata records the version landing
+      # 76 s after that read. `npm view` once is therefore a race this step
+      # loses whenever propagation is slower than the round trip. The retry
+      # window lives in scripts/verify-npm-version.sh, shared with `release.sh`
+      # so the two paths cannot drift apart again.
       - name: Verify the published package
+        id: verify
         env:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
-          PUBLISHED="$(npm view "@innocarpe/deepseek-build@${VERSION}" version)"
+          PUBLISHED="$(./scripts/verify-npm-version.sh "@innocarpe/deepseek-build@${VERSION}")"
           echo "registry reports: ${PUBLISHED}"
           [[ "$PUBLISHED" == "$VERSION" ]]
           echo "--- provenance / attestations ---"
@@ -211,7 +220,16 @@ jobs:
 
       # The user-facing path, end to end: registry install → postinstall asset
       # download → both CLIs report the release version.
+      #
+      # This runs whenever a publish happened or the version was already live —
+      # including when the step above failed. The two steps answer different
+      # questions: `verify` asks whether registry metadata serves the version
+      # yet; this one asks whether a user can actually install it. When
+      # metadata lags, this is the decisive signal, and a skip hides it — the
+      # 5.7.0 release published successfully but recorded this step as
+      # `skipped`, so the strongest evidence available never ran.
       - name: Global install smoke (the user path)
+        if: ${{ !cancelled() && (steps.publish.outcome == 'success' || steps.live.outputs.already != '') }}
         env:
           VERSION: ${{ steps.release.outputs.version }}
         run: |

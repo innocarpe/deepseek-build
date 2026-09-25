@@ -260,8 +260,15 @@ fi
 echo "== published (no provenance attestation) =="
 
 echo "== 4/4 verifying the registry =="
-LIVE="$(npm view "@innocarpe/deepseek-build@${VERSION}" version 2>/dev/null || true)"
-[[ "$LIVE" == "$VERSION" ]] || { echo "error: registry reported '${LIVE:-none}'" >&2; exit 1; }
+# A publish that returned can still be invisible for a while (measured 76 s on
+# the v5.7.0 release), so this retries instead of reading once. This is the
+# read that sits closest to the race — it follows `npm publish` directly.
+if ! LIVE="$(./scripts/verify-npm-version.sh "@innocarpe/deepseek-build@${VERSION}")"; then
+  echo "error: the registry never served ${VERSION} — see the message above" >&2
+  echo "  The publish may still have landed; re-check with:" >&2
+  echo "    ./scripts/verify-npm-version.sh '@innocarpe/deepseek-build@${VERSION}'" >&2
+  exit 1
+fi
 echo "registry confirms @innocarpe/deepseek-build@${LIVE}"
 echo
 echo "Verify like a user:"

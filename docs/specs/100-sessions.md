@@ -14,6 +14,12 @@
 3. On load: run **tool-pair repair** (spec 15) before next API call.  
 4. CLI: create/resume by id (exact flags as implemented; document in user-guide).  
 5. Session id: opaque ulid/uuid; list recent sessions optional for minimum.
+6. The `meta` line carries the **prefix shape** of the build that produced the
+   transcript (spec 10 §1.5.1 rule 5), so a later process can attribute a
+   prefix change for a continuing conversation. It is additive and optional: a
+   file written before this field loads normally, and a resume then makes no
+   attribution claim rather than guessing from an absent baseline. `meta` is
+   never part of the API request.
 
 ## 2. Non-goals (minimum)
 
@@ -28,6 +34,8 @@
 | `roundtrip_jsonl` | write then load equal messages |
 | `load_repairs_tool_pairs` | hole → interrupted placeholder |
 | `path_under_home` | files only under build home |
+| `prefix_snapshot_roundtrip` | meta carries the shape; save→load returns it |
+| `legacy_meta_without_snapshot_loads` | pre-§1.5.1 file → no shape, no error |
 
 ## 4. Implementation notes
 

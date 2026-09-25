@@ -7,8 +7,9 @@
 //!
 //! ```text
 //! messages_to_api =
-//!   stable_prefix   // system body with ordered Spec 10 sections
-//!   + volatile_tail // user / assistant / tool chain
+//!   earliest stable body   // kept byte-for-byte once placed (Spec 10 §1.10)
+//!   + volatile_tail        // user / assistant / tool chain
+//!   + later stable bodies  // appended when the assembled body changes
 //! ```
 //!
 //! Stable section order (normative Spec 10 §1.1):
@@ -22,7 +23,25 @@
 //! `docs/product/evidence/VC007_*`.
 
 use sha2::{Digest, Sha256};
+use xai_chat_state::conversation_util::canonical_system_prompt_eq;
 use xai_grok_sampling_types::ToolSpec;
+use xai_grok_sampling_types::conversation::ConversationItem;
+
+/// Marker `assemble_spec10_path_a_turn` writes between the product template
+/// and the tools document. Its presence means a system message is already a
+/// Spec 10 stable body (Spec 10 §1.10 rules 3–4).
+const SPEC10_TOOLS_MARKER: &str = "\n\n## Tools\n";
+
+/// How [`place_stable_body`] put the assembled body onto the request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StableBodyPlacement {
+    /// Latest system message already equals the assembled body.
+    Unchanged,
+    /// No prior stable body. The leading system message now holds it.
+    FirstWrite,
+    /// A prior stable body was left byte-for-byte, and the new body was appended.
+    Appended,
+}
 
 /// One skills-index row for Spec 10 stable prefix (index only — no body).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -261,11 +280,56 @@ pub fn path_a_inputs_from_turn(
 /// The product base system prompt is everything before the first
 /// `\n\n## Tools\n` marker introduced by this module.
 pub fn extract_base_system_prompt(system_content: &str) -> String {
-    const MARKER: &str = "\n\n## Tools\n";
-    match system_content.find(MARKER) {
+    match system_content.find(SPEC10_TOOLS_MARKER) {
         Some(i) => system_content[..i].to_string(),
         None => system_content.to_string(),
     }
+}
+
+fn last_system_content(items: &[ConversationItem]) -> Option<&str> {
+    items.iter().rev().find_map(|item| match item {
+        ConversationItem::System(sys) => Some(sys.content.as_ref()),
+        _ => None,
+    })
+}
+
+fn has_spec10_system(items: &[ConversationItem]) -> bool {
+    items.iter().any(|item| match item {
+        ConversationItem::System(sys) => sys.content.contains(SPEC10_TOOLS_MARKER),
+        _ => false,
+    })
+}
+
+/// Place `stable_body` on `items` under Spec 10 §1.10.
+///
+/// The product template is recovered by the caller from the earliest system
+/// message. This function does not rewrite a system message that already
+/// contains [`SPEC10_TOOLS_MARKER`].
+pub fn place_stable_body(
+    items: &mut Vec<ConversationItem>,
+    stable_body: &str,
+) -> StableBodyPlacement {
+    let unchanged = last_system_content(items)
+        .is_some_and(|latest| canonical_system_prompt_eq(latest, stable_body));
+    if unchanged {
+        return StableBodyPlacement::Unchanged;
+    }
+    if !has_spec10_system(items) {
+        let mut found_system = false;
+        for item in items.iter_mut() {
+            if let ConversationItem::System(sys) = item {
+                sys.content = std::sync::Arc::<str>::from(stable_body);
+                found_system = true;
+                break;
+            }
+        }
+        if !found_system {
+            items.insert(0, ConversationItem::system(stable_body.to_string()));
+        }
+        return StableBodyPlacement::FirstWrite;
+    }
+    items.push(ConversationItem::system(stable_body.to_string()));
+    StableBodyPlacement::Appended
 }
 
 /// Discover standing project instructions (Spec 10 §1.4) under `workspace_root`.
@@ -414,17 +478,17 @@ pub fn apply_spec10_path_a_turn_assembly(
             "prefix_epoch_full": assembled.epoch_sha256_hex,
             "volatile_count": assembled.volatile_count,
             "stable_bytes": assembled.stable_prefix_bytes.len(),
-            "wire_system_rewritten": true,
         })),
     );
     assembled
 }
 
-/// Apply Spec 10 assembly **to a live ConversationRequest** (mutates system message).
+/// Apply Spec 10 assembly **to a live ConversationRequest** (Spec 10 §1.10).
 ///
-/// This is the Path A wire-honest path for V2-10-1: `messages_to_api` leading
-/// system content becomes Spec 10 ordered stable prefix layout. Tools remain
-/// in the API `tools[]` field as well (Grok hybrid; document also in system).
+/// First placement writes the stable body into the leading system message.
+/// A later change appends a new system message and leaves every earlier
+/// system message byte-for-byte. Tools remain in the API `tools[]` field as
+/// well (the array is still a full replacement; §1.10 rule 5).
 ///
 /// Returns the assembled epoch metadata. Best-effort; never panics.
 pub fn apply_spec10_to_conversation_request(
@@ -464,21 +528,20 @@ pub fn apply_spec10_to_conversation_request(
         volatile_count,
     );
 
-    // Mutate wire: leading System content = Spec 10 stable body.
-    let mut found_system = false;
-    for item in &mut request.items {
-        if let xai_grok_sampling_types::ConversationItem::System(sys) = item {
-            sys.content = std::sync::Arc::<str>::from(assembled.stable_body.as_str());
-            found_system = true;
-            break;
-        }
-    }
-    if !found_system {
-        request.items.insert(
-            0,
-            xai_grok_sampling_types::ConversationItem::system(assembled.stable_body.clone()),
-        );
-    }
+    let placement = place_stable_body(&mut request.items, assembled.stable_body.as_str());
+    let placement_label = match placement {
+        StableBodyPlacement::Unchanged => "unchanged",
+        StableBodyPlacement::FirstWrite => "first_write",
+        StableBodyPlacement::Appended => "appended",
+    };
+    xai_grok_telemetry::unified_log::debug(
+        "shell.turn.spec10_stable_body_placement",
+        None,
+        Some(serde_json::json!({
+            "placement": placement_label,
+            "prefix_epoch": assembled.epoch_short(),
+        })),
+    );
     assembled
 }
 
@@ -709,6 +772,150 @@ mod tests {
             None,
         );
         assert_eq!(a2.epoch_sha256_hex, e1);
+    }
+
+    /// Serialized system messages. A non-system item is one `V` line so the
+    /// byte prefix is the message sequence, not a token count.
+    fn system_message_bytes(
+        items: &[xai_grok_sampling_types::conversation::ConversationItem],
+    ) -> String {
+        let mut out = String::new();
+        for item in items {
+            match item {
+                xai_grok_sampling_types::conversation::ConversationItem::System(s) => {
+                    out.push_str("S\n");
+                    out.push_str(s.content.as_ref());
+                    out.push('\n');
+                }
+                _ => out.push_str("V\n"),
+            }
+        }
+        out
+    }
+
+    fn shared_prefix_len(before: &str, after: &str) -> usize {
+        before
+            .bytes()
+            .zip(after.bytes())
+            .take_while(|(left, right)| left == right)
+            .count()
+    }
+
+    /// §1.10. The mock's hit is the shared byte prefix of the serialized
+    /// messages. No §1.9 harness exists in this tree, so this test owns the mock.
+    #[test]
+    fn in_history_update_appends_and_head_rewrite_breaks_the_byte_prefix() {
+        let tools = vec![tool(
+            "read_file",
+            json!({"type":"object","properties":{"target_file":{"type":"string"}}}),
+        )];
+        let mut req = xai_grok_sampling_types::ConversationRequest {
+            items: vec![
+                xai_grok_sampling_types::ConversationItem::system("GROK_BASE_TEMPLATE"),
+                xai_grok_sampling_types::ConversationItem::user("hello"),
+            ],
+            tools: tools.clone(),
+            hosted_tools: vec![],
+            tool_choice: None,
+            model: Some("deepseek-v4-flash".into()),
+            temperature: None,
+            max_output_tokens: None,
+            top_p: None,
+            x_grok_conv_id: None,
+            x_grok_req_id: None,
+            x_grok_session_id: None,
+            x_grok_turn_idx: None,
+            x_grok_transient_retry: None,
+            x_grok_agent_id: None,
+            x_grok_deployment_id: None,
+            x_grok_user_id: None,
+            trace: None,
+            traceparent: None,
+            reasoning_effort: None,
+            json_schema: None,
+            prompt_cache_key: None,
+            length_policy: xai_grok_sampling_types::LengthPolicy::Fail,
+        };
+        let dir = tempfile::tempdir().expect("tempdir");
+        apply_spec10_to_conversation_request(
+            &mut req,
+            dir.path().to_str().unwrap(),
+            Some(dir.path()),
+            None,
+        );
+        let old_body = match &req.items[0] {
+            xai_grok_sampling_types::ConversationItem::System(s) => s.content.as_ref().to_string(),
+            _ => panic!("first placement writes the leading system"),
+        };
+        assert!(old_body.contains("read_file"));
+        let before = system_message_bytes(&req.items);
+        let old_body_end =
+            before.find(&old_body).expect("old body is on the wire") + old_body.len();
+
+        req.tools.push(tool(
+            "write_file",
+            json!({"type":"object","properties":{"file_path":{"type":"string"}}}),
+        ));
+        let updated = apply_spec10_to_conversation_request(
+            &mut req,
+            dir.path().to_str().unwrap(),
+            Some(dir.path()),
+            None,
+        );
+        match &req.items[0] {
+            xai_grok_sampling_types::ConversationItem::System(s) => {
+                assert_eq!(
+                    s.content.as_ref(),
+                    old_body,
+                    "leading system stays byte-for-byte"
+                );
+            }
+            _ => panic!("leading item stays a system message"),
+        }
+        match req.items.last() {
+            Some(xai_grok_sampling_types::ConversationItem::System(s)) => {
+                assert_eq!(s.content.as_ref(), updated.stable_body.as_str());
+                assert!(s.content.contains("write_file"));
+                assert_ne!(s.content.as_ref(), old_body);
+            }
+            _ => panic!("the new body is an appended system message"),
+        }
+        assert_eq!(req.items.len(), 3, "system, user, appended system");
+
+        let after = system_message_bytes(&req.items);
+        let append_hit = shared_prefix_len(&before, &after);
+        let append_miss = after.len().saturating_sub(append_hit);
+        assert!(
+            append_hit >= old_body_end,
+            "append hit {append_hit} must cover the old body ending at {old_body_end}"
+        );
+        assert!(append_miss > 0, "the appended body is the miss");
+
+        let mut rewritten = req.items.clone();
+        if let xai_grok_sampling_types::ConversationItem::System(s) = &mut rewritten[0] {
+            s.content = std::sync::Arc::<str>::from(updated.stable_body.as_str());
+        }
+        // Drop the appended message so the rewrite shape is "same items, new head".
+        rewritten.pop();
+        let rewrite_hit = shared_prefix_len(&before, &system_message_bytes(&rewritten));
+        assert!(
+            rewrite_hit < old_body_end,
+            "head rewrite hit {rewrite_hit} must end inside the old body ({old_body_end})"
+        );
+        assert!(rewrite_hit < append_hit);
+
+        let len_after_append = req.items.len();
+        apply_spec10_to_conversation_request(
+            &mut req,
+            dir.path().to_str().unwrap(),
+            Some(dir.path()),
+            None,
+        );
+        assert_eq!(
+            req.items.len(),
+            len_after_append,
+            "same body does not append again"
+        );
     }
 
     #[test]

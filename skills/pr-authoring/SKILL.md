@@ -21,7 +21,8 @@ This skill is the **agent harness** for change delivery. It is not CI.
 
 ## Hard rules
 
-1. **Never push product work straight to `main`.** Branch → PR → squash-merge.
+1. **Never push product work straight to `main`.** Branch → PR → **merge commit**
+   (AGENTS.md **Merge on GitHub**; squash and rebase are disabled on this repo).
 2. **One meaningful unit** per PR (one review lens). Prefer split over mega-PR.
 2b. **Ultragoal:** plan **all** PR units + sequential/parallel DAG **before** implementing; stack sequential PRs; atomic commits on the branch.
 3. **Title:** Conventional Commits  

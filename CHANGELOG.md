@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+## 6.0.0 — 2026-09-25
 
 - Pasting an image into a pane on a remote host now attaches it. A pasted image
   path is resolved by the host the pager runs on, and a terminal that works
@@ -8,6 +9,47 @@
   temp file to the remote `$TMPDIR` and pastes the remote path. An earlier
   `is_ssh` early-return skipped the classifier there, so the paste landed as
   literal path text and the attachment was impossible over SSH.
+- Port the vendored Grok Build base from `1.0.0` to `1.0.41` — 41 upstream
+  releases covering 472 changelog items, 25 sync commits and 3,587 files — and
+  re-derive this product's own overlay (DeepSeek sampling mapping, the status
+  line, theme skins, prompt identity, Path A helpers) on the new base with a
+  three-way merge. Most of the visible change is latency and correctness work:
+  session start no longer waits on remote-settings fetches or MCP connects, the
+  first message in a large repository no longer waits on a full status scan,
+  resuming a large session is significantly faster, git status and diff on big
+  histories are bounded, subagent spawning no longer stalls or freezes the
+  parent, and finished child transcripts are evicted and rebuilt on demand.
+  Fixed along the way: sessions interrupted by a crash say so instead of
+  dropping the turn, pasted images can no longer attach the wrong image,
+  oversized images no longer brick a session, a shell command is moved to the
+  background rather than cancelled when you send a message mid-run, and Esc no
+  longer cancels a running turn. New: a configurable status line, a tabbed
+  `/usage` `/session-info` `/context` modal, prompt-draft stashing, queued
+  messages that wait for you to finish editing, workflows in the command
+  palette, and hook capabilities for confirming, rewriting and adding context.
+  Owner-readable summary: `docs/product/CHANGELIST_6_0_0.md`.
+- A release no longer reports a failed publish when the package published
+  correctly. The `v5.7.0` run read the npm registry one second after
+  `npm publish` returned, got `E404` while the version was still propagating,
+  and `set -euo pipefail` turned that into a failed job — the version landed
+  76 s later. The post-publish read is now a bounded retry (300 s, matching the
+  metadata cache lifetime) shared by `release.sh`, the emergency publish path
+  and the release workflow, and the global-install smoke runs whenever a
+  publish happened instead of inheriting a skip from the failed step above it.
+
+## 5.7.0 — 2026-09-25
+
+- A cache epoch change now says *what* moved, not just *that* something did.
+  The stable prefix is built once per process and reused, so the only moment a
+  conversation's prefix actually moves is when a later process rebuilds it —
+  a resumed session. dsb stores each session's prefix shape beside its
+  transcript and, on resume, prints `prefix_change=<axes>` with a detail line
+  naming the entries (`tools.added=mcp__demo__pong`,
+  `skills.removed=old-skill`, `environment.cwd`). A session that carries no
+  stored shape — any file written before this change — logs nothing rather
+  than guess, and an unchanged prefix logs `none`. The shape is observational:
+  `stable_prefix_bytes` and every existing epoch are byte-identical, pinned by
+  a golden test that fails loudly when a change would invalidate live caches.
 - The TUI fits a phone-width pane. A collapsed prompt echo now folds to one
   line plus an ellipsis at or below 60 columns (the measured iPhone pane is 55
   columns by 41 rows) instead of the fixed three rows it used to spend — about
@@ -40,25 +82,6 @@
   pair the release workflows already strip), and the installer verifies every
   binary in a staging dir under the bin dir before renaming any of them into
   place, so a self-check failure leaves the previous installation untouched.
-- Port the vendored Grok Build base from `1.0.0` to `1.0.41` — 41 upstream
-  releases covering 472 changelog items, 25 sync commits and 3,587 files — and
-  re-derive this product's own overlay (DeepSeek sampling mapping, the status
-  line, theme skins, prompt identity, Path A helpers) on the new base with a
-  three-way merge. Most of the visible change is latency and correctness work:
-  session start no longer waits on remote-settings fetches or MCP connects, the
-  first message in a large repository no longer waits on a full status scan,
-  resuming a large session is significantly faster, git status and diff on big
-  histories are bounded, subagent spawning no longer stalls or freezes the
-  parent, and finished child transcripts are evicted and rebuilt on demand.
-  Fixed along the way: sessions interrupted by a crash say so instead of
-  dropping the turn, pasted images can no longer attach the wrong image,
-  oversized images no longer brick a session, a shell command is moved to the
-  background rather than cancelled when you send a message mid-run, and Esc no
-  longer cancels a running turn. New: a configurable status line, a tabbed
-  `/usage` `/session-info` `/context` modal, prompt-draft stashing, queued
-  messages that wait for you to finish editing, workflows in the command
-  palette, and hook capabilities for confirming, rewriting and adding context.
-  Owner-readable summary: `docs/product/CHANGELIST_6_0_0.md`.
 - Make syncing the vendored base a procedure with tooling rather than a
   rediscovery: a `grok-sync` skill, a runbook, a running ledger of what each
   sync decided and why, and `scripts/grok-sync-inventory.sh` — one command that
@@ -90,10 +113,6 @@
   as well as the endpoint: `deepseek-v4-pro` and the V3 chat/reasoner
   families keep the text-only wire with its on-disk `<image_files>` fallback,
   while vision-capable models send the image inline.
-
-## 5.7.0 — 2026-09-25
-
-- phone-width layout and Orca pane status
 
 ## 5.6.0 — 2026-09-25
 

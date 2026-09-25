@@ -30,6 +30,18 @@ is silently skipped.
 2. **CHANGELOG invariant (fail-close):** `# Changelog` → `## Unreleased` at the
    very top → version sections newest-first. After any bump, run
    `./scripts/reorder-changelog.sh --check` — non-zero exit means fix first.
+2b. **The bump moves the `Unreleased` items into the new version section —
+   verbatim, never a summary.** Confirm the move *before* merging the release
+   PR: `./scripts/bump-version.sh <ver> --dry-run` prints how many items would
+   move. `--desc` only fills the new section when `Unreleased` is empty; when
+   items exist they are the section and `--desc` does not seed it. Measured
+   failures: `v5.7.0` shipped 7 items still reading as unreleased while
+   `## 5.7.0` held one `--desc` line, and `v6.0.0` repeated it with 9 items
+   (including the same seven) — so neither release record named what it did.
+   After the release PR merges, re-read the section: it must name the work,
+   not repeat `--desc`. For a *past* release with this defect, moving the items
+   into its section is a normal PR against `main`; the tag is immutable.
+   Covered by `./scripts/test-changelog-release.sh` (also in CI).
 3. **MAJOR gate (fail-close):** a MAJOR bump is blocked unless README's
    product-status banner already references the new major (`**5.0.0** …` row).
    Update `docs/product/` + README *before* running the release.
@@ -155,6 +167,8 @@ gh workflow run publish-npm.yml --ref v4.0.4
       endpoint / status markers — not the pre-fix build
 - [ ] `gh release view v<ver> --json tagName,assets` shows the `darwin-arm64` tarball
 - [ ] CHANGELOG still newest-first: `./scripts/reorder-changelog.sh --check`
+- [ ] The `<ver>` section names what shipped — items moved out of
+      `Unreleased`, not a lone `--desc` line (`git show v<ver>:CHANGELOG.md | head -30`)
 - [ ] README version literals match `<ver>`
 - [ ] `npm view @innocarpe/deepseek-build@<ver> dist.attestations` shows a
       provenance attestation (CI path; the emergency path has none)
@@ -163,6 +177,8 @@ gh workflow run publish-npm.yml --ref v4.0.4
 
 | Bad | Why |
 |-----|-----|
+| Bumping without moving the `Unreleased` items | The section ships reading as "unreleased" while the version says shipped — the `v5.7.0` defect (7 items) and again at `v6.0.0` (9 items, compounding) |
+| Rewriting items while moving them | The release record is the reviewed text of each PR, not a post-hoc summary |
 | Publishing from a worktree whose HEAD ≠ tag | Ships unreleased/unmerged code as the binary |
 | Skipping asset check because CI "should" attach | CI queue routinely never runs; 404s for users |
 | `4.0` / `v4` in any public text | SemVer fail-close (Agents.md) |

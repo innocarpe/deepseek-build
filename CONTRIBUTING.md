@@ -7,7 +7,7 @@ Thanks for your interest. This project is early: **docs and specs land before co
 1. Read [docs/README.md](docs/README.md), [docs/product/PRD-v1.md](docs/product/PRD-v1.md), and [docs/product/NON_GOALS.md](docs/product/NON_GOALS.md).  
 2. Pick a [milestone](https://github.com/innocarpe/deepseek-build/milestones) (see [docs/product/MILESTONES.md](docs/product/MILESTONES.md)).  
 3. For behavior changes, ensure a [spec](docs/specs/) exists or open a `spec` PR first.  
-4. Branch → PR → CI → squash-merge.  
+4. Branch → PR → checks → **merge commit** (see [§9 merge policy](docs/contributing/pull-requests.md#9-merge-policy)).
 
 **Process guides (normative) — read these, not only the CI gates:**
 
@@ -18,6 +18,7 @@ Thanks for your interest. This project is early: **docs and specs land before co
 | [docs/contributing/examples.md](docs/contributing/examples.md) | Filled PR body examples (`spec`/`feat`/`fix`/`docs`) |
 | [docs/contributing/review-checklist.md](docs/contributing/review-checklist.md) | Review / self-merge checklist |
 | [skills/pr-authoring/SKILL.md](skills/pr-authoring/SKILL.md) | **Agent skill** for writing/opening PRs |
+| [skills/session-unit/SKILL.md](skills/session-unit/SKILL.md) | **Agent skill** for finishing one opening unit and handing the next to a new tab |
 | [docs/contributing/commits.md](docs/contributing/commits.md) | Conventional Commits |
 | [docs/contributing/versioning.md](docs/contributing/versioning.md) | **SemVer only** (`MAJOR.MINOR.PATCH`, never bare `1.0`) |
 | [docs/contributing/releases.md](docs/contributing/releases.md) | Release checklist draft; dual CLI names |
@@ -56,7 +57,7 @@ Full rules: **[docs/contributing/pull-requests.md](docs/contributing/pull-reques
 4. **Exactly one kind label** matching the title type.  
 5. Fill the PR template (summary, related, test plan).  
 6. Set milestone when known; link issues with `Closes #N` / `Refs #N`.  
-7. Default merge: **squash and merge** (PR title becomes the commit on `main`).  
+7. Default merge: **merge commit** — squash and rebase are disabled on this repo. Branch commits stay in `main` history, so keep each one atomic.  
 8. No secrets, API keys, or raw private session logs.
 
 ### Docs-only and spec PRs

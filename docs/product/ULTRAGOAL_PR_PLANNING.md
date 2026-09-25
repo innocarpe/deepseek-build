@@ -87,10 +87,10 @@ flowchart TB
 
 ### 2.3 Atomic commits (on the feature branch)
 
-Even with **squash-merge to `main`**, branch history and intermediate pushes should stay **atomic** so:
+Because `main` takes **merge commits**, branch history is `main` history — keep it **atomic** so:
 
 - Reviewers can read commit-by-commit  
-- `git bisect` / revert of a bad step is possible before squash  
+- `git bisect` / revert of a bad step stays possible after merge  
 - Parallel workers can rebase cleanly  
 
 **Atomic commit means:**
@@ -146,16 +146,16 @@ gitGraph
   branch prB
   commit id: "B1 atomic"
   checkout main
-  merge prA id: "squash A"
+  merge prA id: "merge A"
   checkout prB
   commit id: "B rebase"
   checkout main
-  merge prB id: "squash B"
+  merge prB id: "merge B"
 ```
 
 **Tooling:** `gh pr create --base <branch>` for stacks; Graphite optional. Document stack order in each PR body (`Depends on #N`).
 
-**Exact squash-stack repair, merge predicates, failure ladder:**  
+**Stack rebase, merge predicates, failure ladder:**  
 [stack-merge-runbook.md](../contributing/stack-merge-runbook.md) — **follow it; do not invent rebase steps.**
 
 **Fixed unit lists (do not re-invent overnight):**
@@ -206,16 +206,16 @@ If the agent cannot list **at least one** unit before coding → **stop and plan
 
 ---
 
-## 5. Interaction with squash-merge culture
+## 5. Interaction with merge-commit history
 
 | Layer | Policy |
 |-------|--------|
 | **Branch** | Atomic Conventional Commits |
-| **`main`** | Squash-merge; PR title = subject on `main` |
+| **`main`** | Merge commit; every branch commit stays in history |
 | **PR description** | Still Orca-level; list atomic steps if useful |
-| **Stack** | Each slot squash-merges in order |
+| **Stack** | Each slot merges in order; a child rebases onto the new `main` (no squash-repair) |
 
-Squash is **not** permission for sloppy branch history during the work.
+The merge is **not** permission for sloppy branch history — the commits survive.
 
 ---
 

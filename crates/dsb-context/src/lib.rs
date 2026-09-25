@@ -10,6 +10,7 @@ mod canonicalize;
 mod epoch;
 mod path_a_agent_context;
 mod prefix;
+mod shape;
 mod skills;
 
 pub use canonicalize::{canonicalize_json, stable_prefix_bytes};
@@ -21,6 +22,7 @@ pub use prefix::{
     DEFAULT_SYSTEM_PROMPT, EnvironmentSummary, PrefixBuildInputs, PrefixBuilder, PrefixError,
     SkillIndexEntry, StablePrefix, VolatileTail, discover_project_instructions,
 };
+pub use shape::{PrefixAxis, PrefixChange, PrefixShape, sub_hash};
 pub use skills::{SkillError, discover_skills_index, load_skill_body};
 
 use dsb_provider_deepseek::ChatMessage;

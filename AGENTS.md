@@ -62,6 +62,48 @@ Do **not** claim a release is ready as “1.0”; say **`1.0.0`** only when inst
 Both are built from `dsb-cli`. Prefer documenting **`deepseek-build`** first; always mention the alias.
 Config dir remains `~/.deepseek-build/` (product path ≠ command name).
 
+## Session output language (mandatory)
+
+**Human-facing session text in this repository is Korean.** The maintainer reads
+a session while it runs, so the rule covers everything a session puts on the
+screen — not only the final answer.
+
+| In scope | Example |
+|----------|---------|
+| Final answers | `핵심을 찾았습니다. 홈 전역이라 두 경우를 다 덮습니다` |
+| Progress notes between tool calls | `이제 dsb가 지침을 읽는 자리 실측` |
+| Tool-call descriptions (the one-liner on a call) | `README 구조 확인` |
+| Plan lists, status reports, questions to the human | `계획 3단계로 갈까요?` |
+
+**The opening line of a turn is in scope.** Sessions here habitually open with an
+English sentence (`"I'll start by reading the brief."`) and switch later; that
+opening line is exactly what this rule is for.
+
+**Keep verbatim:** commands, paths, code, identifiers, API and package names,
+error messages, and raw tool output. Translating those hurts readability — the
+rule is about the sentences a session writes itself.
+
+**Exceptions.** A turn that explicitly asks for another language wins. Repository
+artifacts keep the repository's conventions: code, comments, commit messages, PR
+bodies and the docs tree stay English.
+
+Measured 2026-09-25 over this repository's session logs (primary sessions only).
+Of the sessions in this tree that had a standing Korean rule in context, 10 of 12
+answered ≥99% of their text turns in Korean (the other two: 67%, 83%). Sessions
+in this tree with no such rule answered 0–1% (3 of 5; the other two: 56%, 92%).
+So the rule works for the session a human is watching — but not automatically.
+
+Two shapes still leaked, and they are different problems:
+
+- **The opening line.** A turn starts with one English sentence and switches
+  after the first tool call. That is the most common leak, which is why this
+  section names it.
+- **Delegated runs.** Subagent runs from the same batch, with near-identical
+  English briefs, came back 0%, 0%, 1%, 98% — the same instruction produced very
+  different adherence, so a rule document alone is a probabilistic control
+  there. Delegated runs need the instruction in their brief as well
+  (`skills/worktree-dispatch`).
+
 ## Source priorities (fail-close) — layered
 
 Normative: [`docs/architecture/HARNESS_PHILOSOPHY.md`](docs/architecture/HARNESS_PHILOSOPHY.md)
@@ -159,13 +201,51 @@ single clone and no Orca, work as usual: branch, commit, PR
   `rg -l grok-build scripts/`) — goes serially across all worktrees. Units that
   only build and test `crates/` can run in parallel.
 - **Leave other sessions' worktrees alone** — their files, branches and
-  terminals. Ask the owning session or report instead.
+  terminals. Ask the owning session or report instead. **Do not judge a worktree
+  abandoned from `orca terminal list`:** on 2026-09-25 it returned 0 terminals
+  for a worktree whose agent was mid-build, because that session ran outside
+  Orca. Check live processes (`pgrep -fl "/deepseek-build/<slug>"`) and the last
+  commit time, and treat "no signal" as unknown rather than idle
+  (`skills/worktree-dispatch` §0).
 - **Open work sessions as `deepseek-build` (`dsb`), not another coding agent.**
   Every session that changes this repo runs under the product this repo ships:
   its TUI, its tools, its cache behaviour. Claude Code, Codex and similar spend
   capacity that belongs to this product, and they hide the product's own gaps
   from the people who would fix them. Reading, planning and review may use any
   tool; the session that *writes the change* is `deepseek-build`.
+
+## One session, one unit
+
+The opening message, or the brief a dispatch handed over, is this session's
+**one unit**. The order is [`skills/session-unit`](skills/session-unit/SKILL.md).
+Worktree commands stay in [`worktree-dispatch`](skills/worktree-dispatch/SKILL.md);
+the PR stays in [`pr-authoring`](skills/pr-authoring/SKILL.md).
+
+- **Write the done-condition in one sentence before editing.** Take it from
+  the opening. Do not later swap it for a smaller goal that is only what this
+  session can finish easily, and do not add work the opening did not name.
+- **Carry the unit through without waiting for another prompt** when the
+  opening asked for the work: implement, run the checks that change needs,
+  one-concern commits, then the PR. Stop short of push or PR only when the
+  opening said to stop there.
+- **Merge is part of the unit, not a separate permission.** When the checks are
+  green and the body meets the bar, merge your own PR with the method this file
+  states under **Merge on GitHub**, then clean up the worktree
+  (`skills/worktree-dispatch` §4). Do not stop and ask whether to merge, and do
+  not leave a green PR open for a later prompt — **development speed is the
+  point**. Stop short of merging only when the opening said so (a review-only
+  unit, a stacked child whose parent is unmerged, or a PR the user asked to
+  look at first). Waiting on the user is the exception, not the default.
+- **A defect in a file this unit is already changing**, which no other
+  session is editing, is part of finishing — its own commit, same unit.
+  Anything the opening did not name (a new behavior, a fresh investigation,
+  a drive-by in a file this unit is not already changing) is the **next**
+  unit. Do not start it here. Open a new worktree and a `deepseek-build`
+  tab for it, with that unit's done-condition as the first line of the
+  brief. Report the tab. Do not ask whether to open it.
+- **When the unit is done, say so first.** Name whether the done-condition
+  holds, the evidence (including the merge commit), and any unit you handed
+  off. Do not offer another unit in this session.
 
 ## Product CI (future)
 

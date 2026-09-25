@@ -117,7 +117,7 @@ break compatibility. The product stays a Rust TUI with an overlay model.
 
 **Open question, tracked not assumed:** dsh speaks the **Anthropic Messages
 subset** of the DeepSeek API while this product speaks **Chat Completions**
-([ADR 0005](../adr/0005-deepseek-provider-contract.md)). [PRD-v7](PRD-v7.md) §6
+([ADR 0005](../adr/0005-deepseek-provider-contract.md)). [PRD-v6 §7.2](PRD-v6.md)
 carries this as an investigation with an evidence bar; no spec may depend on its
 outcome until it lands.
 

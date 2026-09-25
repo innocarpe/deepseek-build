@@ -116,3 +116,83 @@ key. The merge left them unverified, and this table does not imply otherwise.
 4. Sync infrastructure merged and usable by a session with no prior context.
 5. Tag `v6.0.0` published to npm with a verified global install; GitHub release
    notes carrying the changelist digest.
+
+---
+
+## 7. Line continuation — `6.1.0` DeepSeek-native depth
+
+**Status:** proposed. Board: [DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md](./DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md).
+Evidence: [research/dsh-deepseek-harness.md](../research/dsh-deepseek-harness.md).
+
+`6.0.0` moved the base. The next question is narrower and belongs to the same
+line: **does the product actually exploit what this base now makes possible?**
+
+Reading DeepSeek's own official harness (`dsh`) answered it. dsh carries a
+coherent body of work on **keeping a cached prefix alive while the session
+changes** — the prompt, the tool set, and policy state all append after cached
+history instead of rewriting the head — plus a habit of enforcing context
+contracts with runtime invariants rather than tests alone. That is the natural
+sequel to §2's L2 work: **§2 strengthens the substrate; §7 spends it.**
+
+### Why `6.1.0` and not a new major
+
+Per [versions/README.md](./versions/README.md) §Rules 1, a minor is a changelog
+and release notes *unless behavior identity shifts*. This work adds no new
+surface, no new pillar, and no new identity — it makes an existing claim
+("DeepSeek-native harness") true in places it currently is not. That is a
+minor by the rule, and the dependency direction agrees: §2's per-effort model
+identifiers, API-sourced effort levels, per-model retry configuration, and
+request-size caps are precisely the substrate the depth units build on.
+
+**Two conditions move this off the 6.x line:**
+
+1. If the wire investigation (§7.2 below) concludes the product should move to
+   the **Anthropic Messages** transport, that is an identity-relevant change
+   and takes its own major.
+2. If `6.x` minor numbers are already spent by base-port follow-up work when
+   this train starts, the depth work moves to the next free line.
+
+### 7.1 Scope
+
+**In scope (wire-independent, ships as `6.1.0` and later minors):**
+
+- The cache-preserving context lifecycle, in cost order — policy state as
+  runtime context, the prompt/tool change path, retry reuses the assembly,
+  centered section ordering.
+- Cache-miss **attribution** and a cumulative cache surface, so a miss says
+  *what moved*, not only that something moved.
+- A cache measurement harness — first, so no later unit can claim a win
+  without numbers.
+- A runtime invariant that the request equals the log-derived projection.
+- Spill for oversized tool results.
+
+**Out of scope:** multi-agent coordination layers, sandbox modes and
+escalation, dsh's request-series bookkeeping, everything-is-a-plugin, and any
+new TUI surface. Reasons are recorded per item in the research doc and the
+board's §5.
+
+### 7.2 The wire question (evidence, not a decision)
+
+dsh speaks the **Anthropic Messages subset** of the DeepSeek API; this product
+speaks **Chat Completions** per [ADR 0005](../adr/0005-deepseek-provider-contract.md).
+The paths differ in cache accounting fields, effort levels, reasoning replay,
+image handling, and whether a prompt or tool update can be expressed
+mid-history at all.
+
+**Nothing in §7.1 may depend on this outcome, and no spec may specify
+`systemPromptUpdate`/`toolUpdate` until it lands.** The deliverable is
+evidence on this product's own routes, followed by an ADR 0005 amendment or an
+explicit re-affirmation.
+
+### 7.3 Exit criteria
+
+1. The wire-independent lifecycle is merged and **measured** on a live route.
+2. Cache attribution and the cumulative surface are visible to the owner.
+3. The context-contract invariant is merged, with a test that fails when the
+   contract is broken.
+4. Spill is demonstrated on a session that previously blew up the context.
+5. The wire investigation closes with ADR 0005 amended or re-affirmed.
+6. Rows this line did **not** take are recorded with reasons — the ledger
+   discipline [UPSTREAM_SYNC_LEDGER.md](./UPSTREAM_SYNC_LEDGER.md) established
+   for vendor syncs, applied to harness ideas.
+7. Tag `v6.1.0` published to npm with a verified global install.

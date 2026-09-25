@@ -166,6 +166,15 @@ official `api.deepseek.com` endpoint and OpenRouter). That measurement is its
 own unit of work; nothing in Axis 1–3 should wait for it, except that
 `systemPromptUpdate`/`toolUpdate` cannot be specified until it is settled.
 
+**Where this landed:** the judged items are scoped as the **`6.1.0`**
+continuation of the `6.x` line — [PRD-v6 §7](../product/PRD-v6.md) and its
+board [DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md](../product/DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md).
+Not a new major: per [versions/README.md](../product/versions/README.md)
+§Rules 1 a minor is not a new PRD unless behavior identity shifts, and this
+work adds no surface and no identity — it makes an existing claim true. **This
+§6 wire question is the one condition that would move the work to its own
+major**, because changing the transport is identity-relevant.
+
 ---
 
 ## 7. What this sweep does not establish

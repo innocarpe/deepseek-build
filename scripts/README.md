@@ -5,6 +5,8 @@
 | `install.sh` | Install **`deepseek-build`** + **`dsb`** onto PATH (`~/.deepseek-build/bin` or Cargo bin) |
 | `build-grok-pager.sh` | Build/check vendored Grok composition root (`deepseek-build-agent`) |
 | `check-semver.sh` | Fail-close: workspace version must be full SemVer `MAJOR.MINOR.PATCH` |
+| `release.sh` | Release orchestrator (bump → PR → merge → tag → assets → CI publish → verify) |
+| `npm-emergency-publish.sh` | **Emergency** local npm publish; drives the interactive login + emailed code through `aside` (ADR 0012) |
 | `check-pr-title.sh` | **Optional** local Conventional Commits title check (not CI) |
 | `sync-labels.sh` | Push `.github/labels.json` to GitHub labels |
 | `smoke-dogfood.sh` | Quick offline smoke (+ optional thin live if key set) |

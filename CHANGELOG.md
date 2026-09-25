@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Publish releases from CI over npm OIDC trusted publishing instead of a local
+  interactive publish: the tag push now waits for the prebuilt asset, verifies
+  the packaged agent reports the release version, and publishes with a
+  provenance attestation. No npm token or one-time code is involved. A local
+  publish remains only as an emergency fallback.
 - Editing a file with CRLF line endings works, and the file keeps them. A
   multi-line `old_string` used to fail with `no_match` on any CRLF file — a
   Windows checkout, a `core.autocrlf` working copy, a `.bat` — because the

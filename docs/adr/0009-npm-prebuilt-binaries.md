@@ -50,7 +50,11 @@ it must not happen merely because a runner is available.
 - Tag `vMAJOR.MINOR.PATCH` **must** attach the `darwin-arm64` tarball before or with npm publish.
 - Script: `scripts/package-release-binaries.sh` builds/packages local or CI artifacts.  
 - CI workflow (recommended): on tag push, build the single target → upload the asset.
-- **npm publish remains human-gated** (ADR 0007).
+- **The ordering rule is enforced, not just documented:** `publish-npm.yml`
+  waits for the asset, executes the packaged agent to confirm it reports the
+  release version, and refuses to publish otherwise.
+- **npm publish is CI-published** over OIDC trusted publishing
+  ([ADR 0012](./0012-npm-trusted-publishing.md), amending ADR 0007's human gate).
 
 ### Package identity (unchanged)
 

@@ -2156,7 +2156,10 @@ fn dispatch_mouse_drag_selects_text() {
     };
     let mut state = DashboardState::new();
     state.dispatch.set_text("hello world");
-    let rect = Rect::new(2, 1, 60, 1);
+    // 70 columns keeps the composer roomy, so the `❯ ` prefix is drawn and the column arithmetic below is about the
+    // drag. A 60-column chromeless box sits exactly on the narrow-pane threshold and would drop the arrow, shifting
+    // the text left of these mouse columns.
+    let rect = Rect::new(2, 1, 70, 1);
     state.dispatch_rect = Some(rect);
     let mut buf = Buffer::empty(Rect::new(0, 0, 80, 10));
     let _ = state

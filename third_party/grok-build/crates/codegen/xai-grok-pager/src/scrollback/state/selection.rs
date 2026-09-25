@@ -222,9 +222,10 @@ impl ScrollbackState {
     /// Uses the block's `collapse_mode` to determine the target mode.
     /// The target may be `Truncated` for running blocks (e.g., execute) instead of `Collapsed`.
     pub fn collapse_selected(&mut self) {
+        let content_width = self.prompt_content_width(self.last_width);
         if let Some(i) = self.selected
             && let Some((_, entry)) = self.entries.get_index(i)
-            && entry.is_foldable()
+            && entry.is_foldable_at(content_width)
         {
             let target_mode = entry.block.collapse_mode(entry.is_running);
             if entry.display_mode != target_mode {
@@ -238,9 +239,10 @@ impl ScrollbackState {
 
     /// Expand selected entry (no-op if already expanded or not foldable).
     pub fn expand_selected(&mut self) {
+        let content_width = self.prompt_content_width(self.last_width);
         if let Some(i) = self.selected
             && let Some((_, entry)) = self.entries.get_index(i)
-            && entry.is_foldable()
+            && entry.is_foldable_at(content_width)
             && entry.display_mode != DisplayMode::Expanded
         {
             self.fold_selected_impl(|entry| entry.set_display_mode(DisplayMode::Expanded));
@@ -248,11 +250,12 @@ impl ScrollbackState {
     }
 
     pub fn toggle_fold_selected(&mut self) {
+        let content_width = self.prompt_content_width(self.last_width);
         if let Some(i) = self.selected
             && let Some((_, entry)) = self.entries.get_index(i)
-            && entry.is_foldable()
+            && entry.is_foldable_at(content_width)
         {
-            self.fold_selected_impl(|entry| entry.toggle_fold());
+            self.fold_selected_impl(move |entry| entry.toggle_fold_at(content_width));
         }
     }
 
@@ -436,10 +439,11 @@ impl ScrollbackState {
 
     /// Collapse all foldable entries.
     pub fn collapse_all(&mut self) {
+        let content_width = self.prompt_content_width(self.last_width);
         let mut changed_ids = Vec::new();
         for (id, entry) in &mut self.entries {
             entry.display_mode_pinned = false;
-            if entry.is_foldable() {
+            if entry.is_foldable_at(content_width) {
                 entry.display_mode = DisplayMode::Collapsed;
                 entry.invalidate_cache();
                 changed_ids.push(*id);
@@ -456,10 +460,11 @@ impl ScrollbackState {
 
     /// Expand all foldable entries.
     pub fn expand_all(&mut self) {
+        let content_width = self.prompt_content_width(self.last_width);
         let mut changed_ids = Vec::new();
         for (id, entry) in &mut self.entries {
             entry.display_mode_pinned = false;
-            if entry.is_foldable() {
+            if entry.is_foldable_at(content_width) {
                 entry.display_mode = DisplayMode::Expanded;
                 entry.invalidate_cache();
                 changed_ids.push(*id);
@@ -477,10 +482,10 @@ impl ScrollbackState {
     /// Smart toggle: if ANY foldable entry is collapsed, expand all.
     /// Otherwise collapse all.
     pub fn toggle_expand_all(&mut self) {
-        let any_collapsed = self
-            .entries
-            .values()
-            .any(|entry| entry.is_foldable() && entry.display_mode == DisplayMode::Collapsed);
+        let content_width = self.prompt_content_width(self.last_width);
+        let any_collapsed = self.entries.values().any(|entry| {
+            entry.is_foldable_at(content_width) && entry.display_mode == DisplayMode::Collapsed
+        });
         if any_collapsed {
             self.expand_all();
         } else {

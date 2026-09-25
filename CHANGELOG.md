@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- A submitted prompt on a phone-width pane is a one-row band. The fold is measured at the width the text actually wraps at, so a long one-line prompt no longer stays expanded and skips the one-row budget. At or below 60 columns the echo also drops its two blank pad rows and the decorative `❯` on both the echo and the input box; `$ `, `↻  `, `? ` and `! ` stay, because those say what kind of turn or mode this is. Widths above 60 keep today's three-line budget, the padding and the arrow, and a prompt folded by a resize unfolds again when the pane widens.
 
 - `npm install -g` on npm 12 no longer looks finished when the agent was
   never downloaded. npm 12.0.0 denies dependency install scripts unless the

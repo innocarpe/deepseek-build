@@ -65,12 +65,22 @@ pub trait BlockContent {
     /// Vertical padding (blank line with accent top/bottom).
     ///
     /// Borrows the appearance rather than taking a [`BlockContext`] so the O(history) height passes do not build one per entry.
+    /// Width-blind: see [`Self::has_vpad_for_width`] for the width-aware form.
     fn has_vpad_for(&self, _appearance: &AppearanceConfig) -> bool {
         true
     }
 
+    /// Vertical padding at `content_width` — the width this block's text wraps at.
+    ///
+    /// Two pad rows around a one-row band are a large fraction of a phone viewport, so a narrow pane may drop the pad
+    /// where a desktop pane keeps it. Defaults to the width-blind answer.
+    fn has_vpad_for_width(&self, appearance: &AppearanceConfig, content_width: u16) -> bool {
+        let _ = content_width;
+        self.has_vpad_for(appearance)
+    }
+
     fn has_vpad(&self, ctx: &BlockContext) -> bool {
-        self.has_vpad_for(&ctx.appearance)
+        self.has_vpad_for_width(&ctx.appearance, ctx.width)
     }
 
     /// Whether block supports raw mode toggle.
@@ -79,8 +89,20 @@ pub trait BlockContent {
     }
 
     /// Whether block can be collapsed/expanded.
+    ///
+    /// Width-blind; see [`Self::is_foldable_at`] for the width-aware form.
     fn is_foldable(&self) -> bool {
         true
+    }
+
+    /// Whether this block folds at `content_width` — the width its text wraps at.
+    ///
+    /// The width-blind [`Self::is_foldable`] predates phone-width panes: a prompt that fits three rows at desktop
+    /// width can need more at a phone pane. Defaults to the width-blind answer, so only blocks whose fold decision
+    /// depends on the wrap width override it.
+    fn is_foldable_at(&self, content_width: u16) -> bool {
+        let _ = content_width;
+        self.is_foldable()
     }
 
     /// Get the next display mode when toggling fold. Default behavior: toggle between Collapsed and Expanded. Blocks
@@ -430,12 +452,20 @@ impl BlockContent for RenderBlock {
         delegate_block!(self, has_vpad_for(appearance))
     }
 
+    fn has_vpad_for_width(&self, appearance: &AppearanceConfig, content_width: u16) -> bool {
+        delegate_block!(self, has_vpad_for_width(appearance, content_width))
+    }
+
     fn has_raw_mode(&self) -> bool {
         delegate_block!(self, has_raw_mode())
     }
 
     fn is_foldable(&self) -> bool {
         delegate_block!(self, is_foldable())
+    }
+
+    fn is_foldable_at(&self, content_width: u16) -> bool {
+        delegate_block!(self, is_foldable_at(content_width))
     }
 
     fn next_fold_mode(&self, current: DisplayMode, is_running: bool) -> DisplayMode {

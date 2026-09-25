@@ -222,6 +222,20 @@ impl ScrollbackEntry {
         }
     }
 
+    /// [`Self::toggle_fold`] at a known content width.
+    ///
+    /// A prompt can be foldable in a phone-width pane and not in a desktop one (see [`BlockContent::is_foldable_at`]),
+    /// so the gate has to ask the width-aware question — otherwise a narrow-pane echo collapsed by the width-aware
+    /// default could never be expanded again.
+    pub fn toggle_fold_at(&mut self, content_width: u16) {
+        if self.is_foldable_at(content_width) {
+            self.display_mode = self
+                .block
+                .next_fold_mode(self.display_mode, self.is_running);
+            self.invalidate_cache();
+        }
+    }
+
     pub fn display_mode(&self) -> DisplayMode {
         self.display_mode
     }
@@ -366,6 +380,14 @@ impl ScrollbackEntry {
         });
     }
 
+    /// Content width of the cached render, if one exists. This is the wrap width `ensure_cached` was given.
+    pub(crate) fn cached_content_width(&self) -> Option<u16> {
+        self.cached_output
+            .borrow()
+            .as_ref()
+            .map(|cached| cached.width)
+    }
+
     /// Borrow the cached output.
     ///
     /// Panics if `ensure_cached` was not called first for the current width.
@@ -481,6 +503,11 @@ impl ScrollbackEntry {
 
     pub fn is_foldable(&self) -> bool {
         self.block.is_foldable()
+    }
+
+    /// [`Self::is_foldable`] at a known content width.
+    pub fn is_foldable_at(&self, content_width: u16) -> bool {
+        self.block.is_foldable_at(content_width)
     }
 
     /// True for a thinking block hidden by the Appearance toggle. Takes the flag as a param so hot layout loops can hoist the cache read.

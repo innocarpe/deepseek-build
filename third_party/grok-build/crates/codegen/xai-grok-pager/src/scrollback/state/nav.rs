@@ -940,10 +940,12 @@ impl ScrollbackState {
             }
         }
 
-        // Expand the entry so a collapsed fold doesn't hide the matched line.
+        // Expand the entry so a collapsed fold doesn't hide the matched line. Asked at the live width: a prompt that
+        // only folds in a narrow pane is still folded there, and a search hit inside it has to be revealed.
         let respect_manual_folds = self.appearance.scrollback.scroll.respect_manual_folds;
+        let content_width = self.prompt_content_width(self.last_width);
         if let Some((id, entry)) = self.entries.get_index_mut(entry_idx)
-            && entry.is_foldable()
+            && entry.is_foldable_at(content_width)
             && entry.display_mode != DisplayMode::Expanded
         {
             entry.set_display_mode(DisplayMode::Expanded);

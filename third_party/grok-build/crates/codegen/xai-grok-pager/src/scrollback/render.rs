@@ -21,7 +21,7 @@ use super::text_selection::{
 use super::types::{
     derive_selection_text, line_plain_text_into, selectable_cols, selectable_cols_usize,
 };
-use super::wrappers::{EntryRenderer, group_header_chrome_prefix_width};
+use super::wrappers::{EntryRenderer, group_header_chrome_prefix_width, timestamp_reserved_for};
 use crate::appearance::AppearanceConfig;
 use crate::render::Renderable;
 use crate::render::osc8::{LinkOverlay, OverlayLink};
@@ -50,18 +50,10 @@ pub fn media_open_button_col(content_width: u16, is_video: bool) -> u16 {
 
 /// Width reserved for the timestamp on message blocks.
 ///
-/// Matches the constant in `EntryRenderer::timestamp_reserved()`.
+/// Thin alias for [`super::wrappers::timestamp_reserved_for`], so this pass cannot drift from
+/// `EntryRenderer::timestamp_reserved()`.
 fn timestamp_reserved_for_block(block: &RenderBlock, appearance: &AppearanceConfig) -> u16 {
-    if appearance.show_timestamps
-        && matches!(
-            block,
-            RenderBlock::UserPrompt(_) | RenderBlock::AgentMessage(_) | RenderBlock::Btw(_)
-        )
-    {
-        10
-    } else {
-        0
-    }
+    timestamp_reserved_for(appearance, block)
 }
 
 /// Reusable scratch `Buffer` so clipped-entry rendering is greppable and not reallocated every frame.

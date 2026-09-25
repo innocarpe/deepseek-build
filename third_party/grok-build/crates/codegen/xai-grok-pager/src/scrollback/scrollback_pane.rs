@@ -21,6 +21,7 @@ use crate::scrollback::text_selection::{
     VisibleBlockGeometry,
 };
 use crate::scrollback::types::{BlockContext, DisplayMode, derive_selection_text, selectable_cols};
+use crate::scrollback::wrappers::block_content_width_for;
 use crate::theme::Theme;
 
 /// Displays conversation entries with optional pinned header for the current turn's prompt. For efficiency, scratch
@@ -580,12 +581,14 @@ impl ScrollbackPane {
 
         let layout = HorizontalLayout::new(area, &appearance.scrollback.layout);
 
-        // Compute content lines from render_height
-        // The block adds vpad (2 rows) if has_vpad is true
+        // Compute content lines from render_height. Measured at the block's own content width (the same chain the
+        // height passes use), not at the pane width: a prompt drops its pad on a narrow pane, and a wider pane width
+        // here would reserve two rows that were never drawn.
         let cwd = state.cwd();
+        let block_content_width = block_content_width_for(appearance, &entry.block, area.width);
         let has_vpad = entry
             .block
-            .has_vpad(&entry.context(area.width, appearance, cwd));
+            .has_vpad_for_width(appearance, block_content_width);
         let vpad_rows = if has_vpad { 2 } else { 0 };
         let content_lines = render_height.saturating_sub(vpad_rows);
 
@@ -1149,7 +1152,10 @@ fn paint_expandable_indicator(
     if !display_cfg.expandable_indicator {
         return;
     }
-    if !entry.block.is_foldable() {
+    // Width-aware so the chevron appears on a block that is folded at this width, including a prompt folded by the
+    // narrow-pane default. Uses the same entry-area → content-width chain as the fold decision.
+    let content_width = block_content_width_for(appearance, &entry.block, content_area.width);
+    if !entry.block.is_foldable_at(content_width) {
         return;
     }
     let at_min_fold = entry.display_mode == DisplayMode::Collapsed

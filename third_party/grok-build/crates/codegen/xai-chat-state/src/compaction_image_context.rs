@@ -143,7 +143,7 @@ pub fn render_image_files_block(paths: &[String]) -> Option<String> {
         image_files_block(
             "The following images were provided by the user and saved to the workspace for future use:",
             paths,
-            "\nThese images can be copied for use in other locations. If your backend cannot receive image data directly (text-only API), read or OCR these files with your tools to access their contents.\n",
+            "\nThese images can be copied for use in other locations. If the image is not visible to you directly (a text-only API model, for example DeepSeek V4 Pro), read or OCR these files with your tools to access their contents.\n",
         )
     })
 }

@@ -1,3 +1,4 @@
+pub mod agent_status;
 pub mod config;
 pub mod focus;
 pub mod hooks;
@@ -20,6 +21,21 @@ pub use config::{
     NotificationMethod, TitleConfig, TitleItem,
 };
 pub use title::TitleState;
+
+/// Map the pager's title state onto the status vocabulary a host reads.
+///
+/// Precedence mirrors the title: a pending permission is the most actionable
+/// fact about the pane, so it outranks a running turn — an agent blocked on
+/// approval is not making progress even while `is_busy` is still set.
+fn agent_status_state_for(state: &title::TitleState<'_>) -> agent_status::AgentStatusState {
+    if state.has_pending_permissions {
+        return agent_status::AgentStatusState::Waiting;
+    }
+    if state.is_busy || state.activity.is_some() {
+        return agent_status::AgentStatusState::Working;
+    }
+    agent_status::AgentStatusState::Done
+}
 
 pub struct NotificationEvent {
     pub kind: NotificationEventKind,
@@ -44,6 +60,10 @@ pub struct NotificationService {
     permission_notified: bool,
     /// Out-of-band escape queue for notification/shutdown escapes; see [`EscapeWriter`](crate::render::draw::EscapeWriter).
     escape_writer: EscapeWriter,
+    /// OSC 9999 explicit status frames for hosts that read them (Orca). Silent
+    /// on every other host, and deduped so a resting pane does not rewrite an
+    /// identical frame on every tick.
+    agent_status_reporter: agent_status::AgentStatusReporter,
 }
 
 impl NotificationService {
@@ -67,6 +87,7 @@ impl NotificationService {
             progress_last_sent: None,
             permission_notified: false,
             escape_writer,
+            agent_status_reporter: agent_status::AgentStatusReporter::new(),
         }
     }
 
@@ -131,6 +152,19 @@ impl NotificationService {
             self.clear_progress_into(&mut buf);
         }
 
+        // Why here as well as `on_tick`: tick demand falls to `None` once a pane
+        // is idle, so the tick that would carry the closing frame may never
+        // run. This is the turn-end hook that still fires.
+        if let Some(status_esc) = self.agent_status_reporter.frame_for(
+            agent_status::host(),
+            agent_status_state_for(state),
+            state.model,
+            state.session_name,
+            self.terminal_ctx,
+        ) {
+            buf.push_str(&status_esc);
+        }
+
         if buf.is_empty() { None } else { Some(buf) }
     }
 
@@ -170,6 +204,19 @@ impl NotificationService {
             }
         }
 
+        // Report explicit status to hosts that read OSC 9999 (Orca). Rides the
+        // same tick as the title so the two can never disagree about the turn
+        // state, and stays silent everywhere else.
+        if let Some(status_esc) = self.agent_status_reporter.frame_for(
+            agent_status::host(),
+            agent_status_state_for(state),
+            state.model,
+            state.session_name,
+            self.terminal_ctx,
+        ) {
+            buf.push_str(&status_esc);
+        }
+
         if buf.is_empty() { None } else { Some(buf) }
     }
 
@@ -179,6 +226,17 @@ impl NotificationService {
     pub fn shutdown(&mut self) {
         let mut buf = self.title_manager.reset();
         self.clear_progress_into(&mut buf);
+        // Close the turn out explicitly: a host holding `working` when the pane
+        // exits keeps a spinner alive for a session that is gone.
+        if let Some(status_esc) = self.agent_status_reporter.frame_for(
+            agent_status::host(),
+            agent_status::AgentStatusState::Done,
+            None,
+            None,
+            self.terminal_ctx,
+        ) {
+            buf.push_str(&status_esc);
+        }
         self.escape_writer.emit(buf);
     }
 
@@ -238,6 +296,7 @@ impl NotificationService {
             progress_last_sent: None,
             permission_notified: false,
             escape_writer: EscapeWriter::disconnected(),
+            agent_status_reporter: agent_status::AgentStatusReporter::new(),
         }
     }
 }

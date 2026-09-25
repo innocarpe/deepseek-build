@@ -3,6 +3,7 @@
 //! Specs: 15 (repair), 20 (routing), 30 (thinking wire via provider).
 //! Sessions: JSONL persist/resume under `~/.deepseek-build/sessions/`.
 
+mod cache_totals;
 mod loop_;
 mod pairing;
 mod parallel;
@@ -12,6 +13,7 @@ mod routing;
 mod session;
 mod subagent;
 
+pub use cache_totals::CacheSessionTotals;
 pub use loop_::{Agent, AgentConfig, TurnEvent, TurnOutcome};
 pub use pairing::{InterruptedTool, PAIRING_INTERRUPTED_CONTENT, pair_tool_results};
 pub use parallel::{MAX_PARALLEL_READONLY, is_mutating_tool, partition_indices};

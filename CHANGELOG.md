@@ -33,6 +33,18 @@
   `stable_prefix_bytes` and every existing epoch are byte-identical, pinned by
   a golden test that fails loudly when a change would invalidate live caches.
 
+- A session now reports what its cache did over the whole conversation, not
+  just the last turn. `dsb run` and the REPL print
+  `cache_session=hit=<n>,miss=<n>,rate=<pct>,reported=<n>,unreported=<n>` once
+  per turn, summing the prompt tokens of every response that carried cache
+  fields. A response that carried none moves `unreported` and nothing else —
+  counting it as a miss would invent a number the provider never sent — and a
+  session whose responses all lack cache fields prints no line at all rather
+  than a `rate=na` that reads like a measurement. The counter is per
+  conversation and never reset by a turn; it is stored with the session, so
+  resuming one continues its totals instead of restarting them. It covers the
+  `run` / REPL surface; the full-screen TUI status line is a separate unit.
+
 ## 6.0.0 — 2026-09-25
 
 - Port the vendored Grok Build base from `1.0.0` to `1.0.41` — 41 upstream

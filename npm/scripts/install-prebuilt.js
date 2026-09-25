@@ -13,8 +13,44 @@ const { platformId, releaseAssetName, releaseDownloadUrl } = require('../lib/pla
 
 const REQUIRED = ['deepseek-build', 'dsb', 'deepseek-build-agent'];
 
+/**
+ * Version stamps the agent honours at *runtime* (`installed()` in the vendored
+ * `xai-grok-version` crate: `DEEPSEEK_BUILD_VERSION`, then `GROK_TEST_VERSION`,
+ * else the version baked into the binary).
+ *
+ * They are legitimate on a *build* shell — `scripts/build-grok-pager.sh`
+ * exports `DEEPSEEK_BUILD_VERSION` so a release build bakes the product SemVer
+ * — but a process that merely inherits one makes the agent print the caller's
+ * value instead of its own. So the self-check below runs without them: an
+ * install must not be judged against whatever version the caller's shell
+ * happens to be stamping.
+ *
+ * The release workflows already strip them by hand
+ * (`.github/workflows/release-prebuilt.yml`, `.github/workflows/publish-npm.yml`:
+ * `env -u DEEPSEEK_BUILD_VERSION -u GROK_TEST_VERSION`). Keep this list in
+ * step with theirs.
+ *
+ * `GROK_VERSION` is deliberately absent: the vendor `build.rs` reads it at
+ * *compile* time only. Measured on a shipped binary, `GROK_VERSION=7.7.7`
+ * still prints the built version.
+ */
+const VERSION_STAMP_ENV = ['DEEPSEEK_BUILD_VERSION', 'GROK_TEST_VERSION'];
+
 function ensureDir(p) {
   fs.mkdirSync(p, { recursive: true });
+}
+
+/**
+ * The environment a freshly installed binary is probed with: the caller's env
+ * minus the version stamps (see `VERSION_STAMP_ENV`). PATH/HOME stay — the
+ * binary needs them to exec at all.
+ */
+function selfCheckEnv(base = process.env) {
+  const env = { ...base };
+  for (const key of VERSION_STAMP_ENV) {
+    delete env[key];
+  }
+  return env;
 }
 
 /**
@@ -27,9 +63,17 @@ function ensureDir(p) {
  * cache entry. We therefore (1) remove the destination first so a fresh
  * inode is written, and (2) verify the freshly installed binary actually
  * runs before declaring success.
+ *
+ * Runs with `selfCheckEnv()`: with an inherited version stamp the binary
+ * reports the caller's version, and this check would call a good install
+ * corrupt.
  */
 function verifyInstalledBin(dest, name, version) {
-  const r = spawnSync(dest, ['--version'], { encoding: 'utf8', timeout: 20000 });
+  const r = spawnSync(dest, ['--version'], {
+    encoding: 'utf8',
+    timeout: 20000,
+    env: selfCheckEnv(),
+  });
   if (r.status !== 0) {
     return `\`${name} --version\` exited with status ${r.status} (expected 0)`;
   }

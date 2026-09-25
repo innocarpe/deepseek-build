@@ -19,9 +19,13 @@
 *.pem
 *.key
 
-# Agent harness: .claude/ and .agents/ are tracked for their skill links only
-# (ADR 0011). Per-user tool state written beside them stays local.
-.claude/settings.local.json
+# Agent harness: .claude/ and .agents/ track only their skill links (ADR 0011).
+# Tools write per-user state beside them (settings.local.json, worktrees/,
+# scheduled_tasks.json, ...); keep all of it local.
+/.claude/*
+!/.claude/skills
+/.agents/*
+!/.agents/skills
 
 # Runtime / session debris
 .deepseek-build/sessions/

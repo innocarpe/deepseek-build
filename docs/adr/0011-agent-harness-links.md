@@ -39,9 +39,11 @@ Commit three symlinks at the repo root:
 a new skill directory under `skills/` is picked up by all three agents without
 touching the links.
 
-`.claude/` and `.agents/` are new top-level directories and hold only these
-links. Per-user files that tools write there (`.claude/settings.local.json`)
-are gitignored.
+`.claude/` and `.agents/` are new top-level directories and track only these
+links. Everything else under them is gitignored (`/.claude/*` with
+`!/.claude/skills`, same for `.agents`): Claude Code writes per-user state
+there — `settings.local.json`, `worktrees/`, `scheduled_tasks.json`,
+`launch.json`, `agent-memory-local/` — and none of it belongs in the repo.
 
 ## Alternatives considered
 

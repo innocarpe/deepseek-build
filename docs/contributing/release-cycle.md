@@ -220,7 +220,25 @@ prompt; step 1 is an account-identity action and needs a person.
 - **Runner:** `macos-14`, so the job can execute the packaged `darwin-arm64`
   agent. npm trusted publishing supports GitHub-hosted runners only.
 - **After publish** the job runs the user-facing path: a clean
-  `npm install -g` and `dsb --version` / `deepseek-build --version`.
+  `npm install -g` and `dsb --version` / `deepseek-build --version`. That step
+  runs whenever a publish happened or the version was already live — including
+  when the verification step above it failed — because "can a user install it?"
+  is the question it answers, and a skip would hide the answer.
+- **Registry visibility.** A successful `npm publish` does not make the version
+  immediately readable: the registry serves reads through a CDN with its own
+  cache, and nothing in npm's documentation promises read-after-write. On the
+  `5.7.0` release the verify step read one second after publish and got
+  `E404`, while the registry's metadata records the version landing **76 s**
+  after that read; the smoke step was skipped as a result. Every post-publish
+  read therefore goes through
+  [`scripts/verify-npm-version.sh`](../../scripts/verify-npm-version.sh), a
+  bounded retry (300 s default, 5 s initial interval doubling to a 30 s
+  ceiling). It prints the confirmed version on stdout and a diagnostic on
+  timeout. `release.sh` and `npm-emergency-publish.sh` call the same helper, so
+  the three publish paths cannot drift apart. The window can be shortened for
+  a test with `DSB_NPM_VERIFY_TIMEOUT_SEC`.
+  [`scripts/test-npm-verify-retry.sh`](../../scripts/test-npm-verify-retry.sh)
+  covers it hermetically, with a local mock registry instead of the network.
 
 ### Emergency path (CI cannot publish)
 

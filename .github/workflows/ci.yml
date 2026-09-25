@@ -35,6 +35,7 @@ jobs:
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
       semver: ${{ steps.filter.outputs.semver }}
+      release_verify: ${{ steps.filter.outputs.release_verify }}
       grok: ${{ steps.filter.outputs.grok }}
     steps:
       - uses: actions/checkout@v4
@@ -55,6 +56,14 @@ jobs:
               - 'package.json'
               - 'scripts/check-semver.sh'
               - 'npm/scripts/check-version-match.js'
+              - '.github/workflows/ci.yml'
+            release_verify:
+              - 'scripts/verify-npm-version.sh'
+              - 'scripts/test-npm-verify-retry.sh'
+              - 'scripts/lib/mock_npm_registry.py'
+              - 'scripts/release.sh'
+              - 'scripts/npm-emergency-publish.sh'
+              - '.github/workflows/publish-npm.yml'
               - '.github/workflows/ci.yml'
             grok:
               - 'third_party/grok-build/**'
@@ -157,6 +166,26 @@ jobs:
           fi
       - run: ./scripts/check-semver.sh
       - run: node npm/scripts/check-version-match.js
+
+  # The publish → verify race guard. Hermetic (a local mock registry, no
+  # network, no credentials), so it is cheap: it reproduces the shape of the
+  # v5.7.0 failure — a version that is not readable yet and becomes readable
+  # later — and fails if the retry window or the shared helper is undone.
+  release_verify:
+    name: release verify retry
+    needs: changes
+    if: needs.changes.outputs.release_verify == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ripgrep
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ripgrep
+          fi
+      - run: ./scripts/test-npm-verify-retry.sh
 
   # Vendored Grok validation. PRs keep the fast format and strict Clippy gates.
   # The full upstream workspace test runs once after merge instead of once per
@@ -276,7 +305,7 @@ jobs:
   # ---------------------------------------------------------------------------
   required:
     name: required
-    needs: [changes, fmt, clippy, test, semver, grok_fmt, grok_clippy, grok_test]
+    needs: [changes, fmt, clippy, test, semver, release_verify, grok_fmt, grok_clippy, grok_test]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -289,6 +318,7 @@ jobs:
           echo "clippy=${{ needs.clippy.result }}"
           echo "test=${{ needs.test.result }}"
           echo "semver=${{ needs.semver.result }}"
+          echo "release_verify=${{ needs.release_verify.result }}"
           echo "grok_fmt=${{ needs.grok_fmt.result }}"
           echo "grok_clippy=${{ needs.grok_clippy.result }}"
           echo "grok_test=${{ needs.grok_test.result }}"
@@ -306,6 +336,7 @@ jobs:
             "clippy:${{ needs.clippy.result }}" \
             "test:${{ needs.test.result }}" \
             "semver:${{ needs.semver.result }}" \
+            "release_verify:${{ needs.release_verify.result }}" \
             "grok_fmt:${{ needs.grok_fmt.result }}" \
             "grok_clippy:${{ needs.grok_clippy.result }}" \
             "grok_test:${{ needs.grok_test.result }}"

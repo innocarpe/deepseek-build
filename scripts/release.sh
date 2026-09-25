@@ -25,6 +25,10 @@ VERSION=""
 DESC=""
 SKIP_BUMP=0; SKIP_PR=0; SKIP_TAG=0; NO_PUBLISH=0; WAIT_ALL=0; LOCAL_PUBLISH=0
 PLATFORM=""; TIMEOUT=5400
+# How long to keep asking the registry whether a version is live when that
+# answer only shapes a diagnostic (the failed-CI-run path below). The
+# post-publish confirmation uses the helper's full default window instead.
+REGISTRY_PROBE_SEC=45
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -271,6 +275,19 @@ else
   if ! gh run watch "$RUN_ID" --exit-status >/dev/null 2>&1; then
     echo "error: publish-npm.yml run $RUN_ID did not succeed" >&2
     echo "  gh run view $RUN_ID --log-failed" >&2
+    # A failed run does not always mean a failed release: on v5.7.0 the publish
+    # itself succeeded and a later step went red on a registry read that raced
+    # the publish, so the run's exit status alone misreports the outcome. Say
+    # which case this is — still a failure, because something in CI is wrong,
+    # but the reader should not have to look up whether the version shipped.
+    # A short window is enough here: this runs long after the publish.
+    if LIVE_NOW="$(DSB_NPM_VERIFY_TIMEOUT_SEC="${REGISTRY_PROBE_SEC}" \
+        ./scripts/verify-npm-version.sh "@innocarpe/deepseek-build@$VERSION" 2>/dev/null)"; then
+      echo "  note: the registry already serves ${LIVE_NOW} — the publish landed;" >&2
+      echo "  the failing step is something after it (see the log above)." >&2
+    else
+      echo "  note: the registry does not serve $VERSION either — the publish did not land." >&2
+    fi
     echo "  Emergency path: ./scripts/release.sh $VERSION --publish-only --local-publish" >&2
     exit 1
   fi
@@ -278,9 +295,18 @@ fi
 
 # Verify the registry, whichever path published. The local tarball smoke is the
 # caller's job (release skill §Post-publish verification); CI runs its own.
-LIVE="$(npm view "@innocarpe/deepseek-build@$VERSION" version 2>/dev/null || true)"
-if [[ "$LIVE" != "$VERSION" ]]; then
-  echo "error: registry does not report $VERSION (got '${LIVE:-none}')" >&2
+#
+# This must not be a single immediate read: a publish that has returned can
+# still be invisible for a while (measured 76 s on the v5.7.0 release), so an
+# instant check fails on a healthy release. See scripts/verify-npm-version.sh
+# for the measurement and the retry window. On the CI path the run above has
+# already confirmed visibility, so this is a cheap re-confirmation; on the
+# --local-publish path it follows `npm publish` directly and is the read that
+# sits closest to the race.
+if ! LIVE="$(./scripts/verify-npm-version.sh "@innocarpe/deepseek-build@$VERSION")"; then
+  echo "error: the registry never served $VERSION — see the message above" >&2
+  echo "  If the publish itself failed, see the run log; if it succeeded, re-check with:" >&2
+  echo "    ./scripts/verify-npm-version.sh '@innocarpe/deepseek-build@$VERSION'" >&2
   exit 1
 fi
 echo "== registry reports @innocarpe/deepseek-build@$LIVE =="

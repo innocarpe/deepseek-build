@@ -85,6 +85,10 @@
   families keep the text-only wire with its on-disk `<image_files>` fallback,
   while vision-capable models send the image inline.
 
+## 6.0.0 — 2026-09-25
+
+- Grok Build base ported 1.0.0 to 1.0.41 with the DeepSeek overlay re-derived; sync infrastructure
+
 ## 5.7.0 — 2026-09-25
 
 - phone-width layout and Orca pane status

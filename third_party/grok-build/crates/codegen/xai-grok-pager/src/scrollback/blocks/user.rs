@@ -527,6 +527,15 @@ impl BlockContent for UserPromptBlock {
         appearance.scrollback.blocks.prompt.vpad && !appearance.prompt.compact
     }
 
+    /// On a phone-width pane the prompt echo is a one-row band, and the two
+    /// blank pad rows around it cost as much vertical space as the band
+    /// itself on a 41-row viewport. Drop the pad there so the echo is exactly
+    /// one row; wider panes keep the configured pad, so the desktop rhythm
+    /// (blank line above and below each prompt) is untouched.
+    fn has_vpad_for_width(&self, appearance: &AppearanceConfig, content_width: u16) -> bool {
+        content_width > COLLAPSED_NARROW_TERMINAL_COLS && self.has_vpad_for(appearance)
+    }
+
     fn has_raw_mode(&self) -> bool {
         false
     }

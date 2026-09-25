@@ -494,7 +494,11 @@ impl<'a> EntryRenderer<'a> {
     /// ceiling can't overflow and corrupt `virtual_y` / `total_height`. Shared by
     /// `desired_height` and `estimate_height` so the assembly stays canonical.
     fn assemble_height(&self, content_width: u16, content_lines: u16) -> u16 {
-        let vpad: u16 = if self.entry.block.has_vpad_for(self.appearance()) {
+        let vpad: u16 = if self
+            .entry
+            .block
+            .has_vpad_for_width(self.appearance(), content_width)
+        {
             2
         } else {
             0
@@ -909,7 +913,13 @@ impl Renderable for EntryRenderer<'_> {
             .ensure_cached(text_width, self.appearance(), self.is_selected, self.cwd);
         let cached_ref = self.entry.cached_output_ref();
         let output: &BlockOutput = &cached_ref;
-        let has_vpad = self.entry.block.has_vpad(&ctx);
+        // Measured at the block's own content width, the same value the height
+        // passes use; `ctx.width` here is the pre-timestamp content column, and
+        // letting the two differ would paint pad rows that were never reserved.
+        let has_vpad = self
+            .entry
+            .block
+            .has_vpad_for_width(self.appearance(), self.block_content_width(area.width));
         // Determine how many rows of vpad/content to skip.
         // Layout is: [vpad_top?] [content lines...] [vpad_bottom?]
         let vpad_top = if has_vpad { 1u16 } else { 0 };

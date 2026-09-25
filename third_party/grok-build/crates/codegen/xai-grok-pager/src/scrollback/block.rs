@@ -87,13 +87,25 @@ pub trait BlockContent {
     /// Vertical padding (blank line with accent top/bottom).
     ///
     /// Borrows the appearance rather than taking a [`BlockContext`] so the
-    /// O(history) height passes do not build one per entry.
+    /// O(history) height passes do not build one per entry. Width-blind: see
+    /// [`Self::has_vpad_for_width`] for the width-aware form.
     fn has_vpad_for(&self, _appearance: &AppearanceConfig) -> bool {
         true
     }
 
+    /// Vertical padding at `content_width` — the width this block's text
+    /// wraps at. The width-blind [`Self::has_vpad_for`] predates phone-width
+    /// panes: two pad rows around a one-row band is a twentieth of a
+    /// 41-row viewport, so a narrow pane may want the pad gone where a
+    /// desktop pane keeps it. Defaults to the width-blind answer, so the
+    /// blocks that don't care keep their current behaviour unchanged.
+    fn has_vpad_for_width(&self, appearance: &AppearanceConfig, content_width: u16) -> bool {
+        let _ = content_width;
+        self.has_vpad_for(appearance)
+    }
+
     fn has_vpad(&self, ctx: &BlockContext) -> bool {
-        self.has_vpad_for(&ctx.appearance)
+        self.has_vpad_for_width(&ctx.appearance, ctx.width)
     }
 
     /// Whether block supports raw mode toggle.
@@ -512,6 +524,10 @@ impl BlockContent for RenderBlock {
 
     fn has_vpad_for(&self, appearance: &AppearanceConfig) -> bool {
         delegate_block!(self, has_vpad_for(appearance))
+    }
+
+    fn has_vpad_for_width(&self, appearance: &AppearanceConfig, content_width: u16) -> bool {
+        delegate_block!(self, has_vpad_for_width(appearance, content_width))
     }
 
     fn has_raw_mode(&self) -> bool {

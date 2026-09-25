@@ -148,7 +148,8 @@ request-size caps are precisely the substrate the depth units build on.
 
 1. If the wire investigation (§7.2 below) concludes the product should move to
    the **Anthropic Messages** transport, that is an identity-relevant change
-   and takes its own major.
+   and takes its own major. It did not. §7.2 re-affirms ADR 0005
+   (2026-09-26).
 2. If `6.x` minor numbers are already spent by base-port follow-up work when
    this train starts, the depth work moves to the next free line.
 
@@ -171,7 +172,7 @@ escalation, dsh's request-series bookkeeping, everything-is-a-plugin, and any
 new TUI surface. Reasons are recorded per item in the research doc and the
 board's §5.
 
-### 7.2 The wire question (evidence, not a decision)
+### 7.2 The wire question — re-affirmed (2026-09-26)
 
 dsh speaks the **Anthropic Messages subset** of the DeepSeek API; this product
 speaks **Chat Completions** per [ADR 0005](../adr/0005-deepseek-provider-contract.md).
@@ -179,10 +180,37 @@ The paths differ in cache accounting fields, effort levels, reasoning replay,
 image handling, and whether a prompt or tool update can be expressed
 mid-history at all.
 
-**Nothing in §7.1 may depend on this outcome, and no spec may specify
-`systemPromptUpdate`/`toolUpdate` until it lands.** The deliverable is
-evidence on this product's own routes, followed by an ADR 0005 amendment or an
-explicit re-affirmation.
+**Closed: re-affirm ADR 0005. The ADR text is not amended.** The decision
+already pins Chat Completions as the primary API and leaves
+`https://api.deepseek.com/anthropic` optional, not the default. Amending the
+ADR would write a non-change into an Accepted contract. The evidence belongs
+in the research note.
+
+On 2026-09-26, twelve `POST https://api.deepseek.com/chat/completions` calls
+(model `deepseek-chat`, `thinking.type = disabled`, all HTTP 200) measured
+the cache questions that could have forced a move. Full table:
+[chat-completions-wire-inventory-2026-09-25.md](../research/chat-completions-wire-inventory-2026-09-25.md)
+§6. The model id is not an ADR 0005 pin.
+
+| Question that could have forced a move | Official host, this sample |
+|---|---|
+| Does the cache work without a transport change? | Yes. A stable prefix's second and third call were 1280 hit / 228 miss on a 1508-token prompt, same bytes, same numbers. |
+| Can an in-history update be expressed? | Yes. A system message appended after the user turn, leading system unchanged, kept 1280/1524 (84%) twice. Two different unseen leading systems were each 0 hit / 1512 miss. Uncached input 1512 versus 244 is 6.2×. |
+| Does this path need a cache key? | No. A call that sent `prompt_cache_key` matched the no-key hit (1280/228, HTTP 200). |
+
+The case for moving the product to Anthropic Messages is weaker than when
+this section was opened. Messages still differs in effort levels, reasoning
+replay, and image handling. This close did not measure those, and it does
+not record them as a reason to switch. The condition in "Why `6.1.0`" that
+would open a `7.0.0` major did not fire.
+
+No product code changed with this close. Path A's `Usage` still has no
+`prompt_cache_miss_tokens` field, so it still drops the miss the official
+server sends (depth board U2.3).
+
+**Nothing in §7.1 depends on a transport change.** Spec 10 §1.10 already
+specifies the appended stable body. This section does not add a
+`systemPromptUpdate` / `toolUpdate` wire form.
 
 ### 7.3 Exit criteria
 
@@ -192,6 +220,7 @@ explicit re-affirmation.
    contract is broken.
 4. Spill is demonstrated on a session that previously blew up the context.
 5. The wire investigation closes with ADR 0005 amended or re-affirmed.
+   **Re-affirmed 2026-09-26 (§7.2). Not amended.**
 6. Rows this line did **not** take are recorded with reasons — the ledger
    discipline [UPSTREAM_SYNC_LEDGER.md](./UPSTREAM_SYNC_LEDGER.md) established
    for vendor syncs, applied to harness ideas.

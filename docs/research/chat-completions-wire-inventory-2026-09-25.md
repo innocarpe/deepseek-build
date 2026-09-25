@@ -14,6 +14,11 @@ U0.2). Not a product commitment and not a transport change.
 gated units: does a cache key reach the wire, which usage fields report cache
 reads, and can a prompt or tool change be appended after cached history?
 
+**Update (2026-09-26).** §6 called `https://api.deepseek.com` directly.
+§1–§4 stay the 2026-09-25 OpenRouter record. Where those sections say the
+official host was not called, §6 closes that limit. The filename keeps the
+original measurement date.
+
 ---
 
 ## 0. What was re-checked because `main` moved
@@ -63,10 +68,10 @@ persisted unit, and the client sends no cache key. `user_id` on that schema
 is documented for isolation, and this product does not send it
 (`ChatCompletionRequest.user` stays `None` in the same `From` impl).
 
-**Live call.** **Limit:** the environment this measurement ran in had no
-credential for `https://api.deepseek.com`. That host was not called, and
-nothing below is a response from it. The route that was available is the
-product's configured Chat Completions host for this session:
+**Live call.** **Limit, closed by §6:** this 2026-09-25 pass had no
+credential for `https://api.deepseek.com`, so nothing in §1–§4 is a response
+from that host. §6 is. The route available on 2026-09-25 was the product's
+configured Chat Completions host for that session:
 `POST https://openrouter.ai/api/v1/chat/completions`,
 model `deepseek/deepseek-v4-flash`, `thinking.type = disabled`,
 `reasoning_effort = none`, `max_tokens = 16`, `stream = false`.
@@ -185,14 +190,14 @@ is not evidence about tool caching. There is still no in-history tool
 event. The expressible tool update on this transport is a new full `tools`
 array.
 
-**What this does not show.** **Limit, repeated:** no credential for
-`https://api.deepseek.com` was present, so that host was not called.
-OpenRouter's `cached_tokens` is the field this host returned; it may be
-OpenRouter's accounting of the upstream prefix cache. The official field
-names in §2 stay the contract for a direct DeepSeek call until someone
-measures that host. Identical replays moved by more than a hundred tokens (641, 712, 768
-on the same 792-token body), so a unit cannot treat a single hit count as a
-precise byte boundary.
+**What this does not show.** The 2026-09-25 calls did not reach
+`https://api.deepseek.com`. §6 does, and it replaces this paragraph for that
+host. OpenRouter's `cached_tokens` is the field this host returned; it may be
+OpenRouter's accounting of the upstream prefix cache. Identical replays on
+OpenRouter moved by more than a hundred tokens (641, 712, 768 on the same
+792-token body), so a unit cannot treat a single OpenRouter hit count as a
+precise byte boundary. That spread is an OpenRouter fact. On the official
+host, the same-byte replays in §6 matched exactly, except one tools pair.
 
 **Implication for U3.1.** The transport can express `systemPromptUpdate:
 'in-history'`: a second system message after history is legal on this route,
@@ -208,7 +213,8 @@ an assembly fact for the unit, not a reason to drop it.
 
 ## 4. Which gated units survive
 
-The cold start's five gated units, from this evidence:
+The cold start's five gated units, from the 2026-09-25 OpenRouter evidence.
+§6 restates the rows the official host changed:
 
 | Unit | Survives on this line? | Because |
 |---|---|---|
@@ -217,6 +223,12 @@ The cold start's five gated units, from this evidence:
 | **U2.3** Cumulative session cache surface | Yes. | Per-turn `cached_tokens` is a real number to sum. Path A does not retain `prompt_cache_miss_tokens`, and OpenRouter did not send it. |
 | **Scored cache regression bench** (board §1, no unit number) | Yes, with a wide threshold. | Head rewrite vs replay separates. A tight token threshold would flap: the same body returned 641, 712, and 768. |
 | **U3.1** Prompt/tool update after cached history | Yes for an appended system message. | §3. A tool change is a full `tools` array, not a history event. |
+
+For `api.deepseek.com`, §6 supersedes this table's wide-threshold reason,
+the U2.2 claim that categories must be coarse because identical bodies
+vary, the U2.3 clause that OpenRouter did not send a miss, and the
+uncertainty about whether an appended system message keeps a hit. The
+OpenRouter numbers above stay the record of that host.
 
 U2.2, U2.3, and the bench still belong on the vendored turn path. They are
 not blocked by the inert `prompt_cache_key`.
@@ -232,16 +244,103 @@ still has to land in the vendored assembly named in the U2.2 row.
 
 ---
 
-## 5. What this session did not do
+## 5. What the 2026-09-25 session did not do
 
 - No change under `crates/` or `third_party/`.
 - No version bump, CHANGELOG edit, tag, or npm publish. The `6.0.0` lane
   was already on `main`; npm still reported `5.7.0` at the start of the
   session, and this note leaves both alone.
 - No second vendored build.
-- No call to `https://api.deepseek.com`. The environment had no credential
-  for that host. Official field names in §2 are the schema pages, not a
-  captured response.
+- The 2026-09-25 session did not call `https://api.deepseek.com`. That
+  limit is closed by §6: twelve `POST /chat/completions` calls on that host,
+  all HTTP 200. The official field names in §2 now have a captured response,
+  not only the schema pages.
 - No Anthropic Messages migration. The Messages mapping keeps system text in
   a top-level `system` field (`conversation/messages.rs:281`), which is a
   different body. That comparison is not a decision to switch.
+
+---
+
+## 6. Official endpoint remeasurement (2026-09-26)
+
+The limit in §1, §3, and §5 — no call to `https://api.deepseek.com` — is
+closed. Twelve calls, all HTTP 200, about six seconds apart:
+
+| Item | Value |
+|---|---|
+| Request | `POST https://api.deepseek.com/chat/completions` |
+| Model | `deepseek-chat` |
+| Body | `thinking.type = disabled`, `max_tokens = 8`, `stream = false` |
+| Prefix | about 1500 tokens (the measured `prompt_tokens` column) |
+
+ADR 0005 pins `deepseek-v4-flash` and `deepseek-v4-pro`. This probe did not
+use those ids. The numbers are official-host cache behavior for
+`deepseek-chat`, not a measurement of the product pins.
+
+`prompt_cache_hit_tokens` + `prompt_cache_miss_tokens` equals
+`prompt_tokens` on every row, and `prompt_tokens_details.cached_tokens`
+equals the hit count on every row.
+
+| Call | Shape | prompt | hit | miss | details.cached |
+|---|---|---:|---:|---:|---:|
+| A1 cold | stable system + user, first sight | 1508 | 0 | 1508 | 0 |
+| A2 same body | same bytes as A1 | 1508 | 1280 | 228 | 1280 |
+| A3 same body | same bytes as A1 | 1508 | 1280 | 228 | 1280 |
+| B append turn | system, user, assistant, user | 1527 | 1280 | 247 | 1280 |
+| B repeat | same bytes as B | 1527 | 1280 | 247 | 1280 |
+| F rewrite head | unseen leading system (`VERSION TWO`) | 1512 | 0 | 1512 | 0 |
+| F rewrite again | a different unseen leading system (`VERSION ONE`) | 1512 | 0 | 1512 | 0 |
+| G append system | stable system, user, then a short system update | 1524 | 1280 | 244 | 1280 |
+| G append repeat | same bytes as G | 1524 | 1280 | 244 | 1280 |
+| D tools | A plus a one-function `tools` array | 1766 | 1408 | 358 | 1408 |
+| D tools repeat | same bytes as D | 1766 | 1536 | 230 | 1536 |
+| E with cache key | A plus a `prompt_cache_key` field | 1508 | 1280 | 228 | 1280 |
+
+### How this host differs from OpenRouter
+
+1. **Same bytes repeated, except one pair.** A2 = A3 (1280/228), B = B
+   (1280/247), G = G (1280/244). OpenRouter moved 641, 712, and 768 on one
+   792-token body (§3). The official host did not move on those shapes.
+2. **Usage names both hit and miss.** `prompt_cache_hit_tokens`,
+   `prompt_cache_miss_tokens`, and `prompt_tokens_details.cached_tokens`
+   agree. OpenRouter omitted the hit and miss names and sent
+   `cached_tokens` only (§2).
+3. **`prompt_cache_key` is unnecessary here too.** E returned the same
+   1280/228 as A2 and A3, HTTP 200. A2 hit 1280 with no key. The official
+   schema still has no such parameter (§1). U2.1 stays closed.
+
+The two F calls are **not** a same-byte pair. The probe wrote one leading
+system, then a different one. Neither string had been sent before. Both
+returned 0 hit / 1512 miss. That is a full miss reproduced on two cold
+heads, not a replay of one body.
+
+D is the only same-byte pair that moved (1408/358, then 1536/230). The hit
+grew while the prompt stayed 1766. A cache that was still warming would look
+like this. That explanation is not proven. The first tools call already hit
+1408, above A's 1280, so the `tools` array did not zero the prefix.
+
+### Shapes that decide U3.1
+
+Rewriting the leading system to a string the host had not seen (F) was a
+full miss both times: 0 / 1512. Appending a system message after the user
+turn and leaving the leading system byte-for-byte (G) kept 1280/1524 (84%)
+both times. Uncached input was 1512 on F and 244 on G, which is 6.2×
+(1512/244). The penalty reproduced. The keep reproduced.
+
+### What §4's rows become on this host
+
+| Unit | On `api.deepseek.com`, this sample |
+|---|---|
+| **U2.1** | Still closed. A hit without a key, and a key that did not change the hit. |
+| **U2.2** | Still survives. A new leading system is a reproducible full miss. The categories still have to be components the assembly can distinguish. |
+| **U2.3** | The server sends `prompt_cache_miss_tokens`. Path A's `Usage` still has no field for it, so serde drops it. The gap is that the server sends the miss and the client discards it. |
+| **Scored bench** | The "wide threshold" in §4 was the OpenRouter live spread (641/712/768). That spread is gone on this host's same-byte replays. A live threshold has to differ by route. Spec 10 §1.9's landed 90% is a different number: Reasonix's threshold on a prefix-accounting mock, not a fit to OpenRouter noise. This note does not retune it. D shows one official same-byte pair can still move while a prefix is warming, so a live official guard cannot assume the second call is the steady value. |
+| **U3.1** | Premise confirmed for this model id. New head: 0% twice. Append after history: 84% twice. 6.2× uncached input. |
+
+### Limits of this section
+
+- Model id is `deepseek-chat`, not the ADR 0005 pins.
+- Twelve calls, one prefix family, one day. D's move is unexplained beyond
+  the warming guess, and the guess is not a finding.
+- No product code changed. Path A still drops `prompt_cache_miss_tokens`.
+- The raw response bodies were not committed. This table is the record.

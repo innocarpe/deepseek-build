@@ -340,7 +340,7 @@ pub(crate) fn render_image_files_block(paths: &[String]) -> Option<String> {
         out.push_str(&format!("{}. {p}\n", i + 1));
     }
     out.push_str(
-        "\nThese images can be copied for use in other locations. If your backend cannot receive image data directly (text-only API), read or OCR these files with your tools to access their contents.\n</image_files>",
+        "\nThese images can be copied for use in other locations. If the image is not visible to you directly (a text-only API model, for example DeepSeek V4 Pro), read or OCR these files with your tools to access their contents.\n</image_files>",
     );
     Some(out)
 }
@@ -544,7 +544,7 @@ mod tests {
         assert!(msg.contains("<image_files>"));
         assert!(msg.contains("/assets/image-"));
         assert!(msg.ends_with("hello") || msg.contains("\n\nhello"));
-        // Text-only backends need to know they can read/OCR the saved files.
+        // Text-only models need to know they can read/OCR the saved files.
         assert!(msg.contains("read or OCR these files with your tools"));
         let assets = std::fs::read_dir(dir.path().join("assets")).unwrap();
         assert_eq!(assets.count(), 1);

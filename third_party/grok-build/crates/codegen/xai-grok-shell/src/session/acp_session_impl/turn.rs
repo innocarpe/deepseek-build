@@ -717,9 +717,12 @@ impl SessionActor {
                     cwd: self.session_info.cwd.clone(),
                 });
             // Persist pasted images AND base64 images extracted from the query
-            // text. Text-only backends (official DeepSeek) cannot receive
+            // text. A text-only backend (DeepSeek V4 Pro) cannot receive
             // `image_url` blocks, so the on-disk paths prepended below are the
             // only way the agent can still read/OCR the images with its tools.
+            // Vision-capable backends (V4.1 Flash on the official API and
+            // OpenRouter) additionally carry the image parts inline below; the
+            // paths remain useful there for `Read` and for resume replay.
             let mut persisted_images = user_images.clone();
             persisted_images.extend(extra_images.iter().cloned());
             crate::session::image_describe::persist_and_prepend_image_files(

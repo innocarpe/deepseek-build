@@ -14,6 +14,7 @@
 | **North star** | [VISION.md](./VISION.md) + [HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.md) |
 | **Evidence** | [research/dsh-deepseek-harness.md](../research/dsh-deepseek-harness.md) · [research/upstream-gap-sweep-2026-09-25.md](../research/upstream-gap-sweep-2026-09-25.md) |
 | **PR planning** | [ULTRAGOAL_PR_PLANNING.md](./ULTRAGOAL_PR_PLANNING.md) |
+| **Cold start** | [ULTRAGOAL_PROMPT_COLD_START_DEEPSEEK_DEPTH_6X.md](./ULTRAGOAL_PROMPT_COLD_START_DEEPSEEK_DEPTH_6X.md) |
 | **Ledger** | [UPSTREAM_SYNC_LEDGER.md](./UPSTREAM_SYNC_LEDGER.md) — this board's *not taken* list is its harness-idea counterpart |
 
 **Do not** plan releases as `5.0.1`–`5.7.0` or `6.0.0` — those targets are used

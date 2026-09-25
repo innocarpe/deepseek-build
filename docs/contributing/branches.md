@@ -65,7 +65,7 @@ final-final-v2
 ## Lifecycle
 
 ```text
-main ──checkout -b──► branch ──push──► PR ──CI──► review ──squash merge──► delete branch
+main ──checkout -b──► branch ──push──► PR ──checks──► review ──merge commit──► delete branch
          ▲                                         │
          └──────── pull --rebase / merge main ─────┘  (keep branch current)
 ```

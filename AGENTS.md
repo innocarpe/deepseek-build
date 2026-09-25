@@ -222,8 +222,15 @@ the PR stays in [`pr-authoring`](skills/pr-authoring/SKILL.md).
 - **Carry the unit through without waiting for another prompt** when the
   opening asked for the work: implement, run the checks that change needs,
   one-concern commits, then the PR. Stop short of push or PR only when the
-  opening said to stop there. Merge only when the opening granted it, using
-  the merge method this file states under **Merge on GitHub**.
+  opening said to stop there.
+- **Merge is part of the unit, not a separate permission.** When the checks are
+  green and the body meets the bar, merge your own PR with the method this file
+  states under **Merge on GitHub**, then clean up the worktree
+  (`skills/worktree-dispatch` §4). Do not stop and ask whether to merge, and do
+  not leave a green PR open for a later prompt — **development speed is the
+  point**. Stop short of merging only when the opening said so (a review-only
+  unit, a stacked child whose parent is unmerged, or a PR the user asked to
+  look at first). Waiting on the user is the exception, not the default.
 - **A defect in a file this unit is already changing**, which no other
   session is editing, is part of finishing — its own commit, same unit.
   Anything the opening did not name (a new behavior, a fresh investigation,
@@ -232,8 +239,8 @@ the PR stays in [`pr-authoring`](skills/pr-authoring/SKILL.md).
   tab for it, with that unit's done-condition as the first line of the
   brief. Report the tab. Do not ask whether to open it.
 - **When the unit is done, say so first.** Name whether the done-condition
-  holds, the evidence, and any unit you handed off. Do not offer another
-  unit in this session.
+  holds, the evidence (including the merge commit), and any unit you handed
+  off. Do not offer another unit in this session.
 
 ## Product CI (future)
 

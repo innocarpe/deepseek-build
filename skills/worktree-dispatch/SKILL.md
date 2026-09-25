@@ -167,12 +167,15 @@ What a brief carries:
 Then mark the card so other sessions can see the state:
 `orca worktree set --worktree "id:$WT_ID" --comment "<one-line state>" --json`
 
-## 4. Clean up after merge
+## 4. Merge and clean up
 
-Only for a worktree whose PR is merged and whose session has finished:
+**This step is part of the unit** (AGENTS.md §One session, one unit). Once the
+checks pass and the body meets the bar, merge and clean up in the same session —
+do not leave a green PR for a later prompt.
 
 ```sh
-GH_TOKEN="$(gh auth token --user <account>)" gh pr view <n> --repo innocarpe/deepseek-build --json state,mergeCommit
+GH_TOKEN="$(gh auth token --user <account>)" gh pr merge <n> --repo innocarpe/deepseek-build --merge --delete-branch
+gh pr view <n> --repo innocarpe/deepseek-build --json state,mergeCommit   # state must read MERGED
 git -C "$WT" status --short                          # must print nothing
 orca terminal close --worktree "id:$WT_ID" --all --json
 orca worktree rm --worktree "id:$WT_ID" --json

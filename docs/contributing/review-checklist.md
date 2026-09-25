@@ -82,8 +82,12 @@ Reference: [pr-body-standard.md](./pr-body-standard.md), Orca template at `OpenS
 
 ## H. Final merge call
 
+**Merging is part of the unit, not a separate permission** (AGENTS.md
+§One session, one unit). When these are yes, merge and clean up the worktree —
+do not park a green PR waiting for a later prompt.
+
 Only merge if you can answer **yes**:
 
 1. Would I accept this from an external contributor as-is?  
-2. Can a future reader of `git log` understand the intent from the squash title alone?  
+2. Can a future reader of `git log` understand the intent from the commit subjects and the merge commit alone?  
 3. If this is wrong, can we revert or follow up without a archaeology dig?

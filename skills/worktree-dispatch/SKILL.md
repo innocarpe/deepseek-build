@@ -153,7 +153,15 @@ What a brief carries:
 - **Harness** — follow `AGENTS.md`, `skills/session-unit`, and
   `skills/pr-authoring`; `gh` with `--repo` and a per-command token; push
   to `origin`
-- **Authority** — whether merging was granted, stated either way
+- **Language** — a delegated run answers in the language its brief *asks for*,
+  and `AGENTS.md` alone is not reliable there: subagent runs from the same batch
+  on 2026-09-25, with near-identical English briefs, came back 0%, 0%, 1%, 98%.
+  Put the language instruction where that run cannot miss it — the brief itself.
+  Write the brief in Korean with the technical detail inline, or open it with
+  `보고·진행 메모는 한국어로` before switching to English. A delegated run's
+  report is human-facing session text too.
+- **Authority** — merging is part of the unit when the opening asked for the work
+  to be carried through; say so in the brief, and say when it is withheld.
 - **Report** — PR URL, test evidence, what was left out
 
 Then mark the card so other sessions can see the state:

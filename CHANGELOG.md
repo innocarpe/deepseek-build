@@ -58,6 +58,10 @@
   families keep the text-only wire with its on-disk `<image_files>` fallback,
   while vision-capable models send the image inline.
 
+## 5.7.0 — 2026-09-25
+
+- phone-width layout and Orca pane status
+
 ## 5.6.0 — 2026-09-25
 
 - First-run setup now asks for the API provider first — DeepSeek API or

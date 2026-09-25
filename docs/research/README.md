@@ -12,5 +12,6 @@ Non-binding notes on other tools. **Do not treat as product commitment.**
 | [adversarial-review-2026-08-06-claude-opus.md](adversarial-review-2026-08-06-claude-opus.md) | Claude Opus FAIL review post-#4; doc escape hatches + missing artifacts |
 | [upstream-gap-sweep-2026-09-25.md](upstream-gap-sweep-2026-09-25.md) | Deep Code + Reasonix vs dsb: what is missing, with the take / hold / reject call on each |
 | [dsh-deepseek-harness.md](dsh-deepseek-harness.md) | DeepSeek's official `dsh` harness: the cache-preserving context lifecycle, executable invariants, and tool-result contracts worth porting — with the wire question left open |
+| [chat-completions-wire-inventory-2026-09-25.md](chat-completions-wire-inventory-2026-09-25.md) | U0.2 measurement: Chat Completions cache key, usage fields, and in-history system/tool updates |
 
 When a research insight becomes a product rule, promote it into `docs/product/`, `docs/specs/`, or an ADR — do not leave it only here.

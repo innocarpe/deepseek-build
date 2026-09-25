@@ -107,6 +107,26 @@ backend, the cache units are redefined as "make the key reach the wire first";
 if an in-history update cannot be expressed, the prompt/tool unit is dropped
 from this line and becomes `7.0.0` material.
 
+**U0.2 result (2026-09-25), measured at `687582c`.** Full table:
+[chat-completions-wire-inventory-2026-09-25.md](../research/chat-completions-wire-inventory-2026-09-25.md).
+`prompt_cache_key` does not reach Chat Completions, and a prefix hit was
+observed without one, so U2.1 does not survive as a wire change. Cache reads
+are still reported (`prompt_cache_hit_tokens` /
+`prompt_cache_miss_tokens` on the official schema;
+`prompt_tokens_details.cached_tokens` on the OpenRouter route that was
+actually called). Path A keeps the hit and drops the miss. An appended
+system message is expressible; rewriting the leading system measured
+`cached_tokens = 0`. A tool update has no history-event form; it is a full
+`tools` array.
+
+| Gated unit | After U0.2 |
+|---|---|
+| U2.1 cache-key reachability | Closed by the note. No further wire change. |
+| U2.2 cache-miss attribution | Survives, against usage fields, in `spec10_path_a_assembly.rs` / `turn.rs`. |
+| U2.3 cumulative cache surface | Survives. No miss count is retained on Path A. |
+| Scored cache bench (board §1) | Survives, with a wide threshold. Identical bodies were not token-stable. |
+| U3.1 in-history prompt/tool update | Survives for an appended system message. Tool updates are a `tools` array. |
+
 ### Wave 1 — wire-independent, absent-by-measurement
 
 | Unit | Deliverable | Dep | Size |

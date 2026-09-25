@@ -22,6 +22,9 @@
 //! See: `docs/specs/10-cache-contract.md`, VC007 evidence under
 //! `docs/product/evidence/VC007_*`.
 
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{LazyLock, Mutex};
+
 use sha2::{Digest, Sha256};
 use xai_chat_state::conversation_util::canonical_system_prompt_eq;
 use xai_grok_sampling_types::ToolSpec;
@@ -81,6 +84,9 @@ pub struct Spec10PathAAssembled {
     pub epoch_sha256_hex: String,
     /// Number of volatile tail items (does not affect epoch).
     pub volatile_count: usize,
+    /// Component hashes over the documents concatenated into `stable_body`.
+    /// Observational: it is not an input to the epoch (Spec 10 Path A attribution).
+    pub shape: PathAPrefixShape,
 }
 
 impl Spec10PathAAssembled {
@@ -100,33 +106,61 @@ impl Spec10PathAAssembled {
 /// Stable sections are byte-stable for identical inputs; volatile tail does not
 /// affect the epoch.
 pub fn assemble_spec10_path_a_turn(inputs: &Spec10PathAInputs) -> Spec10PathAAssembled {
+    let system_bytes = inputs.system_prompt.trim_end().to_string();
     let tools_doc = tools_document(&inputs.tools);
     let skills_doc = skills_document(&inputs.skills_index);
     let env_doc = env_document(&inputs.environment);
+    let project_included = included_project_instructions(&inputs.project_instructions);
 
-    let mut stable_body = inputs.system_prompt.trim_end().to_string();
+    let mut stable_body = system_bytes.clone();
     stable_body.push_str("\n\n## Tools\n");
     stable_body.push_str(&tools_doc);
     stable_body.push_str("\n\n## Skills index\n");
     stable_body.push_str(&skills_doc);
     stable_body.push_str("\n\n## Environment\n");
     stable_body.push_str(&env_doc);
-    if !inputs.project_instructions.trim().is_empty() {
+    if !project_included.is_empty() {
         stable_body.push_str("\n\n## Project instructions\n");
-        stable_body.push_str(inputs.project_instructions.trim_end());
-        stable_body.push('\n');
+        stable_body.push_str(&project_included);
     }
 
     // Epoch is over the stable body alone (Spec 10 §1.3 / §1.5). Volatile
-    // strings are tracked for call-site honesty but never hashed.
+    // strings are tracked for call-site honesty but never hashed. The shape
+    // hashes the same documents that were just concatenated, so naming a
+    // component cannot drift from the bytes in the body.
     let stable_prefix_bytes = stable_body.as_bytes().to_vec();
     let epoch_sha256_hex = sha256_hex(&stable_prefix_bytes);
+    let shape = PathAPrefixShape {
+        epoch_sha256_hex: epoch_sha256_hex.clone(),
+        system: sha256_hex(system_bytes.as_bytes()),
+        tools: sha256_hex(tools_doc.as_bytes()),
+        skills: sha256_hex(skills_doc.as_bytes()),
+        environment: sha256_hex(env_doc.as_bytes()),
+        project_instructions: sha256_hex(project_included.as_bytes()),
+        tool_names: tool_name_hashes(&inputs.tools),
+        skill_names: skill_name_hashes(&inputs.skills_index),
+        environment_os_family: sha256_hex(inputs.environment.os_family.as_bytes()),
+        environment_cwd: sha256_hex(inputs.environment.cwd.as_bytes()),
+    };
 
     Spec10PathAAssembled {
         stable_body,
         stable_prefix_bytes,
         epoch_sha256_hex,
         volatile_count: inputs.volatile_tail_text.len(),
+        shape,
+    }
+}
+
+/// Bytes of the project-instructions section that `assemble_spec10_path_a_turn`
+/// actually appends. Empty when the section is omitted.
+fn included_project_instructions(raw: &str) -> String {
+    if raw.trim().is_empty() {
+        String::new()
+    } else {
+        let mut included = raw.trim_end().to_string();
+        included.push('\n');
+        included
     }
 }
 
@@ -141,18 +175,15 @@ pub fn tools_document(tools: &[ToolSpec]) -> String {
 pub fn skills_document(skills: &[Spec10SkillIndexEntry]) -> String {
     let mut sorted = skills.to_vec();
     sorted.sort_by(|a, b| a.name.cmp(&b.name));
-    let value = serde_json::Value::Array(
-        sorted
-            .into_iter()
-            .map(|s| {
-                serde_json::json!({
-                    "name": s.name,
-                    "description": s.description,
-                })
-            })
-            .collect(),
-    );
+    let value = serde_json::Value::Array(sorted.iter().map(skill_object).collect());
     canonicalize_json_string(&value)
+}
+
+fn skill_object(skill: &Spec10SkillIndexEntry) -> serde_json::Value {
+    serde_json::json!({
+        "name": skill.name,
+        "description": skill.description,
+    })
 }
 
 /// Environment document (no wall-clock fields).
@@ -191,24 +222,43 @@ pub fn sort_keys(value: serde_json::Value) -> serde_json::Value {
     }
 }
 
+fn tool_object(tool: &ToolSpec) -> serde_json::Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("name".into(), serde_json::Value::String(tool.name.clone()));
+    if let Some(desc) = &tool.description {
+        obj.insert(
+            "description".into(),
+            serde_json::Value::String(desc.clone()),
+        );
+    }
+    obj.insert("parameters".into(), tool.parameters.clone());
+    serde_json::Value::Object(obj)
+}
+
 fn tools_to_value(tools: &[ToolSpec]) -> serde_json::Value {
-    serde_json::Value::Array(
-        tools
-            .iter()
-            .map(|t| {
-                let mut obj = serde_json::Map::new();
-                obj.insert("name".into(), serde_json::Value::String(t.name.clone()));
-                if let Some(desc) = &t.description {
-                    obj.insert(
-                        "description".into(),
-                        serde_json::Value::String(desc.clone()),
-                    );
-                }
-                obj.insert("parameters".into(), t.parameters.clone());
-                serde_json::Value::Object(obj)
-            })
-            .collect(),
-    )
+    serde_json::Value::Array(tools.iter().map(tool_object).collect())
+}
+
+fn tool_name_hashes(tools: &[ToolSpec]) -> BTreeMap<String, String> {
+    let mut names = BTreeMap::new();
+    for tool in tools {
+        names.insert(
+            tool.name.clone(),
+            sha256_hex(canonicalize_json_string(&tool_object(tool)).as_bytes()),
+        );
+    }
+    names
+}
+
+fn skill_name_hashes(skills: &[Spec10SkillIndexEntry]) -> BTreeMap<String, String> {
+    let mut names = BTreeMap::new();
+    for skill in skills {
+        names.insert(
+            skill.name.clone(),
+            sha256_hex(canonicalize_json_string(&skill_object(skill)).as_bytes()),
+        );
+    }
+    names
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -218,6 +268,173 @@ fn sha256_hex(bytes: &[u8]) -> String {
         out.push_str(&format!("{b:02x}"));
     }
     out
+}
+
+fn epoch_short(hex: &str) -> &str {
+    hex.get(..16).unwrap_or(hex)
+}
+
+/// Per-component hashes of one Path A assembly (Spec 10 Path A attribution).
+///
+/// Every field is a hash. The log names an axis; it never stores the prompt,
+/// a skill description, or a cwd value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathAPrefixShape {
+    pub epoch_sha256_hex: String,
+    pub system: String,
+    pub tools: String,
+    pub skills: String,
+    pub environment: String,
+    pub project_instructions: String,
+    pub tool_names: BTreeMap<String, String>,
+    pub skill_names: BTreeMap<String, String>,
+    pub environment_os_family: String,
+    pub environment_cwd: String,
+}
+
+/// What moved between two Path A shapes. Emitted only when the epoch differs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathAPrefixChange {
+    axes: Vec<&'static str>,
+    detail: Vec<String>,
+    unattributed: bool,
+    pub prev_epoch_short: String,
+    pub cur_epoch_short: String,
+}
+
+impl PathAPrefixChange {
+    pub fn between(prev: &PathAPrefixShape, cur: &PathAPrefixShape) -> Self {
+        let mut axes = Vec::new();
+        if prev.system != cur.system {
+            axes.push("system");
+        }
+        if prev.tools != cur.tools {
+            axes.push("tools");
+        }
+        if prev.skills != cur.skills {
+            axes.push("skills");
+        }
+        if prev.environment != cur.environment {
+            axes.push("environment");
+        }
+        if prev.project_instructions != cur.project_instructions {
+            axes.push("project_instructions");
+        }
+
+        let mut detail = Vec::new();
+        if axes.contains(&"tools") {
+            let before = detail.len();
+            collect_named_detail("tools", &prev.tool_names, &cur.tool_names, &mut detail);
+            if detail.len() == before {
+                detail.push("tools.reordered".to_string());
+            }
+        }
+        if axes.contains(&"skills") {
+            collect_named_detail("skills", &prev.skill_names, &cur.skill_names, &mut detail);
+        }
+        if axes.contains(&"environment") {
+            if prev.environment_os_family != cur.environment_os_family {
+                detail.push("environment.os_family".to_string());
+            }
+            if prev.environment_cwd != cur.environment_cwd {
+                detail.push("environment.cwd".to_string());
+            }
+        }
+
+        let unattributed = prev.epoch_sha256_hex != cur.epoch_sha256_hex && axes.is_empty();
+        if unattributed {
+            axes.clear();
+        }
+        Self {
+            axes,
+            detail,
+            unattributed,
+            prev_epoch_short: epoch_short(&prev.epoch_sha256_hex).to_string(),
+            cur_epoch_short: epoch_short(&cur.epoch_sha256_hex).to_string(),
+        }
+    }
+
+    /// `prefix_change=` value: axis names in §1.1 order, or `unattributed`.
+    pub fn label(&self) -> String {
+        if self.unattributed {
+            return "unattributed".to_string();
+        }
+        if self.axes.is_empty() {
+            return "none".to_string();
+        }
+        self.axes.join(",")
+    }
+
+    pub fn detail_label(&self) -> Option<String> {
+        if self.detail.is_empty() {
+            None
+        } else {
+            Some(self.detail.join(","))
+        }
+    }
+
+    /// Grep-able block. Detail is a second line only when a finer axis exists.
+    pub fn log_block(&self) -> String {
+        let mut out = format!(
+            "prefix_change={} prev={} cur={}",
+            self.label(),
+            self.prev_epoch_short,
+            self.cur_epoch_short
+        );
+        if let Some(detail) = self.detail_label() {
+            out.push('\n');
+            out.push_str("prefix_change_detail=");
+            out.push_str(&detail);
+        }
+        out
+    }
+}
+
+fn collect_named_detail(
+    prefix: &str,
+    prev: &BTreeMap<String, String>,
+    cur: &BTreeMap<String, String>,
+    out: &mut Vec<String>,
+) {
+    for (name, hash) in cur {
+        match prev.get(name) {
+            None => out.push(format!("{prefix}.added={name}")),
+            Some(before) if before != hash => out.push(format!("{prefix}.changed={name}")),
+            Some(_) => {}
+        }
+    }
+    for name in prev.keys() {
+        if !cur.contains_key(name) {
+            out.push(format!("{prefix}.removed={name}"));
+        }
+    }
+}
+
+static PATH_A_BASELINES: LazyLock<Mutex<HashMap<String, PathAPrefixShape>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Remember `shape` as this session's Path A baseline and, when the epoch
+/// moved, say which component documents moved.
+///
+/// The first assembly in this process has no baseline and returns `None`
+/// (no `prefix_change=` line). An unchanged epoch also returns `None`: the
+/// turn already logs `prefix_epoch=`. The baseline is process-local. A new
+/// process does not invent a reason from a missing baseline.
+pub fn observe_path_a_prefix_change(
+    session_id: &str,
+    shape: &PathAPrefixShape,
+) -> Option<PathAPrefixChange> {
+    let mut baselines = PATH_A_BASELINES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let prev = baselines.get(session_id).cloned();
+    baselines.insert(session_id.to_string(), shape.clone());
+    drop(baselines);
+    let prev = prev?;
+    if prev.epoch_sha256_hex == shape.epoch_sha256_hex {
+        return None;
+    }
+    Some(PathAPrefixChange::between(&prev, shape))
 }
 
 /// Best-effort stamp of Spec 10 turn epoch under product home or a provided dir.
@@ -935,5 +1152,156 @@ mod tests {
         assert_eq!(idx.len(), 1);
         assert_eq!(idx[0].name, "demo");
         assert_eq!(idx[0].description, "Demo skill");
+    }
+
+    #[test]
+    fn path_a_shape_is_the_concatenated_documents() {
+        let inputs = base_inputs();
+        let assembled = assemble_spec10_path_a_turn(&inputs);
+        let tools = tools_document(&inputs.tools);
+        let skills = skills_document(&inputs.skills_index);
+        let env = env_document(&inputs.environment);
+        let mut project = inputs.project_instructions.trim_end().to_string();
+        project.push('\n');
+        let mut expected = inputs.system_prompt.trim_end().to_string();
+        expected.push_str("\n\n## Tools\n");
+        expected.push_str(&tools);
+        expected.push_str("\n\n## Skills index\n");
+        expected.push_str(&skills);
+        expected.push_str("\n\n## Environment\n");
+        expected.push_str(&env);
+        expected.push_str("\n\n## Project instructions\n");
+        expected.push_str(&project);
+        assert_eq!(assembled.stable_body, expected);
+        assert_eq!(assembled.shape.tools, sha256_hex(tools.as_bytes()));
+        assert_eq!(
+            assembled.shape.system,
+            sha256_hex(inputs.system_prompt.trim_end().as_bytes())
+        );
+        assert_eq!(
+            sha256_hex(&assembled.stable_prefix_bytes),
+            assembled.epoch_sha256_hex
+        );
+    }
+
+    #[test]
+    fn path_a_first_sight_and_unchanged_epoch_have_no_change_line() {
+        let assembled = assemble_spec10_path_a_turn(&base_inputs());
+        let id = "path_a_first_sight_and_unchanged_epoch_have_no_change_line";
+        assert!(observe_path_a_prefix_change(id, &assembled.shape).is_none());
+        assert!(observe_path_a_prefix_change(id, &assembled.shape).is_none());
+    }
+
+    #[test]
+    fn path_a_tool_add_names_tools_added() {
+        let prev = assemble_spec10_path_a_turn(&base_inputs());
+        let mut next = base_inputs();
+        next.tools.push(tool("write", json!({"type":"object"})));
+        let cur = assemble_spec10_path_a_turn(&next);
+        let change = PathAPrefixChange::between(&prev.shape, &cur.shape);
+        assert_eq!(change.label(), "tools");
+        assert_eq!(change.detail_label().as_deref(), Some("tools.added=write"));
+        assert!(!change.log_block().contains("SYSTEM_FIXED"));
+        let id = "path_a_tool_add_names_tools_added";
+        assert!(observe_path_a_prefix_change(id, &prev.shape).is_none());
+        let observed = observe_path_a_prefix_change(id, &cur.shape).expect("epoch moved");
+        assert_eq!(observed.label(), "tools");
+        assert_eq!(observed.log_block(), change.log_block());
+    }
+
+    #[test]
+    fn path_a_system_change_names_system_only() {
+        let prev = assemble_spec10_path_a_turn(&base_inputs());
+        let mut next = base_inputs();
+        next.system_prompt = "SYSTEM_OTHER".into();
+        let cur = assemble_spec10_path_a_turn(&next);
+        let change = PathAPrefixChange::between(&prev.shape, &cur.shape);
+        assert_eq!(change.label(), "system");
+        assert!(change.detail_label().is_none());
+        assert!(!change.log_block().contains("SYSTEM_OTHER"));
+    }
+
+    #[test]
+    fn path_a_tool_reorder_names_reordered() {
+        let mut first = base_inputs();
+        first.tools.push(tool(
+            "write",
+            json!({"type":"object","properties":{"path":{"type":"string"}}}),
+        ));
+        let mut second = first.clone();
+        second.tools.reverse();
+        let prev = assemble_spec10_path_a_turn(&first);
+        let cur = assemble_spec10_path_a_turn(&second);
+        assert_ne!(prev.epoch_sha256_hex, cur.epoch_sha256_hex);
+        let change = PathAPrefixChange::between(&prev.shape, &cur.shape);
+        assert_eq!(change.label(), "tools");
+        assert_eq!(change.detail_label().as_deref(), Some("tools.reordered"));
+    }
+
+    #[test]
+    fn path_a_skill_description_names_the_skill_not_the_text() {
+        let prev = assemble_spec10_path_a_turn(&base_inputs());
+        let mut next = base_inputs();
+        next.skills_index[0].description = "Different".into();
+        let cur = assemble_spec10_path_a_turn(&next);
+        let change = PathAPrefixChange::between(&prev.shape, &cur.shape);
+        assert_eq!(change.label(), "skills");
+        assert_eq!(
+            change.detail_label().as_deref(),
+            Some("skills.changed=pr-authoring")
+        );
+        let line = change.log_block();
+        assert!(!line.contains("Different"));
+        assert!(!line.contains("Write PRs"));
+    }
+
+    #[test]
+    fn path_a_environment_detail_names_the_axis_not_the_cwd() {
+        let prev = assemble_spec10_path_a_turn(&base_inputs());
+        let mut next = base_inputs();
+        let cwd = "/secret-cwd-do-not-log";
+        next.environment.cwd = cwd.into();
+        let cur = assemble_spec10_path_a_turn(&next);
+        let change = PathAPrefixChange::between(&prev.shape, &cur.shape);
+        assert_eq!(change.label(), "environment");
+        assert_eq!(change.detail_label().as_deref(), Some("environment.cwd"));
+        let line = change.log_block();
+        assert!(!line.contains(cwd));
+        assert!(!line.contains("macos"));
+    }
+
+    #[test]
+    fn path_a_project_instructions_have_no_finer_axis() {
+        let prev = assemble_spec10_path_a_turn(&base_inputs());
+        let mut next = base_inputs();
+        next.project_instructions = "other instructions".into();
+        let cur = assemble_spec10_path_a_turn(&next);
+        let change = PathAPrefixChange::between(&prev.shape, &cur.shape);
+        assert_eq!(change.label(), "project_instructions");
+        assert!(change.detail_label().is_none());
+        assert!(!change.log_block().contains("other instructions"));
+    }
+
+    #[test]
+    fn path_a_axes_stay_in_section_order() {
+        let prev = assemble_spec10_path_a_turn(&base_inputs());
+        let mut next = base_inputs();
+        next.system_prompt = "OTHER".into();
+        next.environment.os_family = "linux".into();
+        next.project_instructions = "other".into();
+        let cur = assemble_spec10_path_a_turn(&next);
+        let change = PathAPrefixChange::between(&prev.shape, &cur.shape);
+        assert_eq!(change.label(), "system,environment,project_instructions");
+    }
+
+    #[test]
+    fn path_a_epoch_moved_without_component_change_is_unattributed() {
+        let prev = assemble_spec10_path_a_turn(&base_inputs());
+        let mut cur = prev.shape.clone();
+        cur.epoch_sha256_hex = "ff".repeat(32);
+        let change = PathAPrefixChange::between(&prev.shape, &cur);
+        assert_eq!(change.label(), "unattributed");
+        assert!(change.detail_label().is_none());
+        assert!(!change.log_block().contains("system"));
     }
 }

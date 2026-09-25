@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|--------|
-| Status | **ready-for-impl** — §1.5.1, §1.5.2, §1.9, and §1.10 enforced with tests |
+| Status | **ready-for-impl** — §1.5.1 (overlay and Path A), §1.5.2, §1.9, and §1.10 enforced with tests |
 | Philosophy | HARNESS §4.2, §5; Deep Code pillar B; Reasonix cache-first |
 | Gate | Part of **G2** |
 | Tests | **Automated golden + negative required** |
@@ -124,8 +124,67 @@ Rules:
    stored shape. Within a process the prefix is built once and reused, so a
    per-turn comparison would report `none` forever and name nothing.
 
-**Landed:** shape, comparison, and resume-time logging (`dsb-context`,
-`dsb-agent`, `dsb-cli`); §4 names the tests.
+**Landed (overlay):** shape, comparison, and resume-time logging (`dsb-context`,
+`dsb-agent`, `dsb-cli`); §4.2 and §4.3 name the tests. That path is not Path A.
+`xai-grok-shell` does not depend on `dsb-context`.
+
+##### Path A (vendored turn)
+
+Path A builds the prefix in `assemble_spec10_path_a_turn` and applies it from
+`apply_spec10_to_conversation_request`, called from
+`acp_session_impl/turn.rs` on every main turn. Attribution uses only the
+documents that function already concatenates, hashed **before** concatenation:
+
+| Axis | Bytes hashed |
+|---|---|
+| `system` | System prompt after `trim_end`, the bytes before `## Tools` |
+| `tools` | `tools_document` |
+| `skills` | `skills_document` |
+| `environment` | `env_document` |
+| `project_instructions` | The project-instructions bytes actually appended, or empty when that section is omitted |
+
+No other axis. The volatile tail, the §1.10 placement
+(`unchanged` / `first_write` / `appended`), and the wire `tools[]` array are
+not attribution categories. The tools axis is the tools document inside the
+stable body. A category this assembly cannot see is not added.
+
+Rules for this path, against §1.5.1:
+
+1. The baseline is the previous assembly of **this session in this process**.
+   The first assembly has no baseline and logs no `prefix_change=` line
+   (rule 4). A missing baseline is not a guess.
+2. Assembly runs on every turn, so an unchanged epoch logs `prefix_epoch=`
+   only and does **not** log `prefix_change=none` (rule 1). Rule 4's "a
+   baseline always produces a line, `none` included" is the overlay resume
+   comparison, which happens once. Repeating `none` on every Path A turn
+   would name nothing.
+3. When the epoch differs, log one block:
+
+   ```text
+   prefix_change=system,tools prev=<epoch_short> cur=<epoch_short>
+   prefix_change_detail=tools.added=write
+   ```
+
+   Axes are in the §1.1 order above. The detail line is omitted when the
+   moved component has no finer axis (`system`, `project_instructions`).
+4. Finer axes, and only these: `tools.added=<name>`, `tools.removed=<name>`,
+   `tools.changed=<name>`, `tools.reordered` (the tools document moved and
+   every named tool hash matches), `skills.added=<name>`,
+   `skills.removed=<name>`, `skills.changed=<name>`, `environment.os_family`,
+   `environment.cwd`. Detail names the axis. It does not include prompt text,
+   a skill description, or a cwd value (rule 3).
+5. If the epoch differs and every component hash matches, log
+   `prefix_change=unattributed`. That is a coverage bug in this section, not
+   a sixth component and not a provider event (§3).
+6. Computing the shape must not change `stable_prefix_bytes` or the epoch.
+   The hashes are of the strings just concatenated.
+
+The baseline is not written to the session file. Cross-process resume
+attribution stays the overlay record (`report_prefix_change` on Path B). A
+new Path A process has no baseline until its first assembly.
+
+**Landed (Path A):** `observe_path_a_prefix_change` in
+`spec10_path_a_assembly.rs`, called from `turn.rs`. §4.7 names the tests.
 
 #### 1.5.2 Session-cumulative hit/miss (landed)
 
@@ -408,6 +467,21 @@ Runner: `crates/dsb-agent/tests/cache_guard.rs`; wrapper
 Runner: `crates/dsb-agent/src/cache_totals.rs`, with the turn-loop and
 persist→resume cases in `crates/dsb-agent/src/loop_.rs`.
 
+### 4.7 Path A attribution (landed)
+
+| Test | Expect |
+|------|--------|
+| `path_a_shape_is_the_concatenated_documents` | The stable body is the five documents concatenated, and the tools/system hashes are those documents |
+| `path_a_first_sight_and_unchanged_epoch_have_no_change_line` | No baseline, and a repeated epoch, both return no `prefix_change=` line |
+| `path_a_tool_add_names_tools_added` | A new tool is `tools` / `tools.added=<name>`, and the session observer agrees |
+| `path_a_system_change_names_system_only` | A system-template change names `system` and has no detail line |
+| `path_a_tool_reorder_names_reordered` | Reordering tools moves the epoch and the detail is `tools.reordered` |
+| `path_a_skill_description_names_the_skill_not_the_text` | `skills.changed=<name>`; the description text is not in the line |
+| `path_a_environment_detail_names_the_axis_not_the_cwd` | `environment.cwd`; the cwd value is not in the line |
+| `path_a_project_instructions_have_no_finer_axis` | `project_instructions` with no detail line and no instruction text |
+| `path_a_axes_stay_in_section_order` | Moved axes join in §1.1 order |
+| `path_a_epoch_moved_without_component_change_is_unattributed` | Epoch differs, component hashes do not: `unattributed`, not a new axis |
+
 ## 5. Implementation notes
 
 - Crate: `dsb-context` (ADR 0004) — builder, shape, classifier.  
@@ -416,7 +490,11 @@ persist→resume cases in `crates/dsb-agent/src/loop_.rs`.
   disagree. Detail sub-axis hashes are truncated to 16 hex chars; they name a
   change, they do not authenticate it.  
 - `dsb-agent` carries the shape on the built prefix and persists it with the
-  session; `dsb-cli` prints the lines.  
+  session; `dsb-cli` prints the lines. That is the overlay resume path.
+- Path A carries its own shape inside `assemble_spec10_path_a_turn`, over the
+  five documents that function concatenates. `turn.rs` logs
+  `prefix_change=` only when that epoch differs from the previous assembly
+  of the same session in this process. The Path A baseline is not persisted.  
 - The §1.5.2 counter is `crates/dsb-agent/src/cache_totals.rs`, carried on
   `Agent` and stored in the session's `meta` line (spec 100 §1 item 7) beside
   the prefix shape. It is folded in at the model response and printed once per

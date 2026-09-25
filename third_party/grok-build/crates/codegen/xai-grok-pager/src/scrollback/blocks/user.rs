@@ -1352,6 +1352,99 @@ mod tests {
         );
     }
 
+    // ── Width-derived fold decision ─────────────────────────────────
+
+    /// The measured iPhone pane is 53 columns wide. With the default chrome
+    /// (accent + 2+2 pads) and the 10-column timestamp gutter, the prompt's
+    /// text wraps at 53 - 5 - 10 = 38 columns; 34 stands for that narrow band
+    /// with a little margin, so these tests stay valid if the pad widths move
+    /// by a column. This is the user's reported case: a ~100-column one-liner
+    /// that the width-blind `is_foldable()` scores as two visual rows (under
+    /// the three-row roomy budget), so the block called itself unfolded and the
+    /// narrow one-row budget never applied.
+    const PHONE_CONTENT_WIDTH: u16 = 34;
+
+    /// One logical line of about 100 columns, the shape the user submitted.
+    fn hundred_column_prompt() -> UserPromptBlock {
+        UserPromptBlock::new("x".repeat(100))
+    }
+
+    #[test]
+    fn narrow_single_line_prompt_is_foldable_at_phone_width() {
+        let block = hundred_column_prompt();
+        assert!(
+            block.is_foldable_at(PHONE_CONTENT_WIDTH),
+            "a ~100-column prompt needs 100/(34-2) = 4 rows at phone width, over the 1-row budget"
+        );
+        assert!(
+            !block.is_foldable(),
+            "the width-blind estimate divides by 60 and must still read this as two rows"
+        );
+    }
+
+    #[test]
+    fn prompt_vpad_drops_at_phone_width() {
+        let block = UserPromptBlock::new("hello");
+        let appearance = AppearanceConfig::default();
+        assert!(
+            appearance.scrollback.blocks.prompt.vpad,
+            "the default config must ask for vpad, or this test proves nothing"
+        );
+        assert!(
+            !block.has_vpad_for_width(&appearance, PHONE_CONTENT_WIDTH),
+            "a phone-width pane drops the prompt's blank pad rows at 34 columns"
+        );
+    }
+
+    #[test]
+    fn prompt_vpad_keeps_at_desktop_width() {
+        let block = UserPromptBlock::new("hello");
+        let appearance = AppearanceConfig::default();
+        assert!(
+            block.has_vpad_for_width(&appearance, 80),
+            "desktop width keeps the configured prompt pad"
+        );
+    }
+
+    /// Boundary behaviour: the same prompt folds at the narrow width and not at
+    /// the desktop one, which is what lets the resize re-derivation flip it.
+    #[test]
+    fn wide_prompt_folds_at_phone_width_but_not_at_desktop_width() {
+        let block = UserPromptBlock::new("x".repeat(200));
+        assert!(
+            !block.is_foldable_at(80),
+            "200 columns fit 200/78 = 3 rows at desktop width, inside the roomy budget"
+        );
+        assert!(
+            block.is_foldable_at(PHONE_CONTENT_WIDTH),
+            "the same 200 columns need 200/32 = 7 rows at phone width"
+        );
+    }
+
+    /// A prompt that fits either budget stays unfolded everywhere, so the
+    /// width-aware rule does not start folding short prompts.
+    #[test]
+    fn short_prompt_is_unfoldable_at_both_widths() {
+        let block = UserPromptBlock::new("hello");
+        assert!(!block.is_foldable_at(PHONE_CONTENT_WIDTH));
+        assert!(!block.is_foldable_at(80));
+    }
+
+    /// A wrapped prompt is measured against the *narrow* budget at phone width:
+    /// two visual rows (two logical lines of 40) are already one row over.
+    #[test]
+    fn two_wrapped_rows_fold_at_phone_width() {
+        let block = UserPromptBlock::new(format!("{}\n{}", "y".repeat(40), "z".repeat(40)));
+        assert!(
+            block.is_foldable_at(PHONE_CONTENT_WIDTH),
+            "two wrapped rows exceed the one-row narrow budget"
+        );
+        assert!(
+            !block.is_foldable_at(80),
+            "the same two rows fit the three-row desktop budget"
+        );
+    }
+
     /// The measured width is inside the threshold with margin, and the widest
     /// desktop pane observed on the same machine (80) is outside it. Pins the
     /// relationship the two constants were chosen for.

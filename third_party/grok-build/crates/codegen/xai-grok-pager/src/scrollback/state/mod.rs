@@ -3610,6 +3610,133 @@ mod tests {
         );
     }
 
+    // ── Width-derived prompt fold at push and on resize ────────────
+
+    /// The measured iPhone Orca pane is 53 columns. At that pane width the
+    /// prompt's content column (entry area minus chrome minus the timestamp
+    /// gutter) is narrow enough that a ~100-column one-liner needs four rows.
+    const PHONE_PANE: u16 = 53;
+    /// The narrowest desktop pane observed on the same machine.
+    const DESKTOP_PANE: u16 = 80;
+
+    /// A one-line prompt of about 100 columns — the shape the user reported.
+    fn hundred_column_prompt() -> String {
+        "x".repeat(100)
+    }
+
+    #[test]
+    fn prompt_at_phone_width_defaults_to_collapsed() {
+        let mut state = ScrollbackState::new();
+        state.prepare_layout(PHONE_PANE, 20);
+        let id = state.push_block(user_block(&hundred_column_prompt()));
+        assert_eq!(
+            state.get_by_id(id).unwrap().display_mode,
+            DisplayMode::Collapsed,
+            "a ~100-column prompt pushed into a {PHONE_PANE}-column pane must arrive folded"
+        );
+    }
+
+    #[test]
+    fn prompt_at_desktop_width_stays_expanded() {
+        let mut state = ScrollbackState::new();
+        state.prepare_layout(DESKTOP_PANE, 20);
+        let id = state.push_block(user_block(&hundred_column_prompt()));
+        assert_eq!(
+            state.get_by_id(id).unwrap().display_mode,
+            DisplayMode::Expanded,
+            "the same prompt fits its desktop budget and must stay expanded"
+        );
+    }
+
+    /// A prompt pushed before the first frame has no width to judge by, so the
+    /// fold is left alone rather than guessed at zero columns.
+    #[test]
+    fn prompt_pushed_before_first_frame_keeps_its_block_default() {
+        let mut state = ScrollbackState::new();
+        let id = state.push_block(user_block(&hundred_column_prompt()));
+        assert_eq!(
+            state.get_by_id(id).unwrap().display_mode,
+            RenderBlock::user_prompt(hundred_column_prompt()).default_display_mode(),
+            "with no width yet the block's own default stands"
+        );
+    }
+
+    #[test]
+    fn resize_narrow_folds_unpinned_prompt() {
+        let mut state = ScrollbackState::new();
+        state.prepare_layout(DESKTOP_PANE, 20);
+        let pinned = state.push_block(user_block(&hundred_column_prompt()));
+        let automatic = state.push_block(user_block(&hundred_column_prompt()));
+        // A manual fold is a user gesture: respell it as pinned-and-expanded,
+        // the shape `fold_selected_impl` produces under `respect_manual_folds`.
+        state.get_by_id_mut(pinned).unwrap().display_mode_pinned = true;
+
+        state.prepare_layout(PHONE_PANE, 20);
+
+        assert_eq!(
+            state.get_by_id(automatic).unwrap().display_mode,
+            DisplayMode::Collapsed,
+            "an unpinned prompt still on its desktop default folds when the pane narrows"
+        );
+        assert_eq!(
+            state.get_by_id(pinned).unwrap().display_mode,
+            DisplayMode::Expanded,
+            "a pinned prompt keeps the mode the user left it in"
+        );
+    }
+
+    #[test]
+    fn resize_wider_unfolds_the_automatic_prompt() {
+        let mut state = ScrollbackState::new();
+        state.prepare_layout(PHONE_PANE, 20);
+        let id = state.push_block(user_block(&hundred_column_prompt()));
+        assert_eq!(
+            state.get_by_id(id).unwrap().display_mode,
+            DisplayMode::Collapsed
+        );
+
+        state.prepare_layout(DESKTOP_PANE, 20);
+
+        assert_eq!(
+            state.get_by_id(id).unwrap().display_mode,
+            DisplayMode::Expanded,
+            "widening back to a desktop pane unfolds the prompt again"
+        );
+    }
+
+    /// The whole point of the change: the echo occupies one row with no pad at
+    /// phone width, versus three rows (one line + two pad rows) at desktop.
+    #[test]
+    fn phone_width_prompt_echo_is_one_row_without_padding() {
+        let mut state = ScrollbackState::new();
+        state.prepare_layout(PHONE_PANE, 20);
+        let id = state.push_block(user_block(&hundred_column_prompt()));
+        assert_eq!(
+            state.get_by_id(id).unwrap().display_mode,
+            DisplayMode::Collapsed,
+            "the test measures the folded echo, so the fold must have fired"
+        );
+
+        let height = state.get_cached_entry_height(0).expect("layout cache");
+
+        assert_eq!(
+            height, 1,
+            "the collapsed prompt echo is one row with no vertical padding"
+        );
+    }
+
+    #[test]
+    fn desktop_width_prompt_echo_keeps_its_padding() {
+        let mut state = ScrollbackState::new();
+        state.prepare_layout(DESKTOP_PANE, 20);
+        state.push_block(user_block("Hello"));
+        assert_eq!(
+            state.get_cached_entry_height(0),
+            Some(3),
+            "desktop keeps the two pad rows around the one-row prompt"
+        );
+    }
+
     #[test]
     fn restore_reverts_follow_autoselect_and_current_turn() {
         let mut state = snapshot_fixture();

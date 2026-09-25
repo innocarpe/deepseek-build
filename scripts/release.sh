@@ -162,6 +162,15 @@ EOF
     --body-file "$BODY" --label chore --label size/S)"
   echo "== PR: $PR_URL =="
 
+  # Record the PR number in the decision-log row the bump opened. That row is
+  # what the MAJOR gate reads, and the number only exists now — leaving it as
+  # `PR #_(fill in)_` is how six rows on `main` shipped unrecorded.
+  PR_NUM="${PR_URL##*/}"
+  python3 scripts/lib/version_log.py set-pr docs/product/versions/README.md "$VERSION" "$PR_NUM"
+  git add docs/product/versions/README.md
+  git commit -m "docs(product): record the release PR in the $VERSION decision-log row" || true
+  git push origin "$BRANCH"
+
   gh pr merge "$BRANCH" --merge
   STATE="$(gh pr view "$BRANCH" --json state --jq .state)"
   [[ "$STATE" == "MERGED" ]] || { echo "error: PR not merged (state=$STATE)" >&2; exit 1; }

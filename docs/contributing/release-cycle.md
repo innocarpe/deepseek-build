@@ -51,6 +51,7 @@ turn repeated builds into incremental ones.
 | [`bump-version.sh`](../../scripts/bump-version.sh) | Single-command bump: `Cargo.toml`, `package.json`, `Cargo.lock`, `CHANGELOG.md` (moves the `Unreleased` items into the new version section), README.md version literals, `docs/product/versions/README.md`. Requires a clean tree; `--dry-run` previews the move. |
 | [`reorder-changelog.sh`](../../scripts/reorder-changelog.sh) | Reorder CHANGELOG.md to the invariant (Unreleased top, versions newest-first) without touching non-version sections; `--check` exits non-zero if out of order. Reorders only — it does not move items between sections. |
 | [`test-changelog-release.sh`](../../scripts/test-changelog-release.sh) | Hermetic regression test for the `Unreleased` move (`lib/changelog_release.py`); fixture CHANGELOGs in a temp dir, no network, no repo state |
+| [`lib/version_log.py`](../../scripts/lib/version_log.py) | Fill the decision-log row's `PR #_(fill in)_` with the release PR number; called by `release.sh` the moment `gh pr create` returns (idempotent, so a resumed release re-runs safely) |
 | [`release.sh`](../../scripts/release.sh) | Orchestrator: bump → MAJOR/README gate → verify → PR (`chore(release)`) → merge → tag `v{ver}` → wait for prebuilt assets → wait for CI publish → verify the registry. |
 | [`npm-emergency-publish.sh`](../../scripts/npm-emergency-publish.sh) | **Emergency path only.** Local interactive publish that drives `npm login --auth-type=web` and any emailed code through the `aside` browser agent, so no person has to supply a number. |
 | [`cache-guard.sh`](../../scripts/cache-guard.sh) | Release gate for spec 10 §1.9: runs the cache regression bench (scripted turn scenarios vs a prefix-accounting mock provider, two scored layers). Skips unless `DSB_RELEASE_CACHE_GUARD=1`; threshold via `DSB_CACHE_GUARD_THRESHOLD` (default 90). |
@@ -130,6 +131,15 @@ the contract and test names are spec 10 §1.9 / §4.4.
   glued junction; `reorder-changelog.sh --check` reports it and the in-place
   run repairs it. Pinned by `test-changelog-release.sh` case 8, which builds
   both merges and asserts one conflicts while the glued one does not.
+- **The release PR number goes into the decision-log row.** `bump-version.sh`
+  opens the row before the PR exists, so it writes `PR #_(fill in)_`; that
+  placeholder used to survive forever — six rows on `main` read it (`4.0.4`,
+  `5.2.0`, `5.2.2`, `5.5.3`, `5.5.4`, `6.0.0`) until they were filled by hand.
+  `release.sh` now fills the row from the number `gh pr create` returns and
+  commits it into the release PR, so the record lands with the release.
+  `scripts/lib/version_log.py` does the edit and refuses a missing row, an
+  absent PR column or a non-numeric number; re-running it (a resumed release)
+  leaves a recorded number alone.
 - Prereleases sort below their release (`4.0.4` > `4.0.4-beta.1` > `4.0.4-alpha.1`).
 
 ### What the Unreleased move prevents

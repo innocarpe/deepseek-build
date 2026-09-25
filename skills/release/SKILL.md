@@ -42,6 +42,13 @@ is silently skipped.
    not repeat `--desc`. For a *past* release with this defect, moving the items
    into its section is a normal PR against `main`; the tag is immutable.
    Covered by `./scripts/test-changelog-release.sh` (also in CI).
+2d. **Record the release PR number in the decision-log row.** The bump writes
+   `PR #_(fill in)_` and nothing used to come back to it (six rows shipped that
+   way). `release.sh` fills it from `gh pr create` and commits it into the
+   release PR; if the row still reads the placeholder after a release, run
+   `python3 scripts/lib/version_log.py set-pr docs/product/versions/README.md <ver> <pr>`
+   by hand — a placeholder in the row the MAJOR gate reads is an unfinished
+   release record.
 2c. **Never let `## Unreleased` touch the next heading.** A glued junction makes
    the *merge* path file items under a version with no conflict, which is how
    `#209` reached `## 5.7.0` and `#206` reached `## 6.0.0` while neither had

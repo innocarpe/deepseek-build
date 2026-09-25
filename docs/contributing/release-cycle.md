@@ -112,20 +112,61 @@ turn repeated builds into incremental ones.
    before merging anything that touches the changelog; keep the newest-first
    invariant green.
 
+## Account 2FA state, and what it means per path
+
+Measured on 2026-09-25, after the `5.6.0` release:
+
+```
+$ npm profile get | grep two-factor
+two-factor auth: auth-and-writes
+```
+
+| Path | Needs proof of presence? | Why |
+|------|--------------------------|-----|
+| **CI publish** (`publish-npm.yml`, OIDC) | **No** | npm accepts the workflow's OIDC token; 2FA is not part of the exchange |
+| `npm stage publish` | No | staging defers proof of presence by design |
+| `npm stage approve <id>` | **Yes** | approval is the interactive step (CLI or npmjs.com) |
+| **Local `npm publish`** (emergency path) | **Yes** | the account is `auth-and-writes`, so a direct publish asks for 2FA |
+
+`auth-and-writes` is what makes a **local** publish need 2FA. It does not affect
+the OIDC path, which is why the trusted publisher is the default and a local
+publish is only a fallback. `auth-only` would relax the local case;
+`auth-and-writes` is the stricter and currently chosen setting.
+
+**How the proof is supplied here.** The registered 2FA method is a **security
+key**, not an authenticator app, so there is no code to type. Under a terminal
+npm prints a browser URL and polls until that page is approved:
+
+```
+Authenticate your account at:
+https://www.npmjs.com/auth/cli/<single-use>
+```
+
+`npm-emergency-publish.sh` captures that URL and hands it to `aside exec`, which
+approves it with the registered key. Two measured requirements make this work:
+
+- **A pty is required.** Piped, npm answers `EOTP` and exits without offering
+  the URL at all. The script runs the publish under `script`.
+- **`--browser=false` is required.** With a browser configured, npm prints
+  `Press ENTER to open in the browser...` and blocks on that read instead of
+  polling. Every npm call in the script passes the flag.
+
 ## Trusted Publisher enrollment (one-time)
 
-Check the current state:
+**Enrolled 2026-09-25.** Re-check it on the package settings page:
+`https://www.npmjs.com/package/@innocarpe/deepseek-build/access` -> *Trusted
+Publisher*. The saved connection should read
+`innocarpe/deepseek-build publish-npm.yml`, `Permissions: npm publish, npm
+stage publish`.
 
-```bash
-npx npm@latest trust list @innocarpe/deepseek-build
-# 403 "Please enable 2fa for your account" → neither the account 2FA nor the
-# publisher exists yet; the CI publish step will fail until both are done.
-```
+`npm trust list <package>` is **not** a read-only check any more: with 2FA
+enabled it answers `EOTP` and waits for a browser approval. Approving it does
+then print the connection, which is a valid way to confirm it.
 
 Enrollment, on npmjs.com as the package's maintainer:
 
 1. Enable 2FA on the npm account (security key, or an authenticator app).
-2. Package → **Settings** → **Trusted Publisher** → **GitHub Actions**:
+2. Package -> **Settings** -> **Trusted Publisher** -> **GitHub Actions**:
    - Organization or user: `innocarpe`
    - Repository: `deepseek-build`
    - Workflow filename: `publish-npm.yml` — **filename only, no path, case-sensitive**
@@ -134,8 +175,8 @@ Enrollment, on npmjs.com as the package's maintainer:
 3. Read the saved connection back off the page to confirm it stored what you
    intended (npm does not validate on save; errors surface only at publish).
 
-The `aside` CLI can drive steps 2–3 and read emailed codes from Gmail; step 1
-is an account-identity action and needs a person.
+The `aside` CLI can drive steps 2-3, including approving the security-key
+prompt; step 1 is an account-identity action and needs a person.
 
 ## CI notes (`release-prebuilt.yml`)
 

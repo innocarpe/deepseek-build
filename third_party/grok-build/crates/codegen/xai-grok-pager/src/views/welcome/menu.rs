@@ -1,5 +1,3 @@
-//! Menu component — renders shortcut key menus.
-
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -8,6 +6,10 @@ use ratatui::text::Span;
 use crate::theme::Theme;
 
 use super::logo::logo_visual_width;
+
+fn cols(text: &str) -> u16 {
+    unicode_width::UnicodeWidthStr::width(text) as u16
+}
 
 /// Render the welcome menu rows as `label … shortcut`, padded within each row.
 /// Returns the Rect for each item row (for hit-testing clicks and hover).
@@ -32,11 +34,11 @@ pub fn render_menu(
         .fg(theme.gray_bright)
         .bg(theme.bg_highlight);
 
-    // Width: label + gap + key. Keep a 4-col gap between label and key for
-    // readability.
+    // Width: label + gap + key
+    // Keep a 4-col gap between label and key for readability
     let content_min: u16 = items
         .iter()
-        .map(|(key, label)| (key.len() + label.len() + 4) as u16)
+        .map(|(key, label)| cols(key) + cols(label) + 4)
         .max()
         .unwrap_or(0);
     let menu_width = logo_visual_width(area.height)
@@ -60,8 +62,13 @@ pub fn render_menu(
         }
 
         let is_selected = selected == Some(i);
-        let key_width = key.len() as u16;
-        let label_len = label.len() as u16;
+        let key_width = cols(key);
+        // The key sits at the right edge, so the label is cut to leave room for it.
+        let label = crate::render::line_utils::truncate_str(
+            label,
+            menu_centered.width.saturating_sub(key_width + 1) as usize,
+        );
+        let label_len = cols(&label);
 
         let row_rect = Rect {
             x: menu_centered.x,
@@ -87,7 +94,12 @@ pub fn render_menu(
         } else {
             label_style
         };
-        buf.set_span(menu_centered.x, y, &Span::styled(*label, lstyle), label_len);
+        buf.set_span(
+            menu_centered.x,
+            y,
+            &Span::styled(&*label, lstyle),
+            label_len,
+        );
 
         // Key shortcut flush with the right edge of the menu column.
         let kstyle = if is_selected {
@@ -102,7 +114,7 @@ pub fn render_menu(
             key_width,
         );
 
-        // [x] dismiss affordance restyling (for the import row)
+        // Restyle the [x] dismiss control (for the import row)
         if let Some(x_offset) = key.rfind("[x]") {
             let key_x_start = menu_centered.x + menu_centered.width - key_width;
             let dismiss_start = key_x_start + x_offset as u16;
@@ -131,6 +143,13 @@ pub fn render_menu(
                     cell.set_style(dismiss_style);
                 }
             }
+        }
+
+        // Terminal theme (Reset band slots): the selection/hover cue is
+        // reverse video; the row is all default-fg text so it inverts
+        // uniformly. RGB themes keep their bg_highlight band.
+        if is_selected && theme.is_bandless() {
+            buf.set_style(row_rect, Style::default().add_modifier(Modifier::REVERSED));
         }
 
         y += 1;

@@ -1,18 +1,17 @@
 //! Repeated warm-process benchmark for shell session listing.
 //!
-//! The shell-core case measures `build_unified_list` after request parsing
-//! through local row construction. It excludes response serialization, ACP
-//! transport, and pager parsing, filtering, and rendering. Storage cases are
-//! diagnostics.
+//! The shell-core case measures `build_unified_list` from just after request parsing through local row construction.
+//! It excludes response serialization, ACP transport, and pager parsing, filtering, and rendering.
+//! Storage cases are diagnostics.
 //!
-//! The fixture has 3,000 encoded workspaces and 9,864 summaries. Its 32
-//! same-repo CWDs are the main checkout, 15 DB/filesystem overlaps, one dead
-//! DB-only worktree, and 15 filesystem-only worktrees, all with current labels
-//! and interleaved activity. Another 2,968 unrelated CWDs provide scale.
+//! The fixture has 3,000 encoded workspaces and 9,864 summaries.
+//! Its 32 same-repo CWDs are the main checkout, 15 DB/filesystem overlaps, one dead DB-only worktree, and 15 filesystem-only worktrees.
+//! All have current labels and interleaved activity.
+//! Another 2,968 unrelated CWDs provide scale.
 //!
-//! Setup and exact assertions are outside timing. Samples reuse the tree and
-//! process, so filesystem and JSON work uses a warm OS page cache. Fixed
-//! year-2100 timestamps pass the pager cutoff, though pager stages are excluded.
+//! Setup and exact assertions are outside timing.
+//! Samples reuse the tree and process, so filesystem and JSON work uses a warm OS page cache.
+//! Fixed year-2100 timestamps pass the pager cutoff, though pager stages are excluded.
 //!
 //! Run: `cargo bench -p xai-grok-shell --bench session_list`
 //! Allow roughly 4-8 minutes after compilation for the configured samples.
@@ -37,7 +36,7 @@ use xai_grok_shell::session::storage::{JsonlStorageAdapter, StorageAdapter};
 use xai_grok_shell::session::unified_list::{ListReq, UnifiedListResult, build_unified_list};
 
 const WORKSPACE_COUNT: usize = 3_000;
-// Bump whenever workload semantics change, even if aggregate counts do not.
+// Bump whenever the shape of the workload changes, even if aggregate counts do not
 const FIXTURE_SCHEMA_VERSION: usize = 1;
 const MAIN_CHECKOUT_COUNT: usize = 1;
 const LINKED_WORKTREE_COUNT: usize = 30;
@@ -483,49 +482,49 @@ fn write_summary(
 ) {
     let session_dir = cwd_dir.join(session_id);
     fs::create_dir(&session_dir).expect("create session directory");
-    let summary = Summary {
-        info: Info {
-            id: acp::SessionId::new(session_id),
-            cwd: cwd.to_owned(),
-        },
-        cwd_generation: 0,
-        previous_cwd: None,
-        pending_cwd_switch_reminder: None,
-        cwd_switch_bookkeeping_generation: 0,
-        session_summary: format!("Deterministic benchmark session {ordinal}"),
-        created_at: active_at - ChronoDuration::minutes(5),
-        updated_at: active_at,
-        num_messages: 8 + ordinal % 24,
-        num_chat_messages: 8 + ordinal % 24,
-        current_model_id: acp::ModelId::new("benchmark-model"),
-        parent_session_id: None,
-        forked_at: None,
-        collection_id: None,
-        next_trace_turn: 0,
-        chat_format_version: 1,
-        prompt_display_cwd: None,
-        session_kind: None,
-        fork_context_source: None,
-        fork_parent_prompt_id: None,
-        inherited_prefix_len: None,
-        hidden: None,
-        source_workspace_dir: None,
-        git_root_dir: Some(cwd.to_owned()),
-        git_remotes: vec!["git@github.com:xai-org/benchmark.git".to_owned()],
-        head_commit: Some(format!("{ordinal:040x}")),
-        head_branch: Some("main".to_owned()),
-        request_id: None,
-        grok_home: None,
-        last_active_at: Some(active_at),
-        generated_title: Some(format!("Benchmark session {ordinal}")),
-        title_is_manual: false,
-        worktree_label: worktree_label.map(str::to_owned),
-        agent_name: Some("benchmark-agent".to_owned()),
-        sandbox_profile: Some("workspace".to_owned()),
-        reasoning_effort: None,
-        last_turn_summary: None,
-        last_turn_summary_prompt_id: None,
-    };
+    let summary: Summary = serde_json::from_value(serde_json::json!({
+        "info": { "id": session_id, "cwd": cwd },
+        "agent_id": null,
+        "attempt_id": null,
+        "cwd_generation": 0,
+        "previous_cwd": null,
+        "pending_cwd_switch_reminder": null,
+        "cwd_switch_bookkeeping_generation": 0,
+        "session_summary": format!("Deterministic benchmark session {ordinal}"),
+        "created_at": active_at - ChronoDuration::minutes(5),
+        "updated_at": active_at,
+        "num_messages": 8 + ordinal % 24,
+        "num_chat_messages": 8 + ordinal % 24,
+        "current_model_id": "benchmark-model",
+        "parent_session_id": null,
+        "forked_at": null,
+        "collection_id": null,
+        "next_trace_turn": 0,
+        "chat_format_version": 1,
+        "prompt_display_cwd": null,
+        "session_kind": null,
+        "fork_context_source": null,
+        "fork_parent_prompt_id": null,
+        "inherited_prefix_len": null,
+        "hidden": null,
+        "source_workspace_dir": null,
+        "git_root_dir": cwd,
+        "git_remotes": ["git@github.com:xai-org/benchmark.git"],
+        "head_commit": format!("{ordinal:040x}"),
+        "head_branch": "main",
+        "request_id": null,
+        "grok_home": null,
+        "last_active_at": active_at,
+        "generated_title": format!("Benchmark session {ordinal}"),
+        "title_is_manual": false,
+        "worktree_label": worktree_label,
+        "sandbox_profile": "workspace",
+        "reasoning_effort": null,
+        "last_turn_summary": null,
+        "last_turn_summary_prompt_id": null,
+        "last_recap": null
+    }))
+    .expect("deserialize summary");
     let summary_path = session_dir.join("summary.json");
     let bytes = serde_json::to_vec_pretty(&summary).expect("serialize summary");
     fs::write(&summary_path, bytes).expect("write summary");
@@ -613,6 +612,23 @@ fn bench_session_list(c: &mut Criterion) {
                             .list_sessions(Some(black_box(&fixture.picker_cwd))),
                     )
                     .expect("list cwd sessions"),
+            )
+        })
+    });
+
+    // The `/session-info` title path: one summary loaded by (cwd, id).
+    storage.measurement_time(Duration::from_secs(5));
+    storage.throughput(Throughput::Elements(1));
+    storage.bench_function(BenchmarkId::new("single_summary_load", &fixture_id), |b| {
+        let info = Info {
+            id: acp::SessionId::new("bench-session-0000-00"),
+            cwd: fixture.picker_cwd.clone(),
+        };
+        b.iter_with_large_drop(|| {
+            black_box(
+                runtime
+                    .block_on(fixture.adapter.load_summary(black_box(&info)))
+                    .expect("load single summary"),
             )
         })
     });

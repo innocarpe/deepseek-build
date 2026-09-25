@@ -1,6 +1,5 @@
-//! Generates the file-tree based on how we are using it during training
-//! This gives the model an overview of the project and helps it navigate and understand
-//! the repository better, cold-starting the exploration
+//! Generates the file tree in the format used during training.
+//! It gives the model a project overview and a starting point for exploring the repository.
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -11,18 +10,15 @@ use ignore::{WalkBuilder, WalkState};
 
 use crate::file_system::FsError;
 
-/// Number of threads for parallel directory walking
 const NUM_WALK_THREADS: usize = 8;
 
-/// Configuration for limiting file tree traversal to prevent runaway I/O
-/// on very large or deeply nested directories.
+/// Configuration for limiting file tree traversal to prevent runaway I/O on very large or deeply nested directories.
 #[derive(Debug, Clone, Copy)]
 pub struct ListContentsLimits {
     /// Maximum number of characters in the output
     pub max_characters: usize,
-    /// Maximum depth to traverse (0 = root only)
+    /// Maximum depth to traverse (0 means root only)
     pub max_depth: usize,
-    /// Maximum number of directories to visit during traversal
     pub max_dirs_visited: usize,
 }
 
@@ -65,11 +61,13 @@ fn get_file_ext_str(files: &[String], k: usize) -> String {
     let top_exts = get_top_exts(files);
     let include_dots = top_exts.len() > k
         || (top_exts.len() == k && top_exts.iter().any(|(ext, _)| ext.is_empty()));
-    let top_k_exts = &top_exts[0..std::cmp::min(k, top_exts.len())];
+    let top_k_exts = top_exts
+        .get(..std::cmp::min(k, top_exts.len()))
+        .unwrap_or(&[]);
     if top_k_exts.is_empty() {
         return String::new();
     }
-    if top_k_exts.len() == 1 && top_k_exts[0].0.is_empty() {
+    if top_k_exts.len() == 1 && top_k_exts.first().is_some_and(|(ext, _)| ext.is_empty()) {
         return "(...)".to_string();
     }
     let filtered_top_k_exts: Vec<_> = top_k_exts
@@ -96,8 +94,7 @@ struct DirContents {
     dirs: Vec<String>,
 }
 
-/// Performs a single parallel walk and collects all directory contents into a map.
-/// Returns a map from directory path -> (files, subdirs) in that directory.
+/// One parallel walk collects every directory's files and subdirectories into a map keyed by directory path.
 fn collect_all_contents(
     root: &Path,
     max_depth: usize,
@@ -110,7 +107,6 @@ fn collect_all_contents(
     let dirs_count = std::sync::atomic::AtomicUsize::new(0);
     let entries_visited = std::sync::atomic::AtomicUsize::new(0);
 
-    // Initialize root entry
     contents_map.insert(
         root.to_path_buf(),
         DirContents {
@@ -149,7 +145,6 @@ fn collect_all_contents(
             Box::new(move |entry| {
                 entries_visited.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-                // Stop early if we've collected enough directories
                 if dirs_count.load(std::sync::atomic::Ordering::Relaxed) >= max_dirs {
                     return WalkState::Quit;
                 }
@@ -209,7 +204,7 @@ fn collect_all_contents(
     }
 
     let _entries_total = entries_visited.load(std::sync::atomic::Ordering::Relaxed);
-    // (instrumentation_timer.with_field calls removed — dev-only, not part of Phase 1 move)
+    // instrumentation_timer.with_field calls removed (dev-only)
 
     let mut contents_map: HashMap<PathBuf, DirContents> = {
         let _timer = (); // instrumentation_timer noop (dev infra)
@@ -312,7 +307,13 @@ impl DirectoryNode {
         assert!(self.is_expanded());
         let children = self.children.as_ref().unwrap();
         let mut remaining_subitems = self.dirs.clone();
-        remaining_subitems.extend(self.files[0..self.num_listed_files].iter().cloned());
+        remaining_subitems.extend(
+            self.files
+                .get(..self.num_listed_files)
+                .unwrap_or(&[])
+                .iter()
+                .cloned(),
+        );
         remaining_subitems.sort_by_key(|s| s.to_lowercase());
         let mut curr_str = String::new();
         for subitem in remaining_subitems {
@@ -329,11 +330,42 @@ impl DirectoryNode {
             }
         }
         if self.files.len() > self.num_listed_files {
-            let remaining_str =
-                self.get_remaining_str(&self.files[0..self.num_listed_files], true, 3);
+            let remaining_str = self.get_remaining_str(
+                self.files.get(..self.num_listed_files).unwrap_or(&[]),
+                true,
+                3,
+            );
             curr_str.push_str(&remaining_str);
         }
         curr_str.trim_end_matches('\n').to_string()
+    }
+}
+
+/// Builds the project overview across every provisioned mount, one walk per root, so a multi-repo workspace prompt covers every repo.
+/// Empty `roots` returns an empty string.
+pub async fn list_contents_multi(
+    roots: &[PathBuf],
+    limits: ListContentsLimits,
+) -> Result<String, FsError> {
+    match roots {
+        [] => Ok(String::new()),
+        [only] => list_contents(only.clone(), limits).await,
+        many => {
+            let n = many.len().max(1);
+            let per = ListContentsLimits {
+                max_characters: limits.max_characters / n,
+                max_depth: limits.max_depth,
+                max_dirs_visited: limits.max_dirs_visited / n,
+            };
+            let mut out = String::new();
+            for root in many {
+                if !out.is_empty() {
+                    out.push_str("\n\n");
+                }
+                out.push_str(&list_contents(root.clone(), per).await?);
+            }
+            Ok(out)
+        }
     }
 }
 
@@ -401,7 +433,6 @@ pub async fn list_contents(
         let mut q: VecDeque<&mut DirectoryNode> = VecDeque::new();
         q.push_back(&mut root_node);
         while let Some(node) = q.pop_front() {
-            // Check if we've hit the max directories limit
             if dirs_visited >= limits.max_dirs_visited {
                 dirs_limit_hit = true;
                 to_fit_files = false;
@@ -460,7 +491,10 @@ pub async fn list_contents(
             }
             let num_file_limit = node.files.len();
             for i in node.num_listed_files..num_file_limit {
-                let new_additional_len = node.subitem_str(&node.files[i]).len();
+                let Some(file) = node.files.get(i) else {
+                    break;
+                };
+                let new_additional_len = node.subitem_str(file).len();
                 if new_additional_len <= remaining_chars {
                     node.num_listed_files = i + 1;
                     remaining_chars -= new_additional_len;

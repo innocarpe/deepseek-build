@@ -52,18 +52,31 @@ impl From<std::io::Error> for ComputerError {
 pub trait AsyncFileSystem: Send + Sync {
     async fn read_file(&self, path: &Path) -> Result<Vec<u8>, ComputerError>;
 
+    fn supports_bounded_read(&self) -> bool {
+        false
+    }
+
+    /// Read a complete regular file without acquiring more than `max_bytes + 1` bytes.
+    /// Unsupported backends must not fall back to an unbounded read.
+    async fn read_file_bounded(
+        &self,
+        path: &Path,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, ComputerError> {
+        let _ = (path, max_bytes);
+        Err(ComputerError::io_with_kind(
+            "bounded file reads are not supported by this backend",
+            std::io::ErrorKind::Unsupported,
+        ))
+    }
+
     async fn write_file(&self, path: &Path, data: &[u8]) -> Result<(), ComputerError>;
 
     async fn delete_file(&self, path: &Path) -> Result<(), ComputerError>;
 
-    /// Whether `path` exists as a readable regular file, without reading
-    /// its contents. `Ok(false)` means a definitive not-found; other probe
-    /// failures surface as `Err`.
-    ///
-    /// The default errs with `ErrorKind::Unsupported` — callers must treat
-    /// `Err` as "unknown" and fail closed. Backends opt in by overriding
-    /// with a cheap stat/lookup; a full-content read is never an acceptable
-    /// probe (the target may be arbitrarily large or remote).
+    /// Whether `path` exists as a readable regular file, without reading its contents. The default errs with `ErrorKind::Unsupported` — callers
+    /// must treat `Err` as "unknown" and fail closed. Backends opt in by overriding with a cheap stat/lookup; a full-content read is never an
+    /// acceptable probe (the target may be arbitrarily large or remote).
     async fn file_exists(&self, path: &Path) -> Result<bool, ComputerError> {
         let _ = path;
         Err(ComputerError::io_with_kind(
@@ -88,10 +101,9 @@ pub struct TerminalRunRequest {
     /// For background tasks, this allows retrieval of output after the agent has moved on.
     pub output_file: PathBuf,
 
-    /// Notification handle for streaming output chunks during execution.
-    /// The backend sends `BashOutputChunk` notifications every ~100ms.
-    /// Callers that don't need streaming pass `ToolNotificationHandle::noop()`
-    /// — messages are silently dropped. No `Option` wrapper needed.
+    /// Notification handle for streaming output chunks during execution. The backend sends `BashOutputChunk` notifications
+    /// every ~100ms. Callers that don't need streaming pass `ToolNotificationHandle::noop()` — messages are silently
+    /// dropped. No `Option` wrapper needed.
     pub notification_handle: ToolNotificationHandle,
 
     /// Tool call ID for correlating notifications with the tool invocation.
@@ -99,24 +111,17 @@ pub struct TerminalRunRequest {
     /// `BashOutputChunk.base.tool_call_id`.
     pub tool_call_id: String,
 
-    /// Original user command before isolation wrapping.
-    ///
-    /// When set, the terminal actor stores this on the `ProcessEntry` so
-    /// `get_task()` returns it in `TaskSnapshot.display_command`. This
-    /// ensures model-facing `get_task_output` shows the user's command
-    /// instead of the `unshare`/mount wrapper.
+    /// Original user command before isolation wrapping. When set, the terminal actor stores this on the `ProcessEntry` so
+    /// `get_task()` returns it in `TaskSnapshot.display_command`. This ensures model-facing `get_task_output` shows the
+    /// user's command instead of the `unshare`/mount wrapper.
     pub display_command: Option<String>,
 
     /// Auto-background on timeout instead of killing (default `false`).
     pub auto_background_on_timeout: bool,
 
-    /// When [`Self::auto_background_on_timeout`] is true, maximum time the
-    /// command may block the turn before being moved to the background (process
-    /// keeps running). Independent of [`Self::timeout`].
-    ///
-    /// - `None` → use the terminal backend default (typically 15s).
-    /// - `Some(Duration::MAX)` → no short budget; auto-bg only when `timeout` elapses.
-    /// - `Some(d)` → auto-bg after `d` if still running.
+    /// When [`Self::auto_background_on_timeout`] is true, maximum time the command may block the turn before being moved to the background (process
+    /// keeps running). Independent of [`Self::timeout`]. `None` → use the terminal backend default (typically 15s). `Some(Duration::MAX)` → no
+    /// short budget; auto-bg only when `timeout` elapses. `Some(d)` → auto-bg after `d` if still running.
     pub foreground_block_budget: Option<Duration>,
 
     /// Task kind for distinguishing monitor tasks from regular bash tasks.
@@ -164,13 +169,9 @@ pub struct TerminalRunResult {
     /// Total bytes of output (before truncation).
     /// When truncated, combined_output contains the first and last portions up to output_byte_limit chars.
     pub total_bytes: usize,
-    /// PID of the spawned shell process, when available. Set by the
-    /// local terminal backend at spawn time. Useful for foreground
-    /// commands that auto-background on timeout: the resulting
-    /// `BackgroundTaskStarted` can carry the real PID instead of a
-    /// placeholder. `None` for backends that cannot surface a local
-    /// PID (e.g. ACP/remote terminals) or when the process exited
-    /// before `child.id()` could be queried.
+    /// PID of the spawned shell process, when available. Set by the local terminal backend at spawn time. Useful for foreground commands that
+    /// auto-background on timeout: the resulting `BackgroundTaskStarted` can carry the real PID instead of a placeholder. `None` for backends that
+    /// cannot surface a local PID (e.g. ACP/remote terminals) or when the process exited before `child.id()` could be queried.
     pub pid: Option<u32>,
 }
 
@@ -179,12 +180,14 @@ pub struct TerminalRunResult {
 pub struct BackgroundHandle {
     pub task_id: String,
     pub output_file: PathBuf,
-    /// PID of the spawned shell process, when available. `None` for
-    /// backends that do not surface a local PID (e.g. ACP/remote
-    /// gateways) or when the process exited before the PID could be
+    /// PID of the spawned shell process, when available. `None` for backends that do not surface a
+    /// local PID (e.g. ACP/remote gateways) or when the process exited before the PID could be
     /// captured.
     pub pid: Option<u32>,
 }
+
+/// The `signal` of a task that was lost, not failed. The pager finalizes it without a failed block
+pub const SESSION_RESTART_SIGNAL: &str = "session_restart";
 
 /// Full snapshot of a task's state.
 /// Used by both local and ACP backends.
@@ -195,10 +198,9 @@ pub struct TaskSnapshot {
     pub task_id: String,
     /// The actual command that was executed (may be isolation-wrapped).
     pub command: String,
-    /// The original user command before isolation wrapping.
-    ///
-    /// When set, model/user-facing output should prefer this over `command`
-    /// to avoid exposing internal isolation mechanics (unshare/mount wrapper).
+    /// The original user command before isolation wrapping. When set, model/user-facing output
+    /// should prefer this over `command` to avoid exposing internal isolation mechanics
+    /// (unshare/mount wrapper).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_command: Option<String>,
     pub cwd: String,
@@ -224,14 +226,15 @@ pub struct TaskSnapshot {
     /// because the blocking caller already received the result directly.
     #[serde(default)]
     pub block_waited: bool,
-    /// Whether this task was explicitly killed via the `kill_command_or_subagent` tool.
-    /// When set, auto-wake synthetic prompts are suppressed because the model
-    /// already received the kill result via `KillTaskResult`.
-    /// Also set during `kill_all_background_tasks` teardown (e.g. subagent
-    /// cleanup), where auto-wake suppression is irrelevant since the session
-    /// is shutting down.
+    /// Whether this task was explicitly killed (kill tool, UI Stop, or
+    /// teardown) rather than exiting on its own. Display/tombstone flag;
+    /// auto-wake uses [`Self::is_auto_wake_suppressed`].
     #[serde(default)]
     pub explicitly_killed: bool,
+    /// Model already got a kill/wait tool result, or the kill was teardown.
+    /// False for UI/Stop with no live waiter. Missing on the wire is false.
+    #[serde(default)]
+    pub kill_result_delivered: bool,
 
     /// Session that owns this task. Used for scoped kill operations so
     /// subagent teardown only kills the subagent's own tasks, not
@@ -247,6 +250,10 @@ pub struct TaskSnapshot {
 }
 
 impl TaskSnapshot {
+    pub fn is_completed_background(&self) -> bool {
+        self.completed && self.is_backgrounded
+    }
+
     /// Calculate duration in seconds.
     /// If task is still running, returns time since start.
     pub fn duration_secs(&self) -> f64 {
@@ -256,10 +263,9 @@ impl TaskSnapshot {
             .unwrap_or(0.0)
     }
 
-    /// True iff the task has NOT yet completed — covers bash AND
-    /// monitor task kinds (the `kind` field doesn't change this
-    /// predicate; the runtime turn-end TodoGate counts both as
-    /// backing work).
+    /// True iff the task has NOT yet completed — covers bash AND monitor task kinds (the `kind`
+    /// field doesn't change this predicate; the runtime turn-end TodoGate counts both as backing
+    /// work).
     pub fn is_outstanding(&self) -> bool {
         !self.completed
     }
@@ -274,13 +280,16 @@ impl TaskSnapshot {
     pub fn is_outstanding_background(&self) -> bool {
         !self.completed && self.is_backgrounded
     }
+
+    /// True when a TaskCompleted auto-wake would be redundant.
+    pub fn is_auto_wake_suppressed(&self) -> bool {
+        self.block_waited || (self.explicitly_killed && self.kill_result_delivered)
+    }
 }
 
-/// Result of killing a terminal task.
-///
-/// Serialized over the wire in the `x.ai/task/kill` ext response
-/// (`xai-grok-shell::extensions::task::KillTaskResponse`) and deserialized
-/// by clients (xai-grok-pager), so it derives both serde directions.
+/// Result of killing a terminal task. Serialized over the wire in the `x.ai/task/kill` ext response
+/// (`xai-grok-shell::extensions::task::KillTaskResponse`) and deserialized by clients
+/// (xai-grok-pager), so it derives both serde directions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum KillOutcome {
@@ -289,15 +298,38 @@ pub enum KillOutcome {
     NotFound,
 }
 
+/// Who initiated a background-task kill.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KillSource {
+    /// Model `kill_task` / `kill_command_or_subagent` tool.
+    ModelTool,
+    /// Single-task client UI kill (task-pane `[×]`).
+    ClientUi,
+    /// Bulk teardown: owner sweep, dashboard stop-all, session delete, headless reap.
+    Teardown,
+}
+
+impl KillSource {
+    /// Model-tool and teardown kills count as delivered; a client/UI kill
+    /// counts only when a waiter actually received the result.
+    pub fn marks_result_delivered(self, waiter_delivered: bool) -> bool {
+        matches!(self, Self::ModelTool | Self::Teardown) || waiter_delivered
+    }
+}
+
+/// One command moved to the background by [`TerminalBackend::background_foreground_commands`].
+/// `tool_call_id` doubles as the background task id the model uses to retrieve output later.
+#[derive(Debug, Clone)]
+pub struct BackgroundedForeground {
+    pub tool_call_id: String,
+}
+
 // ============================================================================
 // TerminalBackend trait
 // ============================================================================
 
-/// The single abstraction over terminal execution backends.
-///
-/// Implemented by:
-/// - `LocalTerminalBackend` (in xai-grok-tools, spawns processes)
-/// - `AcpTerminalBackend` (in xai-grok-shell, calls ACP protocol)
+/// The single abstraction over terminal execution backends. `LocalTerminalBackend` (in
+/// xai-grok-tools, spawns processes) `AcpTerminalBackend` (in xai-grok-shell, calls ACP protocol)
 #[async_trait::async_trait]
 pub trait TerminalBackend: Send + Sync {
     /// Run a command. Blocks until completion or timeout.
@@ -313,8 +345,16 @@ pub trait TerminalBackend: Send + Sync {
     /// Get current snapshot of a background task.
     async fn get_task(&self, task_id: &str) -> Option<TaskSnapshot>;
 
-    /// Kill a background task.
+    /// Kill a background task. Equivalent to [`Self::kill_task_with_source`] with
+    /// [`KillSource::ModelTool`].
     async fn kill_task(&self, task_id: &str) -> KillOutcome;
+
+    /// Kill a background task, recording who initiated the kill. The default ignores `source` and
+    /// delegates to [`Self::kill_task`], which existing backends treat as a model-tool kill.
+    async fn kill_task_with_source(&self, task_id: &str, source: KillSource) -> KillOutcome {
+        let _ = source;
+        self.kill_task(task_id).await
+    }
 
     /// Kill all running foreground processes.
     async fn kill_foreground_commands(&self) {}
@@ -335,15 +375,9 @@ pub trait TerminalBackend: Send + Sync {
 
     async fn warm_shell(&self, _cwd: &std::path::Path) {}
 
-    /// Reparent notification handles for all tasks owned by `old_owner_session_id`.
-    /// Swaps the dead child session's notification handle with the parent's
-    /// live handle so events from surviving processes route correctly.
-    /// Also re-spawns monitor pipelines on the caller's runtime so monitor
-    /// events continue streaming to the parent.
-    ///
-    /// `backend_weak` is a [`Weak`](std::sync::Weak) to *this* backend (anchored
-    /// by the parent session's `Arc`); it drives re-spawned monitor pipelines
-    /// without keeping the backend alive. See `run_monitor_pipeline`.
+    /// Reparent notification handles for all tasks owned by `old_owner_session_id`. Swaps the dead child session's
+    /// notification handle with the parent's live handle so events from surviving processes route correctly. Also re-spawns
+    /// monitor pipelines on the caller's runtime so monitor events continue streaming to the parent.
     async fn reparent_notifications(
         &self,
         _old_owner_session_id: &str,
@@ -360,12 +394,18 @@ pub trait TerminalBackend: Send + Sync {
         false
     }
 
-    /// Wait for a background task to complete, with optional timeout.
-    ///
-    /// # Panics / overflow
-    /// Implementations may add `timeout` to `Instant::now()`. Callers must
-    /// bound `timeout` (e.g. via `capped_wait_timeout`) so the sum stays
-    /// representable; unbounded model `timeout_ms` can overflow.
+    /// Background every running foreground command instead of killing it, scoped to `owner_session_id` when `Some`.
+    /// Called on a mid-turn redirect (send-now); one returned entry per command lets the caller answer the model's dangling tool call.
+    async fn background_foreground_commands(
+        &self,
+        _owner_session_id: Option<&str>,
+    ) -> Vec<BackgroundedForeground> {
+        Vec::new()
+    }
+
+    /// Wait for a background task to complete, with optional timeout. Implementations may add
+    /// `timeout` to `Instant::now()`. Callers must bound `timeout` (e.g. via `capped_wait_timeout`)
+    /// so the sum stays representable; unbounded model `timeout_ms` can overflow.
     async fn wait_for_completion(
         &self,
         task_id: &str,
@@ -375,6 +415,19 @@ pub trait TerminalBackend: Send + Sync {
     /// List all known background tasks (running and completed).
     /// Used for context compaction to include task state in summaries.
     async fn list_tasks(&self) -> Vec<TaskSnapshot>;
+
+    /// Metadata-only listing for durable background_tasks snapshots.
+    /// Skips log reads and omits stdout; default clears output after
+    /// [`Self::list_tasks`].
+    async fn list_tasks_metadata(&self) -> Vec<TaskSnapshot> {
+        let mut tasks = self.list_tasks().await;
+        for task in &mut tasks {
+            task.output.clear();
+            task.output_total_bytes = 0;
+            task.truncated = false;
+        }
+        tasks
+    }
 
     /// Return the persistent shell's current working directory, if persistent
     /// shell state is enabled. Returns `None` when persistence is off or the
@@ -470,6 +523,103 @@ mod tests {
             .await
             .expect_err("default probe must err");
         assert_eq!(err.io_error_kind(), Some(std::io::ErrorKind::Unsupported));
+    }
+
+    #[test]
+    fn kill_source_marks_result_delivered() {
+        assert!(KillSource::ModelTool.marks_result_delivered(false));
+        assert!(KillSource::ModelTool.marks_result_delivered(true));
+        assert!(KillSource::Teardown.marks_result_delivered(false));
+        assert!(KillSource::Teardown.marks_result_delivered(true));
+        assert!(!KillSource::ClientUi.marks_result_delivered(false));
+        assert!(KillSource::ClientUi.marks_result_delivered(true));
+    }
+
+    #[test]
+    fn snapshot_suppresses_auto_wake_only_when_result_was_delivered() {
+        let mut snap = TaskSnapshot {
+            task_id: "t".into(),
+            command: "sleep 1".into(),
+            display_command: None,
+            cwd: "/tmp".into(),
+            start_time: std::time::SystemTime::UNIX_EPOCH,
+            end_time: None,
+            output: String::new(),
+            output_file: PathBuf::new(),
+            truncated: false,
+            output_total_bytes: 0,
+            exit_code: None,
+            signal: None,
+            completed: false,
+            kind: TaskKind::Bash,
+            block_waited: false,
+            explicitly_killed: false,
+            kill_result_delivered: false,
+            owner_session_id: None,
+            description: None,
+            is_backgrounded: false,
+        };
+        assert!(!snap.is_auto_wake_suppressed());
+
+        snap.block_waited = true;
+        assert!(snap.is_auto_wake_suppressed());
+        snap.block_waited = false;
+
+        snap.explicitly_killed = true;
+        assert!(
+            !snap.is_auto_wake_suppressed(),
+            "UI/Stop kill with no delivered result must wake"
+        );
+        snap.kill_result_delivered = true;
+        assert!(
+            snap.is_auto_wake_suppressed(),
+            "model-tool/teardown/delivered kill must suppress"
+        );
+        snap.explicitly_killed = false;
+        assert!(
+            !snap.is_auto_wake_suppressed(),
+            "delivered bit alone is not a kill"
+        );
+    }
+
+    #[test]
+    fn kill_result_delivered_deserializes_default_false() {
+        let mut snap = TaskSnapshot {
+            task_id: "t".into(),
+            command: "echo".into(),
+            display_command: None,
+            cwd: "/tmp".into(),
+            start_time: std::time::SystemTime::UNIX_EPOCH,
+            end_time: None,
+            output: String::new(),
+            output_file: PathBuf::from("/tmp/t.log"),
+            truncated: false,
+            output_total_bytes: 0,
+            exit_code: None,
+            signal: None,
+            completed: true,
+            kind: TaskKind::Bash,
+            block_waited: false,
+            explicitly_killed: true,
+            kill_result_delivered: true,
+            owner_session_id: None,
+            description: None,
+            is_backgrounded: false,
+        };
+        let mut value = serde_json::to_value(&snap).expect("serialize");
+        value
+            .as_object_mut()
+            .expect("object")
+            .remove("kill_result_delivered");
+        let decoded: TaskSnapshot = serde_json::from_value(value).expect("legacy snapshot");
+        assert!(!decoded.kill_result_delivered);
+        assert!(decoded.explicitly_killed);
+        assert!(
+            !decoded.is_auto_wake_suppressed(),
+            "legacy explicitly_killed without the new field is not a delivered kill"
+        );
+        snap.kill_result_delivered = false;
+        assert_eq!(decoded, snap);
     }
 
     #[test]

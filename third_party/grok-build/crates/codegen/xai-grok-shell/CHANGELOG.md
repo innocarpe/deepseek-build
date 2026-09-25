@@ -1,5 +1,868 @@
 # Changelog
 
+# 1.0.41 — 2026-09-22
+
+## Features
+
+- **Subagent model inheritance** setting added to /settings; persists in config.toml and respects managed/overlay layers.
+- **Per-model request size limits** can now be configured to match provider HTTP body caps and control inline image eviction.
+
+## Bug Fixes
+
+- **Fixed** the subagent fullscreen view so it no longer shows a stray [Dashboard] button in the header.
+- **Fixed** agent frontmatter `mcpServers` so that headers and URLs from the active agent's agent.md now correctly override config.toml and survive config reloads or agent switches.
+- **Ctrl+P** now opens the command palette immediately from the welcome screen.
+- **Dashboard** now focuses the "+ New Agent" row instead of leaving the previous session selected.
+- Sessions that were interrupted by a crash now show a clear marker instead of silently dropping the turn.
+- **Ctrl+Z** right after stashing a prompt now restores it.
+- **Collapsed edit blocks** setting now correctly collapses edits even if `expanded_by_default` was pinned true.
+- Interjections now receive a visible reply before the agent resumes prior tasks.
+- Canceling a turn that blocked on spawn_subagent now tells the model the child moved to the background instead of claiming it was never executed.
+- Saving a queued-prompt edit now returns focus to the composer so the next keys type the next message.
+- Subagent activation is now consistent between the TUI and `grok agent stdio`; tables that only set limits or models no longer disable subagents.
+- **Effort level selection** now accepts menu labels in addition to IDs.
+
+
+# 1.0.40 — 2026-09-20
+
+## Bug Fixes
+
+- **Miscellaneous bug fixes and updates**.
+
+
+# 1.0.39 — 2026-09-20
+
+## Features
+
+- **Subagents** can always use the parent model, with that choice locked in when the session starts.
+- Earlier image attachments now survive multiple compactions via a persisted path list.
+- **Subagent spawning** no longer requires choosing a type; omitted calls default to general-purpose.
+- The agent now keeps helper scripts, logs, and PR drafts in the system temp directory instead of the repository.
+- read_file descriptions now tell the model when offset/limit are ignored for SKILL.md and instruction files.
+- Effort levels for models now come from the API instead of hard-coded lists, and config aliases inherit the menu.
+- MCP tools that receive the wrong JSON shape are now automatically fixed when the mismatch is unambiguous.
+
+## Bug Fixes
+
+- Local worktree capture no longer refuses repositories that contain uninitialized submodules.
+- **Memory captures** no longer include opaque model reasoning blobs.
+- Idle timeouts now show a clear message instead of raw internal text.
+- Images attached to the last user prompt now survive compaction.
+- **Custom agent profiles** now persist correctly across session resume and reload.
+- **Subagent labels** now appear as "Subagent" instead of "General" in transcripts and the tasks pane.
+
+
+# 1.0.38 — 2026-09-19
+
+## Features
+
+- **Long agent replies** in prompt-suggestion transcripts are no longer cut off mid-sentence.
+- **read_file** on skill and instruction files can now be configured per deployment.
+- **Pasted images** survive yank/undo/history recall and the user is notified when any cannot be sent.
+
+## Bug Fixes
+
+- **Subagent overlays** no longer stay stuck showing "Cancelling" after the child turn ends.
+- **Long quoted arguments** in permission prompts now wrap instead of clipping.
+- **Fixed tool-calling errors** by sending inline-only use_tool schema.
+
+
+# 1.0.37 — 2026-09-18
+
+## Bug Fixes
+
+- **Mermaid flowcharts** with complex labels or large sizes now render and open correctly.
+- **`/context`** legend now shows accurate percentages that always add up to 100%.
+- **Pressing `y`** on a queue row now copies the prompt text to the clipboard.
+- **`/model`** effort picker now defaults to the model's recommended effort level.
+- **Bash commands** using quoted filename variables now respect configured permission rules instead of always prompting.
+
+
+# 1.0.36 — 2026-09-17
+
+## Features
+
+- **New Dashboard preview setting** lets you hide the selected-session preview panel on the dashboard.
+- **New policy setting** allows organizations to disable hooks that are not from managed policy.
+- **Background shell commands** now appear as live task rows with streaming output.
+
+## Bug Fixes
+
+- **`grok --sandbox`** no longer exits when accepting folder trust.
+- **Pinned agents** in the dashboard no longer jump when their activity changes.
+- **Swift code** with triple-quoted strings now highlights correctly in the pager.
+- **Mixed-case reasoning_effort** values (e.g. "xHigh") are now accepted in config.toml.
+- **Fixed accidental empty agent sessions** when pressing Enter right after sending from the dashboard.
+- **Fixed default TUI sessions** so an [agent] set in config.toml is respected instead of always using a builtin plan.
+- **MCP plugin authentication** now succeeds for servers that declare a client ID in their manifest.
+- **Shell command approvals** from background subagents are now shown instead of being silently rejected.
+
+
+# 1.0.35 — 2026-09-16
+
+## Bug Fixes
+
+- **Headless MCP status reporting** and connecting reminders now match actual server handshake state.
+- **MCP tool searches and calls** now render with query, results, arguments and output on the daemon path.
+- **Swift string interpolation** with nested parentheses now highlights correctly in the TUI.
+- **Copy-paste in --minimal mode** no longer inserts extra blank lines or breaks long paths at wrap points.
+- **`/memory` modal** now shows copy confirmations, searches note contents, and works on narrow terminals.
+- **Memory delete** is now much faster and toggling memory on/off from a config-disabled session now correctly wires the agent.
+
+## Performance
+
+- **Syntax highlighting** now uses far less memory and runs faster on large TypeScript and other files.
+
+# 1.0.34 — 2026-09-16
+
+## Bug Fixes
+
+- **Markdown headings** now receive theme colors correctly.
+
+
+# 1.0.33 — 2026-09-15
+
+## Features
+
+- **MCP tool results** now include structured JSON data when the server provides it.
+- **Composer footer** now shows the Alt+Enter chord for inserting a newline when Cmd+Enter is unavailable over SSH.
+
+## Bug Fixes
+
+- **Fixed a bug** where pasting an image on macOS could attach the wrong image.
+- **MCP tool calls** listed directly now show their name, arguments, and any error message.
+- **Background subagent tasks** now correctly show cancelled status when the parent session closes.
+- The Subagents dock no longer shows an unclickable "Done N completed" row after all subagents finish.
+- Cancelled or timed-out MCP tool calls now notify the server so it can stop work instead of continuing in the background.
+- **/rewind** no longer fails when older compaction checkpoints are missing after a session sweep; only the base checkpoint for the target matters.
+- Large skill files are now capped at the same 25k-token limit as other reads; oversized skill bodies show a truncation note instead of flooding context.
+- Long-running sessions no longer lose old compaction checkpoints or prompt offloads during the 30-day cleanup sweep.
+- Auto "where was I" recaps no longer appear while a scheduled task, monitor, or workflow is still running.
+- In minimal mode, confirming /delete or /exit now immediately opens a new empty session instead of appearing stuck.
+- In minimal mode, resuming a session after /new now correctly reloads its history instead of showing the wrong session.
+- MCP tools that take no arguments no longer show a stray "{}" line in the permission sheet.
+- **`grok clone` on Windows** no longer fails when the repository's git config contains backslashes or quotes.
+
+
+# 1.0.32 — 2026-09-14
+
+## Bug Fixes
+
+- **Plugin and skill listings** from x.ai/plugins/list and x.ai/skills/* now reflect the latest config.toml even before the first session.
+- **Fixed crashes** on the first TLS handshake for Windows on ARM64 builds.
+- **Slash commands** like `/feedback` typed during plan approval now execute correctly.
+
+
+# 1.0.31 — 2026-09-13
+
+## Bug Fixes
+
+- **Folded subagent groups** in scrollback now correctly label how many are still running versus completed.
+- **Dashboard search** and the resume picker now clearly indicate the active text field and restore list selection after search.
+- **Dock sections** no longer keep a selection highlight after you collapse them with a click.
+- **Worktree paths** no longer show an extra suffix in the header or dashboard.
+- **MCP tools** with long server prefixes are now kept instead of being silently dropped.
+- **Turn cancelled** banners now correctly name the cause instead of always saying "by user".
+- **Long paths** in headers are now always shortened to the last two components.
+
+
+# 1.0.30 — 2026-09-11
+
+## Features
+
+- **Session header** redesigned as a single row that carries the overlay context and a Dashboard button.
+
+## Bug Fixes
+
+- **Elapsed-time display** now rolls over into hours (for example `3h14m`) instead of stopping at 60 minutes.
+- **Dock Watchers and Loops rows** now show when the next run is due.
+- **Workflow status** now shows a clickable row in the dock.
+
+## Performance
+
+- **Fixed lag in tmux** panes by omitting per-frame synchronized-update wrappers.
+
+
+# 1.0.29 — 2026-09-11
+
+## Bug Fixes
+
+- **Tab navigation** in the pager now cycles cleanly among prompt, scrollback, and the entire dock instead of stopping at every dock section.
+- **Ctrl+G** now hides or shows the dock in the pager; focus returns to scrollback when hiding.
+- **Multiple concurrent `grok agent stdio`** processes against the same GROK_HOME no longer crash at startup.
+- **MCP server connections** no longer fail against modern 2026-07-28 servers.
+- **Fixed startup crash** on Windows when the Client-ProjFS optional feature is disabled.
+
+## Performance
+
+- **Agent dashboard** no longer wastes CPU repainting identical frames when only idle spinners or hidden rows are present.
+
+
+# 1.0.28 — 2026-09-10
+
+## Features
+
+- **`/btw` now works mid-message**: the rest of the line becomes the side question and does not appear in the main transcript.
+- **Per-model `reasoning_summary`** setting is now available in config.toml for Responses API endpoints.
+
+## Bug Fixes
+
+- **Auto-update** no longer removes a grok binary that is still in use by another process.
+- **Prompt editor** no longer gets the cursor stuck or skips a row when pressing Up/Down across soft-wrapped lines.
+
+
+# 1.0.27 — 2026-09-10
+
+## Bug Fixes
+
+- **Queued messages** no longer appear twice when sent immediately.
+- **Dashboard spinners** no longer freeze when background tasks are running.
+
+
+# 1.0.26 — 2026-09-09
+
+## Features
+
+- **Interject messages** to subagents now interrupt long-running background waits so the message arrives immediately.
+- **Subagent message rows** in scrollback now indicate whether a message was sent as interject, queued, or steer.
+- **Feedback form** is now available directly in minimal mode without switching to fullscreen.
+
+## Bug Fixes
+
+- **`/btw` side questions** now include attached images from the composer.
+- **Background task reminders** no longer echo the original shell command.
+- **Failed background tasks** no longer produce duplicate reminders after the model reads their output.
+- **TPM rate-limit errors** during compaction are now retried instead of treated as context overflow.
+- **Ctrl+C** early in a turn now correctly rewinds the prompt without races.
+- **Dashboard arrow keys** now navigate the actions row from an empty input box.
+- **MCP tool calls** on legacy servers now correctly advertise elicitation support.
+- **Memory v2** now recovers from init failures and avoids stalled capture after repeated errors.
+
+
+# 1.0.25 — 2026-09-09
+
+## Features
+
+- **Background task list** is now sent as a durable snapshot so clients can restore state after reconnect.
+- **Hook runs** that succeed are now silent; only blocking or failing hooks show status or a single line.
+- **Vim-mode Shift+J/K** now jump to the next or previous turn at the top of the viewport, matching the timeline arrows.
+- **Double-click** now selects a radio button in settings choosers.
+- **Dashboard actions row** (+ New Agent, Open Previous, Worktree) can now be navigated with arrow keys and activated with Enter.
+- **Workflow tool** now supports pause and stop sources so agents can control background runs they launched.
+- **/theme** picker now matches aliases such as transparent, dark, or system and still inserts the canonical name.
+
+## Bug Fixes
+
+- **Bash command output** shown in the pager is now the complete result instead of a truncated tail.
+- **Voice dictation** now inserts text at the cursor instead of always appending to the end.
+- **Headless prompts** now time out cleanly instead of hanging forever when the agent does not respond.
+- **Scheduled tasks** now guide the agent to check results and clean up or update recurring schedules.
+- **Fixed duplicate user prompt rendering** in some ACP clients by making live echo opt-in.
+- **Fixed grok -c attaching the wrong empty session** after starting without --continue then resuming.
+- **Dock and queue hover colors** now match the rest of the terminal instead of using the stronger dropdown highlight.
+- **Fixed image upload errors** when reading Adobe SVGs that contain a PNG thumbnail prefix.
+- **Dock subagent rows** now show the same [stop] label as other killable rows.
+- **Fixed startup settings and model catalog** being shared or clobbered across concurrent boots or multiple accounts on the same machine.
+- **Dock Tasks panel** now shows the spinner aligned with the header instead of nested under a rule.
+- **/feedback <text>** now sends immediately again instead of starting a model turn; failures save to Drafts with a notice.
+
+## Performance
+
+- **Embedded launches** no longer time out while scanning the skills directory on slow filesystems.
+
+
+# 1.0.24 — 2026-09-07
+
+## Bug Fixes
+
+- **Esc** no longer cancels a running turn and instead reminds you to use Ctrl+C.
+
+
+# 1.0.23 — 2026-09-07
+
+## Bug Fixes
+
+- **Fixed bare URLs and emails** inside table cells so every wrapped line remains a working hyperlink.
+
+
+# 1.0.22 — 2026-09-07
+
+## Features
+
+- **Built-in agent tools** now take precedence over user MCP servers when tool names collide.
+- **Desktop app tools** are now available through a dedicated first-party MCP server.
+- **Remote control pickers** can now group servers by device using announced device identity.
+- **edit_file diffs** now show real file line numbers instead of starting at line 1.
+- **Permission prompts for file edits** now auto-expand the diff row so you can see the change before approving.
+- **Sending a message to a finished subagent** now continues that same subagent instead of failing.
+- **Background subagent completion messages** now show the actual output instead of just a pointer to run the tool.
+- **Dashboard** now shows a unified header with location picker and an actions row for creating agents or resuming previous sessions.
+- **New `grok-workspaced daemon`** mode lets a long-lived process expose folders to the Computer Hub (separate from the Desktop-supervised sidecar).
+
+## Bug Fixes
+
+- **MCP connectors** now correctly show when they need re-authentication even if no tools are listed.
+- **Extensions modal** shortcuts now work when the tab bar is focused, and invalid actions on headers show helpful messages.
+- **Send now** button and shortcuts now work correctly when an automatic background turn is running.
+- **Resumed sessions** now show the exact text you typed for mid-turn follow-ups instead of the wrapped system message.
+- **`/skills`** command now updates the model with newly installed skills even when written from another NFS client.
+- **Auto mode** no longer instantly runs destructive `git checkout --` commands; they now go through the model for safety.
+- **Fixed a crash** that could occur when restoring pasted content after certain skill injections or rewinds.
+- **Subagents and workflows** now respect the same bash timeout and auto-background settings configured for the parent session.
+- **Fixed model backend selection** so an explicit chat_completions setting in config.toml is no longer overwritten by same-slug siblings.
+- **Slash command advertisements** no longer spam repeatedly when your current directory is your home folder.
+- **Foreground shell commands** no longer produce spurious background-task reminders or incorrect kill results.
+- **Queued follow-up buttons** now appear in the order [Send now][edit][cancel].
+- **`/compact instructions`** in the pager are now passed to the compaction backend (bare `/compact` is unchanged).
+- **`/goal`** (and resume) after pressing Esc now correctly starts the goal planner instead of failing with "Planning failed".
+- **run_terminal_cmd** now correctly tells the model that foreground commands are backgrounded after ~15s instead of the 120s timeout value.
+- **Skill announcements** no longer repeat the same list of available skills multiple times in a session.
+- **Monitor events** in multi-session processes now correctly wake idle sessions instead of being buffered until the next prompt.
+
+## Performance
+
+- **Opening or resuming sessions** no longer pauses the interface while reading MCP config files.
+
+
+# 1.0.21 — 2026-09-04
+
+## Bug Fixes
+
+- **Permission mode** (auto / always-approve) now stays visible when the agent enters plan mode and is restored on exit.
+- Typing, pasting, or pressing Shift+Tab on the welcome screen now immediately opens the session instead of creating a duplicate one.
+- Dock sections, queue body, and reveal rows now stay within their documented height rules even on crowded terminals.
+
+
+# 1.0.20 — 2026-09-04
+
+## Bug Fixes
+
+- **Scroll history** after sending a prompt no longer loses the reserved bottom padding or jumps the viewport unexpectedly.
+
+
+# 1.0.19 — 2026-09-04
+
+## Breaking Changes
+
+- **Scheduled /loop tasks always run in the background**; they no longer inject turns into your conversation.
+
+## Features
+
+- **New terminal theme** option makes backgrounds transparent so the terminal's own colors show through.
+- **MCP servers blocked by organization policy** now show clear messages and are refused before any config change.
+- **Session resume now tells the model** what loops, subagents, and workflows were still running.
+- **Dashboard** now shows newly dispatched sessions immediately instead of waiting for the store.
+- **Headless sessions** (`grok -p`) now support the `--worktree` flag to run in a separate git worktree.
+- **Dashboard** now says 'Open session' instead of 'Add session' for the session picker button.
+- **Multi-line bash commands** now render with proper wrapping and highlighting when opening the block viewer.
+- **/usage** now works from the dashboard and shows account allowance when no session is active.
+
+## Bug Fixes
+
+- **Fixed mid-turn UI freezes** when the terminal stops reading output.
+- **Fixed crashes** that occurred when the terminal pane was closed while grok was exiting.
+- **MCP server list** in minimal mode now correctly shows policy-blocked servers.
+- URLs that wrap across multiple lines inside quotes or lists are now fully clickable.
+- **The welcome screen** composer now grows taller when you paste multi-line text.
+- **Enterprise policy files** are no longer deleted on startup when your team login is stored at a custom `GROK_AUTH_PATH`.
+- **/feedback** now drops unsupported images with a notice (matching the modal) and never loses your report text on save errors.
+- **Feedback drafts** keep their paragraph breaks when updated, and the modal no longer switches tabs unexpectedly.
+- **Turn summary lines** no longer lose their spacing after background tasks finish.
+- **Thinking blocks** no longer stay expanded after switching between fullscreen and minimal modes.
+
+## Performance
+
+- **First prompt after login is faster** when MCP servers are configured; they connect in the background.
+
+
+# 1.0.18 — 2026-09-02
+
+## Features
+
+- **Managed policy** now blocks disallowed MCP servers and marketplace installs before any change is written.
+- **Quoting** a previous message from the block viewer now works directly from the viewer.
+- **Welcome screen** now stays until you actually send a prompt; a session is prepared in the background.
+- **Feedback** is now collected in a centered modal instead of a bottom card.
+- **Feedback submissions** now include structured type, task, and failure information.
+- **Feedback modal** now has a Drafts tab to manage and send saved drafts.
+- **Models** can now render interactive charts using Chart.js.
+- **grok inspect** and **grok mcp doctor** now show managed policy details.
+- **Image generation** now supports richer parameters via composer state.
+- **Retry behavior** for rate-limited requests is now configurable per model.
+- Models can now be configured with per-model mTLS client certificates for secure upstream connections.
+- **`/feedback <text>`** now saves a local draft before invoking the feedback skill.
+
+## Bug Fixes
+
+- **Authentication recovery** during turns no longer fails immediately on transient errors.
+- The session dock now aligns consistently, shows more rows inline when expanded, and reveals stop controls on hover.
+- **Pastes** from rich-text sources no longer stay inline or corrupt the composer when they contain special Unicode line separators.
+- **Mouse wheel** over a one-line prompt now scrolls the conversation history instead of being ignored.
+- **Slash dropdowns** no longer truncate long command names when a short sibling is also visible.
+- **Subagent sessions** now respect the retry and rate-limit settings of their selected model.
+- **Session picker** now opens with Ctrl+R everywhere; redo uses Ctrl+Shift+Z or Alt+Z.
+- **Subagent views** no longer duplicate the task prompt on first open after a live echo.
+- **Strikethrough text** now renders correctly inside markdown tables in the pager.
+- **Resume picker** now labels local sessions with a single disk walk instead of per-row lookups.
+
+## Performance
+
+- **Startup** no longer hangs on slow networks while fetching remote settings.
+- **Responses** now complete faster; uploads and session bookkeeping happen in the background.
+- **Startup** now makes fewer network requests by sharing settings fetches.
+- **New sessions** start responding faster by running start hooks in the background.
+
+
+# 1.0.17 — 2026-09-01
+
+## Features
+
+- **MCP tools** now support the 2026-07-28 multi-round-trip elicitation flow where a tool call can return an input_required state that is resumed on retry.
+- **Next-prompt ghost suggestions** now appear less often and are more accurate by preferring silence when the next line is not obvious.
+
+## Bug Fixes
+
+- **Table cell selection** inside /btw panels now correctly highlights cells and copies as TSV instead of drawing a linear rectangle.
+
+
+# 1.0.16 — 2026-09-01
+
+## Breaking Changes
+
+- **Enterprise policies** can now restrict which models users may select via signed requirements.toml.
+
+## Features
+
+- **MCP servers** can now be supplied at session bind time for workspace integrations.
+
+## Bug Fixes
+
+- **Long-running sessions** interrupted by expired tokens during network issues no longer lose work.
+- **Slash command suggestions** with very long names no longer show blank labels in the dropdown.
+- **Sending a message immediately after spawning a subagent** no longer fails while the child is still starting.
+- **Loading spinners** inside the extensions modal (/mcps and other tabs) now animate correctly.
+- **MCP server OAuth authentication** triggered from /mcps no longer deadlocks the session.
+
+## Performance
+
+- **Long-running subagent and task output waits** now default to a one-hour ceiling instead of ten minutes.
+
+
+# 1.0.15 — 2026-08-31
+
+## Features
+
+- **Tip appears** after repeated scrollback drag-copies suggesting /copy and /export commands.
+
+## Bug Fixes
+
+- **Session close** is now faster because memory consolidation runs at the next launch instead of blocking exit.
+- **Typed input including Enter** during pager startup is now preserved and correctly interpreted as submit or newline.
+- **Dock panel** input and rollout now respect remote settings and correctly handle keyboard focus when hidden or empty.
+
+## Performance
+
+- **First reply latency** is reduced by opening the model connection in the background when a session starts.
+- **Signed-in startup** is faster because an expired token refresh now begins in the background at agent spawn.
+- **Creating a new session** returns faster; MCP tools and other startup work happen in the background.
+
+
+# 1.0.14 — 2026-08-31
+
+## Features
+
+- **OIDC token refresh** is now proactive by default for better reliability.
+- **PostToolUse hooks** can now provide feedback and context to the model after tool execution.
+- **SDK-registered PostToolUse hooks** now provide model-facing feedback.
+- **grok usage <session-id>** now shows persisted per-turn token and cost data.
+- **Retry status** in composer and title now shows a short reason for the retry.
+- **Models can now declare** a different identifier for each reasoning-effort level instead of always sending the same id.
+- **Prompt suggestions** now respect remote configuration and default to the current session model.
+- **Windows CLI downloads** are now ~70% smaller using the same compressed sidecars as macOS and Linux.
+
+## Bug Fixes
+
+- **grok inspect** now correctly shows Claude bypass locks as advisory rather than enforced.
+- **Subagent sessions** no longer leak threads or file descriptors when the parent is busy.
+- **Cold startup** no longer performs duplicate remote settings fetches.
+- **Compaction failures** due to context size now degrade input instead of retrying identically.
+- **--sandbox strict** now restricts writes to ~/.grok/sessions only.
+- **Subagent spawning** now waits longer on a busy coordinator and shows clearer retry guidance instead of "unreachable".
+- **Failed task and todo tool calls** now appear in the transcript instead of disappearing without a trace.
+- **Composer status row** no longer collapses or flashes when using double-Enter to send now.
+- **Session close** is no longer delayed by a single slow hook; each SessionEnd hook now has its own timeout.
+- **Hook removal** in the extensions modal no longer offers actions that the handler will refuse.
+- **Interjections** during a turn are now delivered atomically or not at all.
+- **Subagent tasks** no longer get incorrectly cancelled when the parent session is waiting for completion.
+- **Workflow detail view** now closes the overlay on X or outside click instead of returning to the run list.
+- **Resuming subagents** now succeeds for larger transcripts that still fit the model context with headroom.
+
+## Performance
+
+- **Startup** now fetches remote settings only once per boot instead of potentially twice.
+- **First message** on large repositories no longer waits on repository status scan.
+- **Large session memory** no longer blocks the agent during turn completion or subagent spawning.
+- **Signed-in CLI starts** faster by serving remote settings from a local cache on warm boots.
+
+
+# 1.0.13 — 2026-08-28
+
+## Features
+
+- **Length-truncated responses** now continue automatically instead of failing the turn.
+- **Hooks** can now ask the user to confirm a tool call instead of always allowing or denying.
+- **Hooks** can now request deferral or add context shown to the model after a tool runs.
+- **Session close** now records detailed timing data for performance analysis.
+- **Credit limit upsell** now offers a Try Again button to retry the last prompt.
+- **Pasted images** now show a live pixel preview in the prompt box on iTerm2.
+
+## Bug Fixes
+
+- **Transient inference failures** (stalls, drops, 5xx) now retry automatically instead of ending the turn.
+- **Windows users** can now correctly open ~/.grok and worktree sessions.
+- **Session data** is now more reliably saved after prompts and on power loss.
+- **Compaction failures** now show the actual error instead of a generic message.
+- **Truncation error messages** now show the right guidance instead of suggesting an unhelpful retry.
+- **Truncated tool calls** are now executed instead of failing the turn when arguments are complete.
+- **Images larger than 2000px** no longer brick sessions on many-image requests.
+- **Wrapped hyperlinks** in the pager now remain fully clickable on Windows Terminal instead of only the first line.
+- **Recurring scheduled tasks** now include a reminder to stop the monitor when work finishes.
+- **Scheduled task IDs** are now full UUID strings, preventing collisions when tasks are created in the same millisecond.
+
+## Performance
+
+- **Subagent spawning** is faster when connections drop during bursts.
+- **Session startup** with MCP servers is now much faster when auth is already configured.
+- **MCP server startup** no longer stalls behind a fixed batch size.
+- **CLI downloads** are now compressed, making fresh installs and updates substantially faster.
+
+
+# 1.0.12 — 2026-08-27
+
+## Features
+
+- **Credit-limit upsell** now includes a Try Again option. Max-tier users see the same question modal without Upgrade tier.
+
+## Bug Fixes
+
+- **Copying wrapped table cells** no longer inserts unwanted spaces at line breaks.
+- **MCP server connections** that fail transiently now retry instead of staying unavailable.
+- **Waiting on subagents** after an interjection no longer blocks on unrelated background work.
+- **Prompt blocks** now show friendly hook descriptions instead of internal IDs.
+- **Truncation error message** no longer suggests asking for a shorter answer.
+- **Context estimates** for conversations with reasoning are now more accurate.
+- **Token usage** after rewinding or switching modes now matches the actual server-reported count instead of overestimating.
+- **Context bar** now updates immediately when auto-compaction begins instead of waiting until it finishes.
+- **File system monitoring** for .NET projects no longer creates excessive watchers on Linux.
+- **Auto recap** no longer appears while a background task or monitor wake turn is streaming.
+
+## Performance
+
+- **Worktree creation** is faster by skipping stale reflog copies.
+
+
+# 1.0.11 — 2026-08-26
+
+## Features
+
+- **Headless sessions** are now browsable in the resume picker without mixing into default history.
+- **Default permission mode** for new interactive sessions is now configurable.
+- **Turn duration** now appears in session history after resume.
+- **Turn footers** (Worked for, cancelled, failed) now appear after /resume.
+- **mkdir and touch** no longer prompt in auto mode or safe-command lists.
+- **Subagent messages** are now allowed automatically in permission Auto mode.
+- **Headless sessions** can now auto-allow permission prompts via a startup hint.
+
+## Bug Fixes
+
+- **Permission prompts** for common command chains and subcommands are now more reliable.
+- **Blocked prompts** no longer appear in conversation history or scrollback after restart.
+- **Background monitors** no longer have a 10-hour default timeout.
+- **Mouse input** at the right margin no longer types characters into the prompt on certain terminals.
+- **Pasting text ending in a newline** no longer accidentally submits the prompt on some terminals.
+- **Auto mode** now shows a permission card when the classifier blocks an action on interactive sessions.
+- **Image previews** no longer leave ghost artifacts when using the Kitty protocol on Warp.
+- **Expanded Execute tool output** no longer snaps closed during live progress.
+- **/voice** now falls back to parec/arecord on older PipeWire installs.
+
+## Performance
+
+- **Background command waits** now finish as soon as the process exits.
+
+
+# 1.0.10 — 2026-08-24
+
+## Performance
+
+- **grok clone** now reuses matching local checkouts as linked worktrees for faster session creation.
+
+
+# 1.0.9 — 2026-08-24
+
+## Features
+
+- **New sessions in the interactive TUI** now start in auto mode by default for fewer approval prompts.
+- **/feedback now supports attaching images** (screenshots etc.).
+- **The / slash menu** is now ordered by recency and groups skills below commands for easier navigation.
+- **/workflow** now accepts --agent-budget N or an agent_budget JSON field to set child-agent limits.
+- **/workflow** now accepts --effort LEVEL or an effort JSON field to set child reasoning effort.
+- **MCP servers** now receive a grok-cli User-Agent header so providers can attribute traffic.
+- **Dashboard** now lets you start new agents in Auto mode via Shift+Tab.
+- **Workflows** now appear alongside skills in the model prompt so the agent can launch them by name.
+- **`/edit-prompt`** now opens an external editor from the full TUI, not only minimal mode.
+- **Up arrow** on an empty prompt now selects queued follow-ups first instead of opening history.
+- **/plugin** now works as an alias for **/plugins** in the TUI.
+- **Plugin-provided agents** now appear in the **/agents** modal and can be toggled.
+- **/minimal** and **/fullscreen** now switch instantly inside the running session without restarting or losing the current turn.
+- The configurable status line row now appears at the bottom of minimal mode as well as fullscreen.
+- **grok clone** now fetches only the selected branch tip by default, with --full-history for legacy full clones.
+- **grok clone** can now reuse a matching local checkout as a linked worktree instead of always fetching from the network.
+
+## Bug Fixes
+
+- **Subagent tasks** are more resilient to temporary rate limits and will retry instead of failing immediately.
+- **Narrow allow rules for Bash commands** now correctly permit file writes without extra prompts.
+- **Rules** containing markdown headings now render correctly in the prompt.
+- **/new** and **/clear** now preserve the last-chosen reasoning effort instead of resetting to the model default.
+- **Prompt dropdowns** (slash, history, file search) now have consistent left alignment with the composer.
+- **History** now shows every command, slash command, and memory note in the order you typed them.
+- **Collapsed tool-call rows** no longer show a vertical accent line beside the status diamond.
+- **Hint text** above the prompt now lines up with the text you type.
+- **Pressing Esc** while peeking at a conversation from the dashboard now closes open modals instead of leaving the view.
+- **`/copy`** now preserves markdown formatting such as headings and code fences.
+- **Sending a new message** while a shell command is running now moves the command to the background instead of cancelling it.
+- **grok mcp add** now correctly treats bare http(s):// URLs as HTTP servers instead of stdio commands.
+- Plan mode no longer incorrectly blocks subagent spawns as file edits outside plan.md.
+- MCP servers that share a URL but have different names are now kept as separate entries instead of being collapsed.
+- Subagents and workflow-spawned agents no longer receive the workflow tool that only top-level sessions can use.
+- Memory results are now presented as historical context that should be verified against live sources before use.
+- **Interactive grok sessions** now start in ask mode by default again instead of auto.
+- **Minimal mode** no longer truncates subagent wake-turn replies after the first token.
+
+## Performance
+
+- **Concurrent subagents** no longer trigger rate-limit errors during bursts.
+- **MCP server connections** no longer delay session startup when many servers are configured.
+
+
+# 1.0.8 — 2026-08-20
+
+## Features
+
+- MCP servers can now ask for form input or URL consent through the same popup used for questions.
+- Ctrl+S now stashes the current prompt draft so you can send something else and restore it later.
+- ** /workflow** now autocompletes saved workflow names and shows only valid runs for pause/resume/stop/save.
+
+## Bug Fixes
+
+- Downloading a folder that contains only one file now produces a zip that still extracts as a folder.
+- Failed tool calls for tools the model invented now clearly state the tool does not exist.
+- **Status line** refresh timer now uses consistent naming and no longer shows errors on deliberately hidden rows.
+- **Workflow agent rows** now display current context usage instead of cumulative token counts.
+- **Follow-up messages** now send immediately while waiting on a subagent or task, including after using /btw.
+- Subagents and workflow-spawned agents no longer see the workflow tool, which can only be launched from a top-level session.
+
+## Performance
+
+- Opening many subagents at once no longer freezes the interface while loading their history.
+- **Concurrent subagents** now start much faster and no longer freeze the parent session.
+
+
+# 1.0.7 — 2026-08-19
+
+## Features
+
+- Users hitting startup timeouts can now raise the connect budget with the `GROK_CONNECT_UI_TIMEOUT_SECS` environment variable.
+- Permission prompts now show "Always allow" and "Never allow" options by default.
+- Users can now delete scheduled background loops directly from the tray.
+- **Status line command** scripts can now run on a timer via refresh_interval in config.toml.
+- **Permission prompts** now offer a 'Never allow' choice for MCP tools and web-fetch domains that persists per project.
+- **Workflows tab** added to the extensions modal (Ctrl+L or /plugins) listing installed workflows with name, source, and description.
+- **New /workflows** command opens the Workflows catalog tab; use **/workflow runs** to view live workflow runs.
+- **Bare /workflow** (or /workflow runs) now lists active and recent workflow runs with status and progress instead of usage help.
+- **Workflows** row added to the Ctrl+P command palette, opening the Workflows catalog tab.
+
+## Bug Fixes
+
+- **MCP server connections** in non-interactive sessions no longer incorrectly require authentication for tokenless servers.
+- Fixed startup timeouts caused by concurrent auth refreshes across multiple sessions.
+- **Tool call loops** are interrupted earlier to avoid wasting time on repeated identical actions.
+- **Subagents** no longer receive the ask-user-question tool.
+- Bare email addresses are now turned into clickable mailto links in the pager.
+
+
+# 1.0.6 — 2026-08-18
+
+## Breaking Changes
+
+- **Subagent spawning** no longer accepts capability_mode; tool access is now controlled only by agent type.
+
+## Features
+
+- **Shift+arrow keys** now extend text selections in the prompt like a standard text field.
+- **Optional status line** can now display live session info or script output at the bottom of the pager.
+- **grok clone** can now fetch a repo into a content store and mount a projected working tree.
+
+## Bug Fixes
+
+- **Fixed session startup hangs** on large or unhealthy git repositories.
+- **Queued messages** during goals no longer starve, and editing queued prompts works reliably.
+- **Consent notice** on first launch now shows clickable links and handles keyboard/mouse correctly.
+- **Ctrl+C then edit** a prompt now correctly removes the original text from the conversation.
+- **Double-clicking** a terminal command result now shows the complete output instead of a preview.
+- **Consent notice links** are now stricter and more reliable on all terminals.
+- **Video generation** now surfaces a clear ZDR error instead of raw API responses when output storage is required.
+- **Project hooks** on Windows now correctly expand $CLAUDE_PROJECT_DIR when invoking PowerShell scripts.
+
+
+# 1.0.5 — 2026-08-15
+
+## Features
+
+- **GROK_CONFIG** and **GROK_CONFIG_PATH** environment variables now let launchers override selected config settings without editing config.toml.
+- **Worktrees** under ~/.grok/worktrees are now automatically reclaimed when safe, with strong safeguards that never delete a user's last copy.
+- **Hook policy blocks** now correctly report "Turn blocked by a hook" instead of "Turn cancelled by user."
+- **Image and video generation** now limits how many calls the model can request in one step to avoid overload.
+- **Arabic and Persian text** can now be reordered correctly in the terminal UI. Turn on in /settings.
+- **Reasoning effort** can now be supplied when an ACP client opens or resumes a session.
+- **Session titles** now refresh early in the conversation and stay stable; /resume shows a recap and last-turn summary when available.
+- **GROK_FORCE_LOGIN_TEAM_ID** environment variable now lets launchers restrict interactive login to one or more teams.
+- **Preparing spinner** now shows readable labels such as "Writing file…" and "Writing edit…" for common tools.
+
+## Bug Fixes
+
+- **Tool calls** (shell, grep, list_dir) no longer fail for the rest of a session if /dev/null is removed.
+- **Agent skill discovery** now resolves the user's home directory correctly on Windows.
+- **MCP tool calls** now show clearer spinner text instead of the raw wire name while arguments are still arriving.
+- **grok inspect** no longer crashes when its output is piped into a command that closes the pipe early.
+- **Minimal mode** no longer truncates a still-streaming assistant reply when thinking blocks are interleaved.
+
+
+# 1.0.4 — 2026-08-13
+
+## Features
+
+- **New StopCancelled hook event** now reports when a turn ends without completing (interrupt, permission reject, max turns, etc.).
+- **Recurring /loop tasks** now show a one-line expiry notice in the transcript when they auto-expire after 7 days.
+- **Web search** can now be restricted to allowed or excluded domains via [toolset.web_search] in config.toml.
+- **Session search index** can now be disabled via GROK_SESSION_SEARCH or [features] session_search for hosts sharing $GROK_HOME.
+- **Drag to select and copy** values on the /session-info tab; c and y shortcuts also work.
+- **Double-click now selects a word** by default and triple-click selects the whole paragraph.
+- **New follow-up behavior setting** lets queued messages send immediately as interjections instead of waiting for the turn to finish.
+- Tool commands and MCP servers now receive a GROK_SESSION_ID environment variable matching the current session.
+- Relative markdown links can now open existing files in your current working directory when no matching generated media is found.
+- PreToolUse hooks can now rewrite a tool's input before it runs instead of only allowing or denying the call.
+
+## Bug Fixes
+
+- **Queued messages** no longer auto-submit while you are still editing them in the composer.
+- **Sessions poisoned by rejected images** are now healed permanently so future turns succeed without retrying the bad image.
+- **Auto permission mode** now correctly honors your explicit "always allow" grants and narrow allow rules from settings.
+- **Subagent lifecycle events** are now preserved even when delivered out of order, ensuring all subagents appear correctly in the UI.
+- **Keystrokes typed while Grok is starting** are now preserved in the composer instead of being lost.
+- **Background tasks killed from the UI** now correctly wake the model when needed instead of staying parked after a single-task stop.
+- **[stop]** / Ctrl+C inside a fullscreen subagent overlay now cancels the visible child session.
+- **Hook failures** now show the first line of stderr output instead of only the exit code.
+- **Pasting text or dragging images** while the scrollback pane is focused now focuses the composer and pastes there.
+- **[stop]** / Ctrl+C inside a subagent drill-in view now stops the focused subagent instead of the root session.
+- The dashboard shortcut now works with Ctrl+4 in terminals that do not support the Kitty keyboard protocol.
+- Pasting image-only screenshots from tools like Flameshot now works on Linux without a clipboard error.
+- Editing a queued prompt to a slash command like /btw now runs the command instead of sending the text to the model.
+- Text typed while a plan is being generated is now preserved when the approval screen appears.
+- **`grok du`** and worktree commands now work on Windows when only USERPROFILE is set.
+- Permission-mode changes made on the welcome screen now correctly apply to the newly created session.
+
+## Performance
+
+- **Finished subagent transcripts** are now evicted from memory to reduce RAM usage and rebuilt from disk when reopened.
+
+
+# 1.0.3 — 2026-08-12
+
+## Features
+
+- **/session-info** now lets you click any row to copy its value, with hover highlights and a copy-all shortcut.
+
+## Performance
+
+- **Subagent spawning** is dramatically faster when you have many sessions in ~/.grok.
+- **TUI rendering** now automatically matches high-refresh displays (120 Hz+) for smoother scrolling and painting.
+
+
+# 1.0.2 — 2026-08-11
+
+## Features
+
+- **Tool-call argument streaming** now shows a distinct spinner label instead of a generic "Waiting for response…" message.
+- **Harness** now includes UI-verification instructions and project/user rules higher in prefix.
+- **Large sessions** with images no longer exceed limits during compaction
+
+## Bug Fixes
+
+- **Fixed recovery** from server-rejected images so poisoned sessions no longer become permanently unusable.
+- **Improved startup timeout messages** to show which step took longest, elapsed times, and actionable advice instead of a generic error.
+- **Worktree copies** of large repos no longer inherit dangerous fetch specs or stale shallow grafts.
+- **Privacy banner** can now be dismissed from Settings even when you are already opted out.
+- **Status bar** now keeps showing your current model after a catalog refresh even if that model is no longer listed.
+- **Grouped tool calls** now stay grouped even when hooks attach metadata, and show hook results in the header.
+- **Cmd+click** on autolinks in Apple Terminal now opens the correct URL when multiple messages are visible.
+
+# 1.0.1 — 2026-08-10
+
+## Breaking Changes
+
+- /rewind now only truncates conversation history instead of files as well and asks for confirmation by default.
+- **Managed MCP servers** are now only available through the gateway catalog.
+
+## Features
+
+- **Subagent spawning** is now bounded; wide fan-outs queue instead of exhausting file descriptors.
+- New `grok du` command shows disk usage of ~/.grok including worktrees and sessions.
+- **Tools** now report whether they only read data, enabling safer restricted agents and subagents.
+- **Sandbox workspace** sessions can now limit which bundled skills are advertised via caller config.
+- **Renaming a session** from the dashboard now starts with the current title prefilled for easy editing.
+- **/usage**, **/session-info**, and **/context** now open in a tabbed modal instead of adding text to the conversation.
+- **grok trace** exports now bundle memory trace files for easier debugging.
+- Session rename now enforces a 100-character limit, ghost-prefills the current title, and preserves manual titles across machines.
+- New `/rename --auto` command unpins a manual session title so automatic titling resumes.
+- Video generation from references now supports preset voices, single-image input, 1–15 s durations, and 4:3 / 3:4 aspect ratios.
+
+## Bug Fixes
+
+- **Sandbox config** entries ending in /** now correctly grant the parent directory instead of creating a literal ** subdirectory.
+- **Failed alpha/enterprise updates** now suggest the matching GROK_CHANNEL reinstall command.
+- **On Apple Silicon**, grok now installs the native arm64 build even from a Rosetta shell or x86_64 updater.
+- **Skills** that share names with built-in commands now appear alongside them in the slash menu with qualified names.
+- **Notebook** permission rules imported from Claude configs are now ignored with a warning instead of applying broadly.
+- **Goal evaluation** at round end no longer fails due to timeouts.
+- **Tool timeouts** no longer cause the agent to hang when child processes are stuck in D-state or hold pipes open.
+- **Home** and **End** keys now move to the start or end of the current logical line even when the prompt is wrapped.
+- **Worktree** sessions now correctly show their branch in the status bar.
+- **Worktree** sessions now keep their status correctly when switching directories or resuming.
+- **Worktree** status is no longer lost when opening the dashboard.
+- **Recaps** are now written in the same language as your conversation.
+- **Plugin suggestions** no longer flash incorrectly while typing.
+- **Send Now** now works during active goals without cancelling the goal.
+- **Headless sessions** now correctly wait for MCP servers when using delivery tools.
+- **Non-interactive sessions** (`grok -p`) no longer fail when the agent asks for user input or plan approval.
+- **read_file errors** for missing skills now suggest the correct registered path instead of a generic hint.
+- **Session load and creation** can no longer freeze forever when `.envrc` evaluation blocks.
+- **Upgraded installs** no longer silently run outdated platform skill instructions.
+- **Deleting a session** now properly stops and waits for any running subagents before wiping history.
+- **Permission and plan-approval notification hooks** no longer fire on auto-allowed tools.
+- **Mid-turn steering** sent with double-Enter or Ctrl+Enter now correctly tells the model it arrived while work was in progress.
+- **Scrollback drag selection** no longer gets stuck after the mouse button is released outside VS Code or Cursor terminals.
+- **Video generation tools** now show a clear error explaining ZDR storage requirements instead of silently disappearing.
+- **Esc on the cancel-turn panel** now closes the panel and keeps the current turn running as the shortcuts bar indicates.
+
+## Performance
+
+- **Git status** and diff operations no longer cause high CPU or memory use on large repositories.
+- **Large git histories** no longer cause excessive memory use or unresponsiveness.
+- **History search** no longer leaks background threads in long sessions with many subagents.
+- **Resuming large sessions** is now significantly faster and the UI no longer shows an incomplete transcript while replay is still applying.
+
+
 # 1.0.0 — 2026-08-07
 
 ## Features

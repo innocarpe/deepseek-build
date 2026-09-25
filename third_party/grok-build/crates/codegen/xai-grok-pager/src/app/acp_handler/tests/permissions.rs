@@ -1,9 +1,6 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
     use super::*;
 
-    /// The permission prompt must surface the payload an MCP call would
-    /// send — both `UseTool` (meta-dispatch) and `MCPTool` (natively
-    /// registered) raw_input shapes.
     #[test]
     fn mcp_args_lines_extracts_planned_tool_input() {
         for variant in ["UseTool", "MCPTool"] {
@@ -25,8 +22,6 @@
         }
     }
 
-    /// Non-MCP raw_input (bash, edit, gateway `{command}` shapes) must not
-    /// grow a JSON dump — those prompts have dedicated displays.
     #[test]
     fn mcp_args_lines_empty_for_non_mcp_shapes() {
         for raw in [
@@ -44,22 +39,20 @@
         }
     }
 
-    /// A `tool_input` that is missing or JSON null renders nothing rather
-    /// than a misleading `null`.
     #[test]
-    fn mcp_args_lines_empty_for_missing_or_null_input() {
+    fn mcp_args_lines_empty_for_missing_null_or_empty_input() {
         for raw in [
             serde_json::json!({"variant": "UseTool", "tool_name": "t"}),
             serde_json::json!({"variant": "UseTool", "tool_name": "t", "tool_input": null}),
+            serde_json::json!({"variant": "UseTool", "tool_name": "t", "tool_input": {}}),
+            serde_json::json!({"variant": "MCPTool", "tool_name": "t", "tool_input": {}}),
+            serde_json::json!({"variant": "UseTool", "tool_name": "t", "tool_input": []}),
         ] {
-            let req = permission_req_with_raw_input(Some(raw));
-            assert!(mcp_args_lines(&req).is_empty());
+            let req = permission_req_with_raw_input(Some(raw.clone()));
+            assert!(mcp_args_lines(&req).is_empty(), "expected no lines for {raw}");
         }
     }
 
-    /// A pathological single-line value (e.g. an embedded base64 blob) is
-    /// elided at `MCP_ARGS_MAX_LINE_CHARS` so per-frame wrap cost stays
-    /// bounded. Uses a multi-byte char to pin char (not byte) slicing.
     #[test]
     fn mcp_args_lines_caps_line_length() {
         let req = permission_req_with_raw_input(Some(serde_json::json!({
@@ -76,8 +69,6 @@
         assert!(long.ends_with('…'));
     }
 
-    /// Pathologically large payloads are capped in storage with an explicit
-    /// hidden-line count (the overlay clips further at render time).
     #[test]
     fn mcp_args_lines_caps_stored_lines() {
         let big: serde_json::Map<String, serde_json::Value> = (0..MCP_ARGS_MAX_LINES + 50)
@@ -97,8 +88,80 @@
         );
     }
 
-    /// Manual recap with an uncommitted in-flight spinner: filled in place
-    /// (no second block), animation stopped.
+    fn hook_ask_permission_req(
+        raw_input: serde_json::Value,
+        title: &str,
+        options: Vec<acp::PermissionOption>,
+    ) -> acp::RequestPermissionRequest {
+        let ask = xai_grok_workspace::permission::HookAsk {
+            hook_name: "guard".to_owned(),
+            reason: Some("confirm this".to_owned()),
+        };
+        let mut meta = serde_json::Map::new();
+        meta.insert(
+            xai_grok_workspace::permission::HOOK_ASK_META_KEY.to_owned(),
+            serde_json::to_value(&ask).unwrap(),
+        );
+        let fields = acp::ToolCallUpdateFields::new()
+            .raw_input(Some(raw_input))
+            .title(Some(ask.prompt_header(title)));
+        acp::RequestPermissionRequest::new(
+            acp::SessionId::new(std::sync::Arc::from("s1")),
+            acp::ToolCallUpdate::new(acp::ToolCallId::new(std::sync::Arc::from("call-1")), fields),
+            options,
+        )
+        .meta(Some(meta))
+    }
+
+    fn allow_all_edits_option() -> acp::PermissionOption {
+        acp::PermissionOption::new(
+            acp::PermissionOptionId::new(std::sync::Arc::from("allow-edits-session")),
+            "Yes, allow all edits this session".to_string(),
+            acp::PermissionOptionKind::AllowAlways,
+        )
+    }
+
+    #[test]
+    fn hook_ask_is_the_first_description_line_on_every_prompt_shape() {
+        let ask_line = "hook 'guard' asks: confirm this";
+        for (raw_input, acp_title, options, expected_title, expected_command) in [
+            (
+                serde_json::json!({"command": "rm -rf /tmp/x", "description": "Clean tmp"}),
+                "Execute `rm -rf /tmp/x`",
+                vec![],
+                "Clean tmp",
+                Some("rm -rf /tmp/x"),
+            ),
+            (
+                serde_json::json!({"file_path": "/tmp/x.rs", "old_string": "a", "new_string": "b"}),
+                "Edit /tmp/x.rs",
+                vec![allow_all_edits_option()],
+                "Allow Edit to /tmp/x.rs?",
+                None,
+            ),
+            (
+                serde_json::json!({"target_file": "/tmp/x.rs"}),
+                "Read `/tmp/x.rs`",
+                vec![],
+                "Allow Read `/tmp/x.rs`?",
+                None,
+            ),
+            (
+                serde_json::json!({"cmd": "ls -la"}),
+                "Execute `ls -la`",
+                vec![],
+                "Allow Execute?",
+                Some("ls -la"),
+            ),
+        ] {
+            let req = hook_ask_permission_req(raw_input, acp_title, options);
+            let (title, description, command) = build_permission_display(&req, None, false);
+            assert_eq!(title, expected_title);
+            assert_eq!(command.as_deref(), expected_command);
+            assert_eq!(description.first().map(String::as_str), Some(ask_line));
+        }
+    }
+
     #[test]
     fn recap_fills_uncommitted_spinner_in_place() {
         let mut agent = make_agent(Some("s1"));
@@ -117,10 +180,6 @@
         assert!(agent.pending_recap_entry.is_none());
     }
 
-    /// Regression (minimal mode): the spinner was already committed into
-    /// native scrollback (print-once) — an in-place fill would never reach the
-    /// terminal. The stale committed entry is dropped from state and the recap
-    /// appended as a fresh (uncommitted) block so the commit pass prints it.
     #[test]
     fn recap_reprints_fresh_block_when_spinner_already_committed() {
         let mut agent = make_agent(Some("s1"));
@@ -130,7 +189,6 @@
                 recap_block(""),
             ));
         agent.pending_recap_entry = Some(spinner);
-        // The minimal idle commit pass consumed the spinner.
         agent.scrollback.finish_running(spinner);
         agent.scrollback.mark_committed(0);
         agent.scrollback.set_commit_scan_cursor(1);
@@ -151,8 +209,6 @@
         );
     }
 
-    /// An automatic recap never consumes the manual loading slot — it always
-    /// appends its own block and leaves the pending spinner alone.
     #[test]
     fn auto_recap_appends_and_leaves_manual_spinner_pending() {
         let mut agent = make_agent(Some("s1"));
@@ -190,6 +246,38 @@
         );
     }
 
+    /// Wake turns (monitor exit, task/subagent completion) never adopt into `TurnRunning`; the pane stays idle while they stream.
+    /// Recap must not paint mid-wake-turn.
+    #[test]
+    fn late_auto_recap_dropped_while_wake_turn_streams() {
+        let mut agent = make_agent(Some("s1"));
+        agent.running_wake_turn = Some(crate::app::agent_view::RunningWakeTurn {
+            prompt_id: "task-completed-mon-1".into(),
+            cancel_sent: false,
+        });
+
+        assert!(
+            should_drop_late_auto_recap(true, false, &agent),
+            "streaming wake turn is not idle for recap"
+        );
+        assert!(
+            !should_drop_late_auto_recap(true, true, &agent),
+            "history replay rebuilds scrollback even mid-wake-turn"
+        );
+
+        agent.running_wake_turn.as_mut().unwrap().cancel_sent = true;
+        assert!(
+            should_drop_late_auto_recap(true, false, &agent),
+            "cancelling wake turn is still not idle"
+        );
+
+        agent.running_wake_turn = None;
+        assert!(
+            !should_drop_late_auto_recap(true, false, &agent),
+            "wake terminal landed: recap can paint again"
+        );
+    }
+
     fn running_bg_task(is_monitor: bool) -> crate::app::agent::BgTaskState {
         crate::app::agent::BgTaskState {
             task_id: "t1".into(),
@@ -214,8 +302,35 @@
         }
     }
 
+    fn workflow_run_snapshot(
+        run_id: &str,
+        status: &str,
+    ) -> crate::views::workflows::WorkflowRunSnapshot {
+        crate::views::workflows::WorkflowRunSnapshot {
+            run_id: run_id.to_owned(),
+            name: "deep-research".to_owned(),
+            objective: "obj".to_owned(),
+            status: status.to_owned(),
+            management_available: true,
+            builtin: false,
+            phases: Vec::new(),
+            current_phase: None,
+            agents: Vec::new(),
+            agent_budget: None,
+            agents_used: 0,
+            agents_reserved: 0,
+            agents_remaining: None,
+            agent_usage_incomplete: false,
+            active_agents: 0,
+            elapsed_ms: 1_000,
+            received_at: std::time::Instant::now(),
+            pause_message: None,
+            result_summary: None,
+        }
+    }
+
     #[test]
-    fn recap_idle_allows_monitors_but_not_subagents_or_turn_wait() {
+    fn recap_idle_requires_no_wake_source_and_no_turn_wait() {
         let mut agent = make_agent(Some("s1"));
         agent.scrollback.push_block(
             crate::scrollback::block::RenderBlock::agent_message("done"),
@@ -227,9 +342,10 @@
 
         agent.session.bg_tasks.insert("mon".into(), running_bg_task(true));
         assert!(
-            !should_drop_late_auto_recap(true, false, &agent),
-            "running monitors must not block recap"
+            should_drop_late_auto_recap(true, false, &agent),
+            "a running monitor can wake a turn"
         );
+        agent.session.bg_tasks.remove("mon");
 
         agent
             .session
@@ -241,6 +357,53 @@
         );
         agent.session.bg_tasks.remove("bash");
 
+        agent.session.scheduled_tasks.insert(
+            "loop-1".into(),
+            crate::app::agent::ScheduledTaskInfo {
+                task_id: "loop-1".into(),
+                prompt: "babysit prs".into(),
+                human_schedule: "every 1h".into(),
+                created_at: std::time::Instant::now(),
+                next_fire_at: None,
+                tag: "loop".into(),
+                last_subagent_id: None,
+            },
+        );
+        assert!(
+            should_drop_late_auto_recap(true, false, &agent),
+            "a scheduled /loop can wake a turn"
+        );
+        agent.session.scheduled_tasks.clear();
+
+        agent
+            .workflow_runs
+            .push(workflow_run_snapshot("wf-1", "active"));
+        assert!(
+            should_drop_late_auto_recap(true, false, &agent),
+            "an active workflow run can wake a turn"
+        );
+        agent.workflow_runs = vec![workflow_run_snapshot("wf-1", "complete")];
+        assert!(
+            !should_drop_late_auto_recap(true, false, &agent),
+            "a finished workflow run cannot"
+        );
+        agent.workflow_runs.clear();
+
+        agent.goal_state = Some(crate::app::agent::GoalDisplayState::test_stub());
+        assert!(
+            should_drop_late_auto_recap(true, false, &agent),
+            "an active goal queues its own continuation turns"
+        );
+        agent.goal_state = Some(crate::app::agent::GoalDisplayState {
+            status: crate::app::agent::GoalDisplayStatus::UserPaused,
+            ..crate::app::agent::GoalDisplayState::test_stub()
+        });
+        assert!(
+            !should_drop_late_auto_recap(true, false, &agent),
+            "a paused goal needs the user to resume it"
+        );
+        agent.goal_state = None;
+
         agent
             .subagent_sessions
             .insert("child".into(), make_subagent_info("child"));
@@ -248,7 +411,7 @@
             should_drop_late_auto_recap(true, false, &agent),
             "running subagent is not idle"
         );
-        agent.subagent_sessions.get_mut("child").unwrap().finished = true;
+        agent.subagent_sessions.get_mut("child").unwrap().set_finished_for_test(true);
         assert!(
             !should_drop_late_auto_recap(true, false, &agent),
             "finished subagent is idle again"
@@ -308,7 +471,8 @@
         );
         agent.scrollback.push_block(crate::scrollback::block::RenderBlock::session_event(
             crate::scrollback::blocks::SessionEvent::TurnCancelled {
-                elapsed: std::time::Duration::from_secs(1),
+                elapsed: Some(std::time::Duration::from_secs(1)),
+                cause: crate::scrollback::blocks::CancelledBy::User,
             },
         ));
         assert!(
@@ -387,7 +551,7 @@
         let (msg, _rx) = make_permission_message("sess-1");
         handle(msg, &mut app);
 
-        let agent = &app.agents[&AgentId(0)];
+        let agent = test_agent(&app, AgentId(0));
         assert_eq!(agent.permission_queue.len(), 1);
         assert_eq!(agent.active_pane, AgentPane::Prompt);
         assert_eq!(agent.permission_stashed_pane, Some(AgentPane::Scrollback));
@@ -406,7 +570,7 @@
         let (msg, _rx) = make_permission_message("sess-1");
         handle(msg, &mut app);
 
-        let agent = &app.agents[&AgentId(0)];
+        let agent = test_agent(&app, AgentId(0));
         assert_eq!(agent.permission_queue.len(), 1);
         assert_eq!(agent.active_pane, AgentPane::Prompt);
         assert!(agent.permission_stashed_pane.is_none());
@@ -426,7 +590,7 @@
             let (msg, _rx) = make_permission_message("sess-1");
             handle(msg, &mut app);
 
-            let agent = &app.agents[&AgentId(0)];
+            let agent = test_agent(&app, AgentId(0));
             assert_eq!(agent.permission_queue.len(), 1, "pane={pane:?}");
             assert_eq!(agent.active_pane, pane);
             assert!(agent.permission_stashed_pane.is_none(), "pane={pane:?}");
@@ -453,7 +617,7 @@
         let (msg2, _rx2) = make_permission_message("sess-1");
         handle(msg2, &mut app);
 
-        let agent = &app.agents[&AgentId(0)];
+        let agent = test_agent(&app, AgentId(0));
         assert_eq!(agent.permission_queue.len(), 2);
         assert_eq!(agent.active_pane, AgentPane::Scrollback);
         assert_eq!(agent.permission_stashed_pane, Some(AgentPane::Scrollback));
@@ -475,7 +639,7 @@
         let (msg, _rx) = make_permission_message("sess-1");
         handle(msg, &mut app);
         {
-            let agent = &app.agents[&AgentId(0)];
+            let agent = test_agent(&app, AgentId(0));
             assert_eq!(agent.active_pane, AgentPane::Prompt);
             assert_eq!(agent.permission_stashed_pane, Some(AgentPane::Scrollback));
         }
@@ -485,7 +649,7 @@
             &mut app,
         );
 
-        let agent = &app.agents[&AgentId(0)];
+        let agent = test_agent(&app, AgentId(0));
         assert!(agent.permission_queue.is_empty());
         assert_eq!(agent.active_pane, AgentPane::Scrollback);
         assert!(agent.permission_stashed_pane.is_none());

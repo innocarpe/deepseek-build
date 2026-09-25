@@ -27,15 +27,17 @@ GitHub UI shows checks as `CI / <job>` (e.g. `CI / fmt`, `CI / test`, `CI / requ
 | `clippy` | rust paths | clippy |
 | `test` | rust paths | `cargo test --workspace` |
 | `semver` | version files | Cargo/npm SemVer match (no compile) |
+| `release_verify` | release/publish paths | publish → verify retry guard, hermetic (no network) |
 | **`required`** | **always** | aggregate; branch protection requires this |
 
 ```text
 PR / push
    └─ changes
-         ├─ fmt ──────┐
-         ├─ clippy ───┤  (parallel if rust)
-         ├─ test ─────┤
-         ├─ semver ───┤  (if version files)
+         ├─ fmt ─────────┐
+         ├─ clippy ──────┤  (parallel if rust)
+         ├─ test ────────┤
+         ├─ semver ──────┤  (if version files)
+         ├─ release_verify ┤  (if release/publish paths)
          └─ required (always) ← require this check only
 ```
 
@@ -83,6 +85,7 @@ not compile artifacts.
 |--------|--------|
 | **rust** | `crates/**`, `Cargo.toml`, `Cargo.lock`, toolchain, rustfmt, clippy, this workflow |
 | **semver** | `Cargo.toml`, `package.json`, check-semver scripts |
+| **release_verify** | `scripts/verify-npm-version.sh`, its test + mock, `release.sh`, `npm-emergency-publish.sh`, `publish-npm.yml` |
 
 Docs-only → `changes` + `required` only (~seconds).
 

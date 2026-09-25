@@ -1,11 +1,9 @@
 //! Wrapper that turns an ACP `AvailableCommand` into a `SlashCommand`.
 //!
-//! ACP-advertised commands appear in the dropdown but pass through to the
-//! shell for execution. The wrapper stores `String` fields -- consistent
-//! with the `&str` trait design.
+//! ACP-advertised commands appear in the dropdown but pass through to the shell for execution.
+//! The wrapper stores `String` fields, consistent with the `&str` trait design.
 //!
-//! Skills (`SkillMeta::Skill`) are also passed through as `/name args` for
-//! the shell to expand, but marked `InjectSkill` for rendering.
+//! Skills (`SkillMeta::Skill`) are also passed through as `/name args` for the shell to expand, but marked `InjectSkill` for rendering.
 
 use agent_client_protocol as acp;
 use xai_grok_tools::implementations::skills::types::SkillScope;
@@ -36,8 +34,7 @@ pub enum SkillMeta {
     Skill(SkillIdentity),
     /// Unknown `scope` string (e.g. `"workflow"`). Pass through, don't error.
     Foreign,
-    /// Skill-like keys present but invalid. Invocation errors rather than
-    /// silently degrading.
+    /// Skill-like keys present but invalid. Invocation errors rather than silently degrading.
     Malformed,
 }
 
@@ -112,7 +109,7 @@ impl SlashCommand for AcpSlashCommand {
         self.has_args
     }
 
-    /// ACP commands always accept Enter -- args are never required locally.
+    /// ACP commands always accept Enter; args are never required locally.
     /// The shell validates.
     fn args_required(&self) -> bool {
         false
@@ -158,9 +155,8 @@ impl From<&acp::AvailableCommand> for AcpSlashCommand {
         Self {
             name: cmd.name.clone(),
             description: cmd.description.clone(),
-            // ACP commands always accept free-form input. The shell handles
-            // whatever text follows the command name. The `input` field only
-            // determines the placeholder hint, not whether args are allowed.
+            // ACP commands always accept free-form input; the shell handles whatever text follows the command name
+            // The `input` field only determines the placeholder hint, not whether args are allowed
             has_args: true,
             arg_hint,
             skill: SkillMeta::parse(cmd.meta.as_ref()),
@@ -393,7 +389,7 @@ mod tests {
                     ..
                 } => {
                     assert_eq!(display_text, expected, "/{name} {args}");
-                    let [acp::ContentBlock::Text(block)] = &prompt_blocks[..] else {
+                    let [acp::ContentBlock::Text(block)] = prompt_blocks.as_slice() else {
                         panic!("/{name}: expected a single Text block, got {prompt_blocks:?}");
                     };
                     assert_eq!(block.text, expected, "/{name} {args}");

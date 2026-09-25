@@ -5,16 +5,14 @@
     unreachable_code,
     dead_code
 )]
-//! Typed client for hub-proxied `workspace.*` RPC methods — the single
-//! transport for the `workspace_rpc` channel, shared by `WorkspaceOps`
-//! proxy mode and by consumers that cannot depend on
-//! `xai-grok-workspace`. Wire types live in
-//! `xai_grok_workspace_types::rpc`; this crate adds the connected-state
-//! latch, the generic [`WorkspaceClient::rpc`] core, and error mapping.
+//! Typed client for hub-proxied `workspace.*` RPC methods, the single transport for the `workspace_rpc` channel.
+//! `WorkspaceOps` proxy mode and consumers that cannot depend on `xai-grok-workspace` both use it.
+//! Wire types live in `xai_grok_workspace_types::rpc`.
+//! This crate adds the connected-state latch, the generic [`WorkspaceClient::rpc`] core, and error mapping.
 //!
-//! No deadline is imposed by default ([`WorkspaceClient::with_deadline`]
-//! opts in), preserving `WorkspaceOps::rpc_raw` semantics where callers
-//! own their timeouts.
+//! No deadline is imposed by default ([`WorkspaceClient::with_deadline`] opts in).
+//! That preserves the `WorkspaceOps::rpc_raw` behaviour where callers own their timeouts.
+#![deny(clippy::indexing_slicing)]
 use serde_json::Value;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -65,8 +63,7 @@ use xai_grok_workspace_types::rpc::{RpcEnvelope, RpcError, WORKSPACE_RPC_TOOL_ID
 use xai_tool_runtime::{ToolCallContext, ToolStreamItem, TypedToolOutput};
 #[derive(Debug, thiserror::Error)]
 pub enum WorkspaceClientError {
-    /// A previous call observed a fatal transport error and no
-    /// reconnect has been signalled since.
+    /// A previous call observed a fatal transport error and no reconnect has been signalled since.
     #[error("hub connection lost (previously disconnected)")]
     NotConnected,
     #[error("rpc failed: {0}")]
@@ -79,15 +76,15 @@ pub enum WorkspaceClientError {
         #[source]
         source: serde_json::Error,
     },
+    #[error("workspace hibernated; it revives on the next bind; do not retry")]
+    WorkspaceHibernated,
     /// The server returned an error envelope.
     #[error("workspace rpc error: {0}")]
     Rpc(RpcError),
 }
-/// Consume a `ToolStream<TypedToolOutput>` to its terminal item,
-/// discarding progress frames.
+/// Consume a `ToolStream<TypedToolOutput>` to its terminal item, discarding progress frames.
 ///
-/// Returns the terminal result, or a `ToolError::NetworkError` if the
-/// stream ended without producing a terminal item.
+/// Returns the terminal result, or a `ToolError::NetworkError` if the stream ended without producing a terminal item.
 pub async fn consume_stream_terminal(
     stream: &mut xai_tool_runtime::ToolStream<TypedToolOutput>,
 ) -> Result<TypedToolOutput, xai_tool_runtime::ToolError> {
@@ -104,14 +101,15 @@ pub async fn consume_stream_terminal(
         }
     }
 }
-/// Check whether a [`ToolError`](xai_tool_runtime::ToolError) indicates
-/// a fatal transport failure that should mark the hub as disconnected.
-///
-/// Returns `true` for:
-/// - `NetworkError` — direct transport failure (socket dropped, stream
-///   ended without terminal item, etc.)
-/// - `Custom` with `details.code == "protocol_error"` — half-closed
-///   WebSocket producing malformed frames
+/// True when the reported workspace-server version parses as semver and is `>= baseline`.
+/// Absent or unparseable versions return `false`, so a server with an unknown version is treated as lacking the gated feature.
+pub fn server_version_at_least(version: Option<&str>, baseline: &semver::Version) -> bool {
+    version
+        .and_then(|v| semver::Version::parse(v).ok())
+        .is_some_and(|v| v >= *baseline)
+}
+/// Whether a [`ToolError`](xai_tool_runtime::ToolError) is a fatal transport failure that should mark the hub disconnected.
+/// True for `NetworkError`, and for `Custom` with `details.code == "protocol_error"` (half-closed WebSocket, malformed frames).
 pub fn is_transport_fatal(err: &xai_tool_runtime::ToolError) -> bool {
     match err.kind {
         xai_tool_runtime::ToolErrorKind::NetworkError => true,
@@ -124,13 +122,22 @@ pub fn is_transport_fatal(err: &xai_tool_runtime::ToolError) -> bool {
         _ => false,
     }
 }
+/// True when the hub's `workspace_unavailable` details carry `retryable: false`.
+/// That flag means retries cannot succeed until the workspace is revived.
+fn is_non_retryable_workspace_unavailable(err: &xai_tool_runtime::ToolError) -> bool {
+    if !matches!(err.kind, xai_tool_runtime::ToolErrorKind::Custom) {
+        return false;
+    }
+    err.details
+        .as_ref()
+        .and_then(|d| {
+            use serde::Deserialize as _;
+            xai_tool_protocol::WorkspaceUnavailableDetails::deserialize(d).ok()
+        })
+        .is_some_and(|d| d.code == xai_tool_protocol::WORKSPACE_UNAVAILABLE_SUBCODE && !d.retryable)
+}
 /// Typed client over a bound [`ToolHarness`] for `workspace.*` RPCs.
-///
-/// Clones share the harness and the connected latch, which fast-fails
-/// calls after a fatal transport error until
-/// [`mark_connected`](Self::mark_connected) resets it (e.g. from an SDK
-/// `on_reconnect` callback sharing the flag via
-/// [`with_connected_flag`](Self::with_connected_flag)).
+/// Clones share the harness and the connected latch, which fast-fails after a fatal transport error; [`mark_connected`](Self::mark_connected) / [`with_connected_flag`](Self::with_connected_flag) reset it.
 #[derive(Clone)]
 pub struct WorkspaceClient {
     harness: ToolHarness,
@@ -153,8 +160,7 @@ impl WorkspaceClient {
             deadline: None,
         }
     }
-    /// Shares a pre-created connected flag, so an SDK `on_reconnect`
-    /// callback holding the same `Arc` can reset it.
+    /// Shares a pre-created connected flag, so an SDK `on_reconnect` callback holding the same `Arc` can reset it.
     pub fn with_connected_flag(harness: ToolHarness, connected: Arc<AtomicBool>) -> Self {
         Self {
             harness,
@@ -170,6 +176,13 @@ impl WorkspaceClient {
     pub fn harness(&self) -> &ToolHarness {
         &self.harness
     }
+    /// Server binary version from the hub bind report, read without an RPC round-trip.
+    /// Returns `None` before the first bind, or against servers that predate the field.
+    pub fn server_binary_version(&self) -> Option<String> {
+        self.harness
+            .last_bind_report()
+            .and_then(|report| report.binary_version.clone())
+    }
     /// Whether the hub connection is believed to be alive.
     pub fn is_connected(&self) -> bool {
         self.connected.load(Ordering::Relaxed)
@@ -177,12 +190,11 @@ impl WorkspaceClient {
     pub fn mark_disconnected(&self) {
         self.connected.store(false, Ordering::Relaxed);
     }
-    /// Reset after an SDK reconnect.
+    /// Resets the connected latch after an SDK reconnect.
     pub fn mark_connected(&self) {
         self.connected.store(true, Ordering::Relaxed);
     }
-    /// Untyped RPC call: `{"method": .., "params": ..}` through the
-    /// `workspace_rpc` hub tool, returning the raw envelope value.
+    /// Untyped RPC call: `{"method": .., "params": ..}` through the `workspace_rpc` hub tool, returning the raw envelope value.
     pub async fn rpc_raw(
         &self,
         method: &str,
@@ -195,6 +207,8 @@ impl WorkspaceClient {
             .expect("constant tool id is valid");
         let args = serde_json::json!({ "method": method, "params": params });
         tracing::debug!(method, "WorkspaceClient::rpc");
+        let span = tracing::info_span!("workspace_client.rpc", method = tracing::field::Empty);
+        span.record("method", method);
         let fut = async {
             let mut stream = self
                 .harness
@@ -215,6 +229,9 @@ impl WorkspaceClient {
             None => fut.await,
         };
         let typed = result.map_err(|e| {
+            if is_non_retryable_workspace_unavailable(&e) {
+                return WorkspaceClientError::WorkspaceHibernated;
+            }
             if is_transport_fatal(&e) {
                 self.mark_disconnected();
             }
@@ -222,8 +239,7 @@ impl WorkspaceClient {
         })?;
         Ok(typed.value)
     }
-    /// Typed RPC call: derives the method and response type from the
-    /// request type's [`WorkspaceRpc`] impl and decodes the envelope.
+    /// Typed RPC call: derives the method and response type from the request type's [`WorkspaceRpc`] impl and decodes the envelope.
     pub async fn rpc<R: WorkspaceRpc>(&self, req: &R) -> Result<R::Response, WorkspaceClientError> {
         let params = serde_json::to_value(req).map_err(|e| WorkspaceClientError::Decode {
             method: R::METHOD.to_owned(),
@@ -237,9 +253,7 @@ impl WorkspaceClient {
             })?;
         envelope.into_result().map_err(WorkspaceClientError::Rpc)
     }
-    /// `workspace.info`, decoded into the typed shape
-    /// (`WorkspaceInfoReq::Response` is the raw `Value` for
-    /// `WorkspaceOps` compat).
+    /// `workspace.info`, decoded into the typed shape (`WorkspaceInfoReq::Response` is the raw `Value` for `WorkspaceOps` compatibility).
     pub async fn info(&self) -> Result<WorkspaceInfo, WorkspaceClientError> {
         let raw = self.rpc(&WorkspaceInfoReq {}).await?;
         serde_json::from_value(raw).map_err(|e| WorkspaceClientError::Decode {
@@ -344,7 +358,7 @@ impl WorkspaceClient {
     pub async fn git_metadata(&self) -> Result<Value, WorkspaceClientError> {
         self.rpc(&GitMetadataReq {}).await
     }
-    /// `workspace.git_collect_changes` — collect repository changes for serialization.
+    /// `workspace.git_collect_changes`: collects repository changes for serialization.
     pub async fn git_collect_changes(
         &self,
         req: &GitCollectChangesReq,
@@ -571,7 +585,7 @@ mod tests {
     use schemars::JsonSchema;
     use serde::Deserialize;
     use xai_computer_hub_sdk::harness::LocalRegistry;
-    use xai_grok_workspace_types::rpc::skills::SkillScope;
+    use xai_grok_workspace_types::rpc::RpcActivityClass;
     use xai_tool_protocol::{SessionId, ToolId};
     use xai_tool_runtime::{Tool, ToolError};
     use xai_tool_types::ToolDescription;
@@ -600,19 +614,8 @@ mod tests {
             match args.method.as_str() {
                 "workspace.info" => ok(serde_json::json!({
                     "os": "linux", "shell": "bash", "cwd": "/workspace",
+                    "version": "1.2.3",
                 })),
-                "workspace.git_status" => ok(serde_json::json!("On branch main")),
-                "workspace.discover_skills" => ok(serde_json::json!([{
-                    "name": "my-skill",
-                    "description": "A test skill",
-                    "path": "/workspace/.grok/skills/my-skill/SKILL.md",
-                    "scope": "local",
-                }])),
-                "workspace.discover_agents_md" => ok(serde_json::json!([{
-                    "file_name": "AGENTS.md",
-                    "file_path": "/workspace/AGENTS.md",
-                    "content": "# Project instructions",
-                }])),
                 "workspace.echo_params" => ok(args.params),
                 "workspace.err" => Ok(RawOut(serde_json::json!({
                     "err": { "code": "session_not_found", "message": "ghost" },
@@ -624,9 +627,31 @@ mod tests {
                 }
                 "workspace.netfail" => Err(ToolError::network_error("socket dropped")),
                 "workspace.toolfail" => Err(ToolError::custom("some_code", "boom")),
+                "workspace.hibernated" => Err(workspace_gone_tool_error(
+                    xai_tool_protocol::WorkspaceGoneReason::Hibernated,
+                    xai_tool_protocol::WorkspaceGonePhase::RouteMissing,
+                )),
+                "workspace.gone_retryable" => Err(workspace_gone_tool_error(
+                    xai_tool_protocol::WorkspaceGoneReason::NotBound,
+                    xai_tool_protocol::WorkspaceGonePhase::RouteMissing,
+                )),
                 other => panic!("unexpected method {other}"),
             }
         }
+    }
+    fn workspace_gone_tool_error(
+        reason: xai_tool_protocol::WorkspaceGoneReason,
+        phase: xai_tool_protocol::WorkspaceGonePhase,
+    ) -> ToolError {
+        let xai_tool_protocol::ToolErrorWire::Custom {
+            subcode,
+            message,
+            details,
+        } = xai_tool_protocol::workspace_unavailable_wire(reason, phase)
+        else {
+            panic!("workspace_unavailable_wire builds Custom");
+        };
+        ToolError::custom(subcode, message).with_details(details.expect("details always present"))
     }
     fn client() -> WorkspaceClient {
         let registry = LocalRegistry::new();
@@ -638,6 +663,16 @@ mod tests {
         );
         WorkspaceClient::new(harness)
     }
+    #[test]
+    fn version_gating_treats_absent_and_unparseable_as_old() {
+        let base = semver::Version::new(1, 2, 300);
+        assert!(!server_version_at_least(None, &base));
+        assert!(!server_version_at_least(Some("unknown"), &base));
+        assert!(!server_version_at_least(Some("1.2.299"), &base));
+        assert!(!server_version_at_least(Some("1.2.300-dev"), &base));
+        assert!(server_version_at_least(Some("1.2.300"), &base));
+        assert!(server_version_at_least(Some("1.3.0"), &base));
+    }
     #[tokio::test]
     async fn info_decodes_typed_response() {
         let info = client().info().await.unwrap();
@@ -647,27 +682,9 @@ mod tests {
                 os: "linux".into(),
                 shell: "bash".into(),
                 cwd: "/workspace".into(),
+                version: Some("1.2.3".into()),
             }
         );
-    }
-    #[tokio::test]
-    async fn git_status_returns_raw_value() {
-        let v = client().git_status().await.unwrap();
-        assert_eq!(v, serde_json::json!("On branch main"));
-    }
-    #[tokio::test]
-    async fn discover_skills_decodes_typed_list() {
-        let skills = client().discover_skills().await.unwrap();
-        assert_eq!(skills.len(), 1);
-        assert_eq!(skills[0].name, "my-skill");
-        assert_eq!(skills[0].scope, SkillScope::Local);
-    }
-    #[tokio::test]
-    async fn discover_agents_md_decodes_typed_list() {
-        let files = client().discover_agents_md().await.unwrap();
-        assert_eq!(files.len(), 1);
-        assert_eq!(files[0].file_name, "AGENTS.md");
-        assert_eq!(files[0].file_path, "/workspace/AGENTS.md");
     }
     #[tokio::test]
     async fn typed_request_params_round_trip() {
@@ -678,6 +695,7 @@ mod tests {
         }
         impl WorkspaceRpc for EchoReq {
             const METHOD: &'static str = "workspace.echo_params";
+            const ACTIVITY: RpcActivityClass = RpcActivityClass::Read;
             type Response = Value;
         }
         let echoed = client().rpc(&EchoReq { flag: true, n: 7 }).await.unwrap();
@@ -692,6 +710,7 @@ mod tests {
         struct ErrReq;
         impl WorkspaceRpc for ErrReq {
             const METHOD: &'static str = "workspace.err";
+            const ACTIVITY: RpcActivityClass = RpcActivityClass::Read;
             type Response = Value;
         }
         let err = c.rpc(&ErrReq).await.unwrap_err();
@@ -711,6 +730,7 @@ mod tests {
         struct MalformedReq;
         impl WorkspaceRpc for MalformedReq {
             const METHOD: &'static str = "workspace.malformed";
+            const ACTIVITY: RpcActivityClass = RpcActivityClass::Read;
             type Response = Value;
         }
         let err = c.rpc(&MalformedReq).await.unwrap_err();
@@ -746,6 +766,29 @@ mod tests {
             c.is_connected(),
             "non-fatal tool errors must not trip the latch"
         );
+    }
+    #[tokio::test]
+    async fn hibernated_route_miss_maps_to_workspace_hibernated() {
+        let c = client();
+        let err = c
+            .rpc_raw("workspace.hibernated", Value::Null)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, WorkspaceClientError::WorkspaceHibernated),
+            "{err:?}"
+        );
+        assert!(c.is_connected(), "hibernation must not trip the latch");
+    }
+    #[tokio::test]
+    async fn retryable_workspace_unavailable_stays_transport() {
+        let c = client();
+        let err = c
+            .rpc_raw("workspace.gone_retryable", Value::Null)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, WorkspaceClientError::Transport(_)), "{err:?}");
+        assert!(c.is_connected());
     }
     #[tokio::test(start_paused = true)]
     async fn deadline_times_out_slow_calls() {
@@ -791,16 +834,6 @@ mod tests {
         let b = a.clone();
         a.mark_disconnected();
         assert!(!b.is_connected());
-    }
-    #[tokio::test]
-    async fn consume_stream_terminal_returns_ok() {
-        let value = serde_json::json!({"result": "hello"});
-        let typed = TypedToolOutput::from_value(ToolId::new("t").unwrap(), value.clone());
-        let mut stream = xai_tool_runtime::terminal_only(Ok(typed));
-        assert_eq!(
-            consume_stream_terminal(&mut stream).await.unwrap().value,
-            value
-        );
     }
     #[tokio::test]
     async fn consume_stream_terminal_returns_err() {

@@ -104,9 +104,10 @@ mod tests {
 
     use super::*;
     use crate::send::contributors::{
-        CommandAction, CommandInvocation, CommandSpec, SessionIdleInput, TurnAbortInput,
-        TurnAbortReason, TurnDoneInput, TurnErrorInput, TurnInputContext, TurnInputFragment,
-        TurnStartInput,
+        AnalyticsClass, CommandAction, CommandInvocation, CommandSpec, CompactionClass,
+        InputAuthority, InputPolicy, QueuePolicy, SessionIdleInput, ShutdownPolicy, SlashAuthority,
+        TurnAbortInput, TurnAbortReason, TurnBoundary, TurnDoneInput, TurnErrorInput,
+        TurnInputContext, TurnInputFragment, TurnStartInput,
     };
 
     struct Counter(AtomicUsize);
@@ -114,6 +115,25 @@ mod tests {
     #[async_trait]
     impl TurnLifecycleContributor for Counter {
         async fn on_turn_done(&self, _input: &TurnDoneInput) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    struct LegacyStartCounter(AtomicUsize);
+
+    #[async_trait]
+    impl TurnLifecycleContributor for LegacyStartCounter {
+        async fn on_turn_start(&self, _input: &TurnStartInput) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    struct TypedCounter(AtomicUsize);
+
+    #[async_trait]
+    impl TurnLifecycleContributor for TypedCounter {
+        async fn on_turn_start_with_policy(&self, _input: &TurnStartInput, policy: InputPolicy) {
+            assert_eq!(policy.authority, InputAuthority::ModelAuthoredUntrusted);
             self.0.fetch_add(1, Ordering::SeqCst);
         }
     }
@@ -167,6 +187,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn typed_turn_start_defaults_to_legacy_and_can_be_overridden() {
+        let policy = InputPolicy {
+            authority: InputAuthority::ModelAuthoredUntrusted,
+            slash: SlashAuthority::ModelAuthored,
+            turn_boundary: TurnBoundary::Conversational,
+            analytics: AnalyticsClass::AgentMessage,
+            compaction: CompactionClass::ConversationalAgentAnchor,
+            queue: QueuePolicy::VisibleProtected,
+            shutdown: ShutdownPolicy::Drain,
+        };
+        let legacy = LegacyStartCounter(AtomicUsize::new(0));
+        legacy
+            .on_turn_start_with_policy(&TurnStartInput::new(true), policy)
+            .await;
+        assert_eq!(legacy.0.load(Ordering::SeqCst), 1);
+
+        let typed = TypedCounter(AtomicUsize::new(0));
+        typed
+            .on_turn_start_with_policy(&TurnStartInput::new(true), policy)
+            .await;
+        assert_eq!(typed.0.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn builder_freezes_and_registry_dispatches_in_order() {
         let counter = Arc::new(Counter(AtomicUsize::new(0)));
         let mut builder = ExtensionRegistryBuilder::new();
@@ -204,7 +248,10 @@ mod tests {
                 })
                 .await;
             assert_eq!(1, fragments.len());
-            assert_eq!("nudge", fragments[0].text);
+            let Some(fragment) = fragments.first() else {
+                panic!("expected a turn-input fragment");
+            };
+            assert_eq!("nudge", fragment.text);
         }
 
         assert!(registry.command_handler("nope").is_none());

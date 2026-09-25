@@ -9,10 +9,9 @@ pub struct BashCommandHighlights {
     pub suffix: Vec<String>,
 }
 
-/// Internal representation of a parsed "plain" command:
-/// - `words`: the actual command + args (env assignments stripped)
-/// - `span_start` / `span_end`: byte range in the original script covering
-///   the highlighted command part (command name + args).
+/// A parsed "plain" command:
+/// - `words`: the command and args (env assignments stripped)
+/// - `span_start` / `span_end`: byte range in the original script covering the highlighted command part (command name and args).
 #[derive(Debug, Clone)]
 pub struct PlainCommand {
     words: Vec<String>,
@@ -21,14 +20,25 @@ pub struct PlainCommand {
 }
 
 impl PlainCommand {
-    /// Returns the command words (command name + args, env assignments stripped).
+    /// The command name and args, env assignments stripped.
     pub fn words(&self) -> &[String] {
         &self.words
     }
+
+    /// Whether this command's highlighted span covers the entire script (ignoring surrounding whitespace).
+    /// Only then can the dequoted word join stand in for the raw script; a dropped assignment or sibling would let a wider script match a narrower grant.
+    /// A mismatched or shorter `script` is panic-safe and answers `false`.
+    pub(crate) fn spans_whole_script(&self, script: &str) -> bool {
+        let (Some(before), Some(after)) =
+            (script.get(..self.span_start), script.get(self.span_end..))
+        else {
+            return false;
+        };
+        before.trim().is_empty() && after.trim().is_empty()
+    }
 }
 
-/// Parse the provided bash source using tree-sitter-bash, returning a Tree on
-/// success or None if parsing failed.
+/// Parse the provided bash source using tree-sitter-bash.
 pub fn try_parse_shell(src: &str) -> Option<Tree> {
     let lang = BASH.into();
     let mut parser = Parser::new();
@@ -38,20 +48,13 @@ pub fn try_parse_shell(src: &str) -> Option<Tree> {
     parser.parse(src, old_tree)
 }
 
-/// Parse a script which may contain multiple simple commands joined only by
-/// the safe logical/pipe/sequencing operators: `&&`, `||`, `;`, `|`.
-///
-/// Returns `Some(Vec<PlainCommand>)` if every command is a plain word-only
-/// command and the parse tree does not contain disallowed constructs
-/// (parentheses, redirections, substitutions, control flow, etc.). Otherwise
-/// returns `None`.
+/// Parse a script of plain word-only commands joined only by `&&`, `||`, `;`, `|`.
+/// Returns `Some` only when every command is word-only; parentheses, redirections, substitutions, and control flow return `None`.
 pub fn try_parse_word_only_commands_sequence(tree: &Tree, src: &str) -> Option<Vec<PlainCommand>> {
     if tree.root_node().has_error() {
         return None;
     }
 
-    // List of allowed (named) node kinds for a "word only commands sequence".
-    // If we encounter a named node that is not in this list we reject.
     const ALLOWED_KINDS: &[&str] = &[
         // top level containers
         "program",
@@ -75,14 +78,8 @@ pub fn try_parse_word_only_commands_sequence(tree: &Tree, src: &str) -> Option<V
         "file_descriptor",
         // Comments never execute.
         "comment",
-        // Heredoc bodies are stdin data to the (separately classified) head
-        // command, not shell-executed text. An unquoted body surfaces
-        // `$(...)`/`${...}` as named child nodes outside this allowlist, so
-        // substitution smuggling still fails the parse; a `> file` on the same
-        // statement stays visible to the write model as a file_redirect.
-        // `declaration_command` (`export K=V`) is deliberately ABSENT: it is
-        // not a `command` node, so ask-mode segment evaluation (which has no
-        // env guard) would never see a PATH/LD_PRELOAD hijack.
+        // Heredoc bodies are stdin to the head command, not executed text; unquoted `$(...)` still fails this allowlist, and a same-statement `> file` stays a file_redirect
+        // `declaration_command` (`export K=V`) is deliberately absent: it is not a `command` node, so ask-mode segment evaluation (no env guard) would miss a PATH/LD_PRELOAD hijack
         "heredoc_redirect",
         "heredoc_start",
         "heredoc_body",
@@ -90,7 +87,6 @@ pub fn try_parse_word_only_commands_sequence(tree: &Tree, src: &str) -> Option<V
         "heredoc_end",
     ];
 
-    // Allow only safe punctuation / operator tokens; anything else causes reject.
     // We add "=" so that VAR=VALUE is allowed.
     // Redirection operators: >, >>, <, >&, &>, etc.
     const ALLOWED_PUNCT_TOKENS: &[&str] = &[
@@ -118,8 +114,6 @@ pub fn try_parse_word_only_commands_sequence(tree: &Tree, src: &str) -> Option<V
                 return None;
             }
             if !(ALLOWED_PUNCT_TOKENS.contains(&kind) || kind.trim().is_empty()) {
-                // If it's a quote token or operator it's allowed above; we also allow whitespace tokens.
-                // Any other punctuation like parentheses, braces, redirects, backticks, etc are rejected.
                 return None;
             }
         }
@@ -143,16 +137,15 @@ pub fn try_parse_word_only_commands_sequence(tree: &Tree, src: &str) -> Option<V
     Some(commands)
 }
 
-/// Classify "setup" or "wrapper" commands you want to skip when looking for the
-/// "first important command" (cd/export/sleep/timeout/etc).
+/// Classify "setup" or "wrapper" commands you want to skip when looking for the "first important command" (cd/export/sleep/timeout/etc).
 pub(crate) fn is_setup_command(cmd: &[String]) -> bool {
     if cmd.is_empty() {
         return true;
     }
 
     matches!(
-        cmd[0].as_str(),
-        "cd" | "pushd" | "popd" | "export" | "unset" | "set" | "sleep" | "timeout"
+        cmd.first().map(String::as_str),
+        Some("cd" | "pushd" | "popd" | "export" | "unset" | "set" | "sleep" | "timeout")
     )
 }
 
@@ -161,7 +154,9 @@ fn is_env_assignment(tok: &str) -> bool {
     let Some(eq) = tok.find('=') else {
         return false;
     };
-    let name = &tok[..eq];
+    let Some(name) = tok.get(..eq) else {
+        return false;
+    };
     !name.is_empty()
         && name
             .bytes()
@@ -174,17 +169,16 @@ struct EnvScan<'a> {
     chdir: Option<&'a str>,
     /// GNU/BSD `env -S`/`--split-string` rewrites argv; never peel past it.
     has_split_string: bool,
-    /// Unknown/value-taking option arity not modeled — refuse peel + Ask.
+    /// Unknown or value-taking option arity is not modeled; refuse to peel and Ask.
     options_uncertain: bool,
     /// High-confidence literal packed script for Bash deny recursion only.
     split_string_script: Option<String>,
     command_start: usize,
 }
 
-/// Decode expansion-free word/string/concatenation *source spelling* under shell
-/// quote rules. For raw tree-sitter concatenations that still contain `'`/`"`.
-/// Already-dequoted plain argv words must not use this (env-S metasyntax like
-/// `\t` would be corrupted into shell escapes).
+/// Decode expansion-free word/string/concatenation *source spelling* under shell quote rules.
+/// Meant for raw tree-sitter concatenations that still contain `'`/`"`.
+/// Already-dequoted plain argv words must not use this (env-S metasyntax like `\t` would be corrupted into shell escapes).
 pub(crate) fn decode_shell_literal_spelling(raw: &str) -> Option<String> {
     let mut out = String::new();
     let mut chars = raw.chars().peekable();
@@ -208,9 +202,8 @@ pub(crate) fn decode_shell_literal_spelling(raw: &str) -> Option<String> {
     quote.is_none().then_some(out)
 }
 
-/// Option-token spelling only: shell-decode when quote chars remain (glued/equal
-/// concatenations like `-S'cmd'` / `--split-string='cmd'`). Never fold bare
-/// backslashes without quotes — those are env-S metasyntax on the payload side.
+/// Option-token spelling only: shell-decode when quote chars remain (glued/equal concatenations like `-S'cmd'` / `--split-string='cmd'`).
+/// Never fold bare backslashes without quotes; those are env-S metasyntax on the payload side.
 fn decode_env_option_token(raw: &str) -> std::borrow::Cow<'_, str> {
     if !raw.contains(['\'', '"']) {
         return std::borrow::Cow::Borrowed(raw);
@@ -222,8 +215,7 @@ fn decode_env_option_token(raw: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-/// Safe subset for recursing a packed `env -S` operand as a Bash script: no
-/// env-S quotes/escapes/comments/expansions that could diverge under reparse.
+/// Safe subset for recursing a packed `env -S` operand as a Bash script: no env-S quotes/escapes/comments/expansions that could diverge on reparse.
 /// Includes bare `\` so `\t`/`\n`/… stay non-extractable (Ask floor only).
 fn is_high_confidence_env_s_payload(s: &str) -> bool {
     !s.is_empty()
@@ -233,9 +225,8 @@ fn is_high_confidence_env_s_payload(s: &str) -> bool {
             .any(|c| matches!(c, '\'' | '"' | '\\' | '#' | '`' | '$' | '\n' | '\r'))
 }
 
-/// Safe-subset check + own. Callers must pass already-literal text (separate
-/// argv word, or payload carved after option-token quote removal) — never raw
-/// shell-escape sequences meant for env-S.
+/// Callers must pass already-literal text: a separate argv word, or payload carved after option-token quote removal.
+/// Never pass raw shell-escape sequences meant for env-S.
 fn take_high_confidence_payload(raw: &str) -> Option<String> {
     is_high_confidence_env_s_payload(raw).then(|| raw.to_owned())
 }
@@ -255,13 +246,15 @@ enum EnvShort<'a> {
     Uncertain,
 }
 
-/// Walk one short-option token. Arg-taking `u`/`C`/`P`/`a` absorb the rest of
-/// the token as their operand (do not treat `S` inside that operand as `-S`).
+/// Walk one short-option token.
+/// Arg-taking `u`/`C`/`P`/`a` absorb the rest of the token as their operand (do not treat `S` inside that operand as `-S`).
 fn classify_env_short(tok: &str) -> EnvShort<'_> {
     if !tok.starts_with('-') || tok.starts_with("--") || tok == "-" {
         return EnvShort::Uncertain;
     }
-    let body = &tok[1..];
+    let Some(body) = tok.get(1..) else {
+        return EnvShort::Uncertain;
+    };
     if body.is_empty() {
         return EnvShort::Uncertain;
     }
@@ -275,10 +268,10 @@ fn classify_env_short(tok: &str) -> EnvShort<'_> {
     let chars: Vec<char> = body.chars().collect();
     let mut idx = 0usize;
     while idx < chars.len() {
-        match chars[idx] {
-            'i' | 'v' | '0' => idx += 1,
-            'S' => return EnvShort::SplitStringDetect,
-            kind @ ('u' | 'C' | 'P' | 'a') => {
+        match chars.get(idx).copied() {
+            Some('i' | 'v' | '0') => idx += 1,
+            Some('S') => return EnvShort::SplitStringDetect,
+            Some(kind @ ('u' | 'C' | 'P' | 'a')) => {
                 let has_glued = body.char_indices().nth(idx + 1).is_some();
                 return if has_glued {
                     EnvShort::ArgGlued { kind }
@@ -292,7 +285,7 @@ fn classify_env_short(tok: &str) -> EnvShort<'_> {
     EnvShort::NoArg
 }
 
-/// Consume a required option operand; missing → uncertain.
+/// Consume a required option operand; when it is missing the caller marks the options uncertain.
 fn take_option_operand<'a>(cmd: &'a [String], i: &mut usize) -> Option<&'a str> {
     match cmd.get(*i + 1).map(String::as_str) {
         Some(v) => {
@@ -303,10 +296,9 @@ fn take_option_operand<'a>(cmd: &'a [String], i: &mut usize) -> Option<&'a str> 
     }
 }
 
-/// Scan a leading `env`'s options/assignments → its `-C`/`--chdir` target (last
-/// wins), whether a split-string rewrite is present, an optional high-confidence
-/// packed script, and the index where the inner command starts. `env` permutes
-/// options with `NAME=VALUE`. Minimal GNU/BSD table — unknown arity fails closed.
+/// Scan a leading `env`'s options and assignments into an [`EnvScan`]; the last `-C`/`--chdir` wins.
+/// `env` permutes options with `NAME=VALUE`.
+/// The option table is a minimal GNU/BSD subset; unknown arity fails closed.
 fn env_scan(cmd: &[String]) -> EnvScan<'_> {
     let mut chdir = None;
     let mut has_split_string = false;
@@ -449,8 +441,8 @@ fn env_scan(cmd: &[String]) -> EnvScan<'_> {
     }
 }
 
-/// High-confidence packed `env -S`/`--split-string` operand when `words` is an
-/// env invocation stopped on a recoverable literal form. Bash deny only.
+/// High-confidence packed `env -S`/`--split-string` operand when `words` is an env invocation stopped on a recoverable literal form.
+/// Used by the Bash deny recursion only.
 pub(crate) fn env_split_string_script(words: &[String]) -> Option<String> {
     if words.first()?.rsplit(['/', '\\']).next()? != "env" {
         return None;
@@ -462,9 +454,8 @@ pub(crate) fn env_split_string_script(words: &[String]) -> Option<String> {
     scan.split_string_script
 }
 
-/// Strip a leading wrapper (`timeout`/`env`/`nice`/`stdbuf`/`ionice`/`chrt`) and
-/// its args, returning the inner command (`None` if not a wrapper). Conservative:
-/// under-strip when unsure so `timeout 30 rm -rf /` can't hide behind `timeout`.
+/// Strip a leading wrapper (`timeout`/`env`/`nice`/`stdbuf`/`ionice`/`chrt`) and its args, returning the inner command (`None` if not a wrapper).
+/// Conservative: under-strip when unsure so `timeout 30 rm -rf /` can't hide behind `timeout`.
 pub(crate) fn strip_wrapper_command(cmd: &[String]) -> Option<&[String]> {
     // Basename so a path-qualified wrapper (e.g. `/usr/bin/env`) is still stripped.
     let head = cmd.first()?.rsplit(['/', '\\']).next()?;
@@ -472,8 +463,11 @@ pub(crate) fn strip_wrapper_command(cmd: &[String]) -> Option<&[String]> {
     match head {
         // `timeout [OPTIONS] DURATION COMMAND [ARGS]`
         "timeout" => {
-            while i < cmd.len() && cmd[i].starts_with('-') {
-                if matches!(cmd[i].as_str(), "-k" | "-s" | "--kill-after" | "--signal") {
+            while cmd.get(i).is_some_and(|t| t.starts_with('-')) {
+                if matches!(
+                    cmd.get(i).map(String::as_str),
+                    Some("-k" | "-s" | "--kill-after" | "--signal")
+                ) {
                     i += 2;
                 } else {
                     i += 1;
@@ -487,8 +481,8 @@ pub(crate) fn strip_wrapper_command(cmd: &[String]) -> Option<&[String]> {
         }
         // `nice [OPTIONS] [COMMAND]`
         "nice" => {
-            while i < cmd.len() && cmd[i].starts_with('-') {
-                if matches!(cmd[i].as_str(), "-n" | "--adjustment") {
+            while cmd.get(i).is_some_and(|t| t.starts_with('-')) {
+                if matches!(cmd.get(i).map(String::as_str), Some("-n" | "--adjustment")) {
                     i += 2;
                 } else {
                     i += 1;
@@ -497,18 +491,20 @@ pub(crate) fn strip_wrapper_command(cmd: &[String]) -> Option<&[String]> {
         }
         // `ionice [OPTIONS] [COMMAND]`
         "ionice" => {
-            while i < cmd.len() && cmd[i].starts_with('-') {
+            while cmd.get(i).is_some_and(|t| t.starts_with('-')) {
                 if matches!(
-                    cmd[i].as_str(),
-                    "-c" | "-n"
-                        | "-p"
-                        | "-P"
-                        | "-u"
-                        | "--class"
-                        | "--classdata"
-                        | "--pid"
-                        | "--pgid"
-                        | "--uid"
+                    cmd.get(i).map(String::as_str),
+                    Some(
+                        "-c" | "-n"
+                            | "-p"
+                            | "-P"
+                            | "-u"
+                            | "--class"
+                            | "--classdata"
+                            | "--pid"
+                            | "--pgid"
+                            | "--uid"
+                    )
                 ) {
                     i += 2;
                 } else {
@@ -518,7 +514,7 @@ pub(crate) fn strip_wrapper_command(cmd: &[String]) -> Option<&[String]> {
         }
         // `chrt [OPTIONS] PRIORITY COMMAND [ARGS]`
         "chrt" => {
-            while i < cmd.len() && cmd[i].starts_with('-') {
+            while cmd.get(i).is_some_and(|t| t.starts_with('-')) {
                 i += 1;
             }
             // mandatory PRIORITY token
@@ -529,8 +525,8 @@ pub(crate) fn strip_wrapper_command(cmd: &[String]) -> Option<&[String]> {
         }
         // `stdbuf OPTIONS COMMAND [ARGS]`
         "stdbuf" => {
-            while i < cmd.len() && cmd[i].starts_with('-') {
-                if matches!(cmd[i].as_str(), "-i" | "-o" | "-e") {
+            while cmd.get(i).is_some_and(|t| t.starts_with('-')) {
+                if matches!(cmd.get(i).map(String::as_str), Some("-i" | "-o" | "-e")) {
                     i += 2;
                 } else {
                     i += 1;
@@ -555,10 +551,9 @@ pub(crate) fn strip_wrapper_command(cmd: &[String]) -> Option<&[String]> {
     Some(inner)
 }
 
-/// True if `words`' head is a command [`strip_wrapper_command`] would peel — i.e.
-/// its basename is in the canonical wrapper set. Reports membership only (so bare
-/// `env`, which `strip_wrapper_command` returns `None` for, still counts). Keep
-/// the set in sync with `strip_wrapper_command`'s match arms.
+/// True if `words`' head is a command [`strip_wrapper_command`] would peel, i.e. its basename is in the canonical wrapper set.
+/// Reports membership only (so bare `env`, which `strip_wrapper_command` returns `None` for, still counts).
+/// Keep the set in sync with `strip_wrapper_command`'s match arms.
 pub(crate) fn is_wrapper_command(words: &[String]) -> bool {
     matches!(
         words.first().and_then(|w| w.rsplit(['/', '\\']).next()),
@@ -615,34 +610,32 @@ pub(crate) fn unwrap_wrappers_checked(words: &[String]) -> CheckedWrapperPeel<'_
     }
 }
 
-/// Repeatedly strip wrapper commands (e.g. `timeout 30 nice -n 10 rm -rf /`).
-/// Bounded to avoid pathological loops. Returns the original slice if no
-/// wrapper is present.
+/// Repeatedly strip wrapper commands (e.g. `timeout 30 nice -n 10 rm -rf /`), bounded to avoid pathological loops.
+/// Returns the original slice if no wrapper is present.
 pub(crate) fn unwrap_wrappers(words: &[String]) -> &[String] {
     unwrap_wrappers_checked(words).words
 }
 
-/// Peel wrapper commands (`timeout`, `nice`, `env`, …) from a command's words,
-/// exposing the same normalization the permission enforcer applies before
-/// matching session grants. The pager's "Always allow" pattern editor uses this
-/// so its pre-fill and match preview agree with enforcement on wrapped commands.
+/// Peel wrapper commands (`timeout`, `nice`, `env`, …) from a command's words.
+/// This is the same normalization the permission enforcer applies before matching session grants.
+/// The pager's "Always allow" pattern editor uses this so its pre-fill and match preview agree with enforcement on wrapped commands.
 pub fn unwrap_command_wrappers(words: &[String]) -> &[String] {
     unwrap_wrappers(words)
 }
 
 /// Result of peeling shell-transparent prefixes (`exec` / `command` / `builtin`).
-/// Not part of the canonical wrapper set — used only by security gates.
+/// Not part of the canonical wrapper set; used only by security gates.
 pub(crate) enum TransparentPrefixPeel<'a> {
     Ready(&'a [String]),
     Ambiguous,
 }
 
 pub(crate) const MAX_TRANSPARENT_PREFIX_DEPTH: usize = 8;
-/// Bound on alternating wrapper ↔ transparent normalize rounds.
+/// Bound on alternating wrapper and transparent-prefix normalize rounds.
 pub(crate) const MAX_NORMALIZE_ROUNDS: usize = MAX_WRAPPER_DEPTH + MAX_TRANSPARENT_PREFIX_DEPTH;
 
-/// Peel `exec`/`command`/`builtin` after canonical wrappers. Unknown options and
-/// depth exhaustion (a ninth peelable transparent prefix remains) Ask.
+/// Peel `exec`/`command`/`builtin` after canonical wrappers.
+/// Unknown options and depth exhaustion (a ninth peelable transparent prefix remains) Ask.
 pub(crate) fn peel_transparent_prefixes(words: &[String]) -> TransparentPrefixPeel<'_> {
     let mut current = words;
     for _ in 0..MAX_TRANSPARENT_PREFIX_DEPTH {
@@ -652,7 +645,7 @@ pub(crate) fn peel_transparent_prefixes(words: &[String]) -> TransparentPrefixPe
             TransparentStrip::Ambiguous => return TransparentPrefixPeel::Ambiguous,
         }
     }
-    // WHY: mirror wrapper exhaustion — a remaining peelable prefix is unmodeled.
+    // WHY: mirror wrapper exhaustion; a remaining peelable prefix is unmodeled
     match strip_transparent_prefix(current) {
         TransparentStrip::NotPrefix => TransparentPrefixPeel::Ready(current),
         TransparentStrip::Peeled(_) | TransparentStrip::Ambiguous => {
@@ -671,10 +664,9 @@ pub(crate) struct NormalizedCommandPeel<'a> {
     pub(crate) ambiguous: bool,
 }
 
-/// Alternate canonical wrappers and transparent prefixes to a bounded fixed
-/// point so shapes like `command timeout command env -S …` surface the pack.
-/// Ambiguity, depth exhaustion, chdir, split-string, and uncertain env options
-/// all fail closed (callers Ask).
+/// Alternate canonical wrappers and transparent prefixes to a bounded fixed point.
+/// Shapes like `command timeout command env -S …` then still reveal the packed script.
+/// Ambiguity, depth exhaustion, chdir, split-string, and uncertain env options all fail closed (callers Ask).
 pub(crate) fn normalize_command_words(words: &[String]) -> NormalizedCommandPeel<'_> {
     let mut current = words;
     let mut has_chdir = false;
@@ -713,7 +705,7 @@ pub(crate) fn normalize_command_words(words: &[String]) -> NormalizedCommandPeel
     }
 
     if !ambiguous && !has_split_string && !env_options_uncertain {
-        // Remaining peelable head after the budget is unmodeled → fail closed.
+        // Remaining peelable head after the budget is unmodeled, so fail closed
         let still_wrapper = is_wrapper_command(current) && strip_wrapper_command(current).is_some();
         let still_transparent = !matches!(
             strip_transparent_prefix(current),
@@ -782,8 +774,7 @@ fn strip_exec_prefix(cmd: &[String]) -> TransparentStrip<'_> {
             i += 1;
             continue;
         }
-        // Combined shorts that include only c/l plus optional glued -a are rare;
-        // anything else is unmodeled.
+        // Combined shorts that include only c/l plus optional glued -a are rare; anything else is unmodeled
         if tok.starts_with('-')
             && !tok.starts_with("--")
             && tok.chars().skip(1).all(|c| matches!(c, 'c' | 'l'))
@@ -800,7 +791,7 @@ fn strip_exec_prefix(cmd: &[String]) -> TransparentStrip<'_> {
     }
 }
 
-/// `command [-p] command [arguments]` — do not peel display forms `-v`/`-V`.
+/// `command [-p] command [arguments]`; do not peel display forms `-v`/`-V`.
 fn strip_command_prefix(cmd: &[String]) -> TransparentStrip<'_> {
     let mut i = 1usize;
     while let Some(tok) = cmd.get(i).map(String::as_str) {
@@ -835,7 +826,7 @@ fn strip_command_prefix(cmd: &[String]) -> TransparentStrip<'_> {
     }
 }
 
-/// `builtin [shell-builtin [arguments]]` — no options modeled.
+/// `builtin [shell-builtin [arguments]]`; no options modeled.
 fn strip_builtin_prefix(cmd: &[String]) -> TransparentStrip<'_> {
     match cmd.get(1).map(String::as_str) {
         None => TransparentStrip::NotPrefix,
@@ -847,10 +838,7 @@ fn strip_builtin_prefix(cmd: &[String]) -> TransparentStrip<'_> {
     }
 }
 
-/// Simple shell-like splitter that:
-/// - splits on whitespace (outside of quotes)
-/// - handles single and double quotes, removing the quotes
-/// - handles backslash escapes in a basic way
+/// Split on unquoted whitespace, stripping quotes and applying basic backslash escapes.
 fn sh_split_simple(s: &str) -> Vec<String> {
     let mut result = Vec::new();
     let mut current = String::new();
@@ -889,51 +877,47 @@ fn sh_split_simple(s: &str) -> Vec<String> {
     result
 }
 
-/// Given a bash *script string* like:
-///
-/// ```bash
-/// XAI_API_KEY='xai-some-key' cargo run --bin xai-grok-pager
-/// ```
-///
-/// returns the first "important" command as a `BashCommandHighlights` where:
-/// - `prefix` = tokens before the highlighted command (env assignments, setup commands, operators)
-/// - `highlighted_words` = the main command + args (like the old return)
-/// - `suffix` = tokens after the highlighted command.
-///
-/// For the above example:
-///   prefix: ["XAI_API_KEY=xai-some-key"]
-///   highlighted_words: ["cargo", "run", "--bin", "xai-grok-pager"]
-///   suffix: []
+/// Split a bash script into the first important command: `prefix` (assignments/setup), `highlighted_words` (main command and args), and `suffix`.
 pub fn primary_command_from_script(script: &str) -> Option<BashCommandHighlights> {
     let tree = try_parse_shell(script)?;
     let commands = try_parse_word_only_commands_sequence(&tree, script)?;
 
-    let primary = commands.into_iter().find(|c| !is_setup_command(&c.words))?;
+    // Peel wrappers before the setup check and highlight: grants match peeled words, so an unpeeled "Always allow" (`env FOO=1 …`) could never match
+    // Peeling first also gives a wrapper-only script (`timeout 30 cargo test`) a primary command, so the prompt keeps the always-allow rows
+    let primary = commands.into_iter().find_map(|c| {
+        let peeled = unwrap_wrappers(&c.words);
+        if peeled.is_empty() || is_setup_command(peeled) {
+            return None;
+        }
+        let peeled_off = c.words.len() - peeled.len();
+        let peeled_words = c.words.get(peeled_off..)?.to_vec();
+        Some((c, peeled_off, peeled_words))
+    });
+    let (primary, peeled_off, peeled_words) = primary?;
 
-    let prefix_str = &script[..primary.span_start];
-    let suffix_str = &script[primary.span_end..];
+    let prefix_str = script.get(..primary.span_start)?;
+    let suffix_str = script.get(primary.span_end..)?;
+
+    // Peeled wrapper words stay visible as prefix context so the rendered command is still the full invocation; only the grant scope narrows
+    let mut prefix = sh_split_simple(prefix_str);
+    prefix.extend_from_slice(primary.words.get(..peeled_off)?);
 
     Some(BashCommandHighlights {
-        prefix: sh_split_simple(prefix_str),
-        highlighted_words: primary.words,
+        prefix,
+        highlighted_words: peeled_words,
         suffix: sh_split_simple(suffix_str),
     })
 }
 
-/// Parse all commands from a bash script using tree-sitter.
-///
-/// Returns `Some(Vec<PlainCommand>)` with every command in source order
-/// (including "setup" commands like `cd`, `sleep`, etc.), or `None` if
-/// the script contains constructs that tree-sitter-bash cannot cleanly
-/// decompose into plain word-only commands.
+/// Returns `Some(Vec<PlainCommand>)` with every command in source order (including "setup" commands like `cd`, `sleep`, etc.).
+/// Returns `None` if the script contains constructs that tree-sitter-bash cannot cleanly decompose into plain word-only commands.
 pub fn all_commands_from_script(script: &str) -> Option<Vec<PlainCommand>> {
     let tree = try_parse_shell(script)?;
     try_parse_word_only_commands_sequence(&tree, script)
 }
 
-/// Parse a single `command` node into a list of "words", rejecting anything
-/// non-trivial (substitutions, complex strings, etc.), and also returning
-/// the byte span for the *highlighted* portion (command + args, not env).
+/// Parse a single `command` node into a list of "words", rejecting anything non-trivial (substitutions, complex strings, etc.).
+/// Also returns the byte span for the *highlighted* portion (command and args, not env).
 fn parse_plain_command_from_node(cmd: Node, src: &str) -> Option<PlainCommand> {
     if cmd.kind() != "command" {
         return None;
@@ -946,8 +930,7 @@ fn parse_plain_command_from_node(cmd: Node, src: &str) -> Option<PlainCommand> {
 
     for child in cmd.named_children(&mut cursor) {
         match child.kind() {
-            // We ignore simple env var assignments in front of the command.
-            // Safety of their contents is already enforced by the outer whitelist.
+            // Env assignments in front of the command are skipped; the outer whitelist already vetted their contents
             "variable_assignment" => {
                 // no-op, just skip for words & span
             }
@@ -986,8 +969,7 @@ fn parse_plain_command_from_node(cmd: Node, src: &str) -> Option<PlainCommand> {
                     let text = content_node.utf8_text(src.as_bytes()).ok()?.to_owned();
 
                     if span_start.is_none() {
-                        // Highlight whole quoted string in the original script,
-                        // so span uses the outer node.
+                        // Highlight whole quoted string in the original script, so span uses the outer node
                         span_start = Some(child.start_byte());
                     }
                     span_end = Some(child.end_byte());
@@ -1011,7 +993,7 @@ fn parse_plain_command_from_node(cmd: Node, src: &str) -> Option<PlainCommand> {
                 }
             }
             "concatenation" => {
-                // Handle concatenation nodes (e.g., {} in find -exec)
+                // E.g. `{}` in `find -exec`
                 let text = child.utf8_text(src.as_bytes()).ok()?.to_owned();
 
                 if span_start.is_none() {
@@ -1038,11 +1020,9 @@ fn parse_plain_command_from_node(cmd: Node, src: &str) -> Option<PlainCommand> {
 // ── Display soft-breaks (permission UI / formatting) ─────────────────
 
 /// Node kinds whose descendants are payload text, not shell control flow.
-/// Operators that appear only as *characters* inside these are not real
-/// soft-break points (e.g. `&&` in a heredoc body or double-quoted string).
+/// Operators that appear only as *characters* inside these are not real soft-break points (e.g. `&&` in a heredoc body or double-quoted string).
 const PAYLOAD_NODE_KINDS: &[&str] = &[
-    // Heredoc body / content (not the redirect operator itself on the
-    // command line — `cat <<EOF && true` still has a real list `&&`).
+    // Heredoc body / content (not the redirect operator itself on the command line; `cat <<EOF && true` still has a real list `&&`)
     "heredoc_body",
     "simple_heredoc_body",
     "heredoc_content",
@@ -1067,29 +1047,18 @@ fn is_payload_node_kind(kind: &str) -> bool {
     PAYLOAD_NODE_KINDS.contains(&kind)
 }
 
-/// Byte offsets into `script` **after** real shell list/pipeline operators
-/// where a display soft-wrap is safe.
-///
-/// Uses tree-sitter-bash so `&&` / `||` / `|` / `;` that appear only inside
-/// strings, heredoc bodies, or comments are **not** returned. The command-line
-/// operator in `cat <<EOF && echo after` **is** returned (it is a real `list`
-/// operator); the body's `foo && bar` is not.
-///
-/// Returns an empty vec when the script cannot be parsed at all (caller should
-/// fall back to width-only word-wrap, not naive substring splits).
-///
-/// Offsets are sorted ascending and de-duplicated. Each offset is
-/// `operator_node.end_byte()` — i.e. the split keeps the operator on the
-/// preceding display row.
+/// Byte offsets after real list/pipeline operators where a display soft-wrap is safe.
+/// Tree-sitter excludes operators that appear only inside strings, heredoc bodies, or comments; unparseable scripts return empty so the caller width-wraps instead of substring-splitting.
+/// Offsets are sorted, de-duplicated `operator_node.end_byte()` values so the operator stays on the preceding row.
 pub fn soft_break_offsets_after_operators(script: &str) -> Vec<usize> {
     let Some(tree) = try_parse_shell(script) else {
         return Vec::new();
     };
 
     let root = tree.root_node();
-    // On a broken parse, tree-sitter can still expose `|` / `&&` / `;` nodes
-    // that are *not* real shell control flow (e.g. fragments of unclosed
-    // strings or half-parsed heredocs). Prefer no soft-breaks over wrong ones.
+    // On a broken parse, tree-sitter can still expose `|` / `&&` / `;` nodes that are *not* real shell control flow
+    // They can be fragments of unclosed strings or half-parsed heredocs
+    // Prefer no soft-breaks over wrong ones
     if root.has_error() {
         return Vec::new();
     }
@@ -1100,9 +1069,8 @@ pub fn soft_break_offsets_after_operators(script: &str) -> Vec<usize> {
     while let Some(node) = stack.pop() {
         let kind = node.kind();
 
-        // Do not walk into string / heredoc / comment payload — any operator
-        // characters there are not shell syntax nodes we care about, and
-        // skipping the whole subtree is cheaper and safer.
+        // Do not walk into string / heredoc / comment payload; operator characters there are not shell syntax nodes we care about
+        // Skipping the whole subtree is cheaper and safer
         if is_payload_node_kind(kind) {
             continue;
         }
@@ -1126,23 +1094,16 @@ pub fn soft_break_offsets_after_operators(script: &str) -> Vec<usize> {
     breaks
 }
 
-/// Byte ranges of heredoc *payload* (body / content), not the `<<WORD` opener
-/// on the command line.
-///
-/// Used by the permission overlay so physical lines that are pure heredoc
-/// body text are **not** soft-wrapped at spaces (they are free-form payload,
-/// not shell syntax). Returns an empty vec when the script cannot be parsed
-/// or the tree has errors (same policy as [`soft_break_offsets_after_operators`]:
-/// error recovery can invent bogus heredoc spans).
+/// Byte ranges of heredoc payload, not the `<<WORD` opener, so the overlay does not soft-wrap free-form body text at spaces.
+/// Empty when the script cannot be parsed or the tree has errors: recovery can invent bogus spans, same policy as [`soft_break_offsets_after_operators`].
 pub fn heredoc_payload_byte_ranges(script: &str) -> Vec<(usize, usize)> {
     let Some(tree) = try_parse_shell(script) else {
         return Vec::new();
     };
 
     let root = tree.root_node();
-    // Match soft-break policy: on a broken parse, tree-sitter error recovery can
-    // invent or mis-bound `heredoc_body` nodes. Prefer no payload ranges (normal
-    // soft-wrap / no false no-wrap) over wrong spans that overflow or skip wraps.
+    // Match soft-break policy: on a broken parse, tree-sitter error recovery can invent or mis-bound `heredoc_body` nodes
+    // Prefer no payload ranges (normal soft-wrap / no false no-wrap) over wrong spans that overflow or skip wraps
     if root.has_error() {
         return Vec::new();
     }
@@ -1160,7 +1121,7 @@ pub fn heredoc_payload_byte_ranges(script: &str) -> Vec<(usize, usize)> {
             if start < end && end <= script.len() {
                 ranges.push((start, end));
             }
-            // Do not walk into children — the outer body/content range is enough.
+            // Do not walk into children; the outer body/content range is enough
             continue;
         }
         let mut cursor = node.walk();
@@ -1175,8 +1136,7 @@ pub fn heredoc_payload_byte_ranges(script: &str) -> Vec<(usize, usize)> {
     ranges
 }
 
-/// True when the half-open byte range `[start, end)` lies entirely inside one
-/// of the given (sorted) payload ranges.
+/// True when the half-open byte range `[start, end)` lies entirely inside one of the given (sorted) payload ranges.
 pub fn range_fully_inside(start: usize, end: usize, ranges: &[(usize, usize)]) -> bool {
     if end < start {
         return false;
@@ -1184,12 +1144,9 @@ pub fn range_fully_inside(start: usize, end: usize, ranges: &[(usize, usize)]) -
     ranges.iter().any(|&(rs, re)| start >= rs && end <= re)
 }
 
-/// Split `line` (a physical line whose first byte is at `line_start` in the
-/// full script that produced `breaks`) into contiguous slices at any soft
-/// breaks that fall strictly inside the line.
-///
-/// When there are no applicable breaks, returns a single-element vec with
-/// `line` unchanged.
+/// Split `line` into contiguous slices at any soft breaks that fall strictly inside the line.
+/// `line` is a physical line whose first byte is at `line_start` in the full script that produced `breaks`.
+/// When there are no applicable breaks, returns a single-element vec with `line` unchanged.
 pub fn split_physical_line_at_soft_breaks<'a>(
     line: &'a str,
     line_start: usize,
@@ -1211,13 +1168,17 @@ pub fn split_physical_line_at_soft_breaks<'a>(
     let mut chunks = Vec::with_capacity(rel.len() + 1);
     let mut start = 0usize;
     for b in rel {
-        if b > start {
-            chunks.push(&line[start..b]);
+        if b > start
+            && let Some(chunk) = line.get(start..b)
+        {
+            chunks.push(chunk);
             start = b;
         }
     }
-    if start < line.len() {
-        chunks.push(&line[start..]);
+    if start < line.len()
+        && let Some(chunk) = line.get(start..)
+    {
+        chunks.push(chunk);
     }
     if chunks.is_empty() {
         chunks.push(line);
@@ -1225,8 +1186,8 @@ pub fn split_physical_line_at_soft_breaks<'a>(
     chunks
 }
 
-/// Slice of `script` at each soft-break, for tests / debugging. Each slice
-/// ends at an operator (inclusive); the final slice is the remainder.
+/// Slice of `script` at each soft-break, for tests / debugging.
+/// Each slice ends at an operator (inclusive); the final slice is the remainder.
 pub fn soft_break_chunks(script: &str) -> Vec<&str> {
     let breaks = soft_break_offsets_after_operators(script);
     if breaks.is_empty() {
@@ -1235,13 +1196,18 @@ pub fn soft_break_chunks(script: &str) -> Vec<&str> {
     let mut out = Vec::with_capacity(breaks.len() + 1);
     let mut start = 0usize;
     for b in breaks {
-        if b > start && b <= script.len() {
-            out.push(&script[start..b]);
+        if b > start
+            && b <= script.len()
+            && let Some(chunk) = script.get(start..b)
+        {
+            out.push(chunk);
             start = b;
         }
     }
-    if start < script.len() {
-        out.push(&script[start..]);
+    if start < script.len()
+        && let Some(chunk) = script.get(start..)
+    {
+        out.push(chunk);
     }
     out
 }
@@ -1534,7 +1500,6 @@ mod tests {
 
     #[test]
     fn test_sleep_and_timeout_commands_skipped() {
-        // sleep 5 && foo should extract "foo" as the primary command
         let sleep_command = "sleep 5 && foo --bar";
         assert_eq!(
             primary_command_from_script(sleep_command),
@@ -1545,7 +1510,6 @@ mod tests {
             })
         );
 
-        // timeout 60 && foo should extract "foo" as the primary command
         let timeout_command = "timeout 60 && foo --bar";
         assert_eq!(
             primary_command_from_script(timeout_command),
@@ -1556,7 +1520,6 @@ mod tests {
             })
         );
 
-        // sleep 5 && timeout 60 foo should extract "foo" as the primary command
         // Note: "timeout 60 foo" is parsed as one command where timeout takes 60 and foo as args
         // So the primary should skip sleep and get to the timeout command, but timeout is also skipped
         let sleep_timeout_command = "sleep 5 && timeout 60 && foo --bar";
@@ -1576,7 +1539,6 @@ mod tests {
             })
         );
 
-        // Combined with cd: cd /path && sleep 5 && git status
         let cd_sleep_command = "cd /some/path && sleep 5 && git status";
         assert_eq!(
             primary_command_from_script(cd_sleep_command),
@@ -1594,16 +1556,16 @@ mod tests {
             })
         );
 
-        // timeout with wrapped command: timeout 60 cargo test
-        // Here timeout is the first command with args [60, cargo, test]
-        // Since we skip timeout, we should look for the next command, but there isn't one
-        // So this would return None or timeout as primary - let's see the actual behavior
+        // Wrapped command: the wrapper peels into the prefix and the inner program is the primary (see `primary_command_peels_wrappers_into_prefix`)
         let timeout_wrapped = "timeout 60 cargo test";
-        let result = primary_command_from_script(timeout_wrapped);
-        // timeout is the only command here, so if we skip it, there's nothing else
-        // The parsing treats "timeout 60 cargo test" as a single command
-        // Since timeout is a setup command, it gets skipped, and there's no next command
-        assert_eq!(result, None);
+        assert_eq!(
+            primary_command_from_script(timeout_wrapped),
+            Some(BashCommandHighlights {
+                prefix: vec!["timeout".to_owned(), "60".to_owned()],
+                highlighted_words: vec!["cargo".to_owned(), "test".to_owned()],
+                suffix: vec![],
+            })
+        );
 
         // But if we chain it properly with &&, we can extract the real command
         let timeout_chained = "timeout 60 && cargo test";
@@ -1616,19 +1578,44 @@ mod tests {
             })
         );
 
-        // Test sleep with no following command just returns None (no primary command)
         let sleep_only = "sleep 5";
         assert_eq!(primary_command_from_script(sleep_only), None);
     }
 
+    /// The highlighted words must be the wrapper-peeled form, the exact words `evaluate_bash` compares grants against.
+    /// An "Always allow" saved from the highlight could otherwise never match at enforcement time.
+    #[test]
+    fn primary_command_peels_wrappers_into_prefix() {
+        assert_eq!(
+            primary_command_from_script("env FOO=1 cargo test"),
+            Some(BashCommandHighlights {
+                prefix: vec!["env".to_owned(), "FOO=1".to_owned()],
+                highlighted_words: vec!["cargo".to_owned(), "test".to_owned()],
+                suffix: vec![],
+            })
+        );
+        assert_eq!(
+            primary_command_from_script("nice -n 5 make -j8"),
+            Some(BashCommandHighlights {
+                prefix: vec!["nice".to_owned(), "-n".to_owned(), "5".to_owned()],
+                highlighted_words: vec!["make".to_owned(), "-j8".to_owned()],
+                suffix: vec![],
+            })
+        );
+        // A bare wrapper with nothing inside is not a primary command.
+        assert_eq!(primary_command_from_script("timeout 30"), None);
+    }
+
     // ── soft_break_offsets_after_operators ────────────────────────────
 
-    /// Helper: operators present at soft-break points (suffix of each prefix).
+    /// The trailing operator token of the script prefix at each soft-break offset.
     fn break_operator_suffixes(script: &str) -> Vec<String> {
         soft_break_offsets_after_operators(script)
             .into_iter()
             .map(|b| {
-                let prefix = &script[..b];
+                let Some(prefix) = script.get(..b) else {
+                    return String::new();
+                };
                 // Take the trailing operator token (&&, ||, |, ;).
                 if prefix.ends_with("&&") {
                     "&&".to_owned()
@@ -1658,7 +1645,12 @@ mod tests {
         let ops = break_operator_suffixes(script);
         assert_eq!(ops, vec!["&&", "||", ";", "|"]);
         let chunks = soft_break_chunks(script);
-        assert!(chunks[0].ends_with("&&"));
+        assert!(
+            chunks
+                .first()
+                .unwrap_or_else(|| panic!("expected chunk 0"))
+                .ends_with("&&")
+        );
         assert!(chunks.last().unwrap().contains("cat"));
     }
 
@@ -1670,9 +1662,24 @@ mod tests {
         assert_eq!(ops, vec!["&&"]);
         let chunks = soft_break_chunks(script);
         assert_eq!(chunks.len(), 2);
-        assert!(chunks[0].contains(r#""a && b""#));
-        assert!(chunks[0].ends_with("&&"));
-        assert!(chunks[1].contains("echo real"));
+        assert!(
+            chunks
+                .first()
+                .unwrap_or_else(|| panic!("expected chunk 0"))
+                .contains(r#""a && b""#)
+        );
+        assert!(
+            chunks
+                .first()
+                .unwrap_or_else(|| panic!("expected chunk 0"))
+                .ends_with("&&")
+        );
+        assert!(
+            chunks
+                .get(1)
+                .unwrap_or_else(|| panic!("expected chunk 1"))
+                .contains("echo real")
+        );
     }
 
     #[test]
@@ -1686,7 +1693,7 @@ mod tests {
     fn soft_break_ignores_and_inside_heredoc_body() {
         let script = "cat <<EOF && echo after\nfoo && bar\nbaz || qux\nEOF";
         let ops = break_operator_suffixes(script);
-        // Only the command-line list operator — not body `&&` / `||`.
+        // Only the command-line list operator, not body `&&` / `||`
         assert_eq!(
             ops,
             vec!["&&"],
@@ -1696,12 +1703,14 @@ mod tests {
         let breaks = soft_break_offsets_after_operators(script);
         assert_eq!(breaks.len(), 1);
         let first_nl = script.find('\n').unwrap();
+        let Some(&first_break) = breaks.first() else {
+            panic!("expected one soft-break: {breaks:?}");
+        };
         assert!(
-            breaks[0] <= first_nl,
-            "break at {} should be on the opener line (nl at {first_nl})",
-            breaks[0]
+            first_break <= first_nl,
+            "break at {first_break} should be on the opener line (nl at {first_nl})"
         );
-        assert!(script[..breaks[0]].ends_with("&&"));
+        assert!(script.get(..first_break).is_some_and(|p| p.ends_with("&&")));
     }
 
     #[test]
@@ -1714,8 +1723,7 @@ mod tests {
 
     #[test]
     fn soft_break_ignores_and_in_dash_heredoc_body() {
-        // `<<-` (tab-stripping heredoc) must behave like `<<`: only the
-        // command-line list operator is a break, not body operators.
+        // `<<-` (tab-stripping heredoc) must behave like `<<`: only the command-line list operator is a break, not body operators
         let script = "cat <<-EOF && echo after\n\tfoo && bar\n\tbaz | qux\n\tEOF";
         let ops = break_operator_suffixes(script);
         assert_eq!(
@@ -1732,7 +1740,12 @@ mod tests {
         assert_eq!(ops, vec!["&&"]);
         let breaks = soft_break_offsets_after_operators(script);
         // The break is on the second line.
-        assert!(script[..breaks[0]].contains("echo real"));
+        assert!(
+            script
+                .get(..*breaks.first().unwrap_or_else(|| panic!("expected break")))
+                .unwrap_or("")
+                .contains("echo real")
+        );
     }
 
     #[test]
@@ -1764,7 +1777,6 @@ mod tests {
 
     #[test]
     fn soft_break_does_not_split_on_ampersand_background() {
-        // trailing `&` for background is not `&&` — must not produce a break.
         let script = "sleep 1 &";
         assert!(
             soft_break_offsets_after_operators(script).is_empty(),
@@ -1781,31 +1793,48 @@ mod tests {
         let line0 = "a && b";
         let chunks0 = split_physical_line_at_soft_breaks(line0, 0, &breaks);
         assert_eq!(chunks0.len(), 2);
-        assert!(chunks0[0].ends_with("&&"));
-        assert_eq!(chunks0[1].trim(), "b");
+        assert!(
+            chunks0
+                .first()
+                .unwrap_or_else(|| panic!("expected chunks0[0]"))
+                .ends_with("&&")
+        );
+        assert_eq!(
+            chunks0
+                .get(1)
+                .unwrap_or_else(|| panic!("expected chunks0[1]"))
+                .trim(),
+            "b"
+        );
 
         let line1_start = script.find('\n').unwrap() + 1;
         let line1 = "c && d";
         let chunks1 = split_physical_line_at_soft_breaks(line1, line1_start, &breaks);
         assert_eq!(chunks1.len(), 2);
-        assert!(chunks1[0].ends_with("&&"));
-        assert_eq!(chunks1[1].trim(), "d");
+        assert!(
+            chunks1
+                .first()
+                .unwrap_or_else(|| panic!("expected chunks1[0]"))
+                .ends_with("&&")
+        );
+        assert_eq!(
+            chunks1
+                .get(1)
+                .unwrap_or_else(|| panic!("expected chunks1[1]"))
+                .trim(),
+            "d"
+        );
     }
 
     #[test]
     fn soft_break_nested_command_sub_still_sees_outer_list() {
-        // Operators inside $() may or may not be soft-breaks depending on
-        // whether we treat command_substitution as payload. We intentionally
-        // still allow breaks inside $() (they're real shell ops for that
-        // subshell) — only string/heredoc/comment are payload. Assert outer
-        // list op is present either way.
+        // We still allow breaks inside $() (they're real shell ops for that subshell); only string/heredoc/comment are payload
         let script = "echo $(true && false) && echo outer";
         let ops = break_operator_suffixes(script);
         assert!(
             ops.iter().any(|o| o == "&&"),
             "expected at least the outer &&, got {ops:?}"
         );
-        // Outer break: last one should be the list joining to `echo outer`.
         assert_eq!(ops.last().map(String::as_str), Some("&&"));
     }
 
@@ -1835,8 +1864,7 @@ mod tests {
 
     #[test]
     fn heredoc_payload_empty_on_parse_error() {
-        // Same policy as soft_break_empty_on_parse_error: error recovery must
-        // not invent bogus heredoc payload spans.
+        // Same policy as soft_break_empty_on_parse_error: error recovery must not invent bogus heredoc payload spans
         let broken = r#"echo "unclosed && true | false"#;
         let tree = try_parse_shell(broken).expect("tree-sitter still returns a tree");
         assert!(
@@ -1847,7 +1875,7 @@ mod tests {
             heredoc_payload_byte_ranges(broken).is_empty(),
             "must not emit heredoc payload ranges on a broken parse"
         );
-        // Broken heredoc-looking input: unclosed quote + << can confuse recovery.
+        // Broken heredoc-looking input: an unclosed quote and << can confuse recovery
         let broken_heredocish = "cat <<EOF && echo \"unclosed\nbody\nEOF";
         if let Some(tree) = try_parse_shell(broken_heredocish)
             && tree.root_node().has_error()
@@ -1876,8 +1904,7 @@ mod tests {
 
     #[test]
     fn soft_break_gh_jq_pipeline_inside_single_quotes_is_not_a_break() {
-        // Regression: `jq '.[] | ...'` must not soft-break at the `|` — it is
-        // inside a single-quoted raw_string, not a shell pipeline.
+        // Regression: `jq '.[] | ...'` must not soft-break at the `|`; it is inside a single-quoted raw_string, not a shell pipeline
         let script = r#"gh api user --jq '.login' && echo "---" && gh search prs --author=@me --sort=updated --limit=15 --json number,title,url,state,updatedAt,repository,isDraft --jq '.[] | "\(.state)\t#\(.number)\t\(.updatedAt)\t\(.repository.nameWithOwner)\t\(.title)\t\(.url)"'"#;
         let ops = break_operator_suffixes(script);
         assert_eq!(

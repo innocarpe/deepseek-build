@@ -6,18 +6,12 @@ use opentelemetry::trace::{Event, Status};
 use opentelemetry::{Array, KeyValue, StringValue, Value};
 use opentelemetry_sdk::trace::SpanData;
 
-/// Adding a span attribute (default-deny via `enforce_allowlist`): record
-/// numerics as `i64` (`u64` serializes as a string and is dropped); derive
-/// label values from an enum `as_str()`; add string keys here and to the
-/// round-trip test pin, and only if they carry no user content.
-pub(super) static ALLOWED_STRING_KEYS: &[&str] = &[
-    // tracing-opentelemetry / framework-injected
+pub(crate) static ALLOWED_STRING_KEYS: &[&str] = &[
     "level",
     "target",
     "code.namespace",
     "code.filepath",
     "thread.name",
-    // identifiers
     "session_id",
     "prompt_id",
     "req_id",
@@ -32,7 +26,6 @@ pub(super) static ALLOWED_STRING_KEYS: &[&str] = &[
     "event_id",
     "conv_id",
     "turn_id",
-    // model / client
     "model_id",
     "model",
     "compact_model",
@@ -41,7 +34,6 @@ pub(super) static ALLOWED_STRING_KEYS: &[&str] = &[
     "subagent_type",
     "persona",
     "role",
-    // tool / skill / mcp / method NAMES (identifiers, not arguments)
     "skill_name",
     "server_name",
     "tool_name",
@@ -49,7 +41,6 @@ pub(super) static ALLOWED_STRING_KEYS: &[&str] = &[
     "method",
     "operation",
     "endpoint",
-    // paths / urls (additionally home-path- and url-scrubbed by redact_value)
     "path",
     "file_path",
     "repo_path",
@@ -69,7 +60,6 @@ pub(super) static ALLOWED_STRING_KEYS: &[&str] = &[
     "object_path",
     "archive_name",
     "artifact",
-    // enums / classifications
     "verdict",
     "pattern_class",
     "phase",
@@ -79,6 +69,8 @@ pub(super) static ALLOWED_STRING_KEYS: &[&str] = &[
     "error_category",
     "error_type",
     "outcome",
+    "ttft_outcome",
+    "freshness",
     "decision",
     "update_type",
     "kind",
@@ -94,8 +86,11 @@ pub(super) static ALLOWED_STRING_KEYS: &[&str] = &[
     "schedule",
     "interval",
     "mode",
+    "isolation",
     "detail",
-    // span enums + plugin/auth/survey/mcp identifiers (categorical, no user content)
+    "metric",
+    "strategy",
+    "size_class",
     "status",
     "action",
     "auth_method",
@@ -128,11 +123,16 @@ pub(super) static ALLOWED_STRING_KEYS: &[&str] = &[
     "parent_agent_id",
     "from_mode",
     "tool_use_id",
+    "invocation_id",
+    "tool_id",
+    "tool_version",
+    "source_status",
+    "source_reason",
+    "grep_reason",
     "command_name",
     "command_source",
     "event_type",
     "appearance_id",
-    // terminal telemetry
     "terminal.brand",
     "terminal.multiplexer",
     "terminal.tmux_version",
@@ -141,22 +141,28 @@ pub(super) static ALLOWED_STRING_KEYS: &[&str] = &[
     "terminal.term_version_source",
     "skip_reason",
     "auto_cadence_reason",
+    "invocation_source",
+    "output_limit",
+    "read_file_role",
+    "read_skill_match",
+    "read_skill_source",
+    "read_selection",
+    "read_limit_kind",
+    "read_lines_applicability",
+    "read_lines_disposition",
+    "read_bytes_applicability",
+    "read_bytes_disposition",
+    "read_tokens_applicability",
+    "read_tokens_disposition",
 ];
 
-/// O(1) lookup view over [`ALLOWED_STRING_KEYS`].
 static ALLOWED_STRING_KEY_SET: LazyLock<HashSet<&'static str>> =
     LazyLock::new(|| ALLOWED_STRING_KEYS.iter().copied().collect());
 
-/// Allowlisted keys holding full URLs: reduced to `scheme://host[:port]` so
-/// user-influenced path/query can't export. Storage-*path* keys (`gcs_path`,
-/// `object_path`, `output_path`) are excluded — those paths are wanted.
-static URL_VALUED_KEYS: &[&str] = &["url", "endpoint", "gcs_url", "bucket_url"];
+static ORIGIN_REDUCED_KEYS: &[&str] = &["server_name", "url", "endpoint", "gcs_url", "bucket_url"];
 
-/// Scrub every text-bearing surface of each span before export.
-pub(super) fn redact_batch(batch: &mut [SpanData]) {
+pub(crate) fn redact_batch(batch: &mut [SpanData]) {
     for span in batch.iter_mut() {
-        // Exhaustive destructure (no `..`): a new `SpanData` field in a future
-        // `opentelemetry_sdk` fails to compile here instead of exporting unscrubbed.
         let SpanData {
             name,
             attributes,
@@ -176,11 +182,11 @@ pub(super) fn redact_batch(batch: &mut [SpanData]) {
         scrub_attributes(attributes);
         for event in &mut events.events {
             neuter_event_name(event);
-            // Re-scrub: synthesized callsite paths can be absolute (home dir).
+
             redact_in_place(&mut event.name);
             scrub_attributes(&mut event.attributes);
         }
-        // Keep the error message (useful telemetry); scrub secrets/paths from it.
+
         if let Status::Error { description } = status {
             redact_in_place(description);
         }
@@ -190,8 +196,6 @@ pub(super) fn redact_batch(batch: &mut [SpanData]) {
     }
 }
 
-/// Numeric/bool scalars and their arrays are content-free; everything else —
-/// strings and any future `#[non_exhaustive]` variant — is content (fail-closed).
 fn is_content_value(value: &Value) -> bool {
     !matches!(
         value,
@@ -202,7 +206,6 @@ fn is_content_value(value: &Value) -> bool {
     )
 }
 
-/// Default-deny: drop content-valued attributes whose key isn't allowlisted.
 fn enforce_allowlist(attrs: &mut Vec<KeyValue>) {
     attrs.retain(|kv| {
         !is_content_value(&kv.value) || ALLOWED_STRING_KEY_SET.contains(kv.key.as_str())
@@ -211,18 +214,15 @@ fn enforce_allowlist(attrs: &mut Vec<KeyValue>) {
 
 fn scrub_attributes(attrs: &mut Vec<KeyValue>) {
     enforce_allowlist(attrs);
+    enforce_enum_values(attrs);
     for kv in attrs.iter_mut() {
-        if URL_VALUED_KEYS.contains(&kv.key.as_str()) {
+        if ORIGIN_REDUCED_KEYS.contains(&kv.key.as_str()) {
             reduce_url_to_origin(&mut kv.value);
         }
         redact_value(&mut kv.value);
     }
 }
 
-/// An event's name is the formatted `tracing` message (`Event.name`) — free
-/// text the key allowlist can't gate, so replace it with the static callsite id
-/// (fail-closed). Rebuilt from the `code.filepath`/`code.lineno` attrs that
-/// `tracing-opentelemetry` attaches to every event (`with_location`, default-on).
 fn neuter_event_name(event: &mut Event) {
     let mut file: Option<String> = None;
     let mut line: Option<i64> = None;
@@ -244,13 +244,11 @@ fn neuter_event_name(event: &mut Event) {
     event.name = match (file, line) {
         (Some(f), Some(l)) => format!("{f}:{l}").into(),
         (Some(f), None) => f.into(),
-        // No location attrs (e.g. a raw-API event): drop the message entirely.
+
         _ => Cow::Borrowed("event"),
     };
 }
 
-/// Reduce a URL to `scheme://host[:port]` — its path/query can carry user
-/// content. Unparseable values pass through to the secret scrubber.
 fn reduce_url_to_origin(value: &mut Value) {
     if let Value::String(s) = value
         && let Cow::Owned(origin) = crate::redact_common::url_origin(s.as_str())
@@ -259,9 +257,95 @@ fn reduce_url_to_origin(value: &mut Value) {
     }
 }
 
-/// Secret-shape then user-path scrub (shared with the external pipeline).
-/// Returns `Some` only when the input changed (owned, so callers can
-/// overwrite in place).
+const SOURCE_STATUS: &[&str] = &["unknown", "succeeded", "empty", "failed", "partial"];
+const SOURCE_REASON: &[&str] = &[
+    "not_instrumented",
+    "search.unclassified_exit",
+    "read.not_found",
+    "read.directory",
+    "read.denied",
+    "read.ignored",
+    "read.binary",
+    "read.token_limit",
+    "read.io",
+];
+const INVOCATION_SOURCE: &[&str] = &["model", "user_direct", "system"];
+const OUTPUT_LIMIT: &[&str] = &["unobserved", "not_limited", "limited"];
+const READ_FILE_ROLE: &[&str] = &[
+    "skill_entry",
+    "skill_support",
+    "instruction",
+    "memory",
+    "ordinary",
+    "unknown",
+];
+const READ_SKILL_MATCH: &[&str] = &["registered", "unregistered", "unknown"];
+const READ_SKILL_SOURCE: &[&str] = &["local", "repo", "user", "server", "bundled", "plugin"];
+const READ_SELECTION: &[&str] = &[
+    "full",
+    "model_window",
+    "default_window",
+    "skill_full_read",
+    "unknown",
+];
+const READ_LIMIT_KIND: &[&str] = &["none", "lines", "bytes", "tokens", "multiple", "unknown"];
+const CAP_APPLICABILITY: &[&str] = &["applies", "not_applicable", "unknown"];
+const CAP_DISPOSITION: &[&str] = &[
+    "unobserved",
+    "within_limit",
+    "truncated",
+    "rejected",
+    "exempt",
+];
+const GREP_REASON: &[&str] = &["timeout", "spawn_failure", "early_stop"];
+
+fn enforce_enum_values(attrs: &mut Vec<KeyValue>) {
+    attrs.retain(|kv| match kv.key.as_str() {
+        "source_status" => string_in(&kv.value, SOURCE_STATUS),
+        "source_reason" => string_in(&kv.value, SOURCE_REASON),
+        "grep_reason" => string_in(&kv.value, GREP_REASON),
+        "invocation_source" => string_in(&kv.value, INVOCATION_SOURCE),
+        "output_limit" => string_in(&kv.value, OUTPUT_LIMIT),
+        "read_file_role" => string_in(&kv.value, READ_FILE_ROLE),
+        "read_skill_match" => string_in(&kv.value, READ_SKILL_MATCH),
+        "read_skill_source" => string_in(&kv.value, READ_SKILL_SOURCE),
+        "read_selection" => string_in(&kv.value, READ_SELECTION),
+        "read_limit_kind" => string_in(&kv.value, READ_LIMIT_KIND),
+        "read_lines_applicability" | "read_bytes_applicability" | "read_tokens_applicability" => {
+            string_in(&kv.value, CAP_APPLICABILITY)
+        }
+        "read_lines_disposition" | "read_bytes_disposition" | "read_tokens_disposition" => {
+            string_in(&kv.value, CAP_DISPOSITION)
+        }
+        "tool_version" => string_in(&kv.value, crate::events::ToolContractVersion::ALLOWED),
+        "tool_id" => tool_id_allowed(&kv.value),
+        "invocation_id" => invocation_id_allowed(&kv.value),
+        _ => true,
+    });
+}
+
+fn string_in(value: &Value, allowed: &[&str]) -> bool {
+    string_value(value).is_some_and(|text| allowed.contains(&text))
+}
+
+fn string_value(value: &Value) -> Option<&str> {
+    match value {
+        Value::String(text) => Some(text.as_str()),
+        _ => None,
+    }
+}
+
+fn tool_id_allowed(value: &Value) -> bool {
+    string_value(value).is_some_and(|id| {
+        id == crate::events::CanonicalToolId::OPAQUE
+            || crate::events::CanonicalToolId::from_qualified(id).is_some()
+    })
+}
+
+fn invocation_id_allowed(value: &Value) -> bool {
+    string_value(value).is_some_and(|id| uuid::Uuid::parse_str(id).is_ok())
+}
+
 fn redact_owned(input: &str) -> Option<String> {
     crate::redact_common::redact_owned(input)
 }
@@ -286,7 +370,7 @@ fn redact_value(value: &mut Value) {
                 }
             }
         }
-        // Non-string variants carry no free text; `Value` is `#[non_exhaustive]`.
+
         _ => {}
     }
 }
@@ -337,12 +421,12 @@ mod tests {
     #[test]
     fn allowlist_drops_nonallowlisted_content_keeps_safe_and_numeric() {
         let mut attrs = vec![
-            KeyValue::new("session_id", "sess-abc"), // allowlisted string
-            KeyValue::new("path", "/tmp/x.rs"),      // allowlisted string
-            KeyValue::new("prompt", "CANARY_PROMPT secret user text"), // not allowlisted → drop
-            KeyValue::new("command", "echo CANARY_SECRET"), // not allowlisted → drop
-            KeyValue::new("turn_number", 7_i64),     // numeric → keep
-            KeyValue::new("is_background", true),    // bool → keep
+            KeyValue::new("session_id", "sess-abc"),
+            KeyValue::new("path", "/tmp/x.rs"),
+            KeyValue::new("prompt", "CANARY_PROMPT secret user text"),
+            KeyValue::new("command", "echo CANARY_SECRET"),
+            KeyValue::new("turn_number", 7_i64),
+            KeyValue::new("is_background", true),
         ];
         enforce_allowlist(&mut attrs);
         let keys: Vec<&str> = attrs.iter().map(|kv| kv.key.as_str()).collect();
@@ -358,7 +442,7 @@ mod tests {
             !keys.contains(&"command"),
             "non-allowlisted content must be dropped"
         );
-        // Canary: no dropped content survives anywhere in the attribute set.
+
         let blob = format!("{attrs:?}");
         assert!(
             !blob.contains("CANARY_PROMPT"),
@@ -372,8 +456,6 @@ mod tests {
 
     #[test]
     fn allowlist_contents_are_pinned() {
-        // Keep this an independent copy — don't reference ALLOWED_STRING_KEYS, or
-        // the assert becomes a tautology and stops gating allowlist changes.
         let expected: &[&str] = &[
             "level",
             "target",
@@ -437,6 +519,8 @@ mod tests {
             "error_category",
             "error_type",
             "outcome",
+            "ttft_outcome",
+            "freshness",
             "decision",
             "update_type",
             "kind",
@@ -452,7 +536,11 @@ mod tests {
             "schedule",
             "interval",
             "mode",
+            "isolation",
             "detail",
+            "metric",
+            "strategy",
+            "size_class",
             "status",
             "action",
             "auth_method",
@@ -485,6 +573,12 @@ mod tests {
             "parent_agent_id",
             "from_mode",
             "tool_use_id",
+            "invocation_id",
+            "tool_id",
+            "tool_version",
+            "source_status",
+            "source_reason",
+            "grep_reason",
             "command_name",
             "command_source",
             "event_type",
@@ -497,6 +591,19 @@ mod tests {
             "terminal.term_version_source",
             "skip_reason",
             "auto_cadence_reason",
+            "invocation_source",
+            "output_limit",
+            "read_file_role",
+            "read_skill_match",
+            "read_skill_source",
+            "read_selection",
+            "read_limit_kind",
+            "read_lines_applicability",
+            "read_lines_disposition",
+            "read_bytes_applicability",
+            "read_bytes_disposition",
+            "read_tokens_applicability",
+            "read_tokens_disposition",
         ];
         assert_eq!(
             ALLOWED_STRING_KEYS, expected,
@@ -506,9 +613,46 @@ mod tests {
     }
 
     #[test]
+    fn tool_execution_enums_drop_paths_and_still_scrub_secrets() {
+        let mut attrs = vec![
+            KeyValue::new("tool_id", "/tmp/secret-project/main.rs"),
+            KeyValue::new("source_reason", "search.unclassified_exit"),
+            KeyValue::new("read_file_role", "/tmp/secret-project/note.txt"),
+            KeyValue::new("read_tokens_disposition", "rejected"),
+            KeyValue::new("source_status", "CANARY_STATUS /tmp/nope"),
+            KeyValue::new("grep_reason", "timeout"),
+            KeyValue::new("invocation_id", "not-a-uuid"),
+            KeyValue::new("tool_version", "current"),
+            KeyValue::new("model_id", "sk-CANARYabcdefghij1234567890"),
+        ];
+        scrub_attributes(&mut attrs);
+        let keys: Vec<&str> = attrs.iter().map(|kv| kv.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            [
+                "source_reason",
+                "read_tokens_disposition",
+                "grep_reason",
+                "tool_version",
+                "model_id",
+            ]
+        );
+        let model = attrs
+            .iter()
+            .find(|kv| kv.key.as_str() == "model_id")
+            .and_then(|kv| match &kv.value {
+                Value::String(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .expect("model_id must stay a string");
+        assert!(model.contains("[REDACTED_SECRET]"));
+        assert!(!format!("{attrs:?}").contains("secret-project"));
+        assert!(!format!("{attrs:?}").contains("CANARY_STATUS"));
+        assert!(!format!("{attrs:?}").contains("sk-CANARY"));
+    }
+
+    #[test]
     fn error_status_message_retained_but_secret_scrubbed() {
-        // Error messages are useful telemetry and must survive; only secret
-        // shapes (and home/username paths) are scrubbed out of them.
         let mut status = Status::error("upstream auth failed: sk-CANARYabcdefghij1234567890");
         if let Status::Error { description } = &mut status {
             redact_in_place(description);
@@ -544,7 +688,6 @@ mod tests {
 
     #[test]
     fn url_valued_keys_reduced_to_origin_but_storage_paths_kept() {
-        // Origin-reduction applies to every URL-valued key, not just `url`...
         let mut attrs = vec![
             KeyValue::new(
                 "bucket_url",
@@ -554,7 +697,6 @@ mod tests {
                 "endpoint",
                 "https://api.example.com:8443/v1/chat?u=CANARYUSER",
             ),
-            // ...but storage *paths* are deliberately exported in full.
             KeyValue::new("gcs_path", "sessions/abc123/artifact-kept.tar"),
         ];
         scrub_attributes(&mut attrs);
@@ -579,8 +721,6 @@ mod tests {
 
     #[test]
     fn allowlisted_value_is_still_secret_scrubbed() {
-        // Allowlisting a key permits the field; it does not exempt the value
-        // from the shape scrub.
         let mut attrs = vec![KeyValue::new("source", "sk-CANARYabcdefghij1234567890")];
         scrub_attributes(&mut attrs);
         let blob = format!("{attrs:?}");
@@ -592,11 +732,9 @@ mod tests {
 
     #[test]
     fn allowlisted_path_values_are_still_home_scrubbed() {
-        // Path keys are allowlisted so the field exports, but home/username
-        // segments must still collapse — allowlist is not a scrub bypass.
-        let home = dirs::home_dir().expect("home dir for path-scrub test");
+        let home = xai_dirs::home_dir().expect("home dir for path-scrub test");
         let home_str = home.to_string_lossy();
-        // Skip if the home path is too short/generic for the scrubber to match.
+
         if home_str.len() < 4 {
             return;
         }
@@ -620,9 +758,7 @@ mod tests {
 
     #[test]
     fn error_key_value_is_secret_and_path_scrubbed() {
-        // Free-form `error` strings are allowlisted for classification labels;
-        // any secret/path content that sneaks in must still be scrubbed.
-        let home = dirs::home_dir().expect("home dir");
+        let home = xai_dirs::home_dir().expect("home dir");
         let home_str = home.to_string_lossy();
         let msg =
             format!("failed reading {home_str}/.config/creds with sk-CANARYabcdefghij1234567890");

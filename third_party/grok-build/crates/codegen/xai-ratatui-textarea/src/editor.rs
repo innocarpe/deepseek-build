@@ -8,6 +8,7 @@ use unicode_width::UnicodeWidthStr as _;
 mod keys;
 
 pub use keys::classify_key_event;
+pub(crate) use keys::resolve_movement;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WordStyle {
@@ -40,7 +41,68 @@ pub(crate) enum EditCommandCategory {
     Kill,
 }
 
+/// Which selection edge a movement collapses to before moving.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HorizontalEdge {
+    Start,
+    End,
+}
+
+/// A cursor movement: one vocabulary behind plain move, Shift-extend, and collapse.
+/// `Command` carries its collapse edge from construction, so every movement is
+/// directional by type (no fallible extraction later).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Movement {
+    Command(EditCommand, HorizontalEdge),
+    VisualRowUp,
+    VisualRowDown,
+    VisualRowStart,
+    VisualRowEnd,
+    /// Home: logical line start, no already-at-BOL chain (unlike Ctrl+A).
+    LogicalLineStart,
+    /// End: logical line end, no already-at-EOL chain (unlike Ctrl+E).
+    LogicalLineEnd,
+}
+
+impl Movement {
+    /// The selection edge this movement collapses an active selection to.
+    pub(crate) fn collapse_edge(self) -> HorizontalEdge {
+        match self {
+            Self::Command(_, edge) => edge,
+            Self::VisualRowUp | Self::VisualRowStart | Self::LogicalLineStart => {
+                HorizontalEdge::Start
+            }
+            Self::VisualRowDown | Self::VisualRowEnd | Self::LogicalLineEnd => HorizontalEdge::End,
+        }
+    }
+
+    /// Grapheme moves stop at the collapse edge; every other movement continues from it.
+    pub(crate) fn stops_at_collapse_edge(self) -> bool {
+        matches!(
+            self,
+            Self::Command(
+                EditCommand::MoveGraphemeLeft | EditCommand::MoveGraphemeRight,
+                _
+            )
+        )
+    }
+}
+
 impl EditCommand {
+    /// The selection edge this command collapses an active selection to;
+    /// `None` for non-directional commands (inserts, deletes, kills).
+    pub(crate) fn selection_collapse_edge(self) -> Option<HorizontalEdge> {
+        match self {
+            Self::MoveGraphemeLeft | Self::MoveWordLeft(_) | Self::MoveLogicalLineStart => {
+                Some(HorizontalEdge::Start)
+            }
+            Self::MoveGraphemeRight | Self::MoveWordRight(_) | Self::MoveLogicalLineEnd => {
+                Some(HorizontalEdge::End)
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn category(self) -> EditCommandCategory {
         match self {
             Self::Insert(_) => EditCommandCategory::Insert,
@@ -433,7 +495,11 @@ impl EditBuffer {
         cursor_byte: usize,
         cursor_affinity: PostEditCursorAffinity,
     ) -> EditPlan {
-        let removed_text = self.text[replaced_byte_range.clone()].to_owned();
+        let removed_text = self
+            .text
+            .get(replaced_byte_range.clone())
+            .unwrap_or("")
+            .to_owned();
         EditPlan {
             replaced_byte_range,
             replacement,
@@ -542,7 +608,7 @@ impl EditBuffer {
         let mut left_width = 0usize;
         while start > line_start {
             let previous = previous_atomic_boundary(&self.text, start, &atomic_byte_ranges);
-            let grapheme_width = self.text[previous..start].width();
+            let grapheme_width = self.text.get(previous..start).unwrap_or("").width();
             let next_width = left_width.saturating_add(grapheme_width);
             if next_width > left_budget {
                 break;
@@ -555,7 +621,7 @@ impl EditBuffer {
         let mut visible_width = 0usize;
         while end < line_end {
             let next = next_atomic_boundary(&self.text, end, &atomic_byte_ranges);
-            let grapheme_width = self.text[end..next].width();
+            let grapheme_width = self.text.get(end..next).unwrap_or("").width();
             let next_width = visible_width.saturating_add(grapheme_width);
             if next_width > display_width {
                 if end < cursor_byte {
@@ -569,7 +635,7 @@ impl EditBuffer {
 
         SingleLineViewport {
             visible_byte_range: start..end,
-            cursor_display_column: self.text[start..cursor_byte].width(),
+            cursor_display_column: self.text.get(start..cursor_byte).unwrap_or("").width(),
         }
     }
 
@@ -681,7 +747,7 @@ impl EditBuffer {
         (0..cursor_byte)
             .rev()
             .find(|position| {
-                self.text.as_bytes()[*position] == b'\n'
+                self.text.as_bytes().get(*position).copied() == Some(b'\n')
                     && !byte_is_inside_atomic_range(*position, atomic_byte_ranges)
             })
             .map_or(0, |position| position + 1)
@@ -691,11 +757,15 @@ impl EditBuffer {
         let cursor_byte = cursor_byte.min(self.text.len());
         (cursor_byte..self.text.len())
             .find(|position| {
-                self.text.as_bytes()[*position] == b'\n'
+                self.text.as_bytes().get(*position).copied() == Some(b'\n')
                     && !byte_is_inside_atomic_range(*position, atomic_byte_ranges)
             })
             .map_or(self.text.len(), |line_feed| {
-                if line_feed > 0 && self.text.as_bytes()[line_feed - 1] == b'\r' {
+                if line_feed
+                    .checked_sub(1)
+                    .and_then(|i| self.text.as_bytes().get(i).copied())
+                    == Some(b'\r')
+                {
                     line_feed - 1
                 } else {
                     line_feed
@@ -753,7 +823,7 @@ fn atomic_word_class(
             WordStyle::WhitespaceDelimited => Some(WordClass::Word),
         }
     } else {
-        word_class(&text[start..end], style)
+        word_class(text.get(start..end).unwrap_or(""), style)
     }
 }
 

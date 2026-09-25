@@ -1,6 +1,5 @@
-//! Actor-level tests for the `/context` usage categories: populated rows
-//! with counts, compat-harness suppression of the MCP row, and parity
-//! between the MCP snapshot and the injected reminder.
+//! Actor-level tests for the `/context` usage categories.
+//! They cover populated rows with counts, the compat harness suppressing the MCP row, and parity between the MCP snapshot and the injected reminder.
 use super::support::*;
 use super::*;
 use crate::session::tool_index::{ServerMetadata, ToolMetadata};
@@ -53,11 +52,15 @@ async fn usage_categories_include_skills_and_mcp_with_counts() {
             install_mcp_servers(&actor);
             let rows = actor.usage_categories().await;
             assert_eq!(rows.len(), 2, "{rows:?}");
-            let skills = &rows[0];
+            let Some(skills) = rows.first() else {
+                panic!("expected Skills row: {rows:?}");
+            };
             assert_eq!(skills.label, "Skills");
             assert_eq!(skills.detail.as_deref(), Some("2 skills"));
             assert!(skills.tokens > 0);
-            let mcp = &rows[1];
+            let Some(mcp) = rows.get(1) else {
+                panic!("expected MCP row: {rows:?}");
+            };
             assert_eq!(mcp.label, "MCP servers");
             assert_eq!(mcp.detail.as_deref(), Some("1 server"));
             assert!(mcp.tokens > 0);
@@ -66,10 +69,192 @@ async fn usage_categories_include_skills_and_mcp_with_counts() {
         })
         .await;
 }
-/// Anti-drift pin for the MCP row: the estimated snapshot must equal the body
-/// `maybe_inject_mcp_reminder` injects in `Full` mode, minus the
-/// `<system-reminder>` wrapper. Composing the two texts differently (for
-/// example, dropping the tool usage hint from one side) fails this test.
+#[tokio::test(flavor = "current_thread")]
+async fn usage_categories_include_agents_md_with_count() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (gateway_tx, _) =
+                tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
+            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
+            let actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            let def = actor.agent.borrow().definition().clone();
+            let bridge = actor.tool_bridge_handle();
+            let ctx = xai_grok_agent::PromptContext {
+                agents_md_files: vec![
+                    xai_grok_agent::prompt::agents_md::AgentConfigFile {
+                        file_name: "AGENTS.md".into(),
+                        file_path: "/repo/AGENTS.md".into(),
+                        content: "# Root\nUse rustfmt.".into(),
+                        source: Default::default(),
+                    },
+                    xai_grok_agent::prompt::agents_md::AgentConfigFile {
+                        file_name: "AGENTS.md".into(),
+                        file_path: "/repo/crates/AGENTS.md".into(),
+                        content: "# Crate\nPrefer unit tests.".into(),
+                        source: Default::default(),
+                    },
+                ],
+                ..Default::default()
+            };
+            *actor.agent.borrow_mut() = xai_grok_agent::Agent::new(
+                def,
+                ctx,
+                String::new(),
+                bridge,
+                xai_grok_agent::ReminderPolicy::default(),
+                xai_grok_agent::CompactionPolicy::default(),
+                vec![],
+                false,
+            );
+            let rows = actor.usage_categories().await;
+            let agents = rows
+                .iter()
+                .find(|row| row.label == "AGENTS.md")
+                .expect("AGENTS.md row");
+            assert_eq!(agents.detail.as_deref(), Some("2 files"));
+            assert!(agents.tokens > 0, "{agents:?}");
+        })
+        .await;
+}
+#[tokio::test(flavor = "current_thread")]
+async fn usage_categories_include_workflows_when_enabled() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (gateway_tx, _) =
+                tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
+            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
+            let mut actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            actor.background_workflows_enabled = true;
+            let rows = actor.usage_categories().await;
+            let workflows = rows
+                .iter()
+                .find(|row| row.label == "Workflows")
+                .expect("workflows row");
+            assert!(workflows.tokens > 0, "{workflows:?}");
+            assert!(
+                workflows
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("workflow")),
+                "{workflows:?}"
+            );
+            let listing = actor.workflow_listing_for_prompt().expect("listing");
+            assert!(listing.contains("deep-research"), "{listing}");
+        })
+        .await;
+}
+#[tokio::test(flavor = "current_thread")]
+async fn baseline_reminder_lists_workflows_under_skills() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (gateway_tx, _) =
+                tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
+            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
+            let mut actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            actor.background_workflows_enabled = true;
+            seed_skills(&actor, &["commit"]).await;
+            let mut conversation = vec![ConversationItem::system("sys")];
+            actor
+                .inject_baseline_skill_reminder(&mut conversation)
+                .await;
+            let reminder = conversation
+                .iter()
+                .find_map(|item| {
+                    matches!(
+                        item,
+                        ConversationItem::User(u)
+                            if u.synthetic_reason
+                                == xai_grok_sampling_types::SyntheticReason::SystemReminder
+                    )
+                    .then(|| item.text_content())
+                })
+                .expect("baseline reminder");
+            let commit_at = reminder
+                .find("commit")
+                .expect("skill name must appear in reminder");
+            let workflows_at = reminder
+                .find("deep-research")
+                .expect("workflow name must appear in reminder");
+            assert!(
+                commit_at < workflows_at,
+                "workflows must sit under skills:\n{reminder}"
+            );
+        })
+        .await;
+}
+#[tokio::test(flavor = "current_thread")]
+async fn baseline_reminder_lists_workflows_when_there_are_no_skills() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (gateway_tx, _) =
+                tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
+            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
+            let mut actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            actor.background_workflows_enabled = true;
+            let mut conversation = vec![ConversationItem::system("sys")];
+            actor
+                .inject_baseline_skill_reminder(&mut conversation)
+                .await;
+            let reminder = conversation
+                .iter()
+                .find_map(|item| {
+                    matches!(
+                        item,
+                        ConversationItem::User(u)
+                            if u.synthetic_reason
+                                == xai_grok_sampling_types::SyntheticReason::SystemReminder
+                    )
+                    .then(|| item.text_content())
+                })
+                .expect("workflow-only reminder");
+            assert!(reminder.contains("deep-research"), "{reminder}");
+        })
+        .await;
+}
+#[tokio::test(flavor = "current_thread")]
+async fn subagent_session_does_not_list_workflows() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (gateway_tx, _) =
+                tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
+            let (persistence_tx, _) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
+            let mut actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            actor.background_workflows_enabled = true;
+            actor.startup_hints.is_subagent = true;
+            seed_skills(&actor, &["commit"]).await;
+            let mut conversation = vec![ConversationItem::system("sys")];
+            actor
+                .inject_baseline_skill_reminder(&mut conversation)
+                .await;
+            let reminder = conversation
+                .iter()
+                .find_map(|item| {
+                    matches!(
+                        item,
+                        ConversationItem::User(u)
+                            if u.synthetic_reason
+                                == xai_grok_sampling_types::SyntheticReason::SystemReminder
+                    )
+                    .then(|| item.text_content())
+                })
+                .expect("skill reminder");
+            assert!(reminder.contains("commit"), "{reminder}");
+            assert!(
+                !reminder.contains("deep-research"),
+                "subagents cannot launch workflows:\n{reminder}"
+            );
+            assert!(actor.workflow_listing_for_prompt().is_none());
+        })
+        .await;
+}
+/// This test pins the MCP row against drift.
+/// The estimated snapshot must equal the body `maybe_inject_mcp_reminder` injects in `Full` mode, minus the `<system-reminder>` wrapper.
+/// Composing the two texts differently (for example, dropping the tool usage hint from one side) fails this test.
 #[tokio::test(flavor = "current_thread")]
 async fn mcp_snapshot_matches_full_mode_injected_reminder() {
     let local = tokio::task::LocalSet::new();

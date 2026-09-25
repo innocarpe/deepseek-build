@@ -3,7 +3,7 @@
 
     fn toast_157_150() -> String {
         crate::glyphs::sanitize_toast_message(
-            "⚠ Version mismatch: client 0.1.157, leader 0.1.150 — restart grok to match",
+            "⚠ Version mismatch: client 0.1.157, leader 0.1.150. Restart grok to match",
         )
         .into_owned()
     }
@@ -51,7 +51,7 @@
             &mut app,
         ));
         let expected = crate::glyphs::sanitize_toast_message(
-            "⚠ Version mismatch: client 0.2.1, leader 0.2.0 — restart grok to match",
+            "⚠ Version mismatch: client 0.2.1, leader 0.2.0. Restart grok to match",
         )
         .into_owned();
         assert_eq!(agent_toast(&app, AgentId(0)), Some(expected.as_str()));
@@ -60,7 +60,7 @@
     #[test]
     fn version_mismatch_on_welcome_uses_welcome_toast() {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut app = AppView::new(tx, ModelState::default(), Vec::new());
+        let mut app = AppView::new(tx, ModelState::default(), Vec::new(), crate::render::draw::EscapeWriter::disconnected());
         app.leader_mode = true;
         assert!(matches!(app.active_view, ActiveView::Welcome));
         assert!(app.agents.is_empty());
@@ -96,7 +96,7 @@
     #[test]
     fn version_mismatch_on_welcome_survives_reconnected_toast() {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut app = AppView::new(tx, ModelState::default(), Vec::new());
+        let mut app = AppView::new(tx, ModelState::default(), Vec::new(), crate::render::draw::EscapeWriter::disconnected());
         app.leader_mode = true;
         assert!(handle_ext_notification(&both_versions_notif(), &mut app));
         let mismatch = toast_157_150();
@@ -168,7 +168,7 @@
         ));
         let text = agent_toast(&app, AgentId(0)).expect("toast");
         let expected = crate::glyphs::sanitize_toast_message(
-            "⚠ Version mismatch: client 0.1.157  x, leader 0.1.150   — restart grok to match",
+            "⚠ Version mismatch: client 0.1.157  x, leader 0.1.150  . Restart grok to match",
         )
         .into_owned();
         assert_eq!(text, expected);

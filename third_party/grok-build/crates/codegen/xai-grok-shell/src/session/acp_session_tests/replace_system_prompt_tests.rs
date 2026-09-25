@@ -1,8 +1,6 @@
-//! Actor-path coverage for `handle_replace_system_prompt` — the
-//! resident-reconnect `systemPromptOverride` sync. Head-swap semantics are
-//! unit-tested in `xai_chat_state` (`conversation_util` and the actor tests);
-//! these cover only what is unique to the `SessionActor` seam: the end-to-end
-//! swap and the `preserve_inherited_system` skip.
+//! Actor-path coverage for `handle_replace_system_prompt`, the resident-reconnect `systemPromptOverride` sync.
+//! The head swap itself is unit-tested in `xai_chat_state` (`conversation_util` and the actor tests).
+//! These tests cover only what is unique to the `SessionActor` path: the end-to-end swap and the `preserve_inherited_system` skip.
 
 use xai_grok_sampling_types::conversation::ConversationItem;
 
@@ -44,8 +42,8 @@ async fn handle_replace_system_prompt_replaces_head_and_preserves_turns() {
             let conv = actor.chat_state_handle.get_conversation().await;
             assert_eq!(head_text(&conv).as_deref(), Some("client override"));
             assert_eq!(conv.len(), 3, "must not wipe user/assistant turns");
-            assert!(matches!(conv[1], ConversationItem::User(_)));
-            assert!(matches!(conv[2], ConversationItem::Assistant(_)));
+            assert!(matches!(conv.get(1), Some(ConversationItem::User(_))));
+            assert!(matches!(conv.get(2), Some(ConversationItem::Assistant(_))));
         })
         .await;
 }

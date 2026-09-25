@@ -1,12 +1,9 @@
 //! Shared markdown content with cached word-wrapping.
 //!
-//! [`MarkdownContent`] wraps a [`StreamingMarkdownRenderer`] and caches the
-//! word-wrapped output so that repeated calls to [`output()`](MarkdownContent::output)
-//! at the same width are free after the first wrap.  Used by both
-//! [`AgentMessageBlock`](super::AgentMessageBlock) and
-//! [`ThinkingBlock`](super::ThinkingBlock).
+//! [`MarkdownContent`] wraps a [`StreamingMarkdownRenderer`] and caches the word-wrapped output.
+//! Repeated calls to [`output()`](MarkdownContent::output) at the same width are free after the first wrap.
+//! Used by both [`AgentMessageBlock`](super::AgentMessageBlock) and [`ThinkingBlock`](super::ThinkingBlock).
 
-use std::borrow::Cow;
 use std::cell::RefCell;
 
 use ratatui::text::Line;
@@ -22,10 +19,8 @@ use crate::theme::{ThemeKind, cache as theme_cache, md_style};
 use xai_grok_markdown::StreamingMarkdownRenderer;
 
 /// Mutable rendering state behind a single `RefCell`.
-///
-/// Groups the renderer and wrap-cache together so `ensure_wrapped` (called
-/// from `&self` methods via the `BlockContent` trait) can update both the
-/// table-width setting and the cache in a single borrow.
+/// Groups the renderer and wrap-cache together.
+/// `ensure_wrapped` (called from `&self` methods via the `BlockContent` trait) can then update the table-width setting and the cache in one borrow.
 #[derive(Debug, Clone)]
 struct RenderState {
     renderer: StreamingMarkdownRenderer,
@@ -35,23 +30,15 @@ struct RenderState {
     cache_theme: ThemeKind,
     cache_lines: Vec<Line<'static>>,
     cache_joiners: Vec<Option<String>>,
-    /// Number of pre-wrap (renderer output) lines that were frozen at the time
-    /// we last wrapped. Lines `0..frozen_pre_wrap_count` are stable and their
-    /// wrapped output is cached in `cache_lines[0..frozen_wrapped_count]`.
+    /// Number of pre-wrap (renderer output) lines that were frozen at the time we last wrapped.
+    /// Lines `0..frozen_pre_wrap_count` are stable and their wrapped output is cached in `cache_lines[0..frozen_wrapped_count]`.
     frozen_pre_wrap_count: usize,
     /// Number of post-wrap lines produced by the frozen prefix.
     frozen_wrapped_count: usize,
 }
 
-/// Shared markdown content with generation-tracked word-wrap cache.
-///
-/// Owns a [`StreamingMarkdownRenderer`] and provides:
-/// - Mutation via `push_chunk`, `finish`, `set_raw_mode`
-/// - Cached word-wrapping via `wrapped_lines` and `output`
-///
-/// Every mutation bumps an internal generation counter.  The wrap cache is
-/// keyed on `(width, generation)`, so scrolling (which doesn't change content)
-/// returns the cached result instantly.
+/// Shared markdown content with generation-tracked word-wrap cache. The wrap cache is keyed on `(width,
+/// generation)`, so scrolling (which doesn't change content) returns the cached result instantly.
 #[derive(Debug, Clone)]
 pub struct MarkdownContent {
     state: RefCell<RenderState>,
@@ -59,24 +46,12 @@ pub struct MarkdownContent {
     generation: u64,
 }
 
-/// Borrowed view of cached wrapped lines + joiners.
+/// Borrowed view of cached wrapped lines and joiners.
 ///
-/// Returned by [`MarkdownContent::wrapped_lines`] for blocks that need to
-/// post-process the wrapped output (e.g., blending, truncation).
+/// Returned by [`MarkdownContent::wrapped_lines`] for blocks that need to post-process the wrapped output (e.g., blending, truncation).
 pub struct WrappedLines<'a> {
     pub lines: &'a [Line<'static>],
     pub joiners: &'a [Option<String>],
-}
-
-/// Expand tab characters to spaces using the current global tab_width.
-///
-/// Returns `Cow::Borrowed` when the input contains no tabs (zero-copy fast path).
-fn expand_tabs(text: &str) -> Cow<'_, str> {
-    let tw = crate::appearance::tab_width();
-    if tw == 0 || !text.contains('\t') {
-        return Cow::Borrowed(text);
-    }
-    Cow::Owned(text.replace('\t', &" ".repeat(tw as usize)))
 }
 
 impl MarkdownContent {
@@ -86,20 +61,15 @@ impl MarkdownContent {
     }
 
     /// Create with initial text and an optional table width constraint.
-    ///
-    /// When `max_table_width` is `Some(w)`, tables are constrained to fit
-    /// within `w` display columns.  This is useful for pre-rendering
-    /// markdown before the final display width is known (e.g., plan preview).
+    /// When `max_table_width` is `Some(w)`, tables are constrained to fit within `w` display columns.
+    /// Useful for pre-rendering markdown before the final display width is known (e.g., plan preview).
     pub fn new_with_table_width(text: impl Into<String>, max_table_width: Option<usize>) -> Self {
         Self::new_inner(text, max_table_width, true)
     }
 
-    /// Create source-faithful content: CommonMark soft breaks are preserved
-    /// as line breaks instead of collapsing to spaces, so each source line
-    /// maps 1:1 to a rendered line.
-    ///
-    /// Used by the line-numbered plan preview, where rendered lines must map
-    /// back to file lines (e.g. for commenting on a line range).
+    /// Create source-faithful content: CommonMark soft breaks are preserved as line breaks instead of collapsing to spaces.
+    /// Each source line then maps 1:1 to a rendered line.
+    /// Used by the line-numbered plan preview, where rendered lines must map back to file lines (e.g. for commenting on a line range).
     pub fn new_source_faithful(text: impl Into<String>, max_table_width: Option<usize>) -> Self {
         Self::new_inner(text, max_table_width, false)
     }
@@ -113,11 +83,10 @@ impl MarkdownContent {
         renderer.set_max_table_width(max_table_width);
         renderer.set_collapse_soft_breaks(collapse_soft_breaks);
         let text = text.into();
-        let expanded = expand_tabs(&text);
+        let expanded = xai_grok_pager_render::appearance::expand_tabs(&text);
         renderer.push(&expanded);
-        // finish() (not render()) so the streaming LaTeX-delimiter normalizer
-        // flushes any trailing held-back delimiter bytes for this complete,
-        // one-shot document.
+        // finish() (not render()) so the streaming LaTeX-delimiter normalizer flushes any trailing held-back delimiter bytes
+        // This is a complete, one-shot document
         renderer.finish(Some(get_syntect()));
         Self {
             state: RefCell::new(RenderState {
@@ -155,7 +124,7 @@ impl MarkdownContent {
 
     /// Append a streaming chunk and re-render.
     pub fn push_chunk(&mut self, chunk: &str) {
-        let expanded = expand_tabs(chunk);
+        let expanded = xai_grok_pager_render::appearance::expand_tabs(chunk);
         self.state
             .get_mut()
             .renderer
@@ -165,20 +134,18 @@ impl MarkdownContent {
 
     /// Append a chunk without rendering immediately.
     ///
-    /// Used for historical replay during `session/load` so the pager can batch
-    /// markdown work and render once after replay completes.
+    /// Used for historical replay during `session/load` so the pager can batch markdown work and render once after replay completes.
     pub fn push_chunk_deferred(&mut self, chunk: &str) {
-        let expanded = expand_tabs(chunk);
+        let expanded = xai_grok_pager_render::appearance::expand_tabs(chunk);
         self.state.get_mut().renderer.push(&expanded);
         self.generation += 1;
     }
 
-    /// Finish streaming — full re-render for correctness.
+    /// Finish streaming: full re-render for correctness.
     pub fn finish(&mut self) {
         let state = self.state.get_mut();
         state.renderer.finish(Some(get_syntect()));
-        // finish() does a full re-render; reset frozen tracking so the
-        // next ensure_wrapped re-wraps everything from the new output.
+        // finish() does a full re-render; reset frozen tracking so the next ensure_wrapped re-wraps everything from the new output
         state.frozen_pre_wrap_count = 0;
         state.frozen_wrapped_count = 0;
         self.generation += 1;
@@ -194,10 +161,8 @@ impl MarkdownContent {
         self.state.borrow().renderer.source().is_empty()
     }
 
-    /// Get the rendered text as plain text (styles stripped).
+    /// Get the rendered text as plain text (all ratatui styles stripped).
     ///
-    /// Returns the styled markdown output with all ratatui styles removed,
-    /// producing a plain-text representation of the rendered content.
     /// Useful for copy-to-clipboard in pretty mode.
     pub fn rendered_plain_text(&self) -> String {
         let state = self.state.borrow();
@@ -214,8 +179,7 @@ impl MarkdownContent {
         result
     }
 
-    /// Get the line source map (rendered line index → source line number).
-    ///
+    /// Get the line source map (rendered line index to source line number).
     /// Each entry maps a pre-wrap rendered line to the source line it came from.
     /// Used for cursor stability when toggling raw/pretty mode.
     pub fn line_source_map(&self) -> Vec<usize> {
@@ -223,10 +187,8 @@ impl MarkdownContent {
     }
 
     /// Get the pre-wrap rendered lines (before word wrapping).
-    ///
     /// Returns cloned lines from the markdown renderer's current output.
-    /// These are styled `Line<'static>` objects at their natural width,
-    /// suitable for feeding into a ListPane which handles its own wrapping.
+    /// These are styled `Line<'static>` objects at their natural width, suitable for feeding into a ListPane which handles its own wrapping.
     pub fn pre_wrap_lines(&self) -> Vec<Line<'static>> {
         self.state.borrow().renderer.view().lines.to_vec()
     }
@@ -240,29 +202,31 @@ impl MarkdownContent {
         f(state.renderer.view().hyperlinks)
     }
 
-    /// Pre-wrap line ranges of the ` ```mermaid ` blocks in the current
-    /// rendered output, reflecting the current render width.
-    ///
-    /// Allocation-light (no source rebuild) for the per-frame caption path; the
-    /// detection skeleton with the diagram source lives in
-    /// [`mermaid_content`](Self::mermaid_content).
+    pub fn with_table_copy_meta<R>(
+        &self,
+        f: impl FnOnce(&[xai_grok_markdown::TableCopyMeta]) -> R,
+    ) -> R {
+        let state = self.state.borrow();
+        f(state.renderer.view().tables)
+    }
+
+    /// Pre-wrap line ranges of the ` ```mermaid ` blocks in the current rendered output, reflecting the current render width.
+    /// Avoids allocation (no source rebuild) so the caption path can call it every frame.
+    /// The detection skeleton with the diagram source lives in [`mermaid_content`](Self::mermaid_content).
     pub fn mermaid_block_ranges(&self) -> Vec<std::ops::Range<usize>> {
         let state = self.state.borrow();
         super::mermaid_content::mermaid_block_ranges(&state.renderer.view())
     }
 
     /// Build the Mermaid detection skeleton from the current rendered output.
-    ///
-    /// Call at construction/finish (never per streaming chunk) to capture the
-    /// detected diagrams (detection only — rendering is lazy, driven by the
-    /// affordance row on click).
+    /// Call at construction/finish (never per streaming chunk) to capture the detected diagrams.
+    /// Detection only; rendering is lazy, driven by the affordance row on click.
     pub fn mermaid_content(&self) -> super::mermaid_content::MermaidContent {
         let state = self.state.borrow();
         super::mermaid_content::MermaidContent::from_view(&state.renderer.view())
     }
 
     /// Get the current generation counter.
-    ///
     /// Bumped on every content mutation (push_chunk, finish, set_raw_mode).
     /// Used by viewers to detect when items need rebuilding.
     pub fn generation(&self) -> u64 {
@@ -274,13 +238,7 @@ impl MarkdownContent {
         self.current_raw
     }
 
-    /// Drop the word-wrap cache (`cache_lines` / `cache_joiners`).
-    ///
-    /// The next `output()` / `wrapped_lines()` call transparently rebuilds it
-    /// from the renderer's pre-wrap output — the exact path a width or theme
-    /// change already takes. Used by off-screen cache eviction: for a long
-    /// session the post-wrap copy of every styled line is one of the largest
-    /// per-block allocations, and only entries near the viewport need it hot.
+    /// Drop the word-wrap cache (`cache_lines` / `cache_joiners`). Only entries near the viewport need it hot.
     pub fn evict_wrap_cache(&self) {
         let mut state = self.state.borrow_mut();
         if state.cache_lines.is_empty() && state.cache_joiners.is_empty() {
@@ -307,18 +265,14 @@ impl MarkdownContent {
         }
     }
 
-    /// Ensure the wrap cache is populated for the given width.
-    ///
-    /// Uses incremental wrapping: only re-wraps lines after the renderer's
-    /// frozen boundary. Frozen (stable) lines are wrapped once and cached.
-    /// This turns streaming from O(N^2) total wrapping to ~O(N).
+    /// Ensure the wrap cache is populated for the given width. Uses incremental wrapping: only re-wraps lines after the
+    /// renderer's frozen boundary.
     fn ensure_wrapped(&self, width: usize) {
         let mut state = self.state.borrow_mut();
         let current_theme = theme_cache::current_kind();
 
-        // If the theme changed, update the renderer's style so the re-render
-        // below picks up the new colors. Resetting cache_generation forces
-        // the cache to rebuild even if width and content haven't changed.
+        // If the theme changed, update the renderer's style so the re-render below picks up the new colors
+        // Resetting cache_generation forces the cache to rebuild even if width and content haven't changed
         if state.cache_theme != current_theme {
             state.renderer.set_style(md_style::style());
             state.cache_theme = current_theme;
@@ -332,7 +286,7 @@ impl MarkdownContent {
             return;
         }
 
-        // Width or theme changed → full re-wrap (frozen cache invalid)
+        // Width or theme changed: full re-wrap (frozen cache invalid)
         let width_changed = state.cache_width != width;
         if width_changed {
             state.frozen_pre_wrap_count = 0;
@@ -345,24 +299,17 @@ impl MarkdownContent {
 
         let frozen_count = state.renderer.frozen_lines_count();
 
-        // --- Incremental wrapping ---
-        //
-        // The renderer guarantees that view().lines[0..frozen_count] are stable.
-        // We only need to wrap:
-        //   1. Newly frozen lines (frozen_pre_wrap_count..frozen_count)
-        //   2. Tail lines (frozen_count..total_lines)
-        //
-        // The cached frozen wrapped output (cache_lines[0..frozen_wrapped_count])
-        // is preserved as-is.
-        //
-        // We clone the line slices we need *before* mutating cache_lines,
-        // because view() borrows the renderer immutably.
+        // Only two ranges need wrapping. We clone the line slices we need *before* mutating
+        // cache_lines, because view() borrows the renderer immutably.
 
         // Step 1: Wrap any newly frozen lines
         let new_frozen_wrapped = if frozen_count > state.frozen_pre_wrap_count {
-            let new_frozen: Vec<Line<'static>> =
-                state.renderer.view().lines[state.frozen_pre_wrap_count..frozen_count].to_vec();
-            Some(word_wrap_lines_with_joiners(new_frozen, width))
+            state
+                .renderer
+                .view()
+                .lines
+                .get(state.frozen_pre_wrap_count..frozen_count)
+                .map(|new_frozen| word_wrap_lines_with_joiners(new_frozen.to_vec(), width))
         } else {
             None
         };
@@ -370,14 +317,18 @@ impl MarkdownContent {
         // Step 2: Wrap the tail (unfrozen) lines
         let total_lines = state.renderer.view().lines.len();
         let tail_wrapped = if frozen_count < total_lines {
-            let tail: Vec<Line<'static>> = state.renderer.view().lines[frozen_count..].to_vec();
-            Some(word_wrap_lines_with_joiners(tail, width))
+            state
+                .renderer
+                .view()
+                .lines
+                .get(frozen_count..)
+                .map(|tail| word_wrap_lines_with_joiners(tail.to_vec(), width))
         } else {
             None
         };
 
         // Now mutate the cache (no more borrows of view/renderer)
-        // Truncate stale tail, keeping only the previously frozen wrapped output
+        // Truncate the stale tail, keeping only the previously frozen wrapped output
         let frozen_wc = state.frozen_wrapped_count;
         state.cache_lines.truncate(frozen_wc);
         state.cache_joiners.truncate(frozen_wc);
@@ -401,10 +352,8 @@ impl MarkdownContent {
     }
 
     /// Access cached wrapped lines + joiners for post-processing.
-    ///
-    /// The closure receives a [`WrappedLines`] reference valid for the
-    /// duration of the call.  This avoids cloning when the caller only
-    /// needs to inspect or slice the lines (e.g., ThinkingBlock truncation).
+    /// The closure receives a [`WrappedLines`] reference valid for the duration of the call.
+    /// That avoids cloning when the caller only needs to inspect or slice the lines (e.g., ThinkingBlock truncation).
     pub fn with_wrapped_lines<R>(&self, width: usize, f: impl FnOnce(WrappedLines<'_>) -> R) -> R {
         self.ensure_wrapped(width);
         let state = self.state.borrow();
@@ -415,12 +364,10 @@ impl MarkdownContent {
     }
 
     /// Build a [`BlockOutput`] from the cached wrapped lines.
-    ///
-    /// Each line is converted to a [`BlockLine`] with joiner and optional
-    /// background color (from the line's style, e.g., for code blocks).
+    /// Each line is converted to a [`BlockLine`] with joiner and optional background color (from the line's style, e.g., for code blocks).
     /// This is the common path used by [`AgentMessageBlock`](super::AgentMessageBlock).
     pub fn output(&self, width: usize) -> BlockOutput {
-        // Raw mode shows the source `>` markers verbatim — nothing to exclude.
+        // Raw mode shows the source `>` markers verbatim; nothing to exclude
         let strip = QuoteBarStrip::new(!self.current_raw);
         self.with_wrapped_lines(width, |wrapped| {
             if wrapped.lines.is_empty() {
@@ -436,10 +383,15 @@ impl MarkdownContent {
                         .map(|(line, joiner)| {
                             let mut content = line.clone();
                             let selectable = strip.selectable(&mut content);
+                            // For list/blockquote lines, even the first wrapped line includes the
+                            // "│ " prefix. Measure indent_width from the actual line content to
+                            // correctly exclude it from logical width calculations.
+                            let indent_width = compute_subsequent_indent_width(line);
                             let mut block_line = BlockLine::styled(content)
                                 .with_selection_range(Some(MARKDOWN_BODY_RANGE))
                                 .with_joiner(joiner.clone());
                             block_line.selectable = selectable;
+                            block_line.indent_width = indent_width;
                             if let Some(bg) = line.style.bg {
                                 block_line.with_background(bg)
                             } else {
@@ -453,6 +405,28 @@ impl MarkdownContent {
     }
 }
 
+/// Compute the display width of the `subsequent_indent` prefix on a wrapped continuation line. This width is NOT
+/// part of the logical pre-wrap content, so hyperlink column mapping must exclude it. Returns 0 for lines without
+/// recognizable indent prefixes.
+pub(super) fn compute_subsequent_indent_width(line: &Line<'_>) -> usize {
+    use unicode_width::UnicodeWidthStr;
+
+    // Flatten the line's spans into plain text
+    let flat: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+
+    // Blockquote/list lines start with one or more "│ " (U+2502 + space) prefixes
+    let mut width = 0;
+    let mut chars = flat.chars();
+    while let Some('\u{2502}') = chars.next() {
+        if chars.next() == Some(' ') {
+            width += UnicodeWidthStr::width("\u{2502} ");
+        } else {
+            break;
+        }
+    }
+    width
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,7 +437,6 @@ mod tests {
         let md = MarkdownContent::new("Hello world, this is a test line");
         let out1 = md.output(80);
         let out2 = md.output(80);
-        // Same content and width → should return identical output.
         assert_eq!(out1.lines.len(), out2.lines.len());
         // Verify cache was actually used (generation matches).
         let state = md.state.borrow();
@@ -491,7 +464,7 @@ mod tests {
         let out1 = md.output(80);
         md.push_chunk(" world");
         let out2 = md.output(80);
-        // Content changed → output should differ.
+        // Content changed, so the output differs
         let text1: String = out1.lines.iter().map(|l| l.content.to_string()).collect();
         let text2: String = out2.lines.iter().map(|l| l.content.to_string()).collect();
         assert_ne!(text1, text2);
@@ -499,9 +472,8 @@ mod tests {
 
     #[test]
     fn with_wrapped_lines_provides_access() {
-        // Use CommonMark hard breaks (two trailing spaces + \n) so the
-        // three logical lines render as three visual lines. Bare `\n`
-        // between text lines is a soft break and collapses to a space.
+        // Use CommonMark hard breaks (two trailing spaces + \n) so the three logical lines render as three visual lines
+        // Bare `\n` between text lines is a soft break and collapses to a space
         let md = MarkdownContent::new("Line one  \nLine two  \nLine three");
         md.with_wrapped_lines(80, |wrapped| {
             assert_eq!(wrapped.lines.len(), 3);
@@ -509,9 +481,8 @@ mod tests {
         });
     }
 
-    /// End-to-end regression for the table "ghost cell" bug: a markdown table
-    /// with emoji-presentation glyphs (`⚠\u{FE0F}`, `✅`, `✗`) and an em-dash
-    /// must render every row at exactly the content width.
+    /// End-to-end regression for the table "ghost cell" bug.
+    /// A table with emoji-presentation glyphs (`⚠\u{FE0F}`, `✅`, `✗`) and an em-dash must render every row at exactly the content width.
     #[test]
     fn table_rows_fill_content_width_with_emoji() {
         use unicode_width::UnicodeWidthStr;
@@ -538,10 +509,8 @@ mod tests {
         }
     }
 
-    /// In-cell reflow regression: a six-column table of unbreakable tokens at
-    /// width 30 must keep its right border on every line — a table that
-    /// overflows the budget gets hard-clipped by the wrap layer, which eats
-    /// the right `│`.
+    /// In-cell reflow regression: a six-column table of unbreakable tokens at width 30 must keep its right border on every line.
+    /// A table that overflows the budget gets hard-clipped by the wrap layer, which eats the right `│`.
     #[test]
     fn test_six_col_table_output_30_keeps_right_border() {
         use unicode_width::UnicodeWidthStr;
@@ -608,7 +577,7 @@ mod tests {
         let md = MarkdownContent::new("hello world this should wrap across lines");
         let out = md.output(10);
         assert!(out.lines.len() > 1);
-        assert_eq!(out.lines[0].joiner, None);
+        assert_eq!(out.lines.first().map(|l| l.joiner.as_ref()), Some(None));
         assert!(out.lines.iter().skip(1).any(|line| line.joiner.is_some()));
     }
 
@@ -616,11 +585,13 @@ mod tests {
     fn markdown_body_lines_remain_selectable() {
         let md = MarkdownContent::new("hello");
         let out = md.output(80);
-        assert!(matches!(out.lines[0].selectable, Selectable::All));
+        assert!(matches!(
+            out.lines.first().map(|l| &l.selectable),
+            Some(&Selectable::All)
+        ));
     }
 
-    /// Verify that incremental wrapping during streaming produces the same
-    /// output as creating a fresh MarkdownContent with the full text.
+    /// Verify that incremental wrapping during streaming produces the same output as creating a fresh MarkdownContent with the full text.
     #[test]
     fn incremental_wrap_matches_full_wrap() {
         let width = 40;
@@ -674,8 +645,7 @@ mod tests {
         }
     }
 
-    /// Verify that the frozen wrap cache is actually being used (not just
-    /// re-wrapping everything each time).
+    /// Verify that the frozen wrap cache is actually being used (not just re-wrapping everything each time).
     #[test]
     fn frozen_cache_is_reused() {
         let width = 40;
@@ -694,7 +664,6 @@ mod tests {
         let _ = md.output(width);
 
         let state = md.state.borrow();
-        // Frozen wrapped count should have grown (more lines became frozen)
         assert!(
             state.frozen_wrapped_count >= frozen_count_after_first,
             "Frozen count should grow monotonically: before={}, after={}",

@@ -1,10 +1,13 @@
 //! Tests for settings setters, toggles, resets, and rollback.
 use super::*;
-/// `Action::ToggleVimMode` flips the active agent's `vim_mode` field,
-/// updates the in-process pager cache so future agents pick it up
-/// via `load_vim_mode`, emits `Effect::PersistSetting` so the new
-/// value is written to `[ui].vim_mode` in config.toml, and a second
-/// toggle restores the original.
+fn expect_agent(app: &AppView, id: AgentId) -> &AgentView {
+    let Some(agent) = app.agents.get(&id) else {
+        panic!("expected agent {id:?}");
+    };
+    agent
+}
+/// `Action::ToggleVimMode` flips the active agent's `vim_mode` field and the in-process pager cache (`load_vim_mode`) that seeds future agents.
+/// It emits `Effect::PersistSetting` so the new value lands in `[ui].vim_mode` in config.toml, and a second toggle restores the original.
 #[test]
 fn toggle_vim_mode_flips_state_and_persistence_cache() {
     crate::appearance::cache::set_vim_mode(false);
@@ -22,18 +25,18 @@ fn toggle_vim_mode_flips_state_and_persistence_cache() {
     );
     assert!(
         matches!(
-            &effects[0],
-            Effect::PersistSetting {
+            effects.first(),
+            Some(Effect::PersistSetting {
                 key: "vim_mode",
                 value: crate::settings::SettingValue::Bool(true),
                 rollback_value: crate::settings::SettingValue::Bool(false),
-            }
+            })
         ),
         "unexpected effect: {:?}",
-        effects[0],
+        effects.first(),
     );
     assert!(
-        app.agents[&id].vim_mode,
+        expect_agent(&app, id).vim_mode,
         "active agent should be in vim mode after toggle"
     );
     assert!(
@@ -52,15 +55,17 @@ fn toggle_vim_mode_flips_state_and_persistence_cache() {
         ),
         "second toggle must also persist, got {effects:?}",
     );
-    assert!(!app.agents[&id].vim_mode, "toggling again flips it back");
+    assert!(
+        !expect_agent(&app, id).vim_mode,
+        "toggling again flips it back"
+    );
     assert!(
         !crate::appearance::cache::load_vim_mode(),
         "cache must follow the second toggle"
     );
 }
-/// End-to-end: in vim mode, Tab from the prompt focuses scrollback,
-/// and then `j` navigates the scrollback (does NOT bounce back to the
-/// prompt). Drives the real handle_input → dispatch loop.
+/// End-to-end: in vim mode, Tab from the prompt focuses scrollback, and `j` then navigates the scrollback instead of bouncing back to the prompt.
+/// Drives the real loop from handle_input through dispatch.
 #[test]
 fn agent_vim_tab_focuses_scrollback_then_j_navigates() {
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
@@ -78,7 +83,7 @@ fn agent_vim_tab_focuses_scrollback_then_j_navigates() {
         let _ = dispatch(a, &mut app);
     }
     assert_eq!(
-        app.agents[&id].active_pane,
+        expect_agent(&app, id).active_pane,
         ActivePane::Scrollback,
         "Tab in the prompt must focus scrollback",
     );
@@ -92,17 +97,15 @@ fn agent_vim_tab_focuses_scrollback_then_j_navigates() {
         "vim j in scrollback must navigate, got {outcome:?}",
     );
     assert_eq!(
-        app.agents[&id].active_pane,
+        expect_agent(&app, id).active_pane,
         ActivePane::Scrollback,
         "j must keep focus on scrollback, not bounce to the prompt",
     );
     crate::appearance::cache::set_vim_mode(false);
 }
-/// `/vim-mode` (ToggleVimMode) must propagate to OPEN subagent views,
-/// not just top-level agents. Otherwise a user inside a subagent view
-/// toggles vim, presses Tab + j, and the keystroke forwards to the
-/// prompt (vim-OFF fallback) because the subagent view kept its stale
-/// `vim_mode = false`.
+/// `/vim-mode` (ToggleVimMode) must propagate to OPEN subagent views, not just top-level agents.
+/// Otherwise a user inside a subagent view toggles vim, presses Tab then j, and the keystroke forwards to the prompt (vim-OFF fallback).
+/// The subagent view kept its stale `vim_mode = false`.
 #[test]
 fn toggle_vim_mode_propagates_to_open_subagent_views() {
     crate::appearance::cache::set_vim_mode(false);
@@ -114,22 +117,24 @@ fn toggle_vim_mode_propagates_to_open_subagent_views() {
     {
         let parent = app.agents.get_mut(&id).unwrap();
         parent.vim_mode = false;
-        parent
-            .subagent_views
-            .insert("child-1".to_string(), Box::new(child));
+        parent.insert_test_child("child-1".to_string(), Box::new(child));
     }
     let _ = dispatch(Action::ToggleVimMode, &mut app);
-    assert!(app.agents[&id].vim_mode, "parent picks up the toggle");
     assert!(
-        app.agents[&id].subagent_views["child-1"].vim_mode,
+        expect_agent(&app, id).vim_mode,
+        "parent picks up the toggle"
+    );
+    assert!(
+        expect_agent(&app, id)
+            .subagent_views
+            .get("child-1")
+            .is_some_and(|v| v.vim_mode),
         "an open subagent view must also pick up the vim toggle",
     );
 }
-/// `/vim-mode` must toggle vim from the DASHBOARD too (not just an
-/// agent view) — previously it early-returned unless an agent was
-/// active, so it was a silent no-op and the overview's j/k never
-/// turned on. Turning vim ON also focuses the overview so j/k
-/// navigate immediately; turning it OFF returns focus to the input.
+/// `/vim-mode` must toggle vim from the DASHBOARD too, not just an agent view.
+/// It used to early-return unless an agent was active, a silent no-op that left the overview's j/k off.
+/// Turning vim ON also focuses the overview so j/k navigate immediately; turning it OFF returns focus to the input.
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 #[test]
 fn toggle_vim_mode_works_on_dashboard_and_focuses_overview() {
@@ -165,7 +170,7 @@ fn plugin_cta_catalog_reload_empty_candidates_resets_matched_phase() {
     let id = AgentId(0);
     {
         let cta = &mut app.agents.get_mut(&id).unwrap().plugin_cta;
-        cta.official_source_present = true;
+        cta.source_url_or_path = Some(xai_grok_plugin_marketplace::OFFICIAL_SOURCE_GIT_URL.into());
         cta.candidates = vec![cta_entry("figma", "not_installed")];
         cta.phase = CtaPhase::Matched {
             plugin_relative_path: "plugins/figma".into(),
@@ -191,7 +196,7 @@ fn plugin_cta_catalog_reload_empty_candidates_resets_matched_phase() {
         &mut app,
     );
     assert!(effects.is_empty());
-    let cta = &app.agents[&id].plugin_cta;
+    let cta = &expect_agent(&app, id).plugin_cta;
     assert!(cta.candidates.is_empty());
     assert_eq!(cta.phase, CtaPhase::Hidden);
     assert!(cta.hit_connect.rect.is_none());
@@ -202,22 +207,22 @@ fn cancel_before_first_activity_resets_state_and_discards_orphan_response() {
     let mut app = test_app_with_agent();
     let id = AgentId(0);
     dispatch(Action::SendPrompt("rewind me".into()), &mut app);
-    assert!(app.agents[&id].session.state.is_turn_running());
-    assert_eq!(app.agents[&id].scrollback.len(), 1);
-    assert!(app.agents[&id].turn_started_at.is_some());
-    let cancelled_pid = app.agents[&id].session.current_prompt_id.clone();
+    assert!(expect_agent(&app, id).session.state.is_turn_running());
+    assert_eq!(expect_agent(&app, id).scrollback.len(), 1);
+    assert!(expect_agent(&app, id).turn_started_at.is_some());
+    let cancelled_pid = expect_agent(&app, id).session.current_prompt_id.clone();
     assert!(cancelled_pid.is_some());
     let effects = dispatch(Action::CancelTurn, &mut app);
     assert_eq!(effects.len(), 1);
-    assert!(matches!(&effects[0], Effect::CancelTurn { .. }));
-    assert!(app.agents[&id].session.state.is_idle());
-    assert_eq!(app.agents[&id].prompt.text(), "rewind me");
-    assert_eq!(app.agents[&id].scrollback.len(), 0);
-    assert!(app.agents[&id].turn_started_at.is_none());
-    assert!(app.agents[&id].activity_started_at.is_none());
-    assert!(app.agents[&id].last_activity.is_none());
-    assert!(app.agents[&id].session.in_flight_prompt.is_none());
-    assert!(app.agents[&id].session.current_prompt_id.is_none());
+    assert!(matches!(effects.first(), Some(Effect::CancelTurn { .. })));
+    assert!(expect_agent(&app, id).session.state.is_idle());
+    assert_eq!(expect_agent(&app, id).prompt.text(), "rewind me");
+    assert_eq!(expect_agent(&app, id).scrollback.len(), 0);
+    assert!(expect_agent(&app, id).turn_started_at.is_none());
+    assert!(expect_agent(&app, id).activity_started_at.is_none());
+    assert!(expect_agent(&app, id).last_activity.is_none());
+    assert!(expect_agent(&app, id).session.in_flight_prompt.is_none());
+    assert!(expect_agent(&app, id).session.current_prompt_id.is_none());
     dispatch(
         Action::TaskComplete(TaskResult::PromptResponse {
             agent_id: id,
@@ -231,8 +236,8 @@ fn cancel_before_first_activity_resets_state_and_discards_orphan_response() {
         }),
         &mut app,
     );
-    assert!(app.agents[&id].session.state.is_idle());
-    assert_eq!(app.agents[&id].scrollback.len(), 0);
+    assert!(expect_agent(&app, id).session.state.is_idle());
+    assert_eq!(expect_agent(&app, id).scrollback.len(), 0);
 }
 #[test]
 fn set_default_model_allowed_when_agent_chat_kind() {
@@ -258,10 +263,9 @@ fn set_default_model_allowed_when_agent_chat_kind() {
         )),
         "chat_kind must still emit SwitchModel for live chat mode switches"
     );
-    assert!(app.agents[&id].session.model_switch_pending);
+    assert!(expect_agent(&app, id).session.model_switch_pending);
 }
-/// `/model <name>` dispatches `SetDefaultModel` which routes
-/// through both `PersistSetting` and `SwitchModel`.
+/// `/model <name>` dispatches `SetDefaultModel` which routes through both `PersistSetting` and `SwitchModel`.
 #[test]
 fn slash_model_valid_dispatches_set_default_model_with_switch_and_persist() {
     let mut app = test_app_with_agent();
@@ -285,21 +289,21 @@ fn slash_model_valid_dispatches_set_default_model_with_switch_and_persist() {
     );
     assert!(
         matches!(
-            &effects[0],
-            Effect::PersistSetting {
+            effects.first(),
+            Some(Effect::PersistSetting {
                 key: "default_model",
                 ..
-            }
+            })
         ),
         "first effect must be PersistSetting(default_model), got {:?}",
-        effects[0],
+        effects.first(),
     );
     assert!(
-        matches!(&effects[1], Effect::SwitchModel { model_id: mid, .. } if mid == &model_id),
+        matches!(effects.get(1), Some(Effect::SwitchModel { model_id: mid, .. }) if mid == &model_id),
         "second effect must be SwitchModel(<resolved id>), got {:?}",
-        effects[1],
+        effects.get(1),
     );
-    assert!(app.agents[&id].session.model_switch_pending);
+    assert!(expect_agent(&app, id).session.model_switch_pending);
 }
 #[test]
 fn model_switch_pending_resets_correctly_across_success_and_failure() {
@@ -314,7 +318,7 @@ fn model_switch_pending_resets_correctly_across_success_and_failure() {
         },
         &mut app,
     );
-    assert!(app.agents[&id].session.model_switch_pending);
+    assert!(expect_agent(&app, id).session.model_switch_pending);
     dispatch(
         Action::TaskComplete(TaskResult::SwitchModelComplete {
             agent_id: id,
@@ -325,7 +329,7 @@ fn model_switch_pending_resets_correctly_across_success_and_failure() {
         }),
         &mut app,
     );
-    assert!(!app.agents[&id].session.model_switch_pending);
+    assert!(!expect_agent(&app, id).session.model_switch_pending);
     dispatch(
         Action::SwitchModel {
             model_id: model_b.clone(),
@@ -333,7 +337,7 @@ fn model_switch_pending_resets_correctly_across_success_and_failure() {
         },
         &mut app,
     );
-    assert!(app.agents[&id].session.model_switch_pending);
+    assert!(expect_agent(&app, id).session.model_switch_pending);
     dispatch(
         Action::TaskComplete(TaskResult::SwitchModelComplete {
             agent_id: id,
@@ -344,23 +348,21 @@ fn model_switch_pending_resets_correctly_across_success_and_failure() {
         }),
         &mut app,
     );
-    assert!(!app.agents[&id].session.model_switch_pending);
+    assert!(!expect_agent(&app, id).session.model_switch_pending);
 }
-/// `set_compact_mode(app, new)` emits exactly one
-/// `Effect::PersistSetting` with the correct payload — `value`
-/// matches `new`, `rollback_value` matches the prior cache value.
+/// `set_compact_mode(app, new)` emits exactly one `Effect::PersistSetting`: `value` matches `new`, `rollback_value` matches the prior cache value.
 #[test]
 fn set_compact_mode_emits_persist_setting_with_correct_payload() {
     use crate::settings::SettingValue;
     let mut app = test_app_with_agent();
     let effects = dispatch(Action::SetCompactMode(true), &mut app);
     assert_eq!(effects.len(), 1);
-    match &effects[0] {
-        Effect::PersistSetting {
+    match effects.first() {
+        Some(Effect::PersistSetting {
             key,
             value,
             rollback_value,
-        } => {
+        }) => {
             assert_eq!(*key, "compact_mode");
             assert_eq!(value, &SettingValue::Bool(true));
             assert_eq!(rollback_value, &SettingValue::Bool(false));
@@ -369,10 +371,9 @@ fn set_compact_mode_emits_persist_setting_with_correct_payload() {
     }
     assert!(app.current_ui.compact_mode);
 }
-/// Resizing to a short terminal (at or below `AUTO_COMPACT_MAX_ROWS`) flips
-/// the derived render value (`appearance.prompt.compact`) while the user
-/// setting stays untouched; growing back restores it. Resize handling emits
-/// no effects at all, so nothing can persist.
+/// Resizing to a short terminal (at or below `AUTO_COMPACT_MAX_ROWS`) flips the derived render value (`appearance.prompt.compact`).
+/// The user setting stays untouched, and growing back restores it.
+/// Resize handling emits no effects, so nothing can persist.
 #[test]
 fn resize_below_threshold_derives_compact_without_touching_user_setting() {
     use crossterm::event::Event;
@@ -395,8 +396,7 @@ fn resize_below_threshold_derives_compact_without_touching_user_setting() {
     );
     assert!(!app.current_ui.compact_mode);
 }
-/// Threshold boundary: 20 rows engages auto-compact, 21 does not — and the
-/// deeper `SHORT_TERMINAL_ROWS` degradation zone stays compact too.
+/// Threshold boundary: 20 rows engages auto-compact, 21 does not, and the deeper `SHORT_TERMINAL_ROWS` degradation zone stays compact too.
 #[test]
 fn auto_compact_threshold_boundary() {
     use crossterm::event::Event;
@@ -414,9 +414,8 @@ fn auto_compact_threshold_boundary() {
         "16 rows (the short-terminal degradation zone) stays compact"
     );
 }
-/// The resize derivation never writes the thread-local user cache — the
-/// cache (like `current_ui` and disk) holds the USER value only. Fresh
-/// thread because the cache thread-locals are sticky.
+/// The resize derivation never writes the thread-local user cache; the cache (like `current_ui` and disk) holds the USER value only.
+/// Runs in a fresh thread because the cache thread-locals are sticky.
 #[test]
 fn resize_derivation_never_writes_user_cache() {
     std::thread::spawn(|| {
@@ -433,8 +432,7 @@ fn resize_derivation_never_writes_user_cache() {
     .join()
     .unwrap();
 }
-/// User compact ON survives every resize: tiny stays compact (both flags
-/// agree) and growing past the threshold keeps compact (the user value wins).
+/// User compact ON survives every resize: tiny stays compact (both flags agree) and growing past the threshold keeps compact (the user value wins).
 #[test]
 fn user_compact_on_survives_growing_past_threshold() {
     use crossterm::event::Event;
@@ -449,10 +447,9 @@ fn user_compact_on_survives_growing_past_threshold() {
     );
     assert!(app.current_ui.compact_mode);
 }
-/// The startup seed derives from a pre-hydration disk read; once `current_ui`
-/// holds the hydrated layered value, the canonical re-derive hook must
-/// correct a divergent render value and fan it out to the prompt widgets —
-/// without it the wrong seed sticks until a resize or toggle.
+/// The startup seed derives from a pre-hydration disk read.
+/// Once `current_ui` holds the hydrated layered value, the canonical re-derive hook must correct a divergent render value.
+/// The correction fans out to the prompt widgets; without the hook the wrong seed sticks until a resize or toggle.
 #[test]
 fn hydration_rederive_corrects_divergent_startup_seed() {
     let mut app = test_app_with_agent();
@@ -466,14 +463,13 @@ fn hydration_rederive_corrects_divergent_startup_seed() {
         "hydrated user value must win over the stale seed"
     );
     assert!(
-        app.agents[&id].prompt.compact(),
+        expect_agent(&app, id).prompt.compact(),
         "the correction must reach the prompt widget"
     );
 }
-/// Hot-reload keeps the PRE-reload render value in the config it applies and
-/// routes any correction through the single writer, because `set_appearance`
-/// alone never syncs `PromptWidget.compact`. A pending divergence must land
-/// on every agent's widget — background agents included.
+/// Hot-reload keeps the PRE-reload render value in the config it applies and routes any correction through the single writer.
+/// `set_appearance` alone never syncs `PromptWidget.compact`.
+/// A pending divergence must land on every agent's widget, background agents included.
 #[test]
 fn hot_reload_rederive_syncs_prompt_widgets_on_every_agent() {
     let mut app = test_app_with_agent();
@@ -485,21 +481,20 @@ fn hot_reload_rederive_syncs_prompt_widgets_on_every_agent() {
     app.next_agent_id = 2;
     app.last_known_terminal_rows = 18;
     assert!(!app.appearance.prompt.compact);
-    assert!(!app.agents[&id_a].prompt.compact());
-    assert!(!app.agents[&id_b].prompt.compact());
+    assert!(!expect_agent(&app, id_a).prompt.compact());
+    assert!(!expect_agent(&app, id_b).prompt.compact());
     let mut config = app.appearance.clone();
     config.prompt.compact = app.appearance.prompt.compact;
     app.set_appearance(config);
     app.apply_effective_compact();
     assert!(app.appearance.prompt.compact, "derived value applied");
     assert!(
-        app.agents[&id_a].prompt.compact() && app.agents[&id_b].prompt.compact(),
+        expect_agent(&app, id_a).prompt.compact() && expect_agent(&app, id_b).prompt.compact(),
         "the re-derive must sync every agent's prompt widget, not just the active one"
     );
 }
-/// Toggling the setting OFF while auto-compact is active persists the user
-/// value (false) but keeps the derived render value on, and the toast says
-/// why the layout stays compact.
+/// Toggling the setting OFF while auto-compact is active persists the user value (false) but keeps the derived render value on.
+/// The toast says why the layout stays compact.
 #[test]
 fn toggle_off_while_short_keeps_render_compact_and_persists_user_value() {
     use crate::settings::SettingValue;
@@ -513,8 +508,8 @@ fn toggle_off_while_short_keeps_render_compact_and_persists_user_value() {
         app.appearance.prompt.compact,
         "auto-compact keeps the render value on at 14 rows"
     );
-    match &effects[0] {
-        Effect::PersistSetting { key, value, .. } => {
+    match effects.first() {
+        Some(Effect::PersistSetting { key, value, .. }) => {
             assert_eq!(*key, "compact_mode");
             assert_eq!(value, &SettingValue::Bool(false), "persists the USER value");
         }
@@ -532,12 +527,12 @@ fn set_timestamps_emits_persist_setting_with_correct_payload() {
     let mut app = test_app_with_agent();
     let effects = dispatch(Action::SetTimestamps(false), &mut app);
     assert_eq!(effects.len(), 1);
-    match &effects[0] {
-        Effect::PersistSetting {
+    match effects.first() {
+        Some(Effect::PersistSetting {
             key,
             value,
             rollback_value,
-        } => {
+        }) => {
             assert_eq!(*key, "show_timestamps");
             assert_eq!(value, &SettingValue::Bool(false));
             assert_eq!(rollback_value, &SettingValue::Bool(true));
@@ -553,12 +548,12 @@ fn set_timeline_emits_persist_setting_with_correct_payload() {
     let default_on = app.current_ui.show_timeline_enabled();
     let effects = dispatch(Action::SetTimeline(!default_on), &mut app);
     assert_eq!(effects.len(), 1);
-    match &effects[0] {
-        Effect::PersistSetting {
+    match effects.first() {
+        Some(Effect::PersistSetting {
             key,
             value,
             rollback_value,
-        } => {
+        }) => {
             assert_eq!(*key, "show_timeline");
             assert_eq!(value, &SettingValue::Bool(!default_on));
             assert_eq!(rollback_value, &SettingValue::Bool(default_on));
@@ -600,12 +595,12 @@ fn set_confirm_before_rewind_emits_persist_setting_with_correct_payload() {
     let default_on = app.current_ui.confirm_before_rewind_enabled();
     let effects = dispatch(Action::SetConfirmBeforeRewind(!default_on), &mut app);
     assert_eq!(effects.len(), 1);
-    match &effects[0] {
-        Effect::PersistSetting {
+    match effects.first() {
+        Some(Effect::PersistSetting {
             key,
             value,
             rollback_value,
-        } => {
+        }) => {
             assert_eq!(*key, "confirm_before_rewind");
             assert_eq!(value, &SettingValue::Bool(!default_on));
             assert_eq!(rollback_value, &SettingValue::Bool(default_on));
@@ -622,12 +617,12 @@ fn set_page_flip_on_send_emits_persist_setting_with_correct_payload() {
     crate::appearance::cache::set_page_flip_on_send(default_on);
     let effects = dispatch(Action::SetPageFlipOnSend(!default_on), &mut app);
     assert_eq!(effects.len(), 1);
-    match &effects[0] {
-        Effect::PersistSetting {
+    match effects.first() {
+        Some(Effect::PersistSetting {
             key,
             value,
             rollback_value,
-        } => {
+        }) => {
             assert_eq!(*key, "page_flip_on_send");
             assert_eq!(value, &SettingValue::Bool(!default_on));
             assert_eq!(rollback_value, &SettingValue::Bool(default_on));
@@ -646,8 +641,8 @@ fn set_simple_mode_emits_persist_setting_with_correct_payload() {
     let mut app = test_app_with_agent();
     let effects = dispatch(Action::SetSimpleMode(false), &mut app);
     assert_eq!(effects.len(), 1);
-    match &effects[0] {
-        Effect::PersistSetting { key, value, .. } => {
+    match effects.first() {
+        Some(Effect::PersistSetting { key, value, .. }) => {
             assert_eq!(*key, "simple_mode");
             assert_eq!(value, &SettingValue::Bool(false));
         }
@@ -655,10 +650,8 @@ fn set_simple_mode_emits_persist_setting_with_correct_payload() {
     }
     assert_eq!(app.current_ui.simple_mode, Some(false));
 }
-/// `dispatch_open_settings` runs once: the modal opens on the
-/// active agent. A second dispatch — only structurally reachable
-/// if input routing breaks — closes the modal defensively
-/// (debug_assert guards this in dev builds).
+/// `dispatch_open_settings` runs once: the modal opens on the active agent.
+/// A second dispatch (only structurally reachable if input routing breaks) closes the modal defensively; debug_assert guards this in dev builds.
 #[test]
 fn dispatch_open_settings_opens_then_close_on_reentry() {
     use crate::views::modal::ActiveModal;
@@ -681,8 +674,7 @@ fn dispatch_open_settings_opens_then_close_on_reentry() {
         );
     }
 }
-/// A focused open on an agent whose settings modal is already open must
-/// reopen focused on the requested row — not toggle the modal closed.
+/// A focused open on an agent whose settings modal is already open must reopen focused on the requested row, not toggle the modal closed.
 #[test]
 fn dispatch_open_settings_focus_reopens_when_already_open() {
     use crate::views::modal::ActiveModal;
@@ -719,8 +711,8 @@ fn dispatch_open_settings_focus_reopens_when_already_open() {
         "focused re-entry must arm close_on_picker_exit"
     );
 }
-/// Chooser when editable, browse row when locked. The team-admin arm is the
-/// one a `team_name.is_some()` shortcut would break.
+/// Chooser when editable, browse row when locked.
+/// The team arms pin that the lock keys on the capability, not on team name or role.
 #[test]
 fn dispatch_open_settings_focus_skips_the_chooser_only_when_locked() {
     use crate::views::modal::ActiveModal;
@@ -759,25 +751,27 @@ fn dispatch_open_settings_focus_skips_the_chooser_only_when_locked() {
     );
     let mut app = test_app_with_agent();
     app.team_name = Some("acme".to_string());
-    app.team_role = Some("member".to_string());
+    app.can_administer_team = Some(false);
     assert!(
         matches!(open_focused(&mut app), SettingsModalMode::Browse),
         "a team-managed lock must stop at the row that says so"
     );
-    let mut app = test_app_with_agent();
-    app.team_name = Some("acme".to_string());
-    app.team_role = Some("admin".to_string());
-    assert!(
-        matches!(
-            open_focused(&mut app),
-            SettingsModalMode::PickingEnum { .. }
-        ),
-        "a team admin is not locked"
-    );
+    for capability in [Some(true), None] {
+        let mut app = test_app_with_agent();
+        app.team_name = Some("acme".to_string());
+        app.team_role = Some("member".to_string());
+        app.can_administer_team = capability;
+        assert!(
+            matches!(
+                open_focused(&mut app),
+                SettingsModalMode::PickingEnum { .. }
+            ),
+            "{capability:?} is not locked"
+        );
+    }
 }
-/// Focused open that enters the chooser sets `close_on_picker_exit` so Esc
-/// dismisses the modal (GB-4470). Locked landings stay in Browse with the
-/// flag clear — chrome Esc already closes.
+/// Focused open that enters the chooser sets `close_on_picker_exit` so Esc dismisses the modal.
+/// Locked landings stay in Browse with the flag clear; chrome Esc already closes.
 #[test]
 fn dispatch_open_settings_focus_sets_close_on_picker_exit_when_chooser_opens() {
     use crate::views::modal::ActiveModal;
@@ -819,7 +813,7 @@ fn dispatch_open_settings_focus_sets_close_on_picker_exit_when_chooser_opens() {
         "locked focus must not set close_on_picker_exit"
     );
 }
-/// Plain OpenSettings does not arm close-on-picker-Esc.
+/// Plain OpenSettings does not set `close_on_picker_exit`.
 #[test]
 fn dispatch_open_settings_does_not_set_close_on_picker_exit() {
     use crate::views::modal::ActiveModal;
@@ -831,7 +825,7 @@ fn dispatch_open_settings_does_not_set_close_on_picker_exit() {
     };
     assert!(!state.close_on_picker_exit);
 }
-/// Full path: `/privacy`-style focus open → Esc dismisses the settings modal.
+/// Full path: after a `/privacy`-style focus open, Esc dismisses the settings modal.
 #[test]
 fn open_settings_focus_esc_closes_settings_modal() {
     use crate::views::modal::ActiveModal;
@@ -863,7 +857,7 @@ fn open_settings_focus_esc_closes_settings_modal() {
         "deep-link Esc must dismiss the settings modal"
     );
 }
-/// Full path: `/privacy`-style focus open → Enter commits and dismisses.
+/// Full path: after a `/privacy`-style focus open, Enter commits and dismisses.
 #[test]
 fn open_settings_focus_enter_closes_settings_modal() {
     use crate::app::app_view::InputOutcome;
@@ -903,7 +897,7 @@ fn open_settings_focus_enter_closes_settings_modal() {
         "deep-link Enter must commit SetCodingDataSharing, got {outcome:?}"
     );
 }
-/// Browse path: OpenSettings → enter picker → Esc keeps modal open in Browse.
+/// Browse path: OpenSettings, enter the picker, then Esc keeps the modal open in Browse.
 #[test]
 fn open_settings_enter_picker_esc_stays_open_in_browse() {
     use crate::views::modal::ActiveModal;
@@ -933,8 +927,8 @@ fn open_settings_enter_picker_esc_stays_open_in_browse() {
         state.mode()
     );
 }
-/// `ActionThenClose` closes the modal and forwards the preview-revert Action
-/// through `apply_settings_outcome` (handle_input path).
+/// `ActionThenClose` closes the modal and forwards the preview-revert Action through `apply_settings_outcome` (handle_input path).
+/// Theme rows follow this AppView's screen mode (not `MINIMAL_MODE_ACTIVE`, which other tests flip in parallel).
 #[test]
 fn deep_link_preview_esc_closes_modal_and_forwards_revert_action() {
     use crate::app::app_view::InputOutcome;
@@ -943,19 +937,18 @@ fn deep_link_preview_esc_closes_modal_and_forwards_revert_action() {
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     let mut app = test_app_with_agent();
     let id = AgentId(0);
-    let _ = dispatch(Action::OpenSettings, &mut app);
+    let _ = dispatch(Action::OpenSettingsFocus { key: "theme" }, &mut app);
     {
-        let agent = app.agents.get_mut(&id).unwrap();
-        let Some(ActiveModal::Settings { state }) = &mut agent.active_modal else {
+        let agent = app.agents.get(&id).unwrap();
+        let Some(ActiveModal::Settings { state }) = &agent.active_modal else {
             panic!("settings modal must be open")
         };
-        assert!(state.focus_key("theme"));
-        assert!(state.try_enter_picking_enum());
-        state.close_on_picker_exit = true;
-        assert!(matches!(
-            state.mode(),
-            SettingsModalMode::PickingEnum { .. }
-        ));
+        assert!(
+            matches!(state.mode(), SettingsModalMode::PickingEnum { .. }),
+            "deep-link to theme must open the picker, got {:?}",
+            state.mode()
+        );
+        assert!(state.close_on_picker_exit);
     }
     let esc = Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     let outcome = app.handle_input(&esc);
@@ -970,11 +963,34 @@ fn deep_link_preview_esc_closes_modal_and_forwards_revert_action() {
         other => panic!("expected Action(PreviewTheme), got {other:?}"),
     }
 }
-/// `dispatch_open_reset_confirm` moves the Settings modal state
-/// into the new `ResetSettingsConfirm` variant, preserving it
-/// across the confirm dialog's lifecycle. The dispatch arm is
-/// only reachable from an open Settings modal (the `d` keystroke
-/// in `views/settings_modal.rs::handle_browse`).
+/// Theme visibility follows `AppView::screen_mode`, not the process-global minimal flag.
+#[test]
+fn open_settings_theme_row_follows_app_screen_mode() {
+    use crate::views::modal::ActiveModal;
+    let mut app = test_app_with_agent();
+    app.screen_mode = crate::app::ScreenMode::Inline;
+    let _ = dispatch(Action::OpenSettings, &mut app);
+    {
+        let agent = app.agents.get_mut(&AgentId(0)).unwrap();
+        let Some(ActiveModal::Settings { state }) = &mut agent.active_modal else {
+            panic!("settings modal must be open")
+        };
+        assert!(
+            state.focus_key("theme"),
+            "inline app must list theme even if another test flipped MINIMAL_MODE_ACTIVE"
+        );
+    }
+    app.agents.get_mut(&AgentId(0)).unwrap().active_modal = None;
+    app.screen_mode = crate::app::ScreenMode::Minimal;
+    let _ = dispatch(Action::OpenSettings, &mut app);
+    let agent = app.agents.get_mut(&AgentId(0)).unwrap();
+    let Some(ActiveModal::Settings { state }) = &mut agent.active_modal else {
+        panic!("settings modal must be open")
+    };
+    assert!(!state.focus_key("theme"), "minimal app must hide theme");
+}
+/// `dispatch_open_reset_confirm` moves the Settings modal state into the `ResetSettingsConfirm` variant so it survives the confirm dialog.
+/// The dispatch arm is only reachable from an open Settings modal (the `d` keystroke in `views/settings_modal.rs::handle_browse`).
 #[test]
 fn dispatch_open_reset_confirm_moves_settings_state_into_confirm_variant() {
     use crate::views::modal::ActiveModal;
@@ -999,11 +1015,8 @@ fn dispatch_open_reset_confirm_moves_settings_state_into_confirm_variant() {
         _ => panic!("expected ResetSettingsConfirm modal to be active"),
     }
 }
-/// `ConfirmResetSetting { choice: Cancel }` restores the Settings
-/// modal AND preserves the user's filter/scroll/selection state
-/// byte-identically via the box-move. Pins query, selected,
-/// scroll_offset, mode AND the snapshot (not just
-/// ui_snapshot.compact_mode).
+/// `ConfirmResetSetting { choice: Cancel }` restores the Settings modal AND preserves the user's filter/scroll/selection state by moving the boxed state back.
+/// Pins query, selected, scroll_offset, mode AND the snapshot (not just ui_snapshot.compact_mode).
 #[test]
 fn dispatch_confirm_reset_setting_cancel_preserves_modal_state() {
     use crate::views::modal::{ActiveModal, ResetSettingsResult};
@@ -1058,17 +1071,15 @@ fn dispatch_confirm_reset_setting_cancel_preserves_modal_state() {
         _ => panic!("expected Settings modal after Cancel"),
     }
 }
-/// `ConfirmResetSetting { Reset }` on a
-/// PAGER-owned setting (`multiline_mode`) flips the agent's flag
-/// back to default WITHOUT emitting any `Effect` (PAGER setters
-/// short-circuit on no-disk-write). Pins the cross-owner
-/// behavioral parity.
+/// `ConfirmResetSetting { Reset }` on a PAGER-owned setting (`multiline_mode`) flips the agent's flag back to default WITHOUT emitting any `Effect`.
+/// PAGER setters short-circuit because there is no disk write.
+/// Pins that resets behave the same across owner classes.
 #[test]
 fn dispatch_confirm_reset_setting_reset_dispatches_typed_setter_for_pager_bool() {
     use crate::views::modal::ResetSettingsResult;
     let mut app = test_app_with_agent();
     let _ = dispatch(Action::SetMultilineMode(true), &mut app);
-    assert!(app.agents[&AgentId(0)].multiline_mode);
+    assert!(expect_agent(&app, AgentId(0)).multiline_mode);
     setup_reset_confirm_open(&mut app, "multiline_mode");
     let effects = dispatch(
         Action::ConfirmResetSetting {
@@ -1081,15 +1092,13 @@ fn dispatch_confirm_reset_setting_reset_dispatches_typed_setter_for_pager_bool()
         "PAGER reset must NOT emit Effects (in-memory only), got {effects:?}",
     );
     assert!(
-        !app.agents[&AgentId(0)].multiline_mode,
+        !expect_agent(&app, AgentId(0)).multiline_mode,
         "agent.multiline_mode must be reset to default",
     );
 }
-/// Idempotent Reset is gated. When
-/// the focused row is already at its registered default, the
-/// Reset branch emits a short "already at default" toast and
-/// skips the recursive dispatch — unifying behavior across
-/// SHARED/PAGER/SHELL owner classes.
+/// Idempotent Reset is gated.
+/// When the focused row is already at its registered default, the Reset branch emits an "already at default" toast and skips the recursive dispatch.
+/// This unifies behavior across SHARED/PAGER/SHELL owner classes.
 #[test]
 fn dispatch_confirm_reset_setting_reset_on_already_default_is_no_op_with_toast() {
     use crate::views::modal::ResetSettingsResult;
@@ -1118,11 +1127,46 @@ fn dispatch_confirm_reset_setting_reset_on_already_default_is_no_op_with_toast()
         "expected 'already at default' toast, got: {toast_text:?}",
     );
 }
-/// `refresh_open_settings_modals` walks into
-/// `ResetSettingsConfirm.settings_state` so a `set_X` (or
-/// rollback) running while the confirm dialog is open keeps the
-/// boxed snapshot fresh. Without this, Cancel would restore a
-/// stale snapshot.
+/// Browse `d` then `y` on the coding-data row writes even when the local value already reads as the default "opt-out":
+/// that value may be the unconfirmed fail-safe, so "already at default" must not drop a confirmed decline.
+#[test]
+fn reset_via_keys_writes_consent_decline_even_when_already_default() {
+    use crate::app::app_view::InputOutcome;
+    use crate::views::modal::ActiveModal;
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    let mut app = test_app_with_agent();
+    app.coding_data_retention_opt_out = true;
+    let _ = dispatch(Action::OpenSettings, &mut app);
+    {
+        let agent = app.agents.get_mut(&AgentId(0)).expect("agent must exist");
+        let Some(ActiveModal::Settings { state }) = agent.active_modal.as_mut() else {
+            panic!("settings modal must be open");
+        };
+        assert!(state.focus_key("coding_data_sharing"));
+    }
+    let press = |c| Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    let InputOutcome::Action(open) = app.handle_input(&press('d')) else {
+        panic!("`d` on the coding-data row must open the reset confirm");
+    };
+    let _ = dispatch(open, &mut app);
+    let InputOutcome::Action(confirm) = app.handle_input(&press('y')) else {
+        panic!("`y` must confirm the reset");
+    };
+    let effects = dispatch(confirm, &mut app);
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [Effect::SetCodingDataSharing {
+                opted_in: false,
+                ..
+            }]
+        ),
+        "an already-default consent reset must still reach the server: {effects:?}",
+    );
+}
+/// `refresh_open_settings_modals` walks into `ResetSettingsConfirm.settings_state`.
+/// A `set_X` (or rollback) running while the confirm dialog is open thus keeps the boxed snapshot fresh.
+/// Without the walk, Cancel would restore a stale snapshot.
 #[test]
 fn refresh_open_settings_modals_updates_reset_confirm_settings_state() {
     use crate::views::modal::ActiveModal;
@@ -1150,11 +1194,7 @@ fn refresh_open_settings_modals_updates_reset_confirm_settings_state() {
         _ => panic!("expected ResetSettingsConfirm still active"),
     }
 }
-/// The
-/// dispatch-arm bail-out path is verified directly via
-/// `#[should_panic]` in debug mode rather than the previous
-/// `if cfg!(debug_assertions) { return; }` placebo which gave
-/// debug-mode CI no coverage of the routing-bug bail-out.
+/// The dispatch-arm bail-out is verified via `#[should_panic]` in debug mode, so debug-mode CI covers the routing-bug bail-out.
 #[test]
 #[cfg(debug_assertions)]
 #[should_panic(expected = "OpenResetConfirm dispatched without an open Settings modal")]
@@ -1169,8 +1209,7 @@ fn dispatch_open_reset_confirm_panics_in_debug_when_no_settings_modal() {
         &mut app,
     );
 }
-/// Release-mode mirror: same bail-out but verified via the
-/// active_modal staying None (debug_assert! is compiled out).
+/// Release-mode mirror: same bail-out but verified via the active_modal staying None (debug_assert! is compiled out).
 #[test]
 #[cfg(not(debug_assertions))]
 fn dispatch_open_reset_confirm_no_op_in_release_when_no_settings_modal() {
@@ -1190,12 +1229,8 @@ fn dispatch_open_reset_confirm_no_op_in_release_when_no_settings_modal() {
         "active_modal must stay None on routing-bug bail-out",
     );
 }
-/// The CI guard for `action_for_reset` asserts more than
-/// `action.is_some()`, which would pass for a mis-mapped arm
-/// like `("compact_mode", _) => Some(Action::SetTheme(...))`.
-/// This version dispatches the returned action and asserts the
-/// setting reads back at its registered default — catching both
-/// presence AND payload correctness.
+/// A bare `action.is_some()` guard would pass for a mis-mapped arm like `("compact_mode", _) => Some(Action::SetTheme(...))`.
+/// This test dispatches the returned action and asserts the setting reads back at its registered default, catching presence AND payload correctness.
 #[test]
 fn every_setting_has_action_for_reset_arm() {
     use crate::settings::current_value_for;
@@ -1230,11 +1265,9 @@ fn every_setting_has_action_for_reset_arm() {
         }
     });
 }
-/// Every setting whose setter emits `Effect::PersistSetting` MUST have an
-/// `apply_setting_rollback` arm: a failed disk write rolls back through it,
-/// and a missing arm silently diverges in-memory state from `config.toml`.
-/// Drives each setter (move-away → reset) to discover which keys actually
-/// persist, then asserts the rollback hits a real arm (not the catch-all).
+/// Every setting whose setter emits `Effect::PersistSetting` MUST have an `apply_setting_rollback` arm.
+/// A failed disk write rolls back through it, and a missing arm silently diverges in-memory state from `config.toml`.
+/// Drives each setter (move away, then reset) to discover which keys actually persist, then asserts the rollback hits a real arm (not the catch-all).
 #[test]
 fn every_persisting_setting_has_rollback_arm() {
     with_theme_test_env(|| {
@@ -1247,13 +1280,14 @@ fn every_persisting_setting_has_rollback_arm() {
             let mut app = test_app_with_agent();
             move_setting_away_from_default(&mut app, meta.key);
             for eff in dispatch(reset_action, &mut app) {
-                let Effect::PersistSetting {
-                    key,
-                    rollback_value,
-                    ..
-                } = eff
-                else {
-                    continue;
+                let (key, rollback_value) = match eff {
+                    Effect::PersistSetting {
+                        key,
+                        rollback_value,
+                        ..
+                    } => (key, rollback_value),
+                    Effect::PersistFeatureOverride { .. } => continue,
+                    _ => continue,
                 };
                 let mut rb_app = test_app_with_agent();
                 let _ = apply_setting_rollback(&mut rb_app, key, &rollback_value);
@@ -1272,11 +1306,9 @@ fn every_persisting_setting_has_rollback_arm() {
         }
     });
 }
-/// Pin the
-/// asymmetric clear-default semantics. `Action::ClearDefaultModel`
-/// persists `cfg.models.default = None` AND emits the
-/// "cleared" toast, but deliberately does NOT mutate
-/// `agent.session.models.current`.
+/// Pins the asymmetric clear-default behavior.
+/// `Action::ClearDefaultModel` persists `cfg.models.default = None` AND emits the "cleared" toast.
+/// It deliberately does NOT mutate `agent.session.models.current`.
 #[test]
 fn clear_default_model_persists_but_keeps_live_current() {
     use agent_client_protocol as acp;
@@ -1305,28 +1337,21 @@ fn clear_default_model_persists_but_keeps_live_current() {
         "expected exactly one PersistSetting effect"
     );
     assert!(
-        matches!(
-            &effects[0],
-            Effect::PersistSetting {
+        matches!(effects.first(), Some(Effect::PersistSetting {
                 key: "default_model",
                 value: crate::settings::SettingValue::String(s),
-                .. } if s.is_empty()
-        ),
+                .. }) if s.is_empty()),
         "expected PersistSetting(default_model, ''), got {:?}",
-        effects[0],
+        effects.first(),
     );
     assert_eq!(
-        app.agents[&agent_id].session.models.current,
+        expect_agent(&app, agent_id).session.models.current,
         Some(id),
         "clear_default_model must NOT mutate live agent.session.models.current",
     );
 }
-/// `Action::SetDefaultModel(<known id>)` resolves the
-/// id against the live catalog, mutates current, and emits both
-/// PersistSetting + SwitchModel effects. This is the
-/// dispatch-level analog of the slash-command's
-/// `slash_model_valid_dispatches_set_default_model_with_switch_and_persist`
-/// test.
+/// `Action::SetDefaultModel(<known id>)` resolves the id against the live catalog, mutates current, and emits PersistSetting and SwitchModel effects.
+/// This is the dispatch-level analog of `slash_model_valid_dispatches_set_default_model_with_switch_and_persist`.
 #[test]
 fn set_default_model_resolves_known_name() {
     use agent_client_protocol as acp;
@@ -1344,22 +1369,19 @@ fn set_default_model_resolves_known_name() {
         .insert(id.clone(), info);
     let effects = dispatch(Action::SetDefaultModel(id.clone()), &mut app);
     assert_eq!(effects.len(), 2);
-    assert!(matches!(
-        &effects[0],
-        Effect::PersistSetting {
+    assert!(matches!(effects.first(), Some(Effect::PersistSetting {
             key: "default_model",
             value: crate::settings::SettingValue::String(s),
-            .. } if s == "grok-4.5"
-    ));
-    assert!(matches!(
-        &effects[1],
-        Effect::SwitchModel { model_id: mid, .. } if mid == &id
-    ));
-    assert_eq!(app.agents[&agent_id].session.models.current, Some(id));
+            .. }) if s == "grok-4.5"));
+    assert!(
+        matches!(effects.get(1), Some(Effect::SwitchModel { model_id: mid, .. }) if mid == &id)
+    );
+    assert_eq!(
+        expect_agent(&app, agent_id).session.models.current,
+        Some(id)
+    );
 }
-/// Re-dispatching the same model
-/// id is idempotent — no PersistSetting, no SwitchModel, no
-/// reasoning_effort reset.
+/// Re-dispatching the same model id is idempotent: no PersistSetting, no SwitchModel, no reasoning_effort reset.
 #[test]
 fn set_default_model_idempotent_when_already_current() {
     use agent_client_protocol as acp;
@@ -1387,8 +1409,7 @@ fn set_default_model_idempotent_when_already_current() {
         "re-dispatching same model must be idempotent (no effects), got {effects:?}",
     );
 }
-/// `clamp_max_thoughts_width` clamps
-/// out-of-range values to the registered `[40, 500]` bounds.
+/// `clamp_max_thoughts_width` clamps out-of-range values to the registered `[40, 500]` bounds.
 #[test]
 fn set_max_thoughts_width_clamps_out_of_range() {
     let mut app = test_app_with_agent();
@@ -1406,12 +1427,12 @@ fn pr13_set_show_tips_emits_persist_with_rollback() {
     assert_eq!(app.show_tips, None);
     let effects = dispatch(Action::SetShowTips(false), &mut app);
     assert_eq!(effects.len(), 1, "must emit exactly one effect");
-    match &effects[0] {
-        Effect::PersistSetting {
+    match effects.first() {
+        Some(Effect::PersistSetting {
             key,
             value,
             rollback_value,
-        } => {
+        }) => {
             assert_eq!(*key, "show_tips");
             assert_eq!(*value, SettingValue::Bool(false));
             assert_eq!(*rollback_value, SettingValue::Bool(true));
@@ -1421,12 +1442,12 @@ fn pr13_set_show_tips_emits_persist_with_rollback() {
     assert_eq!(app.show_tips, Some(false));
     let effects = dispatch(Action::SetShowTips(true), &mut app);
     assert_eq!(effects.len(), 1);
-    match &effects[0] {
-        Effect::PersistSetting {
+    match effects.first() {
+        Some(Effect::PersistSetting {
             value,
             rollback_value,
             ..
-        } => {
+        }) => {
             assert_eq!(*value, SettingValue::Bool(true));
             assert_eq!(*rollback_value, SettingValue::Bool(false));
         }
@@ -1434,8 +1455,8 @@ fn pr13_set_show_tips_emits_persist_with_rollback() {
     }
     assert_eq!(app.show_tips, Some(true));
 }
-/// Idempotency — re-committing the same value is a no-op
-/// (no Effect). Mirror of `set_auto_compact_threshold_percent_idempotent_re_commit`.
+/// Idempotency: re-committing the same value is a no-op (no Effect).
+/// Mirror of `set_auto_compact_threshold_percent_idempotent_re_commit`.
 #[test]
 fn pr13_set_show_tips_idempotent_re_commit() {
     let mut app = test_app_with_agent();
@@ -1447,12 +1468,9 @@ fn pr13_set_show_tips_idempotent_re_commit() {
         "re-committing the same value must be idempotent (no effects), got {effects:?}"
     );
 }
-/// The first-ever commit of the default value MUST persist
-/// (mirror of `set_auto_compact_threshold_percent_first_commit_of_default_persists`).
-/// Without this special case, a user opting in to the default
-/// would see no Effect but the on-disk state would stay `None` —
-/// the next session's managed-config layer could then override
-/// silently.
+/// The first-ever commit of the default value MUST persist (mirror of `set_auto_compact_threshold_percent_first_commit_of_default_persists`).
+/// Without this special case, a user opting in to the default would see no Effect but the on-disk state would stay `None`.
+/// The next session's managed-config layer could then override silently.
 #[test]
 fn pr13_set_show_tips_first_commit_of_default_persists() {
     let mut app = test_app_with_agent();
@@ -1465,9 +1483,8 @@ fn pr13_set_show_tips_first_commit_of_default_persists() {
     );
     assert_eq!(app.show_tips, Some(true));
 }
-/// Subsequent commits of the same default hit the
-/// idempotent fast-path. Pins the symmetric half of the
-/// `_first_commit_of_default_persists` contract.
+/// Subsequent commits of the same default hit the idempotent fast-path.
+/// Pins the symmetric half of the `_first_commit_of_default_persists` contract.
 #[test]
 fn pr13_set_show_tips_second_commit_of_default_no_ops() {
     let mut app = test_app_with_agent();
@@ -1480,17 +1497,16 @@ fn pr13_set_show_tips_second_commit_of_default_no_ops() {
              (effects.is_empty()), got {effects:?}"
     );
 }
-/// Rollback from prev=None state restores `None` (not
-/// `Some(default)`) — keeps AppView in sync with disk. Mirror of
-/// `auto_compact_rollback_from_none_state_restores_none`.
+/// Rollback from prev=None state restores `None` (not `Some(default)`), keeping AppView in sync with disk.
+/// Mirror of `auto_compact_rollback_from_none_state_restores_none`.
 #[test]
 fn pr13_show_tips_rollback_from_none_state_restores_none() {
     use crate::settings::SettingValue;
     let mut app = test_app_with_agent();
     assert_eq!(app.show_tips, None);
     let effects = dispatch(Action::SetShowTips(false), &mut app);
-    let rollback_value = match &effects[0] {
-        Effect::PersistSetting { rollback_value, .. } => rollback_value.clone(),
+    let rollback_value = match effects.first() {
+        Some(Effect::PersistSetting { rollback_value, .. }) => rollback_value.clone(),
         _ => panic!("expected PersistSetting"),
     };
     assert_eq!(rollback_value, SettingValue::Bool(true));
@@ -1503,10 +1519,8 @@ fn pr13_show_tips_rollback_from_none_state_restores_none() {
              after the failed persist"
     );
 }
-/// Toast text includes the "(restart to apply)" cue —
-/// matches the modal pill so the user gets consistent restart
-/// feedback through both surfaces. Mirror of
-/// `set_auto_compact_threshold_percent_toast_includes_restart_marker`.
+/// Toast text includes the "(restart to apply)" cue, matching the modal pill so the toast and the modal give the same restart feedback.
+/// Mirror of `set_auto_compact_threshold_percent_toast_includes_restart_marker`.
 #[test]
 fn pr13_set_show_tips_toast_includes_restart_marker() {
     let mut app = test_app_with_agent();
@@ -1525,12 +1539,103 @@ fn pr13_set_show_tips_toast_includes_restart_marker() {
         "toast must include the deferred-effect cue, got {toast:?}"
     );
 }
-/// Helper for `every_setting_has_action_for_reset_arm`. Flips the
-/// setting to a non-default value so the round-trip dispatch has
-/// an observable effect (otherwise the assertion would pass
-/// vacuously when current == default).
-/// Dispatches theme-mutating actions for the theme keys — callers must
-/// hold the theme test lock (wrap the test in [`with_theme_test_env`]).
+/// The write a dispatch issued for the row, if any; panics on anything but a single `PersistFeatureOverride`.
+fn issued_feature_override(effects: Vec<Effect>) -> Option<Option<bool>> {
+    use xai_grok_shell::agent::config::Feature;
+    match effects.as_slice() {
+        [] => None,
+        [
+            Effect::PersistFeatureOverride {
+                feature: Feature::SubagentModelInheritance,
+                saved,
+            },
+        ] => Some(*saved),
+        other => panic!("expected at most one PersistFeatureOverride, got {other:?}"),
+    }
+}
+/// Both toggle directions write an explicit value and reset deletes the key. Reset with nothing saved writes nothing
+/// and names a managed layer that shows through; a pin refuses both the toggle and the reset before any effect.
+#[test]
+fn subagent_model_inheritance_persists_overrides_and_reset_deletes_the_key() {
+    use xai_grok_shell::agent::config::{Feature, FeatureConfigLayer, FeatureLayerValue};
+    let feature = Feature::SubagentModelInheritance;
+    let mut app = test_app_with_agent();
+    assert_eq!(None, app.subagent_model_inheritance.config.user);
+    let effects = dispatch(Action::SetSubagentModelInheritance(true), &mut app);
+    assert_eq!(Some(Some(true)), issued_feature_override(effects));
+    assert_eq!(Some(true), app.subagent_model_inheritance.config.user);
+    assert!(read_toast(&app).contains("restart to apply"));
+    let _ = handle_feature_override_persisted(&mut app, feature, Ok(Some(true)));
+    let effects = dispatch(Action::SetSubagentModelInheritance(false), &mut app);
+    assert_eq!(Some(Some(false)), issued_feature_override(effects));
+    let _ = handle_feature_override_persisted(&mut app, feature, Ok(Some(false)));
+    let effects = dispatch(Action::ClearSubagentModelInheritance, &mut app);
+    assert_eq!(Some(None), issued_feature_override(effects));
+    assert_eq!(None, app.subagent_model_inheritance.config.user);
+    let _ = handle_feature_override_persisted(&mut app, feature, Ok(None));
+    assert!(dispatch(Action::ClearSubagentModelInheritance, &mut app).is_empty());
+    assert!(read_toast(&app).ends_with("nothing to reset"));
+    app.subagent_model_inheritance.config.below_user = Some(FeatureLayerValue {
+        layer: FeatureConfigLayer::Managed,
+        value: true,
+    });
+    assert!(dispatch(Action::ClearSubagentModelInheritance, &mut app).is_empty());
+    assert!(read_toast(&app).ends_with("nothing to reset; managed_config.toml sets it"));
+    assert!(!dispatch(Action::SetSubagentModelInheritance(false), &mut app).is_empty());
+    app.subagent_model_inheritance.config.pin = Some(true);
+    assert!(dispatch(Action::SetSubagentModelInheritance(true), &mut app).is_empty());
+    assert!(read_toast(&app).contains("fixed by a requirements.toml pin or an MDM policy"));
+    assert!(dispatch(Action::ClearSubagentModelInheritance, &mut app).is_empty());
+    assert_eq!(Some(false), app.subagent_model_inheritance.config.user);
+    assert!(read_toast(&app).contains("fixed by a requirements.toml pin or an MDM policy"));
+}
+/// One write is on disk at a time: toggles under a pending write only queue the newest intent, the completion issues
+/// it (also after a failure) unless it already matches the disk, and a lone failure settles the mirror back on the disk.
+#[test]
+fn subagent_model_inheritance_writes_one_at_a_time_and_issues_the_newest_intent() {
+    use xai_grok_shell::agent::config::Feature;
+    let feature = Feature::SubagentModelInheritance;
+    let toggle = |app: &mut AppView, action: Action| issued_feature_override(dispatch(action, app));
+    let complete = |app: &mut AppView, result: Result<Option<bool>, String>| {
+        issued_feature_override(handle_feature_override_persisted(app, feature, result))
+    };
+    let mirror = |app: &AppView| app.subagent_model_inheritance.config.user;
+    let failed = || Err("disk".to_owned());
+    let mut app = test_app_with_agent();
+    assert_eq!(
+        Some(Some(true)),
+        toggle(&mut app, Action::SetSubagentModelInheritance(true))
+    );
+    assert_eq!(
+        None,
+        toggle(&mut app, Action::SetSubagentModelInheritance(false))
+    );
+    assert_eq!(
+        None,
+        toggle(&mut app, Action::ClearSubagentModelInheritance)
+    );
+    assert_eq!(None, mirror(&app));
+    assert_eq!(Some(None), complete(&mut app, Ok(Some(true))));
+    assert_eq!(None, complete(&mut app, Ok(None)));
+    assert_eq!(None, mirror(&app));
+    assert!(app.subagent_model_inheritance.writes.is_none());
+    let _ = toggle(&mut app, Action::SetSubagentModelInheritance(true));
+    let _ = toggle(&mut app, Action::SetSubagentModelInheritance(false));
+    assert_eq!(Some(Some(false)), complete(&mut app, failed()));
+    assert!(read_toast(&app).starts_with("\u{2717} Could not save subagent_model_inheritance"));
+    assert_eq!(None, complete(&mut app, failed()));
+    assert_eq!(None, mirror(&app));
+    assert!(app.subagent_model_inheritance.writes.is_none());
+    let _ = toggle(&mut app, Action::SetSubagentModelInheritance(true));
+    let _ = toggle(&mut app, Action::SetSubagentModelInheritance(false));
+    let _ = toggle(&mut app, Action::SetSubagentModelInheritance(true));
+    assert_eq!(None, complete(&mut app, Ok(Some(true))));
+    assert_eq!(Some(true), mirror(&app));
+    assert!(app.subagent_model_inheritance.writes.is_none());
+}
+/// Flips the setting to a non-default value so the round-trip dispatch has an observable effect.
+/// Otherwise the assertion would pass vacuously when current == default.
+/// Dispatches theme-mutating actions for the theme keys; callers must hold the theme test lock (wrap the test in [`with_theme_test_env`]).
 fn move_setting_away_from_default(app: &mut AppView, key: crate::settings::SettingKey) {
     match key {
         "compact_mode" => {
@@ -1547,6 +1652,10 @@ fn move_setting_away_from_default(app: &mut AppView, key: crate::settings::Setti
             let away = !crate::appearance::cache::load_page_flip_on_send();
             let _ = dispatch(Action::SetPageFlipOnSend(away), app);
         }
+        "dashboard_preview" => {
+            let away = !app.current_ui.dashboard_preview_enabled();
+            let _ = dispatch(Action::SetDashboardPreview(away), app);
+        }
         "confirm_before_rewind" => {
             let away = !app.current_ui.confirm_before_rewind_enabled();
             let _ = dispatch(Action::SetConfirmBeforeRewind(away), app);
@@ -1554,6 +1663,17 @@ fn move_setting_away_from_default(app: &mut AppView, key: crate::settings::Setti
         "combine_queued_prompts" => {
             let away = !crate::appearance::cache::load_combine_queued_prompts();
             let _ = dispatch(Action::SetCombineQueuedPrompts(away), app);
+        }
+        "follow_up_behavior" => {
+            let away = match crate::appearance::cache::load_follow_up_behavior() {
+                crate::appearance::FollowUpBehavior::Queue => {
+                    crate::appearance::FollowUpBehavior::Steer
+                }
+                crate::appearance::FollowUpBehavior::Steer => {
+                    crate::appearance::FollowUpBehavior::Queue
+                }
+            };
+            let _ = dispatch(Action::SetFollowUpBehavior(away), app);
         }
         "simple_mode" => {
             let _ = dispatch(Action::SetSimpleMode(false), app);
@@ -1575,6 +1695,9 @@ fn move_setting_away_from_default(app: &mut AppView, key: crate::settings::Setti
         }
         "contextual_hints.word_select" => {
             let _ = dispatch(Action::SetContextualHintWordSelect(false), app);
+        }
+        "contextual_hints.export_copy" => {
+            let _ = dispatch(Action::SetContextualHintExportCopy(false), app);
         }
         "contextual_hints.ssh_wrap" => {
             let _ = dispatch(Action::SetContextualHintSshWrap(false), app);
@@ -1634,10 +1757,13 @@ fn move_setting_away_from_default(app: &mut AppView, key: crate::settings::Setti
             let _ = dispatch(Action::SetVimMode(true), app);
         }
         "remember_tool_approvals" => {
-            let _ = dispatch(Action::SetRememberToolApprovals(true), app);
+            let _ = dispatch(Action::SetRememberToolApprovals(false), app);
         }
         "toolset.ask_user_question.timeout_enabled" => {
             let _ = dispatch(Action::SetAskUserQuestionTimeoutEnabled(false), app);
+        }
+        "subagent_model_inheritance" => {
+            let _ = dispatch(Action::SetSubagentModelInheritance(true), app);
         }
         "keep_text_selection" => {
             let _ = dispatch(
@@ -1737,9 +1863,8 @@ fn set_compact_mode_toast_format() {
     assert!(toast.contains("Compact mode"));
     assert!(toast.contains("off"));
 }
-/// `set_simple_mode_inner` propagates to the active agent's
-/// `input_mode` — without this, the toast says
-/// "Simple mode: on" but the current session keeps Vim input.
+/// `set_simple_mode_inner` propagates to the active agent's `input_mode`.
+/// Without the propagation, the toast says "Simple mode: on" but the current session keeps Vim input.
 #[test]
 fn set_simple_mode_propagates_to_active_agent() {
     let mut app = test_app_with_agent();
@@ -1760,24 +1885,21 @@ fn set_simple_mode_propagates_to_active_agent() {
         "set_simple_mode(false) must switch back to Vim input mode"
     );
 }
-/// `set_simple_mode_inner` is a no-op on the agent-propagation
-/// path when there's no active agent — the persist effect still
-/// fires (the setting is global, not agent-local).
+/// `set_simple_mode_inner` is a no-op on the agent-propagation path when there's no active agent.
+/// The persist effect still fires (the setting is global, not agent-local).
 #[test]
 fn set_simple_mode_no_op_when_no_active_agent() {
     let mut app = test_app();
     let effects = dispatch(Action::SetSimpleMode(true), &mut app);
     assert_eq!(effects.len(), 1);
-    match &effects[0] {
-        Effect::PersistSetting { key, .. } => assert_eq!(*key, "simple_mode"),
+    match effects.first() {
+        Some(Effect::PersistSetting { key, .. }) => assert_eq!(*key, "simple_mode"),
         other => panic!("expected PersistSetting, got {other:?}"),
     }
     assert_eq!(app.current_ui.simple_mode, Some(true));
 }
-/// `set_simple_mode_inner` propagates to **every** agent, not just
-/// the active one — without iterating
-/// over `app.agents.values_mut()`, agent B's input_mode stays
-/// stale when the user toggles simple-mode while agent A is active.
+/// `set_simple_mode_inner` propagates to **every** agent, not just the active one.
+/// Without iterating over `app.agents.values_mut()`, agent B's input_mode stays stale when the user toggles simple-mode while agent A is active.
 #[test]
 fn set_simple_mode_propagates_to_every_agent() {
     let mut app = test_app_with_agent();
@@ -1809,6 +1931,8 @@ fn set_simple_mode_propagates_to_every_agent() {
             available_commands_generation: 0,
             available_tools: None,
             model_switch_pending: false,
+            hook_block_hold: false,
+            blocked_prompt: None,
             user_model_preference: None,
             deferred_model_switch: None,
             bg_tasks: std::collections::BTreeMap::new(),
@@ -1833,12 +1957,9 @@ fn set_simple_mode_propagates_to_every_agent() {
         );
     }
 }
-/// Setters must update BOTH `app.current_ui` AND
-/// `crate::appearance::cache`. The cache is the render hot path's
-/// source of truth; if a future refactor accidentally drops the
-/// `cache::set(new)` call, `app.current_ui` would still show the
-/// new value but the renderer would revert on next frame. Runs
-/// in a fresh thread because the thread-locals are sticky.
+/// Setters must update BOTH `app.current_ui` AND `crate::appearance::cache`.
+/// If a refactor drops the `cache::set(new)` call, `app.current_ui` would still show the new value but the renderer would revert on the next frame.
+/// Runs in a fresh thread because the thread-locals are sticky.
 #[test]
 fn set_x_propagates_to_thread_local_cache() {
     std::thread::spawn(|| {
@@ -1867,11 +1988,8 @@ fn set_x_propagates_to_thread_local_cache() {
     .join()
     .unwrap();
 }
-/// In debug builds, dispatching `Action::OpenSettings` twice in a
-/// row panics on the `debug_assert!` (input-routing bug guard).
-/// Pairs with
-/// `dispatch_open_settings_opens_then_close_on_reentry` (which
-/// exercises the release-mode silent-close path).
+/// In debug builds, dispatching `Action::OpenSettings` twice in a row panics on the `debug_assert!` (input-routing bug guard).
+/// Pairs with `dispatch_open_settings_opens_then_close_on_reentry` (which exercises the release-mode silent-close path).
 #[test]
 #[should_panic(expected = "OpenSettings dispatched while settings modal is already open")]
 #[cfg(debug_assertions)]
@@ -1880,33 +1998,24 @@ fn dispatch_open_settings_double_dispatch_panics_in_debug() {
     let _ = dispatch(Action::OpenSettings, &mut app);
     let _ = dispatch(Action::OpenSettings, &mut app);
 }
-/// `set_multiline_mode(app, true)` mutates the active agent's
-/// flag, fires a toast, and emits NO effects.
+/// `set_multiline_mode(app, true)` mutates the active agent's flag, fires a toast, and emits NO effects.
 #[test]
 fn set_multiline_mode_mutates_agent_and_emits_no_effect() {
     let mut app = test_app_with_agent();
-    assert!(!app.agents[&AgentId(0)].multiline_mode);
+    assert!(!expect_agent(&app, AgentId(0)).multiline_mode);
     let effects = dispatch(Action::SetMultilineMode(true), &mut app);
     assert!(
         effects.is_empty(),
         "PAGER-owned setter must NOT emit Effect::PersistSetting, got {effects:?}",
     );
     assert!(
-        app.agents[&AgentId(0)].multiline_mode,
+        expect_agent(&app, AgentId(0)).multiline_mode,
         "agent.multiline_mode must reflect the new value",
     );
 }
-/// Idempotent fast path: re-emitting the same value is a UX
-/// no-op (no toast, no Effect).
-///
-/// **Contract divergence from SHARED setters:**
-/// `set_compact_mode_inner` only skips
-/// the `app.set_appearance` fan-out — the outer `set_compact_mode`
-/// still toasts AND emits `Effect::PersistSetting` on every
-/// dispatch, including no-ops. PAGER setters can be stricter
-/// because there's no disk write to confirm: re-toasting on a
-/// same-value re-dispatch is pure UI noise, so we skip the toast
-/// at the outer level too.
+/// Idempotent fast path: re-emitting the same value is a UX no-op (no toast, no Effect).
+/// SHARED setters differ: `set_compact_mode_inner` only skips the `app.set_appearance` fan-out.
+/// The outer `set_compact_mode` still toasts AND emits `Effect::PersistSetting` on every dispatch, including no-ops.
 #[test]
 fn set_multiline_mode_idempotent_no_toast() {
     let mut app = test_app_with_agent();
@@ -1917,56 +2026,50 @@ fn set_multiline_mode_idempotent_no_toast() {
     let effects = dispatch(Action::SetMultilineMode(true), &mut app);
     assert!(effects.is_empty());
     assert!(
-        app.agents[&AgentId(0)].toast.is_none(),
+        expect_agent(&app, AgentId(0)).toast.is_none(),
         "redundant set must not re-toast",
     );
     assert!(
-        app.agents[&AgentId(0)].multiline_mode,
+        expect_agent(&app, AgentId(0)).multiline_mode,
         "idempotent re-set must preserve value",
     );
 }
-/// Initial-idempotence: dispatching the same value as the agent's
-/// default produces no toast and no effect.
-/// Pins "no UX side effects on a redundant initial dispatch" —
-/// matches the user-visible "open modal, click Space twice on a
-/// default-false setting" flow.
+/// Initial-idempotence: dispatching the same value as the agent's default produces no toast and no effect.
+/// Pins "no UX side effects on a redundant initial dispatch".
+/// Matches the user-visible "open modal, click Space twice on a default-false setting" flow.
 #[test]
 fn set_multiline_mode_initial_same_value_is_no_op() {
     let mut app = test_app_with_agent();
     let effects = dispatch(Action::SetMultilineMode(false), &mut app);
     assert!(effects.is_empty());
     assert!(
-        app.agents[&AgentId(0)].toast.is_none(),
+        expect_agent(&app, AgentId(0)).toast.is_none(),
         "matching-default dispatch must not toast",
     );
 }
-/// Toast string format matches the `"\u{2713} {label}: {value}"`
-/// format exactly. Exact-equality strictly catches
-/// format drift (e.g., dropping the `:` separator, adding suffix)
-/// that substring `contains` checks would miss.
+/// Toast string format matches the `"\u{2713} {label}: {value}"` format exactly.
+/// Exact equality catches format drift (e.g., dropping the `:` separator, adding a suffix) that substring `contains` checks would miss.
 #[test]
 fn set_multiline_mode_toast_format() {
     let mut app = test_app_with_agent();
     let _ = dispatch(Action::SetMultilineMode(true), &mut app);
-    let toast = app.agents[&AgentId(0)]
+    let toast = expect_agent(&app, AgentId(0))
         .toast
         .as_ref()
         .map(|(s, _)| s.clone())
         .expect("toast must be set");
     assert_eq!(toast, "\u{2713} Multiline: on");
     let _ = dispatch(Action::SetMultilineMode(false), &mut app);
-    let toast = app.agents[&AgentId(0)]
+    let toast = expect_agent(&app, AgentId(0))
         .toast
         .as_ref()
         .map(|(s, _)| s.clone())
         .expect("toast must be set");
     assert_eq!(toast, "\u{2713} Multiline: off");
 }
-/// No active agent → no-op (no panic, no effect, no mutation).
-/// Differs from `set_simple_mode_no_op_when_no_active_agent`: SHARED
-/// settings persist globally even without an agent, but PAGER
-/// settings have nowhere to write without an agent's state to
-/// mutate.
+/// No active agent means no-op (no panic, no effect, no mutation).
+/// Differs from `set_simple_mode_no_op_when_no_active_agent`: SHARED settings persist globally even without an agent.
+/// PAGER settings have nowhere to write without an agent's state to mutate.
 #[test]
 fn set_multiline_mode_no_op_when_no_active_agent() {
     let mut app = test_app();
@@ -1986,8 +2089,7 @@ fn set_multiline_mode_no_op_when_no_active_agent() {
         "active_view must not flip on no-agent dispatch",
     );
 }
-/// Dashboard surface owns its own compose flag: `SetMultilineMode` /
-/// `/multiline` flip `dashboard.multiline_mode` and leave agent flags alone.
+/// The dashboard owns its own compose flag: `SetMultilineMode` / `/multiline` flip `dashboard.multiline_mode` and leave agent flags alone.
 #[test]
 fn set_multiline_mode_on_dashboard_toggles_dashboard_not_agents() {
     let mut app = test_app_with_agent();
@@ -1995,8 +2097,8 @@ fn set_multiline_mode_on_dashboard_toggles_dashboard_not_agents() {
     app.dashboard = Some(crate::views::dashboard::DashboardState::new());
     app.active_view = ActiveView::AgentDashboard;
     assert!(!app.dashboard.as_ref().unwrap().multiline_mode);
-    assert!(!app.agents[&AgentId(0)].multiline_mode);
-    assert!(!app.agents[&AgentId(1)].multiline_mode);
+    assert!(!expect_agent(&app, AgentId(0)).multiline_mode);
+    assert!(!expect_agent(&app, AgentId(1)).multiline_mode);
     let effects = dispatch(Action::SetMultilineMode(true), &mut app);
     assert!(effects.is_empty());
     assert!(
@@ -2004,7 +2106,8 @@ fn set_multiline_mode_on_dashboard_toggles_dashboard_not_agents() {
         "dashboard flag must flip on"
     );
     assert!(
-        !app.agents[&AgentId(0)].multiline_mode && !app.agents[&AgentId(1)].multiline_mode,
+        !expect_agent(&app, AgentId(0)).multiline_mode
+            && !expect_agent(&app, AgentId(1)).multiline_mode,
         "agent flags must stay put"
     );
     let _ = dispatch(Action::SetMultilineMode(false), &mut app);
@@ -2014,42 +2117,31 @@ fn set_multiline_mode_on_dashboard_toggles_dashboard_not_agents() {
         app.dashboard.as_ref().unwrap().multiline_mode,
         "/multiline must toggle dashboard on"
     );
-    assert!(!app.agents[&AgentId(0)].multiline_mode);
+    assert!(!expect_agent(&app, AgentId(0)).multiline_mode);
 }
-/// Multi-agent fan-out. `set_multiline_mode`
-/// mutates only the ACTIVE agent's `multiline_mode`, never
-/// other agents in the registry. The setter currently uses
-/// `app.agents.get_mut(&active)` (index by active), but a
-/// future refactor that loops over `app.agents.values_mut()`
-/// or that touches SHARED `app.current_ui` would silently
-/// regress this contract — without a multi-agent test, the
-/// regression wouldn't surface until the user opened two
-/// agents and noticed cross-contamination.
+/// Multi-agent fan-out: `set_multiline_mode` mutates only the ACTIVE agent's `multiline_mode`, never other agents in the registry.
+/// A refactor that loops over `app.agents.values_mut()` or touches SHARED `app.current_ui` would silently regress this contract.
+/// Only a multi-agent test catches that regression before a user opens two agents.
 #[test]
 fn set_multiline_mode_mutates_only_active_agent_not_others() {
     let mut app = test_app_with_agent();
     insert_placeholder_agent(&mut app, AgentId(1));
-    assert!(!app.agents[&AgentId(0)].multiline_mode);
-    assert!(!app.agents[&AgentId(1)].multiline_mode);
+    assert!(!expect_agent(&app, AgentId(0)).multiline_mode);
+    assert!(!expect_agent(&app, AgentId(1)).multiline_mode);
     let _ = dispatch(Action::SetMultilineMode(true), &mut app);
     assert!(
-        app.agents[&AgentId(0)].multiline_mode,
+        expect_agent(&app, AgentId(0)).multiline_mode,
         "active agent (id=0) must flip to true",
     );
     assert!(
-        !app.agents[&AgentId(1)].multiline_mode,
+        !expect_agent(&app, AgentId(1)).multiline_mode,
         "non-active agent (id=1) must NOT be touched — PAGER-owned \
              setters address the active agent only",
     );
 }
 /// Regression test.
-///
-/// Open the settings modal, dispatch `SetMultilineMode(true)`,
-/// assert the modal's `pager_snapshot.multiline_mode` is refreshed
-/// to `true`. Without `refresh_open_settings_modals`, the snapshot
-/// stays at the open-time value and the user gets stuck — the
-/// indicator shows the wrong state AND subsequent toggles are
-/// no-ops via the idempotent guard.
+/// Without `refresh_open_settings_modals`, the snapshot stays at the open-time value and the user gets stuck.
+/// The indicator shows the wrong state AND subsequent toggles are no-ops via the idempotent guard.
 #[test]
 fn set_multiline_mode_refreshes_open_modal_pager_snapshot() {
     use crate::views::modal::ActiveModal;
@@ -2086,11 +2178,8 @@ fn set_multiline_mode_refreshes_open_modal_pager_snapshot() {
     );
 }
 /// Regression test (SHARED path).
-///
-/// Same bug pattern as the multiline test above, but for
-/// `compact_mode` (SHARED). The bug is fixed for the entire
-/// SHARED family by calling `refresh_open_settings_modals` from
-/// every `set_X` outer, not just for multiline.
+/// Same bug pattern as the multiline test above, but for `compact_mode` (SHARED).
+/// The fix covers the entire SHARED family: every `set_X` outer calls `refresh_open_settings_modals`, not just multiline.
 #[test]
 fn set_compact_mode_refreshes_open_modal_ui_snapshot() {
     use crate::views::modal::ActiveModal;
@@ -2112,15 +2201,14 @@ fn set_compact_mode_refreshes_open_modal_ui_snapshot() {
              stale-snapshot bug (Round-2 Issue 1) would leave it false",
     );
 }
-/// `Action::SetVimMode(true)` flips the cache + every agent's
-/// field, emits `Effect::PersistSetting`, and writes a toast.
+/// `Action::SetVimMode(true)` flips the cache and every agent's field, emits `Effect::PersistSetting`, and writes a toast.
 #[test]
 fn set_vim_mode_mutates_all_agents_and_cache_no_effect() {
     crate::appearance::cache::set_vim_mode(false);
     let mut app = test_app_with_agent();
     insert_placeholder_agent(&mut app, AgentId(1));
-    assert!(!app.agents[&AgentId(0)].vim_mode);
-    assert!(!app.agents[&AgentId(1)].vim_mode);
+    assert!(!expect_agent(&app, AgentId(0)).vim_mode);
+    assert!(!expect_agent(&app, AgentId(1)).vim_mode);
     let effects = dispatch(Action::SetVimMode(true), &mut app);
     assert_eq!(
         effects.len(),
@@ -2129,22 +2217,22 @@ fn set_vim_mode_mutates_all_agents_and_cache_no_effect() {
     );
     assert!(
         matches!(
-            &effects[0],
-            Effect::PersistSetting {
+            effects.first(),
+            Some(Effect::PersistSetting {
                 key: "vim_mode",
                 value: crate::settings::SettingValue::Bool(true),
                 rollback_value: crate::settings::SettingValue::Bool(false),
-            }
+            })
         ),
         "unexpected effect: {:?}",
-        effects[0],
+        effects.first(),
     );
     assert!(
         crate::appearance::cache::load_vim_mode(),
         "cache must mirror the new value so newly-created agents pick it up",
     );
     assert!(
-        app.agents[&AgentId(0)].vim_mode && app.agents[&AgentId(1)].vim_mode,
+        expect_agent(&app, AgentId(0)).vim_mode && expect_agent(&app, AgentId(1)).vim_mode,
         "vim_mode must fan out to EVERY agent (background subagents \
              + side panes pick up the change without restart)",
     );
@@ -2161,7 +2249,7 @@ fn set_vim_mode_idempotent_no_toast() {
     let effects = dispatch(Action::SetVimMode(true), &mut app);
     assert!(effects.is_empty());
     assert!(
-        app.agents[&AgentId(0)].toast.is_none(),
+        expect_agent(&app, AgentId(0)).toast.is_none(),
         "redundant set must not re-toast",
     );
 }
@@ -2208,14 +2296,14 @@ fn set_keep_text_selection_rollback_restores_state() {
         "rollback must restore cache"
     );
 }
-/// `Action::SetVimMode` rollback restores the cache + agents.
+/// `Action::SetVimMode` rollback restores the cache and agents.
 #[test]
 fn set_vim_mode_rollback_restores_state() {
     crate::appearance::cache::set_vim_mode(false);
     let mut app = test_app_with_agent();
     let _ = dispatch(Action::SetVimMode(true), &mut app);
     assert!(crate::appearance::cache::load_vim_mode());
-    assert!(app.agents[&AgentId(0)].vim_mode);
+    assert!(expect_agent(&app, AgentId(0)).vim_mode);
     let _ = apply_setting_rollback(
         &mut app,
         "vim_mode",
@@ -2226,7 +2314,7 @@ fn set_vim_mode_rollback_restores_state() {
         "rollback must restore cache",
     );
     assert!(
-        !app.agents[&AgentId(0)].vim_mode,
+        !expect_agent(&app, AgentId(0)).vim_mode,
         "rollback must restore agent field",
     );
 }
@@ -2288,8 +2376,7 @@ fn set_group_tool_verbs_applies_persists_and_rolls_back() {
         "rollback must restore cache",
     );
 }
-/// Toggling the setting re-folds the existing transcript in place
-/// (no restart, no unrelated structural event needed).
+/// Toggling the setting re-folds the existing transcript in place (no restart, no unrelated structural event needed).
 #[test]
 fn set_group_tool_verbs_refolds_live_transcript() {
     use crate::scrollback::block::RenderBlock;
@@ -2307,13 +2394,13 @@ fn set_group_tool_verbs_refolds_live_transcript() {
         );
     }
     let _ = dispatch(Action::SetGroupToolVerbs(false), &mut app);
-    let sb = &app.agents[&AgentId(0)].scrollback;
+    let sb = &expect_agent(&app, AgentId(0)).scrollback;
     assert!(
         sb.get_cached_entry_height(1).unwrap_or(0) > 0,
         "toggle off must unfold the transcript immediately"
     );
     let _ = dispatch(Action::SetGroupToolVerbs(true), &mut app);
-    let sb = &app.agents[&AgentId(0)].scrollback;
+    let sb = &expect_agent(&app, AgentId(0)).scrollback;
     assert_eq!(
         sb.get_cached_entry_height(1),
         Some(0),
@@ -2321,10 +2408,8 @@ fn set_group_tool_verbs_refolds_live_transcript() {
     );
     crate::appearance::cache::set_group_tool_verbs(true);
 }
-/// Flipping the setting drops manual group expansions: the id set is shared
-/// with N-more dense groups, so a stale verb-slot id must neither mark the
-/// coincident dense run expanded after OFF nor reopen the verb slot expanded
-/// after ON.
+/// Flipping the setting drops manual group expansions: the id set is shared with N-more dense groups.
+/// A stale verb-slot id must neither mark the coincident dense run expanded after OFF nor reopen the verb slot expanded after ON.
 #[test]
 fn set_group_tool_verbs_flip_resets_stale_group_expansion() {
     use crate::scrollback::block::RenderBlock;
@@ -2342,14 +2427,18 @@ fn set_group_tool_verbs_flip_resets_stale_group_expansion() {
         sb.set_selected(Some(0));
         assert!(sb.toggle_group_expansion());
         sb.prepare_layout(80, 40);
-        let info = sb.get_cached_entry_layouts().unwrap()[0];
+        let Some(info) = sb.get_cached_entry_layouts().and_then(|l| l.first()) else {
+            panic!("expected a cached layout");
+        };
         assert!(info.group_collapse_header, "expanded verb slot armed");
     }
     let _ = dispatch(Action::SetGroupToolVerbs(false), &mut app);
     {
         let sb = &mut app.agents.get_mut(&AgentId(0)).unwrap().scrollback;
         sb.prepare_layout(80, 40);
-        let info = sb.get_cached_entry_layouts().unwrap()[0];
+        let Some(info) = sb.get_cached_entry_layouts().and_then(|l| l.first()) else {
+            panic!("expected a cached layout");
+        };
         assert!(
             !info.group_collapse_header,
             "stale expansion must not mark the dense run expanded after OFF"
@@ -2359,7 +2448,9 @@ fn set_group_tool_verbs_flip_resets_stale_group_expansion() {
     {
         let sb = &mut app.agents.get_mut(&AgentId(0)).unwrap().scrollback;
         sb.prepare_layout(80, 40);
-        let info = sb.get_cached_entry_layouts().unwrap()[0];
+        let Some(info) = sb.get_cached_entry_layouts().and_then(|l| l.first()) else {
+            panic!("expected a cached layout");
+        };
         assert!(info.verb_group_header, "run refolds as a verb group");
         assert!(
             !info.group_collapse_header,
@@ -2402,9 +2493,8 @@ fn set_collapsed_edit_blocks_applies_persists_and_rolls_back() {
         "rollback must restore cache",
     );
 }
-/// Toggling the flag re-materializes on-default Edit rows in the live
-/// transcript (no restart) — the dispatch-level pin of
-/// `apply_collapsed_edit_blocks_flip`'s agent walk.
+/// Toggling the flag re-materializes on-default Edit rows in the live transcript (no restart).
+/// This is the dispatch-level pin of `apply_collapsed_edit_blocks_flip`'s agent walk.
 #[test]
 fn set_collapsed_edit_blocks_refolds_live_edit_rows() {
     use crate::scrollback::block::RenderBlock;
@@ -2419,7 +2509,7 @@ fn set_collapsed_edit_blocks_refolds_live_edit_rows() {
         )))
     };
     assert_eq!(
-        app.agents[&AgentId(0)]
+        expect_agent(&app, AgentId(0))
             .scrollback
             .get_by_id(id)
             .unwrap()
@@ -2429,7 +2519,7 @@ fn set_collapsed_edit_blocks_refolds_live_edit_rows() {
     );
     let _ = dispatch(Action::SetCollapsedEditBlocks(true), &mut app);
     assert_eq!(
-        app.agents[&AgentId(0)]
+        expect_agent(&app, AgentId(0))
             .scrollback
             .get_by_id(id)
             .unwrap()
@@ -2439,7 +2529,7 @@ fn set_collapsed_edit_blocks_refolds_live_edit_rows() {
     );
     let _ = dispatch(Action::SetCollapsedEditBlocks(false), &mut app);
     assert_eq!(
-        app.agents[&AgentId(0)]
+        expect_agent(&app, AgentId(0))
             .scrollback
             .get_by_id(id)
             .unwrap()
@@ -2526,8 +2616,11 @@ fn set_show_thinking_blocks_off_preserves_tool_group_header() {
         .scrollback
         .get_cached_entry_layouts()
         .expect("layout cache");
-    assert_eq!(layouts_on[think_idx].height, 1);
-    assert_eq!(layouts_on[think_idx].group_header_count, 3);
+    let Some(think_on) = layouts_on.get(think_idx) else {
+        panic!("missing layout {think_idx}");
+    };
+    assert_eq!(think_on.height, 1);
+    assert_eq!(think_on.group_header_count, 3);
     let _ = dispatch(Action::SetShowThinkingBlocks(false), &mut app);
     let agent = app.agents.get_mut(&AgentId(0)).expect("agent 0");
     agent.scrollback.prepare_layout(80, 40);
@@ -2536,9 +2629,12 @@ fn set_show_thinking_blocks_off_preserves_tool_group_header() {
         .get_cached_entry_layouts()
         .expect("layout cache after hide")
         .to_vec();
-    assert_eq!(layouts[think_idx].height, 0);
-    assert_eq!(layouts[think_idx].group_header_count, 0);
-    assert!(!layouts[think_idx].group_collapse_header);
+    let Some(think_layout) = layouts.get(think_idx) else {
+        panic!("missing layout {think_idx}");
+    };
+    assert_eq!(think_layout.height, 0);
+    assert_eq!(think_layout.group_header_count, 0);
+    assert!(!think_layout.group_collapse_header);
     let header_idx = 1usize;
     assert!(
         agent
@@ -2546,18 +2642,20 @@ fn set_show_thinking_blocks_off_preserves_tool_group_header() {
             .entry(header_idx)
             .is_some_and(|e| e.block.is_tool_call())
     );
-    assert_eq!(layouts[header_idx].height, 1);
-    assert_eq!(layouts[header_idx].group_header_count, 2);
-    assert_eq!(layouts[2].height, 0);
-    assert_eq!(layouts[3].height, 0);
+    let Some(header_layout) = layouts.get(header_idx) else {
+        panic!("missing layout {header_idx}");
+    };
+    assert_eq!(header_layout.height, 1);
+    assert_eq!(header_layout.group_header_count, 2);
+    assert_eq!(layouts.get(2).map(|l| l.height), Some(0));
+    assert_eq!(layouts.get(3).map(|l| l.height), Some(0));
     for (i, layout) in layouts.iter().enumerate().take(7).skip(4) {
         assert!(layout.height > 0, "tail tool {i} visible");
     }
     crate::appearance::cache::set_show_thinking_blocks(false);
 }
-/// Hidden thinking interspersed in a collapsed tool run stays transparent:
-/// the run must still truncate to `group_max_visible` instead of splitting
-/// in two and over-rendering the group.
+/// Hidden thinking interspersed in a collapsed tool run stays transparent.
+/// The run must still truncate to `group_max_visible` instead of splitting in two and over-rendering the group.
 #[test]
 fn set_show_thinking_blocks_off_truncates_across_interspersed_thinking() {
     use crate::appearance::AppearanceConfig;
@@ -2601,22 +2699,23 @@ fn set_show_thinking_blocks_off_truncates_across_interspersed_thinking() {
         .get_cached_entry_layouts()
         .expect("layout cache after hide")
         .to_vec();
-    assert_eq!(layouts[think_idx].height, 0);
-    assert_eq!(layouts[think_idx].group_header_count, 0);
-    assert!(!layouts[think_idx].group_collapse_header);
-    assert_eq!(layouts[0].height, 1);
-    assert_eq!(layouts[0].group_header_count, 2);
-    assert_eq!(layouts[1].height, 0);
-    assert_eq!(layouts[3].height, 0);
+    let Some(think_layout) = layouts.get(think_idx) else {
+        panic!("missing layout {think_idx}");
+    };
+    assert_eq!(think_layout.height, 0);
+    assert_eq!(think_layout.group_header_count, 0);
+    assert!(!think_layout.group_collapse_header);
+    assert_eq!(layouts.first().map(|l| l.height), Some(1));
+    assert_eq!(layouts.first().map(|l| l.group_header_count), Some(2));
+    assert_eq!(layouts.get(1).map(|l| l.height), Some(0));
+    assert_eq!(layouts.get(3).map(|l| l.height), Some(0));
     for (i, layout) in layouts.iter().enumerate().take(7).skip(4) {
         assert!(layout.height > 0, "tail tool {i} visible");
     }
     crate::appearance::cache::set_show_thinking_blocks(false);
 }
-/// Flipping thinking visibility reshapes verb-group runs (shown finished
-/// thoughts claim into folds; hidden ones stay transparent), so the flip must
-/// drop manual group expansions like the `group_tool_verbs` flip does: a
-/// stale id must not reopen the reshaped run expanded.
+/// Flipping thinking visibility reshapes verb-group runs (shown finished thoughts claim into folds; hidden ones stay transparent).
+/// The flip must therefore drop manual group expansions like the `group_tool_verbs` flip does: a stale id must not reopen the reshaped run expanded.
 #[test]
 fn set_show_thinking_blocks_flip_reshapes_verb_runs_and_resets_expansion() {
     use crate::scrollback::block::RenderBlock;
@@ -2634,42 +2733,57 @@ fn set_show_thinking_blocks_flip_reshapes_verb_runs_and_resets_expansion() {
         sb.push_block(RenderBlock::read("b.rs", None));
         sb.prepare_layout(80, 40);
         let layouts = sb.get_cached_entry_layouts().unwrap();
-        assert!(layouts[0].verb_group_header, "thought anchors the run");
-        assert_eq!(layouts[1].height, 0);
+        assert!(
+            layouts.first().is_some_and(|l| l.verb_group_header),
+            "thought anchors the run"
+        );
+        assert_eq!(layouts.get(1).map(|l| l.height), Some(0));
         sb.set_selected(Some(0));
         assert!(sb.toggle_group_expansion());
         sb.prepare_layout(80, 40);
         let layouts = sb.get_cached_entry_layouts().unwrap();
-        assert!(layouts[0].group_collapse_header, "expanded slot armed");
+        assert!(
+            layouts.first().is_some_and(|l| l.group_collapse_header),
+            "expanded slot armed"
+        );
     }
     let _ = dispatch(Action::SetShowThinkingBlocks(false), &mut app);
     {
         let sb = &mut app.agents.get_mut(&AgentId(0)).unwrap().scrollback;
         sb.prepare_layout(80, 40);
         let layouts = sb.get_cached_entry_layouts().unwrap();
-        assert_eq!(layouts[0].height, 0, "hidden thought takes no rows");
-        assert!(layouts[1].verb_group_header, "run re-anchors on the tool");
-        assert!(!layouts[1].group_collapse_header);
-        assert_eq!(layouts[2].height, 0);
+        assert_eq!(
+            layouts.first().map(|l| l.height),
+            Some(0),
+            "hidden thought takes no rows"
+        );
+        assert!(
+            layouts.get(1).is_some_and(|l| l.verb_group_header),
+            "run re-anchors on the tool"
+        );
+        assert!(layouts.get(1).is_some_and(|l| !l.group_collapse_header));
+        assert_eq!(layouts.get(2).map(|l| l.height), Some(0));
     }
     let _ = dispatch(Action::SetShowThinkingBlocks(true), &mut app);
     {
         let sb = &mut app.agents.get_mut(&AgentId(0)).unwrap().scrollback;
         sb.prepare_layout(80, 40);
         let layouts = sb.get_cached_entry_layouts().unwrap();
-        assert!(layouts[0].verb_group_header, "thought re-anchors the run");
         assert!(
-            !layouts[0].group_collapse_header,
+            layouts.first().is_some_and(|l| l.verb_group_header),
+            "thought re-anchors the run"
+        );
+        assert!(
+            layouts.first().is_some_and(|l| !l.group_collapse_header),
             "flip must reset the stale expansion"
         );
-        assert_eq!(layouts[1].height, 0);
+        assert_eq!(layouts.get(1).map(|l| l.height), Some(0));
     }
     crate::appearance::cache::set_group_tool_verbs(true);
     crate::appearance::cache::set_show_thinking_blocks(true);
 }
-/// `Action::SetRespectManualFolds` applies to `app.appearance` AND every
-/// agent's scrollback, emits one `Effect::PersistSetting`, is idempotent,
-/// and rolls back.
+/// `Action::SetRespectManualFolds` applies to `app.appearance` AND every agent's scrollback.
+/// It emits one `Effect::PersistSetting`, is idempotent, and rolls back.
 #[test]
 fn set_respect_manual_folds_applies_persists_and_rolls_back() {
     let mut app = test_app_with_agent();
@@ -2711,7 +2825,7 @@ fn set_respect_manual_folds_applies_persists_and_rolls_back() {
         "rollback must restore app.appearance",
     );
     assert!(
-        !app.agents[&AgentId(0)]
+        !expect_agent(&app, AgentId(0))
             .scrollback
             .appearance()
             .scrollback
@@ -2720,8 +2834,7 @@ fn set_respect_manual_folds_applies_persists_and_rolls_back() {
         "rollback must restore agent scrollback appearance",
     );
 }
-/// `Action::SetRenderMermaid` updates the process-wide cache, emits exactly
-/// one `Effect::PersistSetting`, toasts on change, and is idempotent.
+/// `Action::SetRenderMermaid` updates the process-wide cache, emits exactly one `Effect::PersistSetting`, toasts on change, and is idempotent.
 #[test]
 fn set_render_mermaid_persists_and_is_idempotent() {
     use crate::appearance::RenderMermaid;
@@ -2740,15 +2853,15 @@ fn set_render_mermaid_persists_and_is_idempotent() {
     );
     assert!(
         matches!(
-            &effects[0],
-            Effect::PersistSetting {
+            effects.first(),
+            Some(Effect::PersistSetting {
                 key: "render_mermaid",
                 value: crate::settings::SettingValue::Enum("off"),
                 rollback_value: crate::settings::SettingValue::Enum("auto"),
-            }
+            })
         ),
         "unexpected effect: {:?}",
-        effects[0],
+        effects.first(),
     );
     assert!(read_toast(&app).contains("Mermaid"));
     app.agents.get_mut(&AgentId(0)).unwrap().toast = None;
@@ -2758,7 +2871,7 @@ fn set_render_mermaid_persists_and_is_idempotent() {
         "idempotent re-dispatch must emit no Effect"
     );
     assert!(
-        app.agents[&AgentId(0)].toast.is_none(),
+        expect_agent(&app, AgentId(0)).toast.is_none(),
         "idempotent re-dispatch must not toast",
     );
     assert_eq!(
@@ -2788,8 +2901,7 @@ fn set_render_mermaid_rollback_restores_cache() {
         "rollback must restore the cache mirror",
     );
 }
-/// `Action::SetScrollSpeed` updates the process-wide cache,
-/// recomputes `app.scroll_config`, and emits `Effect::PersistSetting`.
+/// `Action::SetScrollSpeed` updates the process-wide cache, recomputes `app.scroll_config`, and emits `Effect::PersistSetting`.
 /// Clamps to `[1, 100]`.
 #[test]
 fn set_scroll_speed_updates_cache_and_clamps() {
@@ -2803,15 +2915,15 @@ fn set_scroll_speed_updates_cache_and_clamps() {
     );
     assert!(
         matches!(
-            &effects[0],
-            Effect::PersistSetting {
+            effects.first(),
+            Some(Effect::PersistSetting {
                 key: "scroll_speed",
                 value: crate::settings::SettingValue::Int(75),
                 rollback_value: crate::settings::SettingValue::Int(50),
-            }
+            })
         ),
         "unexpected effect: {:?}",
-        effects[0],
+        effects.first(),
     );
     assert_eq!(crate::appearance::cache::load_scroll_speed(), 75);
     let _ = dispatch(Action::SetScrollSpeed(250), &mut app);
@@ -2828,7 +2940,7 @@ fn set_scroll_speed_idempotent() {
     let effects = dispatch(Action::SetScrollSpeed(42), &mut app);
     assert!(effects.is_empty());
     assert!(
-        app.agents[&AgentId(0)].toast.is_none(),
+        expect_agent(&app, AgentId(0)).toast.is_none(),
         "redundant set must not re-toast",
     );
 }
@@ -2850,8 +2962,7 @@ fn set_scroll_speed_rollback_restores_state() {
         "rollback must restore cache",
     );
 }
-/// `Action::SetScrollMode` updates the process-wide cache, rebuilds
-/// `app.scroll_config` with the forced mode, and emits `Effect::PersistSetting`.
+/// `Action::SetScrollMode` updates the process-wide cache, rebuilds `app.scroll_config` with the forced mode, and emits `Effect::PersistSetting`.
 #[test]
 fn set_scroll_mode_updates_cache_and_scroll_config() {
     crate::appearance::cache::set_scroll_mode(crate::appearance::ScrollMode::Auto);
@@ -2886,8 +2997,7 @@ fn set_scroll_mode_updates_cache_and_scroll_config() {
     );
     assert!(effects.is_empty());
 }
-/// `Action::SetInvertScroll` updates the cache and flips the rebuilt
-/// config's direction bit.
+/// `Action::SetInvertScroll` updates the cache and flips the rebuilt config's direction bit.
 #[test]
 fn set_invert_scroll_updates_cache_and_scroll_config() {
     crate::appearance::cache::set_invert_scroll(false);
@@ -2918,8 +3028,7 @@ fn set_invert_scroll_updates_cache_and_scroll_config() {
     assert!(!crate::appearance::cache::load_invert_scroll());
     assert!(format!("{:?}", app.scroll_config).contains("invert_direction: false"));
 }
-/// `Action::SetScrollLines` updates the cache (clamped to `[1, 10]`) and
-/// rebuilds the config with BOTH per-tick values overridden.
+/// `Action::SetScrollLines` updates the cache (clamped to `[1, 10]`) and rebuilds the config with BOTH per-tick values overridden.
 #[test]
 fn set_scroll_lines_updates_cache_and_clamps() {
     crate::appearance::cache::set_scroll_lines(3);
@@ -2947,10 +3056,9 @@ fn set_scroll_lines_updates_cache_and_clamps() {
     let _ = dispatch(Action::SetScrollLines(-2), &mut app);
     assert_eq!(crate::appearance::cache::load_scroll_lines(), Some(1));
 }
-/// A NON-permission setting rollback must NOT touch the active agent's
-/// per-session `auto_mode`. Only the `permission_mode` rollback arm syncs it;
-/// otherwise the per-session flag drifts from the (possibly stale) global UI
-/// mirror on multi-agent setups.
+/// A NON-permission setting rollback must NOT touch the active agent's per-session `auto_mode`.
+/// Only the `permission_mode` rollback arm syncs it.
+/// Otherwise the per-session flag drifts from the (possibly stale) global UI mirror on multi-agent setups.
 #[test]
 fn non_permission_rollback_preserves_session_auto_mode() {
     use crate::settings::SettingValue;
@@ -2959,21 +3067,18 @@ fn non_permission_rollback_preserves_session_auto_mode() {
     app.current_ui.permission_mode = Some("ask".into());
     apply_setting_rollback(&mut app, "show_tips", &SettingValue::Bool(true));
     assert!(
-        app.agents[&AgentId(0)].session.is_auto(),
+        expect_agent(&app, AgentId(0)).session.is_auto(),
         "non-permission rollback must not clobber the per-session auto flag"
     );
 }
-/// Rollback path: a `SettingPersistFailed` for `permission_mode`
-/// reverts `agent.session.yolo_mode` + `app.default_yolo` +
-/// `app.current_ui.permission_mode` via `set_yolo_mode_inner`.
-/// MUST NOT re-emit any effects (would loop on persistent disk
-/// failure).
+/// A `SettingPersistFailed` for `permission_mode` rolls back `agent.session.yolo_mode`, `app.default_yolo`, and `app.current_ui.permission_mode`.
+/// The revert goes through `set_yolo_mode_inner` and MUST NOT re-emit any effects (would loop on persistent disk failure).
 #[test]
 fn rollback_permission_mode_reverts_state_no_effect() {
     use crate::settings::SettingValue;
     let mut app = test_app_with_agent();
     let _ = dispatch(Action::SetYoloMode(true), &mut app);
-    assert!(app.agents[&AgentId(0)].session.is_yolo());
+    assert!(expect_agent(&app, AgentId(0)).session.is_yolo());
     assert_eq!(
         app.current_ui.permission_mode.as_deref(),
         Some("always-approve")
@@ -2991,12 +3096,12 @@ fn rollback_permission_mode_reverts_state_no_effect() {
         "rollback path MUST NOT emit any Effect (would loop on persistent failure)",
     );
     assert!(
-        !app.agents[&AgentId(0)].session.is_yolo(),
+        !expect_agent(&app, AgentId(0)).session.is_yolo(),
         "session.yolo_mode must revert via apply_setting_rollback"
     );
     assert!(!app.default_yolo);
     assert_eq!(app.current_ui.permission_mode.as_deref(), Some("ask"));
-    let toast = app.agents[&AgentId(0)]
+    let toast = expect_agent(&app, AgentId(0))
         .toast
         .as_ref()
         .map(|(s, _)| s.clone())
@@ -3007,13 +3112,9 @@ fn rollback_permission_mode_reverts_state_no_effect() {
              — drift here would diverge from other rollback toasts",
     );
 }
-/// The reset-dispatch test asserts the typed Action lineage. The
-/// reset path dispatches `Action::SetPermissionMode(Ask)` (the
-/// registered default) rather than `Action::SetYoloMode(false)`.
-/// Both emit `Effect::PersistPermissionMode` so the `has_persist`
-/// assertion in the parent test holds; this test pins the typed
-/// Action shape directly so a future refactor that drops the
-/// `SetPermissionMode` mapping in `action_for_reset` is caught.
+/// The reset path dispatches `Action::SetPermissionMode(Ask)` (the registered default) rather than `Action::SetYoloMode(false)`.
+/// Both emit `Effect::PersistPermissionMode`, so the `has_persist` assertion in the parent test holds either way.
+/// This test pins the typed Action shape directly, catching a refactor that drops the `SetPermissionMode` mapping in `action_for_reset`.
 #[test]
 fn action_for_reset_permission_mode_dispatches_set_permission_mode_for_each_canonical() {
     use crate::app::actions::PermissionModeKind;
@@ -3048,13 +3149,8 @@ fn action_for_reset_permission_mode_dispatches_set_permission_mode_for_each_cano
     assert!(action_for_reset("permission_mode", &SettingValue::Enum("bogus")).is_none());
 }
 /// Slash-command-while-modal-open refresh.
-/// `dispatch_cycle_mode` is the entry point for both Shift+Tab
-/// and the `/plan` / `/cycle-mode` slash commands. When the
-/// settings modal is open and a cycle lands, the modal's
-/// `pager_snapshot.plan_mode_active` must refresh to reflect
-/// the new effective state — otherwise the indicator stays
-/// stale until the next setter dispatch. Mirror of
-/// `set_plan_mode_refreshes_open_modal_pager_snapshot`.
+/// When the settings modal is open and a cycle lands, the modal's `pager_snapshot.plan_mode_active` must refresh to the new effective state.
+/// Otherwise the indicator stays stale until the next setter dispatch.
 #[test]
 fn dispatch_cycle_mode_refreshes_open_modal_snapshot() {
     use crate::views::modal::ActiveModal;
@@ -3087,19 +3183,9 @@ fn dispatch_cycle_mode_refreshes_open_modal_snapshot() {
         "current_value_for must read the refreshed snapshot",
     );
 }
-/// `dispatch(Action::SetTheme("grokday"), &mut app)` emits
-/// exactly one `Effect::PersistSetting`, mutates
-/// `app.current_ui.theme`, fires a toast, and toggles AUTO_MODE
-/// off (kind is concrete).
-///
-/// Note: we persist `grokday` (a non-truecolor theme) here
-/// because `Effect::PersistSetting`'s payload is `&'static str`
-/// from the registry's canonical table — the persisted CANONICAL
-/// is what we're asserting, NOT the live theme cache (which
-/// `clamp_to_terminal` might fold to GrokNight in non-truecolor
-/// test environments). Persist + canonical contract is the test
-/// invariant; the cache contract is exercised separately by the
-/// `*_applies_when_*` tests.
+/// `dispatch(Action::SetTheme("grokday"), &mut app)` emits exactly one `Effect::PersistSetting` and mutates `app.current_ui.theme`.
+/// It also fires a toast and toggles AUTO_MODE off (kind is concrete).
+/// The test persists `grokday` (a non-truecolor theme) because the asserted payload is the registry's CANONICAL, not the live theme cache.
 #[test]
 fn set_theme_emits_persist_setting_with_correct_payload() {
     use crate::settings::SettingValue;
@@ -3109,12 +3195,12 @@ fn set_theme_emits_persist_setting_with_correct_payload() {
         crate::theme::cache::set(crate::theme::ThemeKind::DeepSeekNightV2);
         let effects = dispatch(Action::SetTheme("grokday".into()), &mut app);
         assert_eq!(effects.len(), 1);
-        match &effects[0] {
-            Effect::PersistSetting {
+        match effects.first() {
+            Some(Effect::PersistSetting {
                 key,
                 value,
                 rollback_value,
-            } => {
+            }) => {
                 assert_eq!(*key, "theme");
                 assert_eq!(*value, SettingValue::Enum("grokday"));
                 assert_eq!(*rollback_value, SettingValue::Enum("deepseeknight-v2"));
@@ -3128,12 +3214,9 @@ fn set_theme_emits_persist_setting_with_correct_payload() {
         );
     });
 }
-/// Same payload contract as `set_theme_emits_persist_setting_with_correct_payload`
-/// for the auto-dark sibling. Uses `grokday` to avoid the
-/// `clamp_to_terminal` ambiguity in non-truecolor test envs;
-/// `apply_kind` doesn't fire here anyway (parent theme is not
-/// auto by default) but using a non-truecolor canonical keeps
-/// the test robust to environment differences.
+/// Same payload contract as `set_theme_emits_persist_setting_with_correct_payload` for the auto-dark sibling.
+/// Uses `grokday` to avoid the `clamp_to_terminal` ambiguity in non-truecolor test envs.
+/// `apply_kind` doesn't fire here (parent theme is not auto by default), but a non-truecolor canonical keeps the test robust across environments.
 #[test]
 fn set_auto_dark_theme_emits_persist_setting_with_correct_payload() {
     use crate::settings::SettingValue;
@@ -3141,12 +3224,12 @@ fn set_auto_dark_theme_emits_persist_setting_with_correct_payload() {
         let mut app = test_app_with_agent();
         let effects = dispatch(Action::SetAutoDarkTheme("grokday".into()), &mut app);
         assert_eq!(effects.len(), 1);
-        match &effects[0] {
-            Effect::PersistSetting {
+        match effects.first() {
+            Some(Effect::PersistSetting {
                 key,
                 value,
                 rollback_value,
-            } => {
+            }) => {
                 assert_eq!(*key, "auto_dark_theme");
                 assert_eq!(*value, SettingValue::Enum("grokday"));
                 assert_eq!(*rollback_value, SettingValue::Enum("deepseeknight"));
@@ -3163,12 +3246,12 @@ fn set_auto_light_theme_emits_persist_setting_with_correct_payload() {
         let mut app = test_app_with_agent();
         let effects = dispatch(Action::SetAutoLightTheme("groknight".into()), &mut app);
         assert_eq!(effects.len(), 1);
-        match &effects[0] {
-            Effect::PersistSetting {
+        match effects.first() {
+            Some(Effect::PersistSetting {
                 key,
                 value,
                 rollback_value,
-            } => {
+            }) => {
                 assert_eq!(*key, "auto_light_theme");
                 assert_eq!(*value, SettingValue::Enum("groknight"));
                 assert_eq!(*rollback_value, SettingValue::Enum("grokday"));
@@ -3181,9 +3264,8 @@ fn set_auto_light_theme_emits_persist_setting_with_correct_payload() {
         );
     });
 }
-/// PREVIEW Actions emit ZERO `Effect::PersistSetting` and do NOT
-/// mutate `app.current_ui.theme`. This is the fix for
-/// per-keystroke disk write race.
+/// PREVIEW Actions emit ZERO `Effect::PersistSetting` and do NOT mutate `app.current_ui.theme`.
+/// This prevents the per-keystroke disk write race.
 #[test]
 fn preview_theme_emits_no_persist_effect_and_no_current_ui_mutation() {
     with_theme_test_env(|| {
@@ -3227,15 +3309,9 @@ fn preview_auto_light_theme_emits_no_persist_and_no_current_ui_mutation() {
         assert_eq!(app.current_ui.auto_light_theme, initial);
     });
 }
-/// Auto-theme commit applies the live theme **only** when
-/// `theme="auto"` AND the system is in the matching mode.
-///
-/// Scenario: `theme="groknight"` (concrete) + system=Dark. User
-/// commits `auto_dark_theme="grokday"`. The setting is dormant
-/// (parent theme is concrete, not auto), so the live display
-/// must stay on GrokNight even though we're committing a
-/// different theme. Uses `grokday` to avoid `clamp_to_terminal`
-/// ambiguity in non-truecolor envs.
+/// Auto-theme commit applies the live theme **only** when `theme="auto"` AND the system is in the matching mode.
+/// Scenario: `theme="groknight"` (concrete) while the system is Dark, and the user commits `auto_dark_theme="grokday"`.
+/// The setting is dormant (parent theme is concrete, not auto), so the live display must stay on GrokNight.
 #[test]
 fn set_auto_dark_theme_does_not_apply_when_theme_is_not_auto() {
     with_theme_test_env(|| {
@@ -3257,16 +3333,9 @@ fn set_auto_dark_theme_does_not_apply_when_theme_is_not_auto() {
         assert_eq!(app.current_ui.auto_dark_theme.as_deref(), Some("grokday"));
     });
 }
-/// Auto-theme commit DOES apply the live theme when both
-/// (a) parent theme = auto AND (b) system matches.
-///
-/// Uses `GrokDay` (non-truecolor-requiring) for the dark-mode
-/// fixture: the test environment's color detection may not report
-/// truecolor support, and `Theme::apply_kind` clamps
-/// truecolor-only themes (TokyoNight, RosePineMoon) down to
-/// GrokNight. Using a non-truecolor theme avoids the clamp
-/// uncertainty. The "live apply" contract is what we're testing
-/// — the specific theme picked is incidental.
+/// Auto-theme commit DOES apply the live theme when both (a) the parent theme is auto AND (b) the system matches.
+/// Uses `GrokDay` (non-truecolor-requiring) for the dark-mode fixture: the test environment may not report truecolor support.
+/// `Theme::apply_kind` clamps truecolor-only themes (TokyoNight, RosePineMoon) to GrokNight, so a non-truecolor theme avoids the clamp.
 #[test]
 fn set_auto_dark_theme_applies_when_theme_is_auto_and_system_is_dark() {
     with_theme_test_env(|| {
@@ -3288,12 +3357,9 @@ fn set_auto_dark_theme_applies_when_theme_is_auto_and_system_is_dark() {
         );
     });
 }
-/// Auto-theme commit does NOT apply when system is in the
-/// non-matching mode (auto_dark_theme + system=Light).
-/// Uses `groknight` for the auto_dark_theme
-/// value to avoid `clamp_to_terminal` ambiguity (we want a
-/// concrete kind that's clearly different from GrokDay, the
-/// active resolved theme).
+/// Auto-theme commit does NOT apply when system is in the non-matching mode (auto_dark_theme while the system is Light).
+/// Uses `groknight` for the auto_dark_theme value to avoid `clamp_to_terminal` ambiguity.
+/// We want a concrete kind that's clearly different from GrokDay, the active resolved theme.
 #[test]
 fn set_auto_dark_theme_does_not_apply_when_system_is_light() {
     with_theme_test_env(|| {
@@ -3315,9 +3381,8 @@ fn set_auto_dark_theme_does_not_apply_when_system_is_light() {
         assert_eq!(app.current_ui.auto_dark_theme.as_deref(), Some("groknight"),);
     });
 }
-/// Symmetric to the dark test: `set_auto_light_theme` applies only
-/// when theme=auto + system=Light. Uses a non-truecolor theme
-/// (`groknight`) for the same clamp reason as the dark variant.
+/// Symmetric to the dark test: `set_auto_light_theme` applies only when the theme is auto and the system is Light.
+/// Uses a non-truecolor theme (`groknight`) for the same clamp reason as the dark variant.
 #[test]
 fn set_auto_light_theme_applies_when_theme_is_auto_and_system_is_light() {
     with_theme_test_env(|| {
@@ -3338,10 +3403,8 @@ fn set_auto_light_theme_applies_when_theme_is_auto_and_system_is_light() {
         );
     });
 }
-/// `Action::SetTheme` with an unknown theme name returns an empty
-/// Effect vec AND does not mutate `app.current_ui.theme`.
-/// Defense-in-depth at the dispatcher (the registry's choice
-/// table is the primary protection).
+/// `Action::SetTheme` with an unknown theme name returns an empty Effect vec AND does not mutate `app.current_ui.theme`.
+/// Defense-in-depth at the dispatcher (the registry's choice table is the primary protection).
 #[test]
 fn set_theme_unknown_name_is_no_op() {
     with_theme_test_env(|| {
@@ -3375,9 +3438,8 @@ fn set_auto_light_theme_unknown_name_is_no_op() {
         assert_eq!(app.current_ui.auto_light_theme, initial);
     });
 }
-/// `Action::SetAutoDarkTheme("auto")` is rejected — would cause a
-/// circular reference (mirrors `load_auto_theme_config`'s filter
-/// at the disk-read layer).
+/// `Action::SetAutoDarkTheme("auto")` is rejected: it would cause a circular reference.
+/// Mirrors `load_auto_theme_config`'s filter at the disk-read layer.
 #[test]
 fn set_auto_dark_theme_rejects_auto_value() {
     with_theme_test_env(|| {
@@ -3401,8 +3463,7 @@ fn set_auto_light_theme_rejects_auto_value() {
         assert_eq!(app.current_ui.auto_light_theme, initial);
     });
 }
-/// Toast format for theme commits uses the DISPLAY name, not the
-/// snake_case canonical.
+/// Toast format for theme commits uses the DISPLAY name, not the snake_case canonical.
 #[test]
 fn set_theme_toast_format_uses_display_name() {
     with_theme_test_env(|| {
@@ -3441,13 +3502,9 @@ fn set_auto_light_theme_toast_format_uses_display_name() {
         assert!(toast.contains("Grok Night"));
     });
 }
-/// `apply_setting_rollback` for theme keys: a failed persist
-/// reverts `app.current_ui.theme` AND the live cache (mirror of
-/// `rollback_known_key_reverts_cache_and_no_effect`).
-///
-/// Uses non-truecolor themes (`grokday` ↔ `groknight`) to avoid
-/// the `clamp_to_terminal` interaction in test environments that
-/// don't report truecolor support.
+/// `apply_setting_rollback` for theme keys: a failed persist reverts `app.current_ui.theme` AND the live cache.
+/// Mirror of `rollback_known_key_reverts_cache_and_no_effect`.
+/// Uses the non-truecolor themes `grokday` and `groknight` to avoid the `clamp_to_terminal` interaction in test envs without truecolor support.
 #[test]
 fn rollback_theme_reverts_current_ui_and_cache() {
     use crate::settings::SettingValue;
@@ -3518,13 +3575,9 @@ fn rollback_auto_light_theme_reverts_current_ui() {
         assert_eq!(app.current_ui.auto_light_theme.as_deref(), Some("grokday"));
     });
 }
-/// Edge case — if the rollback value is
-/// `"auto"` (corrupted hand-edit), `apply_setting_rollback` clears
-/// `app.current_ui.auto_dark_theme` to `None` (matches the
-/// `load_auto_theme_config` disk-read filter). Without this
-/// special case, `set_auto_dark_theme_inner` would no-op and
-/// leave the in-memory cache stuck at the (failed-to-persist)
-/// new value.
+/// Edge case: if the rollback value is `"auto"` (corrupted hand-edit), `apply_setting_rollback` clears `app.current_ui.auto_dark_theme` to `None`.
+/// This matches the `load_auto_theme_config` disk-read filter.
+/// Without the special case, `set_auto_dark_theme_inner` would no-op and leave the in-memory cache stuck at the (failed-to-persist) new value.
 #[test]
 fn rollback_auto_dark_theme_with_auto_value_clears_to_none() {
     use crate::settings::SettingValue;
@@ -3568,10 +3621,8 @@ fn rollback_auto_light_theme_with_auto_value_clears_to_none() {
         assert_eq!(app.current_ui.auto_light_theme, None);
     });
 }
-/// Setter refreshes the open settings modal
-/// snapshot so the indicator reflects the new value before the
-/// shell's CurrentModeUpdate round-trip. Mirrors
-/// `set_multiline_mode_refreshes_open_modal_pager_snapshot`.
+/// Setter refreshes the open settings modal snapshot so the indicator reflects the new value before the shell's CurrentModeUpdate round-trip.
+/// Mirrors `set_multiline_mode_refreshes_open_modal_pager_snapshot`.
 #[test]
 fn set_plan_mode_refreshes_open_modal_pager_snapshot() {
     use crate::views::modal::ActiveModal;
@@ -3639,8 +3690,7 @@ fn new_session_inherits_switched_default_model_for_welcome() {
              switched model, not the previous default"
     );
 }
-/// Without config, the action is unregistered — Ctrl+R on scrollback does
-/// nothing for mouse reporting (Ctrl+R is unbound on the prompt).
+/// Without config, the action is unregistered: Ctrl+R on scrollback does nothing for mouse reporting (Ctrl+R is unbound on the prompt).
 #[test]
 fn mouse_reporting_toggle_inactive_without_config() {
     use crate::actions::{ActionId, ActionRegistry, When};
@@ -3672,8 +3722,7 @@ fn mouse_reporting_toggle_inactive_without_config() {
         "prompt Ctrl+R stays unbound even when the toggle is enabled"
     );
 }
-/// Config on: toggle off sets process atomic + sticky banner that survives
-/// transient toasts and tick/keypress dismissal of transients.
+/// Config on: toggle off sets the process atomic and a sticky banner that survives transient toasts and tick/keypress dismissal of transients.
 #[serial_test::serial(MOUSE_CAPTURE_ENABLED)]
 #[test]
 fn mouse_reporting_toggle_off_sticky_persists_after_transient_toast() {
@@ -3725,4 +3774,32 @@ fn mouse_reporting_toggle_off_sticky_persists_after_transient_toast() {
         Some("Mouse reporting on"),
     );
     reset_mouse_capture_enabled(true);
+}
+/// The toggle's capture sequences must ride the writer queue (see `EscapeWriter`).
+#[cfg(not(windows))]
+#[serial_test::serial(MOUSE_CAPTURE_ENABLED)]
+#[test]
+fn mouse_reporting_toggle_enqueues_capture_escapes_on_the_writer_queue() {
+    reset_mouse_capture_enabled(true);
+    let mut app = test_app_with_agent();
+    app.registry = crate::actions::ActionRegistry::defaults_with_config(true);
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.escape_writer =
+        crate::render::draw::EscapeWriter::new(tx, crate::render::draw::WriterSync::new());
+    let _ = dispatch(Action::ToggleMouseCapture, &mut app);
+    assert!(!mouse_capture_is_enabled());
+    let disable = rx.try_recv().expect("disable escape queued");
+    assert!(String::from_utf8_lossy(disable.data()).contains("\x1b[?1000l"));
+    assert!(
+        rx.try_recv().is_err(),
+        "toggle-off queues exactly one payload"
+    );
+    let _ = dispatch(Action::ToggleMouseCapture, &mut app);
+    assert!(mouse_capture_is_enabled());
+    let enable = rx.try_recv().expect("enable escape queued");
+    assert!(String::from_utf8_lossy(enable.data()).contains("\x1b[?1000h"));
+    assert!(
+        rx.try_recv().is_err(),
+        "toggle-on queues exactly one payload"
+    );
 }

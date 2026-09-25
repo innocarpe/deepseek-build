@@ -1,5 +1,4 @@
-//! `GROK_HOME` override tests in an isolated binary so `grok_home()`'s
-//! process-wide `OnceLock` initializes from the overridden env var.
+//! `GROK_HOME` override tests in an isolated binary so `grok_home()`'s process-wide `OnceLock` initializes from the overridden env var.
 
 use std::path::PathBuf;
 
@@ -31,8 +30,7 @@ fn grok_home_override_path_helpers() {
         "$GROK_HOME/memory/MEMORY.md"
     );
 
-    // Copy-toast paths follow the same abbreviation convention, so a custom
-    // $GROK_HOME outside $HOME still displays short.
+    // The copy toast abbreviates paths the same way, so a custom $GROK_HOME outside $HOME still shows the short form
     assert_eq!(
         xai_grok_pager::clipboard::display_copy_path(&grok_home.join("last-copy.txt")),
         "$GROK_HOME/last-copy.txt"
@@ -44,8 +42,7 @@ fn grok_home_override_path_helpers() {
     ));
 }
 
-/// Isolated because `grok_home()`'s `OnceLock` is already initialized by the
-/// time the shared lib-test binary reaches a case like this.
+/// Isolated because `grok_home()`'s `OnceLock` is already initialized by the time the shared lib-test binary reaches a case like this.
 #[test]
 #[serial_test::serial(GROK_HOME)]
 fn disk_usage_run_creates_no_grok_home() {
@@ -56,8 +53,13 @@ fn disk_usage_run_creates_no_grok_home() {
     }
 
     for json in [false, true] {
-        xai_grok_pager::disk_usage_cmd::run(xai_grok_pager::disk_usage_cmd::DiskUsageArgs { json })
-            .expect("a missing home is not an error");
+        xai_grok_pager::disk_usage_cmd::run(xai_grok_pager::disk_usage_cmd::DiskUsageArgs {
+            json,
+            clean: false,
+            clean_orphaned: false,
+            yes: false,
+        })
+        .expect("a missing home is not an error");
         assert!(
             !ghost.exists(),
             "grok du must not create the home it reports on (json={json})"

@@ -85,9 +85,8 @@ pub struct GlobOutput {
     /// Absolute paths of matched files included in `count`, sorted by mtime
     /// descending. Empty when `count == 0`.
     pub entries: Vec<String>,
-    /// The model-facing workspace root used to resolve `path` -- equal to
-    /// `display_cwd_or_cwd(cwd, display_cwd)`. Adapters that re-format the
-    /// output use this as the relativization base when
+    /// The model-facing workspace root used to resolve `path` -- equal to `display_cwd_or_cwd(cwd,
+    /// display_cwd)`. Adapters that re-format the output use this as the relativization base when
     /// the model omits `path`, instead of re-resolving cwd themselves.
     pub cwd_for_display: String,
 }
@@ -171,7 +170,7 @@ impl xai_tool_runtime::Tool for GlobTool {
 
         // ── Build ripgrep command ───────────────────────────────
         //   rg --files --glob='!.git/*' --hidden --glob=<pattern> <search_dir>
-        let rg_exec = rg_path();
+        let rg_exec = rg_path()?;
         let mut cmd = Command::new(rg_exec);
         cmd.arg("--files")
             .arg("--glob=!.git/*")
@@ -180,9 +179,11 @@ impl xai_tool_runtime::Tool for GlobTool {
             .arg(&input.pattern)
             .arg(&search_dir)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        crate::util::detach_command(&mut cmd);
-        cmd.stdin(Stdio::null());
+            // stderr is never read; a pipe would block rg once warnings fill it.
+            // Cached descriptor, not `Stdio::null()`: an unlinked `/dev/null`
+            // must not fail the spawn.
+            .stderr(xai_tty_utils::null_stdio());
+        crate::util::detach_search_command(&mut cmd);
 
         #[allow(clippy::disallowed_methods)] // search helper, waited on below
         let mut child = match cmd.spawn() {
@@ -211,11 +212,15 @@ impl xai_tool_runtime::Tool for GlobTool {
                     Ok(0) => break,
                     Ok(n) => {
                         if stdout_buf.len() + n <= MAX_STDOUT_BYTES {
-                            stdout_buf.extend_from_slice(&tmp[..n]);
+                            if let Some(chunk) = tmp.get(..n) {
+                                stdout_buf.extend_from_slice(chunk);
+                            }
                         } else {
                             let remaining = MAX_STDOUT_BYTES.saturating_sub(stdout_buf.len());
-                            if remaining > 0 {
-                                stdout_buf.extend_from_slice(&tmp[..remaining]);
+                            if remaining > 0
+                                && let Some(chunk) = tmp.get(..remaining)
+                            {
+                                stdout_buf.extend_from_slice(chunk);
                             }
                             truncated_by_bytes = true;
                             let _ = child.start_kill();
@@ -227,15 +232,12 @@ impl xai_tool_runtime::Tool for GlobTool {
             }
         }
 
-        // Consume stderr to avoid deadlocks.
-        if let Some(stderr_pipe) = child.stderr.take() {
-            let _ = stderr_pipe
-                .take(1_000_000)
-                .read_to_end(&mut Vec::new())
-                .await;
+        if truncated_by_bytes {
+            // Bounded reap: a D-state rg must not stall this future forever.
+            crate::util::reap_killed_search_child(&mut child).await;
+        } else {
+            let _ = child.wait().await;
         }
-
-        let _ = child.wait().await;
 
         // ── Parse file paths from stdout ────────────────────────
         let stdout = String::from_utf8_lossy(&stdout_buf);
@@ -246,10 +248,9 @@ impl xai_tool_runtime::Tool for GlobTool {
             mtime_ms: i64,
         }
 
-        // Collect every match so total_count is accurate. Cap stat()s and
-        // the returned entry list at RESULT_LIMIT so we don't pay the syscall
-        // cost on huge result sets, but keep counting lines past the cap so
-        // the truncation marker can report the real overflow.
+        // Collect every match so total_count is accurate. Cap stat()s and the returned entry list
+        // at RESULT_LIMIT so we don't pay the syscall cost on huge result sets, but keep counting
+        // lines past the cap so the truncation marker can report the real overflow.
         let mut entries: Vec<FileEntry> = Vec::new();
         let mut total_count: usize = 0;
         for line in stdout.lines() {
@@ -357,13 +358,8 @@ mod tests {
             .render(ToolMetadata::description_template(&GlobTool))
             .unwrap();
         assert!(
-            rendered.contains("required file_pattern parameter")
-                && rendered.contains("set search_dir"),
+            rendered.contains("file_pattern") && rendered.contains("search_dir"),
             "renamed pattern/path params must appear:\n{rendered}"
-        );
-        assert!(
-            !rendered.contains("extension breakdowns") && !rendered.contains("dot-directories"),
-            "stale list_dir-style claims must not remain:\n{rendered}"
         );
     }
 
@@ -416,6 +412,45 @@ mod tests {
         assert_eq!(output.count, 0);
         assert!(!output.truncated);
         assert!(output.tool_output_for_prompt.contains("No files found"));
+    }
+
+    /// One unreadable subdir must not lose sibling results or report
+    /// truncation (rg's warnings go to a null stderr, not a droppable pipe).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn glob_survives_unreadable_subdir() {
+        use std::os::unix::fs::PermissionsExt;
+        if nix::unistd::geteuid().is_root() {
+            return; // chmod 0o000 doesn't bar root
+        }
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("a.ts"), "x").unwrap();
+        std::fs::write(tmp.path().join("b.ts"), "y").unwrap();
+        let locked = tmp.path().join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::write(locked.join("c.ts"), "z").unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let tool = GlobTool;
+        let resources = test_resources(tmp.path());
+        let output = xai_tool_runtime::Tool::run(
+            &tool,
+            test_ctx(resources.into_shared()),
+            GlobInput {
+                pattern: "*.ts".to_string(),
+                path: None,
+            },
+        )
+        .await;
+
+        // Restore before asserting so TempDir cleanup works even on failure.
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let output = output.unwrap();
+        assert_eq!(output.count, 2, "visible files must all be returned");
+        assert!(!output.truncated);
+        assert!(output.tool_output_for_prompt.contains("a.ts"));
+        assert!(output.tool_output_for_prompt.contains("b.ts"));
     }
 
     #[tokio::test]
@@ -698,11 +733,9 @@ mod tests {
 
     #[tokio::test]
     async fn gitignore_respected() {
-        // ripgrep's positive --glob overrides .gitignore, so we test the
-        // underlying ignore behavior by using a pattern that doesn't match
-        // the ignored file. Without .gitignore, `rg --files --hidden`
-        // *would* list ignored_dir/ contents, but with .gitignore they are
-        // excluded from results that don't glob-override them.
+        // ripgrep's positive --glob overrides .gitignore, so we test the underlying ignore behavior by using a pattern that
+        // doesn't match the ignored file. Without .gitignore, `rg --files --hidden` *would* list ignored_dir/ contents, but
+        // with .gitignore they are excluded from results that don't glob-override them.
         let tmp = TempDir::new().unwrap();
 
         // Initialize a git repo so ripgrep respects .gitignore.

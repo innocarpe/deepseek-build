@@ -80,24 +80,23 @@ what was taken, held and rejected, and why.
 
 ---
 
-## Local patches
+## The DeepSeek overlay
 
-Local work on the vendored tree comes in two forms, and an
-`rsync -a --delete` refresh would silently drop both — re-apply after every
-refresh and keep this list current:
+The vendored tree is "as upstream" plus a **product overlay**: the deliberate
+local deviations that make this Grok-derived code the DeepSeek Build product.
+The overlay is carried **in the tree** — a refresh must preserve it, and
+whatever method is used (see the sync runbook) is judged by whether the overlay
+survived.
 
-### Applied directly in the tree
-
-The tree ships "as upstream", but a small set of **deliberate local deviations** lives in the vendored sources. `rsync -a --delete` in the refresh procedure would silently drop them — re-apply after every refresh and keep this list current:
-
-| File | Patch | Why |
-|------|-------|-----|
+| File | Overlay | Why |
+|------|---------|-----|
 | `crates/codegen/xai-grok-pager/src/app/mod.rs` | `print_exit_resume_hint` prints the command from env `GROK_INVOCATION_NAME` (default `grok`) via `invocation_name()` + pure `resume_hint_line()` | dsb-cli brands quit hints `dsb --resume <id>` so the printed command is pasteable |
 | `crates/codegen/xai-grok-pager/src/app/screen_mode_relaunch.rs` | `screen_mode_relaunch_resume_hint` uses `super::invocation_name()` (pure `_with` variant for tests) | Same branding for the screen-mode relaunch failure hint |
-| `crates/codegen/xai-grok-pager-render/src/theme/deepseeknight.rs` | Keeps the classic blue-ramp and neutral-ramp DeepSeek constructors via shared `deepseeknight_inner(neutral)` plus ramp/blue-accent unit tests | Classic `deepseeknight` remains picker-selectable and product/default; neutral `deepseeknight-neutral` is first-class/selectable |
-| `crates/codegen/xai-grok-pager-render/src/theme/deepseeknight_v2.rs` | Defines the measured C-balanced `deepseeknight_v2()` palette and its integrity tests | Selectable DeepSeek Night v2 alternate, exposed as `deepseeknight-v2`; classic remains the product/default skin |
-| `crates/codegen/xai-grok-pager-render/src/theme/mod.rs` | Registers `DeepSeekNightV2` first, classic `DeepSeekNight` second, neutral third, and `GrokDay` fourth in picker/catalog order; keeps classic as the product/default skin; maps `"dark"` to classic; retains only explicit `groknight` / `grok-night` for hidden legacy compatibility | Classic owns product/runtime defaults; V2, classic, neutral, and GrokDay are selectable; only GrokNight stays hidden/compatibility-only |
-| `crates/codegen/xai-grok-pager-render/src/theme/cache.rs` | `CURRENT` plus config/appearance resolution defaults to `DeepSeekNight`; terminal-native lock intentionally reports nominal `GrokNight` | Classic is the product/default dark fallback while explicit V2 and legacy theme values remain honored |
+| `crates/codegen/xai-grok-pager/src/app/terminal_restore.rs` | The panic hook ends with `super::disable_mouse_paste_raw()` | The mouse/paste reset must remain last so a panicking agent shutdown cannot leave mouse reporting or bracketed paste enabled in the user's shell |
+| `crates/codegen/xai-grok-pager-render/src/theme/deepseeknight.rs` | Classic blue-ramp and neutral-ramp DeepSeek constructors via shared `deepseeknight_inner(neutral)` plus ramp/blue-accent unit tests | Classic `deepseeknight` remains picker-selectable and product/default; `deepseeknight-neutral` is first-class/selectable |
+| `crates/codegen/xai-grok-pager-render/src/theme/deepseeknight_v2.rs` | The measured C-balanced `deepseeknight_v2()` palette and its integrity tests | Selectable DeepSeek Night v2 alternate, exposed as `deepseeknight-v2`; classic remains the product/default skin |
+| `crates/codegen/xai-grok-pager-render/src/theme/mod.rs` | Registers `DeepSeekNightV2`, classic `DeepSeekNight`, neutral `DeepSeekNightNeutral` in `ThemeKind`/`ALL`/picker order, with `display_name`, `aliases`, `requires_truecolor`, `display_name_for_canonical`, and `Theme::current()`/`Default` resolving to the classic skin | Classic owns product/runtime defaults; V2, classic and neutral are selectable; only `groknight` stays hidden/compatibility-only |
+| `crates/codegen/xai-grok-pager-render/src/theme/cache.rs` | `CURRENT` plus config/appearance resolution defaults to `DeepSeekNight`; the byte↔kind table covers the DeepSeek kinds; terminal-native lock intentionally reports nominal `GrokNight` | Classic is the product/default dark fallback while explicit V2 and legacy theme values remain honored |
 | `crates/codegen/xai-grok-pager-render/src/theme/system_appearance.rs` | Dark appearance fallback → `DeepSeekNight`; light appearance fallback → `GrokDay`; explicit overrides remain honored | Auto mode follows the classic dark and GrokDay light defaults |
 | `crates/codegen/xai-grok-pager-render/src/syntax.rs` | Night syntax group includes V2, classic/neutral DeepSeek kinds, `GrokNight`, `TokyoNight`, `RosePineMoon`, and `OscuraMidnight` | All supported dark variants share the night syntax palette; terminal-native mode remains nominal `GrokNight` |
 | `crates/codegen/xai-grok-pager/src/settings/defs.rs` | `THEME_CHOICES` / `CONCRETE_THEME_CHOICES` place `deepseeknight-v2` before canonical `deepseeknight` (`DeepSeek Night (classic)`) and include neutral as a selectable DeepSeek skin | Settings pickers surface V2, classic, and neutral; classic is the product/default choice, and only GrokNight remains hidden compatibility |
@@ -106,13 +105,25 @@ The tree ships "as upstream", but a small set of **deliberate local deviations**
 | `crates/codegen/xai-grok-shell/src/session/image_describe.rs` | `<image_files>` envelope states the OCR fallback conditionally ("If the image is not visible to you directly (a text-only API model, for example DeepSeek V4 Pro)…") | The envelope text is what a text-only model has instead of the image; the unconditional upstream wording no longer describes the V4.1 Flash wire |
 | `crates/codegen/xai-grok-shell/src/session/acp_session_impl/turn.rs` | The non-cursor branch persists pasted **and** base64-extracted images together before prepending `<image_files>` | A text-only model (V4 Pro) cannot receive `image_url`, so the on-disk paths are its only image channel; vision-capable models keep the inline parts too |
 | `crates/dsb-cli/src/agent_launch.rs` | First-launch picker writes the chosen skin into the seed config; `GROK_THEME`/`LC_GROK_THEME` only set from explicit env (`DEEPSEEK_BUILD_THEME`/`GROK_THEME`) so in-pager `/theme` persists | First-launch classic/V2 onboarding plus persistent theme changes; classic remains the product/default and V2 remains selectable |
+| `crates/codegen/xai-grok-pager/src/notifications/{agent_status.rs,mod.rs}` | OSC 9999 explicit agent-status frames for hosts that read them (Orca): `working` / `waiting` / `done`, ridden on the same tick as the title, and closed explicitly on turn end and pane exit | A host that reads the status stream needs the turn boundary stated rather than inferred from the tab title; silent on every other host |
 | `crates/codegen/xai-grok-pager/src/scrollback/blocks/user.rs` | `collapsed_max_lines(width, mode)` replaces the fixed `COLLAPSED_MAX_LINES` budget: at or below `COLLAPSED_NARROW_TERMINAL_COLS` (60) a collapsed prompt folds to `COLLAPSED_NARROW_MAX_LINES` (1); wider keeps 3; `Expanded` still never folds | The measured iPhone Orca pane is 55 columns, where a three-line echo of the submitted prompt eats a third of the viewport; desktop widths (80+) keep today's three-line budget |
 | `crates/codegen/xai-grok-pager/src/views/prompt_widget/mod.rs` | The bottom info line's rect is inset one cell per corner (`area.x + 1`, `area.width - 2`) instead of starting at `content_area.x` | The label no longer paints the divider rule immediately after `╰` when it overflows a phone-width pane, and keeps a blank pad before `╯` |
 | `crates/codegen/xai-grok-pager/src/app/agent_view/paste.rs` | `try_handle_dropped_paths_paste()` drops its `is_ssh` early-return: an image path pasted into a remote pane is classified like any other, and the PTY case `ssh_image_path_attaches` pins it | The host that runs the pager is the host that can resolve the path and read its bytes, so SSH changes nothing about the classification. Hosts that paste images this way upload the bytes to that same host first — an Orca SSH pane writes the temp file over SFTP to the remote `$TMPDIR` and pastes the remote path. The early-return made such a paste land as literal path text, so image attachment was impossible over SSH |
 
-Tests: `resume_hint_line_brands_invocation_name` and `failed_relaunch_hint_brands_invocation_name` pin the `dsb` output; upstream default (`grok`) assertions keep passing. Theme tests pin the official `#4D6BFE` accent on the classic and neutral constructors, the v2 palette invariants, the classic dark/GrokDay light resolution defaults, and the picker contract (V2 first; classic second; neutral third; GrokDay fourth; only GrokNight hidden). Settings preview coverage retains legacy theme kinds while both settings catalogs expose `deepseeknight-v2`, `DeepSeek Night (classic)`, and `DeepSeek Night Neutral`; classic remains product/default and neutral remains first-class/selectable. Narrow-layout tests pin the collapse budget at the threshold (`collapsed_budget_switches_at_the_threshold`, `collapsed_prompt_folds_to_one_line_at_phone_width`, `collapsed_prompt_keeps_three_line_budget_above_threshold`, `expanded_prompt_is_unbounded_at_phone_width`) and the info-line inset (`overflowing_label_starts_on_the_pad_not_the_divider_rule`, `fitting_label_leaves_the_divider_rule_visible`, `info_row_keeps_its_width_and_corners_at_every_size`); each fails without its production hunk. The SSH paste deviation is pinned by the PTY case `ssh_image_path_attaches` (`tests/pty_e2e/ssh_image_path_attaches.rs`), which spawns the pager with `SSH_CONNECTION` set — a unit test cannot, because `terminal_context()` is a process-wide static computed once from the environment.
+Tests: `resume_hint_line_brands_invocation_name` and
+`failed_relaunch_hint_brands_invocation_name` pin the `dsb` output; upstream
+default (`grok`) assertions keep passing. Theme tests pin the official
+`#4D6BFE` accent on the classic and neutral constructors, the v2 palette
+invariants, the classic dark/GrokDay light resolution defaults, and the picker
+contract. Settings preview coverage retains legacy theme kinds while both
+catalogs expose `deepseeknight-v2`, `DeepSeek Night (classic)` and
+`DeepSeek Night Neutral`.
+ The SSH paste deviation is pinned by the PTY case
+`ssh_image_path_attaches`, which spawns the pager with `SSH_CONNECTION` set —
+a unit test cannot, because `terminal_context()` is a process-wide static
+computed once from the environment.
 
-### Carried as patch files under `patches/grok-build/`
+### Patch series (historic)
 
 DSB carries local feature work on the vendored tree as patches under
 `patches/grok-build/` — **outside** the vendor tree, so an `rsync --delete`
@@ -169,6 +180,11 @@ Refresh procedure step 2 therefore becomes:
 
 ---
 
+A series is still the right shape when a **small** overlay must survive a
+`rsync --delete` refresh; regenerate one with
+`git format-patch <base>..HEAD -- third_party/grok-build -o patches/grok-build`
+if that method is chosen again.
+|------|-------|-----|
 ## CI plan
 
 ### Default CI workflow (`ci.yml`)

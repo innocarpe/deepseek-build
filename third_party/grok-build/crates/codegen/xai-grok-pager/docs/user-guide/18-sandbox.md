@@ -15,7 +15,7 @@ grok --sandbox workspace
 # Read-only mode (read everywhere, write only to ~/.grok/ + temp dirs)
 grok --sandbox read-only
 
-# Most restrictive profile (read CWD + system paths, write CWD + temp dirs + ~/.grok/, no child network)
+# Most restrictive profile (read CWD + system paths + ~/.grok, write CWD + ~/.grok/sessions + temp dirs, no child network)
 grok --sandbox strict
 ```
 
@@ -23,13 +23,13 @@ grok --sandbox strict
 
 ## Built-in Profiles
 
-| Profile               | FS Read            | FS Write                                       | Child Network | Use Case                          |
-| --------------------- | ------------------ | ---------------------------------------------- | ------------- | --------------------------------- |
-| `off` (default)       | Unrestricted       | Unrestricted                                   | Unrestricted  | No sandbox                        |
-| `workspace`           | Everywhere         | CWD + `~/.grok/` + `/tmp` + `/var/tmp`         | Allowed       | Normal development                |
-| `devbox`              | Everywhere         | All top-level dirs except `/data`              | Allowed       | Disposable dev VMs                |
-| `read-only`           | Everywhere         | `~/.grok/` + `/tmp` + `/var/tmp`               | Blocked¹      | Exploration, code review          |
-| `strict`              | CWD + system paths | CWD + `~/.grok/` + `/tmp` + `/var/tmp`         | Blocked¹      | Untrusted code                    |
+| Profile               | FS Read                        | FS Write                                       | Child Network | Use Case                          |
+| --------------------- | ------------------------------ | ---------------------------------------------- | ------------- | --------------------------------- |
+| `off` (default)       | Unrestricted                   | Unrestricted                                   | Unrestricted  | No sandbox                        |
+| `workspace`           | Everywhere                     | CWD + `~/.grok/` + `/tmp` + `/var/tmp`         | Allowed       | Normal development                |
+| `devbox`              | Everywhere                     | All top-level dirs except `/data`              | Allowed       | Disposable dev VMs                |
+| `read-only`           | Everywhere                     | `~/.grok/` + `/tmp` + `/var/tmp`               | Blocked¹      | Exploration, code review          |
+| `strict`              | CWD + system paths + `~/.grok` | CWD + `~/.grok/sessions` + `/tmp` + `/var/tmp` | Blocked¹      | Untrusted code                    |
 
 ¹ Child-network blocking is enforced on **Linux only** (via seccomp). On macOS it is a no-op — these profiles do not restrict child-process network there.
 
@@ -43,15 +43,18 @@ To block specific files (e.g. `.env` or credential paths) on top of a profile, d
 
 **read-only** -- Use when you want the agent to analyze code without modifying your project files. The agent can read everything but can only write to `~/.grok/` (needed for session persistence) and temp directories. Child-process network access is blocked on Linux (no-op on macOS).
 
-**strict** -- The most restrictive profile, for reviewing untrusted code. The agent can only read files within the current working directory and essential system paths. Writes are limited to CWD, `~/.grok/`, and temp directories. Child-process network access is blocked on Linux (no-op on macOS).
+**strict** -- The most restrictive profile, for reviewing untrusted code. The agent can read the current working directory, essential system paths, and `~/.grok`. Writes are limited to CWD, `~/.grok/sessions`, and temp directories — not the whole `~/.grok` tree. Child-process network access is blocked on Linux (no-op on macOS).
 
-### Direct global hook write protection
+### Direct global write protection
 
-Under `workspace`, `read-only`, and `strict` (and custom profiles that extend those bases), the Grok state directory remains writable for session/runtime files, but the kernel **write-denies** the Grok-owned direct disk paths used as user-global hook sources (they stay readable):
+Under `workspace`, `read-only`, and `strict` (and custom profiles that extend those bases), the kernel **write-denies** the Grok-owned direct disk paths used as user-global hook sources, plus its configuration and trust files (they stay readable when granted). Built-in `strict` can read `~/.grok` (they stay readable); writes are CWD + `~/.grok/sessions` + temp, not the whole tree. Write-deny still applies where the profile grants write:
 
 - `~/.grok/hooks/` (hook directory)
 - `~/.grok/hooks-paths` (registry file; not loaded as hook JSON — only its absolute targets are)
 - Absolute targets listed in `hooks-paths` (relative lines are ignored; missing targets refuse sandbox start)
+- `~/.grok/config.toml`, `~/.grok/trusted_folders.toml`, `~/.grok/managed_config.toml`, `~/.grok/requirements.toml`, `~/.grok/sandbox.toml` (settings, folder trust, managed policy, requirements, and sandbox profiles)
+
+Because these files are read-only under these profiles, a change that would be saved to them applies to the current session only. Accepting a folder-trust prompt, switching the model with `/model`, and changing the permission mode (`/auto` or Shift+Tab) take effect for the session but are not saved. To save folder trust, run `grok --trust` in the directory before starting the sandbox. To change the default model or permission mode, edit `~/.grok/config.toml` directly.
 
 On first launch under these profiles, Grok creates a real empty `hooks/` directory and empty `hooks-paths` file when they are missing (never symlinks or wrong types). Claude/Cursor global settings are **not** covered by this write-deny; discovery of those vendors remains separately gated by compatibility settings.
 
@@ -98,6 +101,16 @@ If the user and project files define the same custom profile differently, Grok u
 | `read_only`        | String[] | Additional read-only paths                           |
 | `read_write`       | String[] | Additional read-write paths                          |
 | `deny`             | String[] | Paths or globs to kernel-deny (read + write/rename; see notes). An entry with `*`, `?`, or `[` is a glob |
+
+> **Note on `read_only` / `read_write`:** These are **literal directory grants**,
+> not globs. A trailing `/**` (or `/*`) is treated as the parent directory, so
+> `…/cache/**` grants `…/cache` (and a bare `/**` grants `/`). Any entry that
+> still contains `*`, `?`, or `[` after that (e.g. `/home/**/cache`, or a
+> directory literally named `dir[1]`) is skipped with a warning — list the
+> concrete directories you need, or put globs under `deny`. Entries with
+> leading or trailing whitespace are also skipped with a warning: whitespace
+> is significant in literal paths, so fix the entry rather than relying on
+> trimming.
 
 > **Note on `deny`:** A non-empty `deny` list is **kernel-enforced**. Denied paths
 > are **read-denied and write/rename-denied** via Seatbelt on macOS and a bwrap
@@ -241,7 +254,7 @@ The default (`inherit = "all"`, `ignore_default_excludes = true`) leaves the env
 
 ## Event Logging
 
-Sandbox events are logged to `~/.grok/sandbox-events.jsonl` for debugging. Events include:
+Sandbox events are logged to `~/.grok/sessions` for debugging. Events include:
 
 - Profile applied (which profile, timestamp)
 - Violations (attempted access to denied paths)

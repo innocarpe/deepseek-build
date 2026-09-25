@@ -46,19 +46,27 @@ fn workspace_target(storage: &MemoryStorage) -> ClearTarget {
 
 fn global_target(storage: &MemoryStorage) -> ClearTarget {
     ClearTarget {
-        label: "global MEMORY.md",
-        path: storage.global_memory_file(),
+        label: if storage.mode().is_v2() {
+            "global memory"
+        } else {
+            "global MEMORY.md"
+        },
+        path: if storage.mode().is_v2() {
+            storage.global_dir().to_path_buf()
+        } else {
+            storage.global_memory_file()
+        },
         clear: |s| s.clear_global(),
     }
 }
 
-pub fn run(args: MemoryArgs) -> Result<()> {
+pub fn run(args: MemoryArgs, mode: xai_grok_shell::config::MemoryMode) -> Result<()> {
     match args.command {
         MemoryCommand::Clear {
             global, all, yes, ..
         } => {
             let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
-            let storage = MemoryStorage::new(&cwd, None);
+            let storage = MemoryStorage::new_for_mode(&cwd, None, mode);
 
             let targets = if all {
                 vec![workspace_target(&storage), global_target(&storage)]
@@ -77,7 +85,7 @@ fn run_clear(storage: &MemoryStorage, targets: &[ClearTarget], skip_confirm: boo
     let existing: Vec<_> = targets.iter().filter(|t| t.path.exists()).collect();
 
     if existing.is_empty() {
-        println!("Nothing to clear \u{2014} no memory files found.");
+        println!("Nothing to clear: no memory files found.");
         return Ok(());
     }
 

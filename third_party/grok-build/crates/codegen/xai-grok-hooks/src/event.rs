@@ -1,25 +1,16 @@
 use serde::Serialize;
 
-/// Maximum serialized size for `toolInput` or `toolResult` in bytes (128 KB).
 pub const MAX_PAYLOAD_SIZE: usize = 128 * 1024;
 
-/// Generates [`HookEventName`] and its `Deserialize`/`parse_key`, `Display`,
-/// `traits()`, and `ALL` from one table, so adding an event is a single row.
-/// Per row: `display` is the canonical rendering (may differ from the variant's
-/// snake_case, e.g. `SubagentEnd` -> `subagent_stop`); `aliases` are the exact
-/// `Deserialize` spellings (disjoint across variants); `traits` is the
-/// `(gate, matcher, hub)` triple. `Serialize` stays derived snake_case (wire unchanged).
 macro_rules! hook_events {
     ($(
         $(#[$vmeta:meta])*
         $variant:ident {
             display: $display:literal,
-            aliases: [$($alias:literal),* $(,)?],
+            aliases: [$first_alias:literal $(, $alias:literal)* $(,)?],
             traits: ($gate:ident, $matcher:ident, $hub:literal $(,)?),
         }
     ),* $(,)?) => {
-        /// Hook event types. `Ord` follows table order (stable, keeps the
-        /// `SubagentStop`/`SubagentEnd` aliases distinct unlike `Display`).
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
         #[serde(rename_all = "snake_case")]
         pub enum HookEventName {
@@ -27,18 +18,19 @@ macro_rules! hook_events {
         }
 
         impl HookEventName {
-            /// Every variant, in canonical display order.
             pub const ALL: &'static [HookEventName] = &[$(HookEventName::$variant),*];
 
-            /// Source of truth for known spellings, behind `Deserialize` and `parse_key`.
             fn from_key_str(s: &str) -> Option<Self> {
                 match s {
-                    $($($alias)|* => Some(Self::$variant),)*
+                    $($first_alias $(| $alias)* => Some(Self::$variant),)*
                     _ => None,
                 }
             }
 
-            /// The event's dispatch traits, generated exhaustively from the table.
+            pub fn pascal_case(self) -> &'static str {
+                match self { $(Self::$variant => $first_alias,)* }
+            }
+
             pub fn traits(self) -> EventTraits {
                 use GateKind::*;
                 use MatcherPolicy::*;
@@ -65,7 +57,6 @@ macro_rules! hook_events {
             {
                 let s = <String as serde::Deserialize>::deserialize(deserializer)?;
                 Self::from_key_str(&s).ok_or_else(|| {
-                    // Built from the table so it can't drift from the accepted set.
                     let known = Self::ALL
                         .iter()
                         .map(|e| e.to_string())
@@ -84,8 +75,6 @@ macro_rules! hook_events {
     };
 }
 
-// Table order is the canonical display order (drives `ALL` and `Ord`).
-// Per-operation aliases map to generic `PreToolUse`/`PostToolUse`.
 hook_events! {
     SessionStart {
         display: "session_start",
@@ -95,7 +84,7 @@ hook_events! {
     UserPromptSubmit {
         display: "user_prompt_submit",
         aliases: ["UserPromptSubmit", "user_prompt_submit", "beforeSubmitPrompt"],
-        traits: (Observe, Ignored, true),
+        traits: (Prompt, Ignored, true),
     },
     PreToolUse {
         display: "pre_tool_use",
@@ -121,7 +110,7 @@ hook_events! {
             "afterAgentResponse",
             "afterAgentThought",
         ],
-        traits: (Observe, Tested, true),
+        traits: (PostTool, Tested, true),
     },
     PostToolUseFailure {
         display: "post_tool_use_failure",
@@ -133,17 +122,23 @@ hook_events! {
         aliases: ["PermissionDenied", "permission_denied", "permissionDenied"],
         traits: (Observe, Tested, true),
     },
-    /// Fires on a genuine turn-end with stop decision control (a hook can block);
-    /// not on user interrupts (API-error turns fire `StopFailure`); observe-only at session end.
     Stop {
         display: "stop",
         aliases: ["Stop", "stop"],
         traits: (Stop, Ignored, true),
     },
-    /// Fires when the turn ends due to an API error. Output and exit code are ignored.
     StopFailure {
         display: "stop_failure",
         aliases: ["StopFailure", "stop_failure", "stopFailure"],
+        traits: (Observe, Tested, true),
+    },
+    StopCancelled {
+        display: "stop_cancelled",
+        aliases: [
+            "StopCancelled",
+            "stop_cancelled",
+            "stopCancelled",
+        ],
         traits: (Observe, Tested, true),
     },
     Notification {
@@ -161,9 +156,7 @@ hook_events! {
         aliases: ["SubagentStop", "subagent_stop", "subagentStop"],
         traits: (Stop, Tested, true),
     },
-    /// Legacy alias of `SubagentStop`: kept as a distinct variant so a hook
-    /// registered under either spelling round-trips, then collapsed via
-    /// [`HookEventName::canonical`] for dispatch and dedup.
+    /// Legacy alias of `SubagentStop`, collapsed by [`HookEventName::canonical`].
     SubagentEnd {
         display: "subagent_stop",
         aliases: ["SubagentEnd", "subagent_end", "subagentEnd"],
@@ -188,18 +181,19 @@ hook_events! {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GateKind {
-    /// Hook output recorded, decisions ignored.
     Observe,
     Tool,
-    /// Stop decision control (`block`, `continue: false`, `additionalContext`).
     Stop,
+    PostTool,
+    /// Prompt decision control (`decision: "block"` with `reason`, exit 2).
+    /// The block reason is user-facing, never model context.
+    /// Exit 2 blocks regardless of JSON, and the default timeout is 30s.
+    Prompt,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatcherPolicy {
-    /// Never evaluated: kept for display with a load-time warning, the hook fires on every occurrence.
     Ignored,
-    /// Tested against the value [`HookPayload::match_value`] extracts from the payload.
     Tested,
 }
 
@@ -207,13 +201,10 @@ pub enum MatcherPolicy {
 pub struct EventTraits {
     pub gate: GateKind,
     pub matcher: MatcherPolicy,
-    /// Whether hub custom hooks receive this event (see `dispatcher::hub_hook_kind`).
     pub hub_forward: bool,
 }
 
 impl HookEventName {
-    /// Collapse aliases so a registration and the fired event meet on one key
-    /// (`SubagentEnd` is an alias of `SubagentStop`).
     pub fn canonical(self) -> Self {
         match self {
             Self::SubagentEnd => Self::SubagentStop,
@@ -221,16 +212,21 @@ impl HookEventName {
         }
     }
 
-    /// Validate a bare event key against the accepted spellings; `None` if unknown.
     pub fn parse_key(s: &str) -> Option<Self> {
         Self::from_key_str(s)
     }
 }
 
-/// Max characters for free-text fields in `StopBackgroundTask`/`StopSessionCron` entries.
 pub const MAX_STOP_ENTRY_TEXT_CHARS: usize = 1000;
 
-/// Clip `text` to `max` chars (on a char boundary) with a `… [+N chars]` marker.
+pub const MAX_CANCEL_TRIGGER_CHARS: usize = 64;
+
+pub const MAX_ASSISTANT_MESSAGE_CHARS: usize = 32_768;
+
+pub fn clip_assistant_message(text: &str) -> String {
+    clip_text(text, MAX_ASSISTANT_MESSAGE_CHARS)
+}
+
 pub fn clip_text(text: &str, max: usize) -> String {
     let char_count = text.chars().count();
     if char_count <= max {
@@ -244,7 +240,17 @@ pub fn clip_stop_entry_text(text: &str) -> String {
     clip_text(text, MAX_STOP_ENTRY_TEXT_CHARS)
 }
 
-/// `SubagentStop` fire phase: always `Gate` today, `Observe` reserved and not emitted.
+// Cap on hook-influenced strings so one huge line can't flood the model or logs.
+pub const MAX_REASON_CHARS: usize = 256;
+
+pub const MAX_HOOK_FEEDBACK_CHARS: usize = 10_000;
+
+pub const MAX_HOOK_OUTPUT_REPLACEMENT_CHARS: usize = 64 * 1024;
+
+pub fn clip_reason(reason: &str) -> String {
+    clip_text(reason, MAX_REASON_CHARS)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SubagentStopPhase {
@@ -252,13 +258,11 @@ pub enum SubagentStopPhase {
     Observe,
 }
 
-/// One in-flight background task in a `Stop` hook input (camelCase on the wire).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StopBackgroundTask {
     pub id: String,
     pub r#type: BackgroundTaskType,
-    /// Always `running` for in-flight entries.
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -268,12 +272,10 @@ pub struct StopBackgroundTask {
     pub agent_type: Option<String>,
 }
 
-/// One session-scoped scheduled wakeup (scheduler task or `/loop`) in a `Stop` hook input.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StopSessionCron {
     pub id: String,
-    /// Human-readable interval (e.g. `every 5 minutes`): grok schedules are intervals, not cron.
     pub schedule: String,
     pub recurring: bool,
     pub prompt: String,
@@ -287,10 +289,19 @@ pub enum BackgroundTaskType {
     Subagent,
 }
 
-/// `StopFailure` error type. Grok emits a subset: capacity errors fold into
-/// `RateLimit`, and there is no `billing_error`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    strum::AsRefStr,
+    strum::IntoStaticStr,
+    strum::EnumIter,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum StopFailureKind {
     RateLimit,
     AuthenticationFailed,
@@ -300,21 +311,47 @@ pub enum StopFailureKind {
     Unknown,
 }
 
-impl StopFailureKind {
-    pub fn as_str(self) -> &'static str {
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    strum::AsRefStr,
+    strum::IntoStaticStr,
+    strum::EnumIter,
+)]
+#[strum(serialize_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum StopCancelledReason {
+    UserInterrupt,
+    PermissionRejected,
+    PermissionCancelled,
+    MaxTurns,
+    NoProgress,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CancelledBy {
+    User,
+    Runtime,
+    Unknown,
+}
+
+impl StopCancelledReason {
+    pub fn cancelled_by(self) -> CancelledBy {
         match self {
-            Self::RateLimit => "rate_limit",
-            Self::AuthenticationFailed => "authentication_failed",
-            Self::InvalidRequest => "invalid_request",
-            Self::ServerError => "server_error",
-            Self::MaxOutputTokens => "max_output_tokens",
-            Self::Unknown => "unknown",
+            Self::UserInterrupt | Self::PermissionRejected | Self::PermissionCancelled => {
+                CancelledBy::User
+            }
+            Self::MaxTurns | Self::NoProgress => CancelledBy::Runtime,
+            Self::Unknown => CancelledBy::Unknown,
         }
     }
 }
-
-/// The normalized event envelope sent to hook commands on stdin as JSON:
-/// common metadata plus an event-specific payload.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HookEventEnvelope {
@@ -329,14 +366,45 @@ pub struct HookEventEnvelope {
     pub client_identifier: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_id: Option<String>,
-    /// Session permission mode (`default`, `auto`, `plan`, `bypassPermissions`) at fire time.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub permission_mode: Option<String>,
     #[serde(flatten)]
     pub payload: HookPayload,
 }
 
-/// Event-specific payload, flattened into the envelope JSON.
+// Additive snake_case aliases for grok's camelCase keys, which some hook clients read; the camelCase keys stay authoritative
+const SNAKE_CASE_ALIASES: &[(&str, &str)] = &[
+    ("hookEventName", "hook_event_name"),
+    ("sessionId", "session_id"),
+    ("transcriptPath", "transcript_path"),
+    ("permissionMode", "permission_mode"),
+    ("toolName", "tool_name"),
+    ("toolInput", "tool_input"),
+    ("toolResult", "tool_response"),
+    ("toolUseId", "tool_use_id"),
+    ("durationMs", "duration_ms"),
+    ("isInterrupt", "is_interrupt"),
+];
+
+impl HookEventEnvelope {
+    pub fn to_hook_json(&self) -> serde_json::Value {
+        let mut value = serde_json::to_value(self).unwrap_or(serde_json::Value::Null);
+        if let serde_json::Value::Object(map) = &mut value {
+            for (camel, snake) in SNAKE_CASE_ALIASES {
+                if let Some(aliased) = map.get(*camel).cloned() {
+                    map.entry(*snake).or_insert(aliased);
+                }
+            }
+            // The snake key carries Claude's PascalCase value; the camel key stays grok-native.
+            map.insert(
+                "hook_event_name".to_string(),
+                self.hook_event_name.pascal_case().into(),
+            );
+        }
+        value
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 pub enum HookPayload {
@@ -353,12 +421,11 @@ pub enum HookPayload {
         turn_count: Option<u64>,
         #[serde(rename = "toolCallCount", skip_serializing_if = "Option::is_none")]
         tool_call_count: Option<u64>,
+        #[serde(rename = "subagentType", skip_serializing_if = "Option::is_none")]
+        subagent_type: Option<String>,
     },
     Stop {
         reason: String,
-        /// True when this Stop fires while the agent is already continuing from a
-        /// previous Stop-hook block this turn; hooks check it to avoid blocking on a
-        /// condition that will never resolve.
         #[serde(rename = "stopHookActive")]
         stop_hook_active: bool,
         #[serde(
@@ -366,8 +433,6 @@ pub enum HookPayload {
             skip_serializing_if = "Option::is_none"
         )]
         last_assistant_message: Option<String>,
-        /// In-flight background work that could wake the session; empty when none in
-        /// flight, omitted (not empty) at fire sites that don't enumerate (session end).
         #[serde(rename = "backgroundTasks", skip_serializing_if = "Option::is_none")]
         background_tasks: Option<Vec<StopBackgroundTask>>,
         #[serde(rename = "sessionCrons", skip_serializing_if = "Option::is_none")]
@@ -377,19 +442,34 @@ pub enum HookPayload {
         error: StopFailureKind,
         #[serde(rename = "errorDetails", skip_serializing_if = "Option::is_none")]
         error_details: Option<String>,
-        /// Rendered error text shown in the conversation: unlike `Stop`, the error
-        /// string, not assistant output.
         #[serde(
             rename = "lastAssistantMessage",
             skip_serializing_if = "Option::is_none"
         )]
         last_assistant_message: Option<String>,
+        #[serde(rename = "subagentType", skip_serializing_if = "Option::is_none")]
+        subagent_type: Option<String>,
+    },
+    StopCancelled {
+        reason: StopCancelledReason,
+        #[serde(rename = "cancelledBy")]
+        cancelled_by: CancelledBy,
+        #[serde(rename = "cancelTrigger", skip_serializing_if = "Option::is_none")]
+        cancel_trigger: Option<String>,
+        #[serde(rename = "reasonDetails", skip_serializing_if = "Option::is_none")]
+        reason_details: Option<String>,
+        #[serde(
+            rename = "lastAssistantMessage",
+            skip_serializing_if = "Option::is_none"
+        )]
+        last_assistant_message: Option<String>,
+        #[serde(rename = "subagentType", skip_serializing_if = "Option::is_none")]
+        subagent_type: Option<String>,
     },
 
     PreToolUse {
-        /// The tool the model invoked. For the meta-dispatch tools (`use_tool`
-        /// and the external MCP-call tool) this is the resolved underlying tool
-        /// (`server__tool`) rather than the dispatcher, so matchers key on it.
+        /// For meta-dispatch tools (`use_tool`, the external MCP-call tool) this is the underlying tool (`server__tool`), not the dispatcher.
+        /// Matchers key on the real target.
         #[serde(rename = "toolName")]
         tool_name: String,
         #[serde(rename = "toolUseId")]
@@ -398,13 +478,10 @@ pub enum HookPayload {
         tool_input: serde_json::Value,
         #[serde(rename = "toolInputTruncated")]
         tool_input_truncated: bool,
-        /// The subagent's type when this tool runs inside one (the envelope's `sessionId`
-        /// gives its identity); `None` for the top-level session.
         #[serde(rename = "subagentType", skip_serializing_if = "Option::is_none")]
         subagent_type: Option<String>,
     },
     PostToolUse {
-        /// Resolved underlying tool for meta-dispatch tools (see `PreToolUse`).
         #[serde(rename = "toolName")]
         tool_name: String,
         #[serde(rename = "toolUseId")]
@@ -425,7 +502,6 @@ pub enum HookPayload {
         subagent_type: Option<String>,
     },
     PostToolUseFailure {
-        /// Resolved underlying tool for meta-dispatch tools (see `PreToolUse`).
         #[serde(rename = "toolName")]
         tool_name: String,
         #[serde(rename = "toolUseId")]
@@ -435,11 +511,14 @@ pub enum HookPayload {
         #[serde(rename = "toolInputTruncated")]
         tool_input_truncated: bool,
         error: String,
+        #[serde(rename = "durationMs", skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+        #[serde(rename = "isInterrupt")]
+        is_interrupt: bool,
         #[serde(rename = "subagentType", skip_serializing_if = "Option::is_none")]
         subagent_type: Option<String>,
     },
     PermissionDenied {
-        /// Resolved underlying tool for meta-dispatch tools (see `PreToolUse`).
         #[serde(rename = "toolName")]
         tool_name: String,
         #[serde(rename = "toolUseId")]
@@ -453,6 +532,8 @@ pub enum HookPayload {
     UserPromptSubmit {
         #[serde(skip_serializing_if = "Option::is_none")]
         prompt: Option<String>,
+        #[serde(rename = "subagentType", skip_serializing_if = "Option::is_none")]
+        subagent_type: Option<String>,
     },
     Notification {
         #[serde(rename = "notificationType")]
@@ -461,7 +542,6 @@ pub enum HookPayload {
         message: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         title: Option<String>,
-        /// Compat: some callers use `level` instead of `notificationType`.
         #[serde(skip_serializing_if = "Option::is_none")]
         level: Option<String>,
     },
@@ -480,7 +560,6 @@ pub enum HookPayload {
         subagent_id: String,
         #[serde(rename = "subagentType")]
         subagent_type: String,
-        /// Subagent analogue of `Stop::stop_hook_active`.
         #[serde(rename = "stopHookActive", skip_serializing_if = "Option::is_none")]
         stop_hook_active: Option<bool>,
         #[serde(
@@ -491,18 +570,25 @@ pub enum HookPayload {
     },
 
     PreCompact {
-        /// "manual" or "auto".
         source: String,
     },
     PostCompact {
-        /// "manual" or "auto".
         source: String,
     },
 }
 
 impl HookPayload {
-    /// The value a [`MatcherPolicy::Tested`] matcher is tested against, or `None` when
-    /// the payload carries nothing selectable (matchers then fire-all, the fail-open default).
+    /// The tool a tool-event payload is about; `None` for every other event.
+    pub fn tool_name(&self) -> Option<&str> {
+        match self {
+            Self::PreToolUse { tool_name, .. }
+            | Self::PostToolUse { tool_name, .. }
+            | Self::PostToolUseFailure { tool_name, .. }
+            | Self::PermissionDenied { tool_name, .. } => Some(tool_name),
+            _ => None,
+        }
+    }
+
     pub fn match_value(&self) -> Option<&str> {
         let value = match self {
             Self::PreToolUse { tool_name, .. }
@@ -518,31 +604,29 @@ impl HookPayload {
             | Self::PreCompact { source }
             | Self::PostCompact { source } => source,
             Self::SessionEnd { reason, .. } => reason,
-            // Always a non-empty name, unlike the free-text arms above.
-            Self::StopFailure { error, .. } => return Some(error.as_str()),
-            // Ignored events listed explicitly so a new Tested event can't silently return None.
+            Self::StopFailure { error, .. } => return Some(error.as_ref()),
+            Self::StopCancelled { reason, .. } => return Some(reason.as_ref()),
             Self::Stop { .. } | Self::UserPromptSubmit { .. } => return None,
         };
         Some(value.as_str()).filter(|v| !v.is_empty())
     }
 }
 
-/// Truncate a JSON value if its serialized size exceeds `MAX_PAYLOAD_SIZE`.
-///
-/// Returns `(possibly_truncated_value, was_truncated)`.
 pub fn truncate_payload(value: serde_json::Value) -> (serde_json::Value, bool) {
     let serialized = serde_json::to_string(&value).unwrap_or_default();
     if serialized.len() <= MAX_PAYLOAD_SIZE {
         return (value, false);
     }
 
-    // Cut at the largest char boundary <= MAX_PAYLOAD_SIZE so the slice never
-    // splits a multibyte codepoint.
+    // Cut on a char boundary so the slice never splits a multibyte codepoint.
     let mut end = MAX_PAYLOAD_SIZE;
     while !serialized.is_char_boundary(end) {
         end -= 1;
     }
-    let mut result = serialized[..end].to_string();
+    let Some(prefix) = serialized.get(..end) else {
+        return (value, false);
+    };
+    let mut result = prefix.to_string();
     result.push_str(" [truncated]");
     (serde_json::Value::String(result), true)
 }
@@ -565,6 +649,11 @@ mod tests {
             ("SessionEnd", "session_end", HookEventName::SessionEnd),
             ("Stop", "stop", HookEventName::Stop),
             ("StopFailure", "stop_failure", HookEventName::StopFailure),
+            (
+                "StopCancelled",
+                "stop_cancelled",
+                HookEventName::StopCancelled,
+            ),
             ("Notification", "notification", HookEventName::Notification),
             (
                 "UserPromptSubmit",
@@ -601,30 +690,6 @@ mod tests {
     }
 
     #[test]
-    fn event_name_display_all_variants() {
-        let cases: &[(HookEventName, &str)] = &[
-            (HookEventName::SessionStart, "session_start"),
-            (HookEventName::PreToolUse, "pre_tool_use"),
-            (HookEventName::PostToolUse, "post_tool_use"),
-            (HookEventName::PostToolUseFailure, "post_tool_use_failure"),
-            (HookEventName::SessionEnd, "session_end"),
-            (HookEventName::Stop, "stop"),
-            (HookEventName::StopFailure, "stop_failure"),
-            (HookEventName::Notification, "notification"),
-            (HookEventName::UserPromptSubmit, "user_prompt_submit"),
-            (HookEventName::PermissionDenied, "permission_denied"),
-            (HookEventName::SubagentStart, "subagent_start"),
-            (HookEventName::SubagentStop, "subagent_stop"),
-            (HookEventName::SubagentEnd, "subagent_stop"), // alias collapses
-            (HookEventName::PreCompact, "pre_compact"),
-            (HookEventName::PostCompact, "post_compact"),
-        ];
-        for (event, expected) in cases {
-            assert_eq!(&event.to_string(), expected, "Display wrong for {event:?}");
-        }
-    }
-
-    #[test]
     fn event_name_deser_camel_and_operation_aliases() {
         let cases: &[(&str, HookEventName)] = &[
             ("sessionStart", HookEventName::SessionStart),
@@ -643,6 +708,7 @@ mod tests {
             ("subagentEnd", HookEventName::SubagentEnd),
             ("preCompact", HookEventName::PreCompact),
             ("stopFailure", HookEventName::StopFailure),
+            ("stopCancelled", HookEventName::StopCancelled),
         ];
         for (spelling, expected) in cases {
             let parsed: HookEventName = serde_json::from_str(&format!("\"{spelling}\"")).unwrap();
@@ -657,18 +723,34 @@ mod tests {
     }
 
     #[test]
+    fn pascal_case_is_the_pascal_alias() {
+        for event in HookEventName::ALL {
+            let pascal = event.pascal_case();
+            let first = pascal.chars().next().expect("alias is non-empty");
+            assert!(
+                first.is_ascii_uppercase() && !pascal.contains('_'),
+                "{event}: pascal_case() must be the PascalCase alias, got {pascal:?}"
+            );
+        }
+    }
+
+    #[test]
     fn event_traits_report_gate_matcher_and_hub_forward() {
         use super::{GateKind, MatcherPolicy};
 
         assert_eq!(HookEventName::PreToolUse.traits().gate, GateKind::Tool);
         assert_eq!(HookEventName::Stop.traits().gate, GateKind::Stop);
+        assert_eq!(
+            HookEventName::UserPromptSubmit.traits().gate,
+            GateKind::Prompt
+        );
         assert_eq!(HookEventName::SubagentStop.traits().gate, GateKind::Stop);
         assert_eq!(
             HookEventName::SubagentEnd.traits().gate,
             GateKind::Stop,
             "alias resolves through canonical()"
         );
-        assert_eq!(HookEventName::PostToolUse.traits().gate, GateKind::Observe);
+        assert_eq!(HookEventName::PostToolUse.traits().gate, GateKind::PostTool);
 
         assert_eq!(HookEventName::Stop.traits().matcher, MatcherPolicy::Ignored);
         assert_eq!(
@@ -700,113 +782,20 @@ mod tests {
     }
 
     #[test]
-    fn stop_payload_serializes_task_and_cron_entries() {
-        let envelope = HookEventEnvelope {
-            hook_event_name: HookEventName::Stop,
-            session_id: "s".into(),
-            cwd: "/tmp".into(),
-            workspace_root: "/tmp".into(),
-            timestamp: "t".into(),
-            transcript_path: None,
-            client_identifier: None,
-            prompt_id: None,
-            permission_mode: None,
-            payload: HookPayload::Stop {
-                reason: "end_turn".into(),
-                stop_hook_active: true,
-                last_assistant_message: Some("done".into()),
-                background_tasks: Some(vec![
-                    StopBackgroundTask {
-                        id: "task-001".into(),
-                        r#type: BackgroundTaskType::Shell,
-                        status: "running".into(),
-                        description: None,
-                        command: Some("tail -f /var/log/syslog".into()),
-                        agent_type: None,
-                    },
-                    StopBackgroundTask {
-                        id: "task-002".into(),
-                        r#type: BackgroundTaskType::Subagent,
-                        status: "running".into(),
-                        description: Some("explore the repo".into()),
-                        command: None,
-                        agent_type: Some("explore".into()),
-                    },
-                ]),
-                session_crons: Some(vec![StopSessionCron {
-                    id: "cron-001".into(),
-                    schedule: "every 2h".into(),
-                    recurring: true,
-                    prompt: "check the build".into(),
-                }]),
-            },
-        };
-        let value = serde_json::to_value(&envelope).unwrap();
-        assert_eq!(value["stopHookActive"], true);
-        assert_eq!(value["backgroundTasks"][0]["id"], "task-001");
-        assert_eq!(value["backgroundTasks"][0]["type"], "shell");
-        assert_eq!(
-            value["backgroundTasks"][0]["command"],
-            "tail -f /var/log/syslog"
-        );
-        assert_eq!(value["backgroundTasks"][1]["agentType"], "explore");
-        assert_eq!(value["sessionCrons"][0]["schedule"], "every 2h");
-        assert_eq!(value["sessionCrons"][0]["recurring"], true);
-    }
-
-    #[test]
-    fn subagent_stop_phase_serializes_lowercase() {
-        let payload = HookPayload::SubagentStop {
-            phase: SubagentStopPhase::Observe,
-            subagent_id: "sub-1".into(),
-            subagent_type: "explore".into(),
-            stop_hook_active: None,
-            last_assistant_message: None,
-        };
-        let value = serde_json::to_value(&payload).unwrap();
-        assert_eq!(value["phase"], "observe");
-        assert_eq!(
-            serde_json::to_value(SubagentStopPhase::Gate).unwrap(),
-            "gate"
-        );
-    }
-
-    #[test]
-    fn stop_failure_kind_as_str_matches_serialization() {
-        for kind in [
-            StopFailureKind::RateLimit,
-            StopFailureKind::AuthenticationFailed,
-            StopFailureKind::InvalidRequest,
-            StopFailureKind::ServerError,
-            StopFailureKind::MaxOutputTokens,
-            StopFailureKind::Unknown,
-        ] {
-            assert_eq!(
-                serde_json::to_value(kind).unwrap(),
-                serde_json::Value::from(kind.as_str()),
-                "{kind:?} serialization drifted from as_str"
-            );
-        }
-    }
-
-    #[test]
-    fn truncate_small_payload() {
-        let value = serde_json::json!({"key": "small"});
-        let (result, truncated) = truncate_payload(value.clone());
+    fn truncate_payload_respects_limit() {
+        let small = serde_json::json!({"key": "small"});
+        let (result, truncated) = truncate_payload(small.clone());
         assert!(!truncated);
-        assert_eq!(result, value);
-    }
+        assert_eq!(result, small);
 
-    #[test]
-    fn truncate_large_payload() {
-        let value = serde_json::Value::String("x".repeat(MAX_PAYLOAD_SIZE + 1000));
-        let (result, truncated) = truncate_payload(value);
+        let (result, truncated) = truncate_payload(serde_json::Value::String(
+            "x".repeat(MAX_PAYLOAD_SIZE + 1000),
+        ));
         assert!(truncated);
         let s = result.as_str().unwrap();
         assert!(s.ends_with("[truncated]"));
         assert!(s.len() < MAX_PAYLOAD_SIZE + 100);
 
-        // '€' is 3 bytes, so the cut lands mid-codepoint and must fall back to a char boundary.
         let (unicode, truncated) =
             truncate_payload(serde_json::Value::String("€".repeat(MAX_PAYLOAD_SIZE)));
         assert!(truncated);
@@ -814,29 +803,192 @@ mod tests {
     }
 
     #[test]
-    fn envelope_serializes_camel_case() {
-        let envelope = HookEventEnvelope {
-            hook_event_name: HookEventName::SessionStart,
-            session_id: "test-session".into(),
-            cwd: "/tmp".into(),
-            workspace_root: "/tmp".into(),
+    fn to_hook_json_emits_camel_and_snake_tool_aliases() {
+        let base = |payload| HookEventEnvelope {
+            hook_event_name: HookEventName::PreToolUse,
+            session_id: "sess-1".into(),
+            cwd: "/repo".into(),
+            workspace_root: "/repo".into(),
+            timestamp: "2025-01-01T00:00:00Z".into(),
+            transcript_path: Some("/tmp/transcript.jsonl".into()),
+            client_identifier: None,
+            prompt_id: None,
+            permission_mode: Some("default".into()),
+            payload,
+        };
+
+        let assert_base_aliases = |v: &serde_json::Value| {
+            for (camel, snake) in [
+                ("sessionId", "session_id"),
+                ("transcriptPath", "transcript_path"),
+                ("permissionMode", "permission_mode"),
+            ] {
+                assert_eq!(v.get(camel), v.get(snake), "{camel} != {snake}");
+                assert!(
+                    v.get(camel).is_some_and(|x| !x.is_null()),
+                    "missing base key pair for {camel}"
+                );
+            }
+            assert_eq!(v.get("cwd").and_then(|x| x.as_str()), Some("/repo"));
+        };
+
+        let pre = base(HookPayload::PreToolUse {
+            tool_name: "run_terminal_command".into(),
+            tool_use_id: "tu-1".into(),
+            tool_input: serde_json::json!({ "command": "ls" }),
+            tool_input_truncated: false,
+            subagent_type: None,
+        })
+        .to_hook_json();
+        assert_base_aliases(&pre);
+        for (camel, snake) in [
+            ("toolName", "tool_name"),
+            ("toolInput", "tool_input"),
+            ("toolUseId", "tool_use_id"),
+        ] {
+            assert_eq!(pre.get(camel), pre.get(snake), "{camel} != {snake}");
+            assert!(
+                pre.get(camel).is_some_and(|x| !x.is_null()),
+                "missing tool key pair for {camel}"
+            );
+        }
+        assert_eq!(
+            pre.get("hookEventName").and_then(|x| x.as_str()),
+            Some("pre_tool_use")
+        );
+        assert_eq!(
+            pre.get("hook_event_name").and_then(|x| x.as_str()),
+            Some("PreToolUse")
+        );
+        assert_eq!(
+            pre.get("tool_name").and_then(|x| x.as_str()),
+            Some("run_terminal_command")
+        );
+
+        let post = HookEventEnvelope {
+            hook_event_name: HookEventName::PostToolUse,
+            payload: HookPayload::PostToolUse {
+                tool_name: "run_terminal_command".into(),
+                tool_use_id: "tu-1".into(),
+                tool_input: serde_json::json!({ "command": "ls" }),
+                tool_result: serde_json::json!({ "stdout": "a\nb\n" }),
+                tool_input_truncated: false,
+                tool_result_truncated: false,
+                duration_ms: Some(12),
+                is_backgrounded: false,
+                subagent_type: None,
+            },
+            ..base(HookPayload::PreToolUse {
+                tool_name: String::new(),
+                tool_use_id: String::new(),
+                tool_input: serde_json::Value::Null,
+                tool_input_truncated: false,
+                subagent_type: None,
+            })
+        }
+        .to_hook_json();
+        assert_base_aliases(&post);
+        for (camel, snake) in [
+            ("toolName", "tool_name"),
+            ("toolInput", "tool_input"),
+            ("toolUseId", "tool_use_id"),
+            ("toolResult", "tool_response"),
+        ] {
+            assert_eq!(post.get(camel), post.get(snake), "{camel} != {snake}");
+            assert!(
+                post.get(camel).is_some_and(|x| !x.is_null()),
+                "missing tool key pair for {camel}"
+            );
+        }
+        assert_eq!(post.get("toolResult"), post.get("tool_response"));
+        assert_eq!(
+            post.get("tool_response"),
+            Some(&serde_json::json!({ "stdout": "a\nb\n" }))
+        );
+        assert_eq!(
+            post.get("hookEventName").and_then(|x| x.as_str()),
+            Some("post_tool_use")
+        );
+        assert_eq!(
+            post.get("hook_event_name").and_then(|x| x.as_str()),
+            Some("PostToolUse")
+        );
+        assert!(post.get("durationMs").is_some());
+    }
+
+    #[test]
+    fn post_tool_use_failure_carries_duration_and_interrupt() {
+        let value = HookEventEnvelope {
+            hook_event_name: HookEventName::PostToolUseFailure,
+            session_id: "sess-1".into(),
+            cwd: "/repo".into(),
+            workspace_root: "/repo".into(),
             timestamp: "2025-01-01T00:00:00Z".into(),
             transcript_path: None,
             client_identifier: None,
             prompt_id: None,
             permission_mode: None,
-            payload: HookPayload::SessionStart {
-                source: "new".into(),
-                model_id: Some("grok-3".into()),
-                agent_type: None,
+            payload: HookPayload::PostToolUseFailure {
+                tool_name: "run_terminal_command".into(),
+                tool_use_id: "tu-1".into(),
+                tool_input: serde_json::json!({ "command": "ls" }),
+                tool_input_truncated: false,
+                error: "boom".into(),
+                duration_ms: Some(42),
+                is_interrupt: true,
+                subagent_type: None,
             },
-        };
-        let value = serde_json::to_value(&envelope).unwrap();
-        for key in ["hookEventName", "sessionId", "workspaceRoot", "modelId"] {
-            assert!(value.get(key).is_some(), "missing camelCase key {key}");
         }
-        for key in ["hook_event_name", "session_id", "model_id"] {
-            assert!(value.get(key).is_none(), "leaked snake_case key {key}");
+        .to_hook_json();
+        assert_eq!(
+            value.get("hookEventName").and_then(|x| x.as_str()),
+            Some("post_tool_use_failure")
+        );
+        assert_eq!(
+            value.get("hook_event_name").and_then(|x| x.as_str()),
+            Some("PostToolUseFailure")
+        );
+        assert_eq!(value.get("error").and_then(|x| x.as_str()), Some("boom"));
+        assert_eq!(value.get("durationMs").and_then(|x| x.as_u64()), Some(42));
+        assert_eq!(value.get("duration_ms").and_then(|x| x.as_u64()), Some(42));
+        assert_eq!(
+            value.get("isInterrupt").and_then(|x| x.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            value.get("is_interrupt").and_then(|x| x.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn stop_cancelled_wire_shape() {
+        let wire_of = |reason: StopCancelledReason| match reason {
+            StopCancelledReason::UserInterrupt => ("user_interrupt", "user"),
+            StopCancelledReason::PermissionRejected => ("permission_rejected", "user"),
+            StopCancelledReason::PermissionCancelled => ("permission_cancelled", "user"),
+            StopCancelledReason::MaxTurns => ("max_turns", "runtime"),
+            StopCancelledReason::NoProgress => ("no_progress", "runtime"),
+            StopCancelledReason::Unknown => ("unknown", "unknown"),
+        };
+        for reason in <StopCancelledReason as strum::IntoEnumIterator>::iter() {
+            let (wire, cancelled_by) = wire_of(reason);
+            let payload = HookPayload::StopCancelled {
+                reason,
+                cancelled_by: reason.cancelled_by(),
+                cancel_trigger: None,
+                reason_details: None,
+                last_assistant_message: None,
+                subagent_type: None,
+            };
+            assert_eq!(payload.match_value(), Some(wire));
+            let value = serde_json::to_value(&payload).unwrap();
+            assert_eq!(value.get("reason").and_then(|x| x.as_str()), Some(wire));
+            assert_eq!(
+                value.get("cancelledBy").and_then(|x| x.as_str()),
+                Some(cancelled_by)
+            );
+            assert!(value.get("cancelTrigger").is_none());
         }
     }
 }

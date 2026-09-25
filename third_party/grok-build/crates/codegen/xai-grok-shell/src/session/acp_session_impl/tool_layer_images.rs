@@ -1,11 +1,10 @@
-//! Tool-layer extracted-image helpers for the session tool pipeline.
-//!
-//! Pure drain / harness split — no `SessionActor` dependency.
+//! Pulls extracted images off tool output for the session's vision follow-up.
+//! Nothing here depends on `SessionActor`, so tests call these as plain functions.
 
 use super::*;
 use xai_grok_tools::util::base64_images::ExtractedImage;
 
-/// Drain pre-truncate image captures off the tool output for session vision.
+/// Drains the images the tool layer extracted from `output`, before truncation, so the session can attach them as vision content.
 pub(super) fn drain_tool_layer_extracted_images(
     output: &mut ToolsToolOutput,
 ) -> Vec<ExtractedImage> {
@@ -18,10 +17,8 @@ pub(super) fn drain_tool_layer_extracted_images(
     }
 }
 
-/// `ToolRunResult` with tool-layer images already drained off `output`.
-///
-/// Construct only via [`Self::new`] so PostToolUse serialize and bridge success
-/// handling cannot skip the harvest.
+/// `ToolRunResult` whose extracted images have already been drained off `output`.
+/// Construct only via [`Self::new`], so neither PostToolUse serialization nor the bridge's success path can skip the drain.
 pub(super) struct DrainedToolSuccess {
     result: ToolRunResult,
     tool_layer_images: Vec<ExtractedImage>,
@@ -37,7 +34,7 @@ impl DrainedToolSuccess {
         }
     }
 
-    /// Output after drain — for PostToolUse / hook-facing serialize.
+    /// The output with images already drained, so serializing it for PostToolUse hooks never touches the payloads.
     pub(super) fn output(&self) -> &ToolsToolOutput {
         &self.result.output
     }
@@ -47,7 +44,8 @@ impl DrainedToolSuccess {
     }
 }
 
-/// Multimodal harness: extend vision follow-ups. Text-only: discard (placeholders stay).
+/// On a multimodal harness the tool-layer images join the vision follow-up.
+/// On a text-only harness they are dropped; the output text keeps only the placeholders.
 pub(super) fn split_tool_layer_for_harness(
     text_only_harness: bool,
     vision: &mut Vec<ExtractedImage>,
@@ -96,9 +94,11 @@ mod tests {
         let drained = DrainedToolSuccess::new(run_result(ToolOutput::MCP(mcp)));
 
         let (result, images) = drained.into_parts();
-        assert_eq!(images.len(), 1);
-        assert_eq!(images[0].mime_type, "image/png");
-        assert_eq!(images[0].data, payload);
+        let [one] = images.as_slice() else {
+            panic!("expected one image: {images:?}");
+        };
+        assert_eq!(one.mime_type, "image/png");
+        assert_eq!(one.data, payload);
         let ToolOutput::MCP(mcp) = result.output else {
             panic!("expected MCP");
         };
@@ -131,9 +131,11 @@ mod tests {
             ToolOutput::ReadFile(ReadFileOutput::FileContent(fc)) if fc.extracted_images.is_empty()
         ));
         let (result, images) = drained.into_parts();
-        assert_eq!(images.len(), 1);
-        assert_eq!(images[0].mime_type, "image/jpeg");
-        assert_eq!(images[0].data, "B".repeat(3000));
+        let [one] = images.as_slice() else {
+            panic!("expected one image: {images:?}");
+        };
+        assert_eq!(one.mime_type, "image/jpeg");
+        assert_eq!(one.data, "B".repeat(3000));
         let ToolOutput::ReadFile(ReadFileOutput::FileContent(fc)) = result.output else {
             panic!("expected FileContent");
         };
@@ -151,9 +153,11 @@ mod tests {
         let mut output = ToolOutput::MCP(mcp);
 
         let harvested = drain_tool_layer_extracted_images(&mut output);
-        assert_eq!(harvested.len(), 1);
-        assert_eq!(harvested[0].mime_type, "image/png");
-        assert_eq!(harvested[0].data, "A".repeat(2000));
+        let [one] = harvested.as_slice() else {
+            panic!("expected one image: {harvested:?}");
+        };
+        assert_eq!(one.mime_type, "image/png");
+        assert_eq!(one.data, "A".repeat(2000));
 
         let ToolOutput::MCP(mcp) = &output else {
             panic!("expected MCP");
@@ -184,9 +188,11 @@ mod tests {
         let mut output = ToolOutput::ReadFile(ReadFileOutput::FileContent(fc));
 
         let harvested = drain_tool_layer_extracted_images(&mut output);
-        assert_eq!(harvested.len(), 1);
-        assert_eq!(harvested[0].mime_type, "image/jpeg");
-        assert_eq!(harvested[0].data, "B".repeat(3000));
+        let [one] = harvested.as_slice() else {
+            panic!("expected one image: {harvested:?}");
+        };
+        assert_eq!(one.mime_type, "image/jpeg");
+        assert_eq!(one.data, "B".repeat(3000));
 
         let ToolOutput::ReadFile(ReadFileOutput::FileContent(fc)) = &output else {
             panic!("expected FileContent");
@@ -243,8 +249,10 @@ mod tests {
             "PostToolUse path: serialize must not peek multi-MB payload"
         );
         let (_result, images) = drained.into_parts();
-        assert_eq!(images.len(), 1);
-        assert_eq!(images[0].data, payload);
+        let [one] = images.as_slice() else {
+            panic!("expected one image: {images:?}");
+        };
+        assert_eq!(one.data, payload);
     }
 
     #[test]
@@ -252,9 +260,11 @@ mod tests {
         let mut vision = Vec::new();
         let tool_layer = vec![img(&"PNG".repeat(500), "image/png")];
         split_tool_layer_for_harness(false, &mut vision, tool_layer);
-        assert_eq!(vision.len(), 1);
-        assert_eq!(vision[0].mime_type, "image/png");
-        assert_eq!(vision[0].data, "PNG".repeat(500));
+        let [one] = vision.as_slice() else {
+            panic!("expected one image: {vision:?}");
+        };
+        assert_eq!(one.mime_type, "image/png");
+        assert_eq!(one.data, "PNG".repeat(500));
     }
 
     #[test]
@@ -265,11 +275,13 @@ mod tests {
             img(&"BBB".repeat(100), "image/jpeg"),
         ];
         split_tool_layer_for_harness(false, &mut vision, tool_layer);
-        assert_eq!(vision.len(), 2);
-        assert_eq!(vision[0].mime_type, "image/png");
-        assert_eq!(vision[0].data, "AAA".repeat(100));
-        assert_eq!(vision[1].mime_type, "image/jpeg");
-        assert_eq!(vision[1].data, "BBB".repeat(100));
+        let [a, b] = vision.as_slice() else {
+            panic!("expected two images: {vision:?}");
+        };
+        assert_eq!(a.mime_type, "image/png");
+        assert_eq!(a.data, "AAA".repeat(100));
+        assert_eq!(b.mime_type, "image/jpeg");
+        assert_eq!(b.data, "BBB".repeat(100));
     }
 
     #[test]
@@ -277,11 +289,13 @@ mod tests {
         let mut vision = vec![img("from-text-extract", "image/webp")];
         let tool_layer = vec![img(&"tool".repeat(50), "image/png")];
         split_tool_layer_for_harness(false, &mut vision, tool_layer);
-        assert_eq!(vision.len(), 2);
-        assert_eq!(vision[0].mime_type, "image/webp");
-        assert_eq!(vision[0].data, "from-text-extract");
-        assert_eq!(vision[1].mime_type, "image/png");
-        assert_eq!(vision[1].data, "tool".repeat(50));
+        let [a, b] = vision.as_slice() else {
+            panic!("expected two images: {vision:?}");
+        };
+        assert_eq!(a.mime_type, "image/webp");
+        assert_eq!(a.data, "from-text-extract");
+        assert_eq!(b.mime_type, "image/png");
+        assert_eq!(b.data, "tool".repeat(50));
     }
 
     #[test]
@@ -297,9 +311,11 @@ mod tests {
         let mut vision = vec![img("existing", "image/png")];
         let tool_layer = vec![img(&"JPG".repeat(500), "image/jpeg")];
         split_tool_layer_for_harness(true, &mut vision, tool_layer);
-        assert_eq!(vision.len(), 1);
-        assert_eq!(vision[0].mime_type, "image/png");
-        assert_eq!(vision[0].data, "existing");
+        let [one] = vision.as_slice() else {
+            panic!("expected one image: {vision:?}");
+        };
+        assert_eq!(one.mime_type, "image/png");
+        assert_eq!(one.data, "existing");
     }
 
     /// Regression for the large-MCP-image path: preserve the extracted payload

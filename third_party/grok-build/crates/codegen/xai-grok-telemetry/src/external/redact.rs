@@ -1,13 +1,11 @@
 //! Export-time fail-closed validators for the external stream.
 //!
-//! The primary redaction (typed-key schema, gating, secret scrub, truncation)
-//! happens at **emit time** in [`super::emit`], because `opentelemetry_sdk`
-//! 0.30 log records and metric data are not mutable from an exporter wrapper.
-//! These wrappers are the **authoritative chokepoint** anyway: they verify,
-//! per record/data point, that nothing reaches the wire that the emit path
-//! shouldn't have produced — and on any violation they *drop* (a record for
-//! logs, the whole export for metrics) rather than scrub in place. Dropping
-//! telemetry on a schema bug is acceptable; leaking is not.
+//! The primary redaction (typed-key schema, gating, secret scrub, truncation) happens at **emit time** in [`super::emit`].
+//! It happens there because `opentelemetry_sdk` 0.30 log records and metric data are not mutable from an exporter wrapper.
+//! These wrappers are the **authoritative chokepoint** anyway.
+//! They verify, per record/data point, that nothing reaches the wire that the emit path shouldn't have produced.
+//! On any violation they *drop* (a record for logs, the whole export for metrics) rather than scrub in place.
+//! Dropping telemetry on a schema bug is acceptable; leaking is not.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -22,10 +20,10 @@ use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData, ResourceMe
 use opentelemetry_sdk::metrics::exporter::PushMetricExporter;
 
 use super::config::ContentGates;
-use super::schema::{Gate, external_allowed_keys, gate_for_key};
+use super::schema::{external_allowed_keys, gate_for_key};
 
-/// Shared, tighten-only view of the content gates. The remote kill switch may
-/// force gates off mid-run; the exporters re-read on every export.
+/// Shared, tighten-only view of the content gates.
+/// The remote kill switch may force gates off mid-run; the exporters re-read on every export.
 pub(crate) type SharedGates = Arc<parking_lot::RwLock<ContentGates>>;
 
 /// Export-health counters (read by the internal `export_health` meta-event).
@@ -39,19 +37,13 @@ pub(crate) struct ExportHealth {
     pub export_failures: AtomicU64,
     /// Successful export attempts, both signals.
     pub export_successes: AtomicU64,
+    /// Most recent transport error message (for shutdown-time diagnostics).
+    pub last_export_error: parking_lot::Mutex<Option<String>>,
 }
 
-fn gate_open(gates: &ContentGates, gate: Gate) -> bool {
-    match gate {
-        Gate::UserPrompts => gates.log_user_prompts,
-        Gate::ToolDetails => gates.log_tool_details,
-    }
-}
-
-/// `true` when this record is clean: every attribute key is schema-named,
-/// gated keys have their gate open, string values carry no secret shapes the
-/// emit path should have scrubbed, and the body is empty (`event.name` is the
-/// structured identity — external records carry no free-text body).
+/// `true` when this record is clean: every attribute key is schema-named and gated keys have their gate open.
+/// String values must carry no secret shapes the emit path should have scrubbed.
+/// The body must be empty: `event.name` is the structured identity, and external records carry no free-text body.
 fn record_is_clean(record: &SdkLogRecord, gates: &ContentGates) -> bool {
     if record.body().is_some() {
         tracing::debug!("external otel: dropping record with non-empty body");
@@ -67,7 +59,7 @@ fn record_is_clean(record: &SdkLogRecord, gates: &ContentGates) -> bool {
             return false;
         }
         if let Some(gate) = gate_for_key(key_str)
-            && !gate_open(gates, gate)
+            && !gate.is_open(gates)
         {
             tracing::debug!(
                 key = key_str,
@@ -86,7 +78,7 @@ fn record_is_clean(record: &SdkLogRecord, gates: &ContentGates) -> bool {
                     return false;
                 }
             }
-            // Bytes / lists / maps / future variants are content (fail-closed).
+            // Bytes, lists, maps, and future variants are content (fail-closed)
             _ => {
                 tracing::debug!(
                     key = key_str,
@@ -99,8 +91,7 @@ fn record_is_clean(record: &SdkLogRecord, gates: &ContentGates) -> bool {
     true
 }
 
-/// Wraps the OTLP [`LogExporter`]; drops any record that violates the pinned
-/// schema before delegating.
+/// Wraps the OTLP [`LogExporter`]; drops any record that violates the pinned schema before delegating.
 #[derive(Debug)]
 pub(crate) struct RedactingLogExporter<E> {
     inner: E,
@@ -140,8 +131,15 @@ impl<E: LogExporter> LogExporter for RedactingLogExporter<E> {
             }
             let result = self.inner.export(LogBatch::new(&clean)).await;
             match &result {
-                Ok(()) => self.health.export_successes.fetch_add(1, Ordering::Relaxed),
-                Err(_) => self.health.export_failures.fetch_add(1, Ordering::Relaxed),
+                Ok(()) => {
+                    self.health.export_successes.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(e) => {
+                    self.health.export_failures.fetch_add(1, Ordering::Relaxed);
+                    *self.health.last_export_error.lock() = Some(e.to_string());
+                    // A bounded/timed-out export fails one batch, not the stream.
+                    tracing::warn!(error = %e, "external otel: log export failed; stream stays enabled");
+                }
             };
             result
         }
@@ -156,8 +154,7 @@ impl<E: LogExporter> LogExporter for RedactingLogExporter<E> {
     }
 }
 
-/// `true` when every data point's attribute keys are within the pinned
-/// metric-attribute set.
+/// `true` when every data point's attribute keys are within the pinned metric-attribute set.
 fn metrics_are_clean(metrics: &ResourceMetrics) -> bool {
     fn keys_ok<'a>(attrs: impl Iterator<Item = &'a opentelemetry::KeyValue>) -> bool {
         for kv in attrs {
@@ -191,12 +188,9 @@ fn metrics_are_clean(metrics: &ResourceMetrics) -> bool {
     })
 }
 
-/// Wraps the OTLP `MetricExporter`. `opentelemetry_sdk` 0.30's
-/// `ResourceMetrics` read path is iterator-based and cannot be mutated, so on
-/// any attribute-key violation the wrapper **drops the entire export**
-/// (returns `Ok`, logs an internal warning, increments the export-health
-/// counter) rather than scrubbing in place. Coarse, but genuinely
-/// fail-closed.
+/// `opentelemetry_sdk` 0.30's `ResourceMetrics` read path is iterator-based and cannot be mutated. On any attribute-key
+/// violation the wrapper therefore drops the entire export rather than scrubbing in place. It returns `Ok`, logs an
+/// internal warning, and increments the export-health counter. This is coarse, but genuinely fail-closed.
 #[derive(Debug)]
 pub(crate) struct ValidatingMetricExporter<E> {
     inner: E,
@@ -227,8 +221,13 @@ impl<E: PushMetricExporter> PushMetricExporter for ValidatingMetricExporter<E> {
             }
             let result = self.inner.export(metrics).await;
             match &result {
-                Ok(()) => self.health.export_successes.fetch_add(1, Ordering::Relaxed),
-                Err(_) => self.health.export_failures.fetch_add(1, Ordering::Relaxed),
+                Ok(()) => {
+                    self.health.export_successes.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(e) => {
+                    self.health.export_failures.fetch_add(1, Ordering::Relaxed);
+                    *self.health.last_export_error.lock() = Some(e.to_string());
+                }
             };
             result
         }

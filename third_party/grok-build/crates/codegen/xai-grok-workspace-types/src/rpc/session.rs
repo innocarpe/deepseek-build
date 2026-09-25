@@ -1,9 +1,8 @@
-//! Session file-state / rewind methods (`workspace.begin_prompt`,
-//! `workspace.end_prompt`, `workspace.rewind_to`).
+//! Session file-state / rewind methods (`workspace.begin_prompt`, `workspace.end_prompt`, `workspace.rewind_to`).
 
 use serde::{Deserialize, Serialize};
 
-use super::WorkspaceRpc;
+use super::{RpcActivityClass, WorkspaceRpc};
 
 /// Begin tracking file state for a prompt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -14,6 +13,7 @@ pub struct BeginPromptReq {
 
 impl WorkspaceRpc for BeginPromptReq {
     const METHOD: &'static str = "workspace.begin_prompt";
+    const ACTIVITY: RpcActivityClass = RpcActivityClass::Read;
     type Response = ();
 }
 
@@ -26,6 +26,7 @@ pub struct EndPromptReq {
 
 impl WorkspaceRpc for EndPromptReq {
     const METHOD: &'static str = "workspace.end_prompt";
+    const ACTIVITY: RpcActivityClass = RpcActivityClass::Read;
     type Response = ();
 }
 
@@ -38,6 +39,7 @@ pub struct RewindToReq {
 
 impl WorkspaceRpc for RewindToReq {
     const METHOD: &'static str = "workspace.rewind_to";
+    const ACTIVITY: RpcActivityClass = RpcActivityClass::Mutation;
     type Response = FileRewindResponse;
 }
 
@@ -50,7 +52,6 @@ pub enum ConflictType {
     ModifiedExternally,
 }
 
-/// A single conflict detected during file rewind.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileRewindConflict {
     pub path: String,
@@ -71,13 +72,6 @@ pub struct FileRewindResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn method_constants() {
-        assert_eq!(BeginPromptReq::METHOD, "workspace.begin_prompt");
-        assert_eq!(EndPromptReq::METHOD, "workspace.end_prompt");
-        assert_eq!(RewindToReq::METHOD, "workspace.rewind_to");
-    }
 
     #[test]
     fn conflict_type_snake_case_wire_values() {

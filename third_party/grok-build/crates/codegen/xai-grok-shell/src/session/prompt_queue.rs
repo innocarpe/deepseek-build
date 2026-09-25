@@ -1,15 +1,14 @@
 //! Server-authoritative prompt queue wire types.
 //!
-//! Canonical definitions live in `xai_prompt_queue`; this re-export keeps every existing
-//! `crate::session::prompt_queue::*` and cross-crate `xai_grok_shell::session::prompt_queue::*`
-//! path resolving without edits.
+//! Canonical definitions live in `xai_prompt_queue`.
+//! This re-export keeps every existing `crate::session::prompt_queue::*` and `xai_grok_shell::session::prompt_queue::*` path resolving without edits.
 
 pub use xai_prompt_queue::{
     COMBINED_DISPLAY_TEXTS_META, CombineGate, QueueChanged, QueueEntryMeta, QueueEntryWire,
     TEXT_SEPARATOR, combine_prefix_len, is_combined, join_texts, stamp_combined_display_texts,
 };
 
-// Outbound method for broadcast_queue_changed. An ACP routing concern, not a queue concern.
+// Outbound method for broadcast_queue_changed. This is an ACP routing concern, not a queue concern.
 pub const QUEUE_CHANGED_METHOD: &str = "x.ai/queue/changed";
 
 #[cfg(test)]
@@ -37,10 +36,22 @@ mod tests {
             running_combined_texts: None,
         };
         let json = serde_json::to_value(&payload).unwrap();
-        assert_eq!(json["sessionId"], "sess-1");
-        assert_eq!(json["entries"][0]["id"], "p1");
-        assert_eq!(json["entries"][0]["position"], 0);
-        assert!(json["entries"][0].get("lastEditor").is_none());
+        assert_eq!(
+            json.get("sessionId").and_then(|v| v.as_str()),
+            Some("sess-1")
+        );
+        let entry0 = json.get("entries").and_then(|e| e.get(0));
+        assert_eq!(
+            entry0.and_then(|e| e.get("id")).and_then(|v| v.as_str()),
+            Some("p1")
+        );
+        assert_eq!(
+            entry0
+                .and_then(|e| e.get("position"))
+                .and_then(|v| v.as_u64()),
+            Some(0)
+        );
+        assert!(entry0.and_then(|e| e.get("lastEditor")).is_none());
         assert!(json.get("runningPromptId").is_none());
         let round: QueueChanged = serde_json::from_value(json).unwrap();
         assert_eq!(round, payload);
@@ -58,7 +69,10 @@ mod tests {
             running_combined_texts: None,
         };
         let json = serde_json::to_value(&payload).unwrap();
-        assert_eq!(json["runningPromptId"], "prompt-running");
+        assert_eq!(
+            json.get("runningPromptId").and_then(|v| v.as_str()),
+            Some("prompt-running")
+        );
         let round: QueueChanged = serde_json::from_value(json).unwrap();
         assert_eq!(round, payload);
     }
@@ -76,7 +90,10 @@ mod tests {
             combined_texts: None,
         };
         let json = serde_json::to_value(&entry).unwrap();
-        assert_eq!(json["lastEditor"], "grok-vscode");
+        assert_eq!(
+            json.get("lastEditor").and_then(|v| v.as_str()),
+            Some("grok-vscode")
+        );
         let round: QueueEntryWire = serde_json::from_value(json).unwrap();
         assert_eq!(round, entry);
     }

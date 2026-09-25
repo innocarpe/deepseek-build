@@ -1,9 +1,16 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use xai_grok_login::GrokAuth;
 use xai_grok_shell::agent::config::Config as AgentConfig;
 use xai_grok_shell::session::repo_changes::UploadMethod;
+use xai_grok_shell::upload::trace_turns::{
+    TraceTurnsReport, TraceTurnsRequest, upload_trace_turns,
+};
 use xai_grok_shell::util::grok_home::grok_home;
+
+/// The whole-session bundle; also the canary the per-turn upload expects its existence probe to see.
+const TRACE_BUNDLE_FILENAME: &str = "trace_export.tar.gz";
 
 #[derive(Debug, clap::Args, Clone)]
 pub struct TraceArgs {
@@ -30,17 +37,24 @@ struct TraceResult {
     local_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    turns: Option<TraceTurnsReport>,
+    /// `gs://{bucket}/{sid}/`, where the per-turn folders live.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    turn_prefix: Option<String>,
+    /// Why an upload run ended as a local export; absent for `--local`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fallback_reason: Option<&'static str>,
 }
 
 pub async fn run(args: TraceArgs, agent_config: &AgentConfig) -> Result<()> {
+    let session_dir = find_session_dir(&args.session_id)?;
+    if !args.json {
+        eprintln!("Found session at: {}", session_dir.display());
+    }
+
     if args.local {
-        return run_export(
-            &args.session_id,
-            args.output.as_deref(),
-            args.json,
-            agent_config,
-        )
-        .await;
+        return run_export(&args, &session_dir, agent_config, None).await;
     }
 
     if !agent_config.is_trace_upload_enabled() {
@@ -51,31 +65,21 @@ pub async fn run(args: TraceArgs, agent_config: &AgentConfig) -> Result<()> {
         if !args.json {
             eprintln!(
                 "Trace uploads disabled. Set [telemetry] trace_upload = true in {}",
-                crate::util::display_user_grok_path("config.toml")
+                crate::util::display_user_grok_path(xai_grok_config::USER_CONFIG_FILENAME)
             );
             eprintln!("Falling back to local export.");
         }
         return run_export(
-            &args.session_id,
-            args.output.as_deref(),
-            args.json,
+            &args,
+            &session_dir,
             agent_config,
+            Some("trace_upload_disabled"),
         )
         .await;
     }
 
-    run_upload(
-        &args.session_id,
-        args.output.as_deref(),
-        args.json,
-        agent_config,
-    )
-    .await
+    run_upload(&args, &session_dir, agent_config).await
 }
-
-// ---------------------------------------------------------------------------
-// Archive construction
-// ---------------------------------------------------------------------------
 
 pub fn build_session_tar(
     session_dir: &Path,
@@ -163,7 +167,7 @@ struct ExportMetadata {
     memtrace_files: usize,
 }
 
-/// No URLs, paths, or bucket names -- only booleans and config source indicators.
+/// No URLs, paths, or bucket names, only booleans and config source indicators.
 #[derive(serde::Serialize)]
 struct TraceConfigSnapshot {
     trace_upload_enabled: bool,
@@ -263,10 +267,6 @@ fn add_directory_to_tar<W: std::io::Write>(
     Ok(count)
 }
 
-// ---------------------------------------------------------------------------
-// Upload method diagnostics
-// ---------------------------------------------------------------------------
-
 /// Show first and last `n` chars with `***` in between. Char-safe (no byte-boundary panics).
 /// Returns the full string if it's short enough that redacting would be pointless.
 fn redact_middle(s: &str, n: usize) -> String {
@@ -274,8 +274,15 @@ fn redact_middle(s: &str, n: usize) -> String {
     if chars.len() <= n * 2 + 3 {
         return s.to_owned();
     }
-    let prefix: String = chars[..n].iter().collect();
-    let suffix: String = chars[chars.len() - n..].iter().collect();
+    let Some(prefix_chars) = chars.get(..n) else {
+        return s.to_owned();
+    };
+    let suffix_start = chars.len().checked_sub(n);
+    let Some(suffix_chars) = suffix_start.and_then(|i| chars.get(i..)) else {
+        return s.to_owned();
+    };
+    let prefix: String = prefix_chars.iter().collect();
+    let suffix: String = suffix_chars.iter().collect();
     format!("{prefix}***{suffix}")
 }
 
@@ -338,10 +345,6 @@ impl std::fmt::Display for UploadMethodDisplay<'_> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Local export
-// ---------------------------------------------------------------------------
-
 pub(crate) fn find_session_dir(session_id: &str) -> Result<PathBuf> {
     xai_grok_shell::session::persistence::find_session_dir_by_id(session_id).with_context(|| {
         format!(
@@ -385,27 +388,29 @@ pub fn save_local_bundle(
 }
 
 async fn run_export(
-    session_id: &str,
-    output: Option<&Path>,
-    json: bool,
+    args: &TraceArgs,
+    session_dir: &Path,
     agent_config: &AgentConfig,
+    fallback_reason: Option<&'static str>,
 ) -> Result<()> {
-    let session_dir = find_session_dir(session_id)?;
-    if !json {
-        eprintln!("Found session at: {}", session_dir.display());
+    let session_id = args.session_id.as_str();
+    if !args.json {
         eprintln!("Building session trace archive...");
     }
 
-    let archive = build_session_tar(&session_dir, session_id, agent_config)?;
-    let output_path = save_local_bundle(&archive, session_id, output)?;
+    let archive = build_session_tar(session_dir, session_id, agent_config)?;
+    let output_path = save_local_bundle(&archive, session_id, args.output.as_deref())?;
 
-    if json {
+    if args.json {
         let result = TraceResult {
             session_id: session_id.to_owned(),
             status: "exported",
             url: None,
             local_path: Some(output_path.display().to_string()),
             error: None,
+            turns: None,
+            turn_prefix: None,
+            fallback_reason,
         };
         println!("{}", serde_json::to_string(&result)?);
     } else {
@@ -417,46 +422,51 @@ async fn run_export(
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Upload with fallback
-// ---------------------------------------------------------------------------
-
 /// Prints upload URL to stdout on success; saves local bundle and returns Err on failure.
 async fn run_upload(
-    session_id: &str,
-    output: Option<&Path>,
-    json: bool,
+    args: &TraceArgs,
+    session_dir: &Path,
     agent_config: &AgentConfig,
 ) -> Result<()> {
-    let session_dir = find_session_dir(session_id)?;
-    if !json {
-        eprintln!("Found session at: {}", session_dir.display());
-    }
+    let session_id = args.session_id.as_str();
+    let output = args.output.as_deref();
+    let json = args.json;
 
-    let upload_method = resolve_upload_method(agent_config).await;
-    let upload_method = match upload_method {
-        Some(method) => method,
-        None => {
-            tracing::warn!(
-                session_id = %session_id,
-                "trace_cmd: no upload credentials available"
-            );
-            anyhow::bail!(
-                "No upload credentials. Run `grok login` or set a deployment key. \
-                 See {} for upload overrides.",
-                crate::util::display_user_grok_path("docs/user-guide")
-            );
+    let upload_method = match resolve_upload_gate(agent_config).await {
+        UploadGate::Ready(method) => method,
+        UploadGate::DataCollectionDisabled => {
+            if !json {
+                eprintln!(
+                    "Trace upload is off for this account (data retention opted out or not yet \
+                     confirmed); exporting locally."
+                );
+            }
+            return run_export(
+                args,
+                session_dir,
+                agent_config,
+                Some("data_collection_disabled"),
+            )
+            .await;
+        }
+        UploadGate::NoCredentials => {
+            if !json {
+                eprintln!(
+                    "No upload credentials for this account (run `grok login` or set a deployment \
+                     key); exporting locally."
+                );
+            }
+            return run_export(args, session_dir, agent_config, Some("no_credentials")).await;
         }
     };
 
     if !json {
         eprintln!("Building session trace archive...");
     }
-    let archive = build_session_tar(&session_dir, session_id, agent_config)?;
+    let archive = build_session_tar(session_dir, session_id, agent_config)?;
     let archive_size = archive.len();
 
-    // Proxy-mode uploads don't need a bucket (the proxy owns the
-    // destination); direct GCS uploads do.
+    // Proxy-mode uploads don't need a bucket (the proxy owns the destination); direct GCS uploads do
     let bucket_url = agent_config
         .endpoints
         .resolve_trace_bucket_url()
@@ -474,7 +484,7 @@ async fn run_upload(
         );
     }
     let bucket_display = bucket_url.as_deref().unwrap_or("proxy-managed");
-    let object_path = format!("{session_id}/trace_export.tar.gz");
+    let object_path = format!("{session_id}/{TRACE_BUNDLE_FILENAME}");
     let method_desc = UploadMethodDisplay {
         method: &upload_method,
         bucket_url: bucket_display,
@@ -507,6 +517,21 @@ async fn run_upload(
     match upload_with_retries(&upload_config, &object_path, &archive).await {
         Ok(url) => {
             tracing::info!(session_id = %session_id, url = %url, "trace_cmd: upload succeeded");
+            // The viewer only lists `turn_N/` folders, so the bundle alone renders nothing
+            let turns = upload_trace_turns(TraceTurnsRequest {
+                session_id,
+                session_dir,
+                upload_config: &upload_config,
+                canary_object_path: &object_path,
+                bundle_archive: archive.as_slice(),
+                client_version: xai_grok_version::VERSION.to_owned(),
+            })
+            .await;
+            // The prefix only means something once at least one per-turn object is known to be there
+            let turn_prefix = url
+                .strip_suffix(TRACE_BUNDLE_FILENAME)
+                .filter(|_| turns.artifacts_uploaded + turns.artifacts_skipped_existing > 0)
+                .map(str::to_owned);
             if json {
                 let result = TraceResult {
                     session_id: session_id.to_owned(),
@@ -514,12 +539,38 @@ async fn run_upload(
                     url: Some(url),
                     local_path: None,
                     error: None,
+                    turns: Some(turns),
+                    turn_prefix,
+                    fallback_reason: None,
                 };
                 println!("{}", serde_json::to_string(&result)?);
             } else {
                 eprintln!();
                 eprintln!("Session trace uploaded successfully.");
                 eprintln!("  {url}");
+                match turns.skipped_reason {
+                    Some(reason) => eprintln!("Per-turn trace skipped: {}", reason.user_message()),
+                    None => {
+                        let in_flight_note = if turns.turns_in_flight > 0 {
+                            " (newest turn still in progress; run again once it finishes)"
+                        } else {
+                            ""
+                        };
+                        eprintln!(
+                            "Per-turn trace: {} of {} turns reconstructed; {} artifacts uploaded, \
+                             {} already present, {} skipped (size), {} failed{in_flight_note}",
+                            turns.turns_reconstructed,
+                            turns.turns_total,
+                            turns.artifacts_uploaded,
+                            turns.artifacts_skipped_existing,
+                            turns.artifacts_skipped_oversize,
+                            turns.artifacts_failed
+                        );
+                        if let Some(prefix) = &turn_prefix {
+                            eprintln!("  {prefix}");
+                        }
+                    }
+                }
                 println!("{url}");
             }
             Ok(())
@@ -550,7 +601,7 @@ pub struct UploadAttempt<'a> {
 }
 
 impl UploadAttempt<'_> {
-    /// Saves local bundle + debug log, prints diagnostics.
+    /// Saves local bundle and debug log, prints diagnostics.
     pub fn handle_failure(&self, error: &anyhow::Error) -> anyhow::Error {
         let export_dir = trace_exports_dir();
         std::fs::create_dir_all(&export_dir).ok();
@@ -570,6 +621,9 @@ impl UploadAttempt<'_> {
                 url: None,
                 local_path: Some(export_path.display().to_string()),
                 error: Some(format!("{error}")),
+                turns: None,
+                turn_prefix: None,
+                fallback_reason: None,
             };
             println!("{}", serde_json::to_string(&result).unwrap_or_default());
         } else {
@@ -617,10 +671,6 @@ impl UploadAttempt<'_> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Upload with retries
-// ---------------------------------------------------------------------------
-
 const UPLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 async fn upload_with_retries(
@@ -651,14 +701,21 @@ async fn upload_with_retries(
     .await
 }
 
-// ---------------------------------------------------------------------------
-// Upload method resolution
-// ---------------------------------------------------------------------------
+pub(crate) enum UploadGate {
+    Ready(UploadMethod),
+    /// ZDR team or data-retention opt-out: session content never leaves the machine.
+    DataCollectionDisabled,
+    NoCredentials,
+}
 
-pub async fn resolve_upload_method(agent_config: &AgentConfig) -> Option<UploadMethod> {
+/// Same order as the live agent's gate: identity first, so an opted-out account never reaches
+/// method resolution even when a direct bucket is configured.
+pub(crate) async fn resolve_upload_gate(agent_config: &AgentConfig) -> UploadGate {
     // On login failure, fall back to ambient creds rather than erroring.
-    let auth_token = xai_grok_shell::auth::ensure_authenticated_or_noninteractive(
+    let auth = xai_grok_login::ensure_authenticated_or_noninteractive(
         &agent_config.grok_com_config,
+        agent_config.login_device_flow,
+        agent_config.endpoints.proxy_url(),
         agent_config.endpoints.has_noninteractive_upload_auth(),
         Some("Authentication required for trace upload."),
     )
@@ -667,12 +724,28 @@ pub async fn resolve_upload_method(agent_config: &AgentConfig) -> Option<UploadM
         |e| tracing::info!(error = %e, "trace_cmd: auth failed, trying ambient credentials"),
     )
     .ok()
-    .flatten()
-    .map(|auth| auth.key);
+    .flatten();
 
-    let method = agent_config.endpoints.resolve_upload_method(auth_token);
-    if method.is_none() {
-        tracing::warn!("trace_cmd: no upload method available");
+    if let Some(auth) = &auth
+        && auth.is_data_collection_disabled()
+    {
+        // The opt-out flag defaults to true until `/user` enrichment fills it (hence "not yet confirmed")
+        let reason = if auth.is_zdr_team() {
+            "zdr_team"
+        } else {
+            "data_retention_opt_out"
+        };
+        tracing::info!(reason, "trace_cmd: data collection disabled; no upload");
+        return UploadGate::DataCollectionDisabled;
     }
-    method
+
+    // Only a first-party credential authenticates the proxy; other keys fall through to deployment/SA keys
+    let auth_token = auth.filter(GrokAuth::is_xai_auth).map(|auth| auth.key);
+    match agent_config.endpoints.resolve_upload_method(auth_token) {
+        Some(method) => UploadGate::Ready(method),
+        None => {
+            tracing::warn!("trace_cmd: no upload method available");
+            UploadGate::NoCredentials
+        }
+    }
 }

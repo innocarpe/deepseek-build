@@ -1,9 +1,5 @@
-//! Git-based plugin installation.
-//!
-//! Handles cloning repos, copying local directories into the managed
-//! `installed-plugins` snapshot (not live symlinks), discovering plugins within
-//! installed sources, and URL/path parsing. Trusted / user-home local installs
-//! are re-copied at session spawn / reload by [`super::local_refresh`].
+//! Installs plugin sources: git clones and local-directory copies land in the managed `installed-plugins` snapshot (not live symlinks).
+//! Trusted / user-home local installs are re-copied at session spawn / reload by [`super::local_refresh`].
 
 use std::path::{Path, PathBuf};
 
@@ -12,24 +8,22 @@ use super::install_registry::{
 };
 use super::manifest::{ManifestLoadResult, load_manifest, name_from_dirname};
 
-/// Source of a plugin installation.
 #[derive(Debug, Clone)]
 pub enum InstallSource {
-    /// Remote git repo or Git-supported local repository path — will be cloned.
+    /// Remote git repo or Git-supported local repository path that will be cloned.
     Git {
         url: String,
         git_ref: Option<String>,
         git_sha: Option<String>,
         subdir: Option<String>,
     },
-    /// Local directory — will be copied into the managed install snapshot.
+    /// Local directory that will be copied into the managed install snapshot.
     Local {
         path: PathBuf,
         subdir: Option<String>,
     },
 }
 
-/// Result of installing a source.
 pub struct InstallResult {
     pub repo_key: String,
     pub repo_path: PathBuf,
@@ -38,7 +32,6 @@ pub struct InstallResult {
     kind: InstallKind,
 }
 
-/// A plugin discovered within an installed source.
 pub struct DiscoveredPlugin {
     pub name: String,
     pub subdir: Option<String>,
@@ -46,19 +39,8 @@ pub struct DiscoveredPlugin {
 }
 
 /// Parse an install source string into an `InstallSource`.
-///
-/// Supports:
-/// - `https://github.com/user/repo` — Git HTTPS
-/// - `https://github.com/user/repo@v1.0.0` — Git with ref
-/// - `https://github.com/user/repo#subdir` — Git with subdirectory
-/// - `git@github.com:user/repo.git` — Git SSH
-/// - `user/repo` — GitHub shorthand (expands to `https://github.com/user/repo`)
-/// - `user/repo@v1.0.0` — GitHub shorthand with ref
-/// - `user/repo#subdir` — GitHub shorthand with subdirectory
-/// - `/path/to/dir` or `./relative` or `~/dir` — Local
-/// - `/path/to/dir#subdir` — Local with subdirectory
+/// Git HTTPS/SSH, GitHub shorthand (`user/repo`), optional `@ref` and `#subdir`, or a local path.
 pub fn parse_install_source(input: &str, cwd: &Path) -> InstallSource {
-    // Split on # for subdir
     let (main, subdir) = match input.rsplit_once('#') {
         Some((m, s)) if !s.is_empty() => (m, Some(s.to_string())),
         _ => (input, None),
@@ -66,15 +48,26 @@ pub fn parse_install_source(input: &str, cwd: &Path) -> InstallSource {
 
     // Detect if this is a URL or local path
     if main.contains("://") || main.contains("git@") {
-        // Git URL — split on @ for ref (but not the git@ prefix)
+        // Git URL: split on @ for ref (but not the git@ prefix)
         let (url, git_ref) = if main.starts_with("git@") {
             // SSH URL: git@host:user/repo.git@ref
             // The @ in git@ is part of the URL, look for @ after the first :
             if let Some(colon_pos) = main.find(':') {
-                let after_colon = &main[colon_pos + 1..];
+                let Some(after_colon) = main.get(colon_pos + 1..) else {
+                    return InstallSource::Git {
+                        url: main.to_string(),
+                        git_ref: None,
+                        git_sha: None,
+                        subdir,
+                    };
+                };
                 if let Some(at_pos) = after_colon.rfind('@') {
-                    let url = format!("{}:{}", &main[..colon_pos], &after_colon[..at_pos]);
-                    let git_ref = after_colon[at_pos + 1..].to_string();
+                    let url = format!(
+                        "{}:{}",
+                        main.get(..colon_pos).unwrap_or(""),
+                        after_colon.get(..at_pos).unwrap_or("")
+                    );
+                    let git_ref = after_colon.get(at_pos + 1..).unwrap_or("").to_string();
                     (url, Some(git_ref))
                 } else {
                     (main.to_string(), None)
@@ -111,7 +104,7 @@ pub fn parse_install_source(input: &str, cwd: &Path) -> InstallSource {
     } else {
         // Local path
         let path = if let Some(stripped) = main.strip_prefix("~/") {
-            dirs::home_dir()
+            xai_dirs::home_dir()
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join(stripped)
         } else {
@@ -123,8 +116,8 @@ pub fn parse_install_source(input: &str, cwd: &Path) -> InstallSource {
     }
 }
 
-/// A full commit sha (40-hex SHA-1 or 64-hex SHA-256) — the only thing the
-/// pin policy accepts; branches, tags, and short prefixes are mutable or forgeable.
+/// A full commit sha (40-hex SHA-1 or 64-hex SHA-256), the only form the pin policy accepts.
+/// Branches, tags, and short prefixes are mutable or forgeable.
 pub fn is_full_commit_sha(s: &str) -> bool {
     (s.len() == 40 || s.len() == 64) && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
@@ -169,9 +162,8 @@ pub fn validate_git_sha(sha: &str) -> Result<&str, String> {
     }
 }
 
-/// The require-sha gate every remote plugin fetch goes through: policy on + no
-/// full-hex pin → typed refusal. Local-directory installs are exempt (the
-/// operator controls that disk; nothing is fetched).
+/// The require-sha gate every remote plugin fetch goes through: with the policy on and no full-hex pin, it returns a typed refusal.
+/// Local-directory installs are exempt (the operator controls that disk; nothing is fetched).
 pub fn ensure_pinned(
     require_sha: bool,
     sha: Option<&str>,
@@ -195,9 +187,8 @@ pub fn ensure_pinned(
     })
 }
 
-/// Prefer an explicit supplied SHA; if only `git_ref` is a full commit SHA,
-/// hoist it into the SHA slot so the verified clone path is used. Catalog pins
-/// published as `ref` still need this.
+/// Prefer an explicit supplied SHA; if only `git_ref` is a full commit SHA, hoist it into the SHA slot so the verified clone path is used.
+/// Catalog pins published as `ref` still need this.
 pub fn hoist_pin_slots<'a>(
     git_ref: Option<&'a str>,
     git_sha: Option<&'a str>,
@@ -211,10 +202,7 @@ pub fn hoist_pin_slots<'a>(
     }
 }
 
-/// Check if a string looks like a GitHub `owner/repo` shorthand.
-///
-/// Returns `true` for strings like `user/repo` or `user/repo@v1.0`
-/// that should be expanded to `https://github.com/user/repo`.
+/// Returns `true` for strings like `user/repo` or `user/repo@v1.0` that should be expanded to `https://github.com/user/repo`.
 /// Avoids false positives for local paths (`/abs`, `./rel`, `~/home`).
 fn is_github_shorthand(s: &str) -> bool {
     // Local path indicators.
@@ -228,7 +216,9 @@ fn is_github_shorthand(s: &str) -> bool {
     };
     // Must be exactly owner/repo (two non-empty segments separated by one /).
     let parts: Vec<&str> = base.splitn(3, '/').collect();
-    parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty()
+    parts.len() == 2
+        && parts.first().is_some_and(|p| !p.is_empty())
+        && parts.get(1).is_some_and(|p| !p.is_empty())
 }
 
 fn repo_source_id(source: &InstallSource) -> String {
@@ -256,8 +246,7 @@ pub fn install_from_source(
     install_from_source_with_label(source, registry, require_sha, None)
 }
 
-/// Like [`install_from_source`]; when `plugin_label` is set it appears in
-/// pin-refusal errors instead of the git URL (marketplace catalog names).
+/// Like [`install_from_source`]; when `plugin_label` is set it appears in pin-refusal errors instead of the git URL (marketplace catalog names).
 pub fn install_from_source_with_label(
     source: &InstallSource,
     registry: &InstallRegistry,
@@ -272,7 +261,6 @@ pub fn install_from_source_with_label(
     let source_id = repo_source_id(source);
     let repo_key = InstallRegistry::repo_key(&source_id);
 
-    // Check if already installed
     if registry.get_repo(&repo_key).is_some() {
         return Err(InstallError::AlreadyInstalled { key: repo_key });
     }
@@ -308,8 +296,7 @@ pub fn install_from_source_with_label(
                     detail: format!("local path is not a directory: {}", path.display()),
                 });
             }
-            // Deliberate full copy (not a symlink): isolates the install from
-            // later source edits/deletion and keeps uninstall a simple dir remove;
+            // Deliberate full copy (not a symlink): isolates the install from later source edits/deletion and keeps uninstall a simple dir remove
             // local_refresh re-copies trusted sources to pick up new components.
             copy_dir_recursive(path, &repo_path).map_err(|e| InstallError::Io {
                 path: repo_path.clone(),
@@ -330,7 +317,7 @@ pub fn install_from_source_with_label(
     let plugins = discover_plugins_in_dir(&repo_path, subdir.as_deref())?;
 
     if plugins.is_empty() {
-        // Clean up — no valid plugins found
+        // Clean up: no valid plugins found
         let _ = remove_repo_path(&repo_path);
         return Err(InstallError::InstallFailed {
             detail: "no plugins found in the source (no plugin.json or convention components)"
@@ -378,7 +365,7 @@ pub fn fetch_sha_args(sha: &str) -> [&str; 6] {
     ["fetch", "--depth", "1", "--", "origin", sha]
 }
 
-/// Validate/normalize URL + optional ref/SHA for pre-trust clone paths.
+/// Validate/normalize URL and optional ref/SHA for pre-trust clone paths.
 pub fn clone_operands<'a>(
     url: &'a str,
     git_ref: Option<&'a str>,
@@ -396,8 +383,7 @@ pub fn clone_operands<'a>(
     Ok((url, git_ref, git_sha))
 }
 
-/// Clone a git repo using the `git` CLI (supports shallow clone, SSH, etc.;
-/// optionally SHA-pinned via `git_sha`).
+/// Clone a git repo using the `git` CLI (supports shallow clone, SSH, etc.; optionally SHA-pinned via `git_sha`).
 fn clone_repo(
     url: &str,
     git_ref: Option<&str>,
@@ -504,7 +490,6 @@ fn run_git_in_capture(cwd: &Path, args: &[&str]) -> Result<std::process::Output,
     Ok(output)
 }
 
-/// Read the HEAD commit SHA from a git repo.
 fn read_head_commit(repo_path: &Path) -> Option<String> {
     run_git_in_capture(repo_path, &["rev-parse", "HEAD"])
         .ok()
@@ -527,10 +512,7 @@ pub fn remove_repo_path(path: &Path) -> Result<(), InstallError> {
     Ok(())
 }
 
-/// Clean up plugin data directories for all plugins in a repo.
-///
 /// Each plugin has a data dir at `~/.grok/plugin-data/<plugin_id>/`.
-/// This iterates all plugins in the repo and removes their data dirs.
 pub fn cleanup_plugin_data(repo: &InstalledRepo, scope: super::discovery::PluginScope) {
     let plugin_data_base = xai_grok_config::grok_home().join("plugin-data");
 
@@ -552,12 +534,8 @@ pub fn cleanup_plugin_data(repo: &InstalledRepo, scope: super::discovery::Plugin
     }
 }
 
-/// Discover plugins within a directory.
-///
-/// Discovery logic:
-/// 1. If `subdir` is specified, only look in that subdirectory
-/// 2. If root has plugin.json or convention components, it's a single plugin
-/// 3. Otherwise, scan immediate subdirectories for plugins
+/// Discovery: if `subdir` is set, only look there.
+/// If root has plugin.json or convention components, it is a single plugin; otherwise scan immediate subdirectories.
 pub(super) fn discover_plugins_in_dir(
     root: &Path,
     subdir: Option<&str>,
@@ -616,11 +594,8 @@ pub(super) fn discover_plugins_in_dir(
     Ok(plugins)
 }
 
-/// Try to load a plugin from a directory.
-///
 /// Returns `Some` if the directory contains a plugin.json or convention components.
 fn try_load_plugin(dir: &Path, subdir: Option<&str>) -> Option<DiscoveredPlugin> {
-    // Try loading manifest
     match load_manifest(dir) {
         Ok(ManifestLoadResult::Found(manifest)) => {
             return Some(DiscoveredPlugin {
@@ -682,7 +657,6 @@ pub fn repo_plugin_map(
         .collect()
 }
 
-/// Result of updating a repo.
 pub struct UpdateResult {
     pub repo_key: String,
     pub old_commit: Option<String>,
@@ -691,25 +665,19 @@ pub struct UpdateResult {
     pub plugins: Vec<DiscoveredPlugin>,
 }
 
-/// Status of an update attempt.
 pub enum UpdateStatus {
-    /// Repo was updated successfully.
     Updated(UpdateResult),
-    /// Repo is pinned to a tag or commit — no automatic update.
-    Pinned { ref_name: String },
-    /// Local install — explicit update is a no-op; session spawn / reload uses
-    /// [`super::local_refresh`] to re-copy trusted sources (install is a full
-    /// directory copy, not a live symlink).
+    /// Repo is pinned to a tag or commit: no automatic update.
+    Pinned {
+        ref_name: String,
+    },
+    /// Local install: explicit update is a no-op.
+    /// Session spawn / reload uses [`super::local_refresh`] to re-copy trusted sources (install is a full directory copy, not a live symlink).
     LiveLocal,
 }
 
-/// Update an installed repo by fetching latest changes.
-///
-/// Update semantics (from design decision #6):
-/// - Branch installs: `git fetch` + fast-forward to remote branch head
-/// - Tag installs: pinned — no-op
-/// - Commit installs: pinned — no-op
-/// - Local installs: no-op (explicit update); [`super::local_refresh`] re-copies on session spawn / reload
+/// Branch installs fetch and fast-forward; tag and commit installs are pinned no-ops.
+/// Local installs are a no-op here; [`super::local_refresh`] re-copies on session spawn / reload.
 pub fn update_repo(
     repo_key: &str,
     repo: &InstalledRepo,
@@ -725,8 +693,7 @@ pub fn update_repo(
         } => {
             // Check if pinned
             if let Some(r) = git_ref {
-                // Heuristic: if the ref looks like a commit hash
-                // or a version tag (starts with v and contains dots), it's pinned.
+                // Heuristic: if the ref looks like a commit hash or a version tag (starts with v and contains dots), it's pinned
                 let is_tag_or_commit =
                     is_full_commit_sha(r) || (r.starts_with('v') && r.contains('.'));
                 if is_tag_or_commit {
@@ -735,13 +702,11 @@ pub fn update_repo(
                     });
                 }
             }
-            // An update pulls whatever the mutable ref now points at — the same
-            // unpinned fetch the install gate refuses.
+            // An update pulls whatever the mutable ref now points at, the same unpinned fetch the install gate refuses
             ensure_pinned(require_sha, None, repo_key, url)?;
 
             let old_commit = Some(commit.clone());
 
-            // Git fetch + pull
             let repo_path = &repo.path;
             if !repo_path.is_dir() {
                 return Err(InstallError::InstallFailed {
@@ -782,11 +747,8 @@ pub fn update_repo(
     }
 }
 
-/// Recursively copy a directory tree.
-///
-/// Symlinks are **not** followed: directory symlinks are skipped (not recursed),
-/// file symlinks are skipped (not materialized as target contents). This keeps
-/// refresh/install snapshots from pulling secrets outside the source tree.
+/// Symlinks are **not** followed: directory symlinks are skipped (not recursed), file symlinks are skipped (the target's contents are not copied).
+/// This keeps refresh/install snapshots from pulling secrets outside the source tree.
 /// Shared by install and refresh, so the skip applies to install-time copies too.
 pub(super) fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
@@ -1014,7 +976,7 @@ mod tests {
 
     #[test]
     fn parse_github_shorthand_not_deep_path() {
-        // Three segments like "a/b/c" should be treated as a local path, not shorthand.
+        // Three segments like "a/b/c" are a local path, not shorthand
         let source = parse_install_source("a/b/c", Path::new("/tmp"));
         match source {
             InstallSource::Local { .. } => {}
@@ -1076,7 +1038,7 @@ mod tests {
         // Create two plugin subdirectories
         std::fs::create_dir_all(root.join("linter/skills")).unwrap();
         std::fs::create_dir_all(root.join("formatter/agents")).unwrap();
-        // Non-plugin dir (should be ignored)
+        // Non-plugin dir (ignored by discovery)
         std::fs::create_dir_all(root.join("docs")).unwrap();
 
         let plugins = discover_plugins_in_dir(root, None).unwrap();
@@ -1095,10 +1057,9 @@ mod tests {
         std::fs::create_dir_all(root.join("packages/plugin-a/skills")).unwrap();
         std::fs::create_dir_all(root.join("packages/plugin-b/skills")).unwrap();
 
-        // Only discover plugin-a
         let plugins = discover_plugins_in_dir(root, Some("packages/plugin-a")).unwrap();
         assert_eq!(plugins.len(), 1);
-        assert_eq!(plugins[0].name, "plugin-a");
+        assert_eq!(plugins.first().map(|p| p.name.as_str()), Some("plugin-a"));
     }
 
     #[test]
@@ -1127,8 +1088,11 @@ mod tests {
 
         let plugins = discover_plugins_in_dir(plugin_dir, None).unwrap();
         assert_eq!(plugins.len(), 1);
-        assert_eq!(plugins[0].name, "my-tool");
-        assert_eq!(plugins[0].version.as_deref(), Some("1.2.0"));
+        let Some(p) = plugins.first() else {
+            panic!("expected one plugin");
+        };
+        assert_eq!(p.name, "my-tool");
+        assert_eq!(p.version.as_deref(), Some("1.2.0"));
     }
 
     fn git_available() -> bool {
@@ -1309,8 +1273,11 @@ mod tests {
         match update_repo("acme-deadbeef", &repo, false).expect("update should succeed") {
             UpdateStatus::Updated(result) => {
                 assert_eq!(result.plugins.len(), 1);
-                assert_eq!(result.plugins[0].name, "acme");
-                assert_eq!(result.plugins[0].subdir.as_deref(), Some("plugins/acme"));
+                let Some(p) = result.plugins.first() else {
+                    panic!("expected one plugin, got {}", result.plugins.len());
+                };
+                assert_eq!(p.name, "acme");
+                assert_eq!(p.subdir.as_deref(), Some("plugins/acme"));
             }
             _ => panic!("expected UpdateStatus::Updated"),
         }
@@ -1552,8 +1519,8 @@ mod tests {
             return;
         }
 
-        // Real pinned install from a local origin. allowAnySHA1InWant matches
-        // make_local_repo so fetch-by-sha against file:// succeeds.
+        // Real pinned install from a local origin
+        // allowAnySHA1InWant matches make_local_repo so fetch-by-sha against file:// succeeds
         let (origin, sha) = make_local_repo();
         let pinned_via_ref = InstallSource::Git {
             url: format!("file://{}", origin.path().display()),

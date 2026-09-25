@@ -1,7 +1,4 @@
-//! Hunk Tracker extension API layer.
-//!
-//! Provides access to the xai-hunk-tracker functionality for tracking file changes
-//! with agent/external attribution.
+//! Extension API layer over xai-hunk-tracker: tracks file changes with agent/external attribution.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -95,19 +92,19 @@ pub(crate) struct GetSummaryRequest {
 pub struct GetHunksResponse {
     pub hunks: Vec<Arc<Hunk>>,
 
-    // === Explicit content status (new fields) ===
-    /// Baseline content with explicit status - only present when requesting a specific path
+    // === Explicit content status ===
+    /// Baseline content with explicit status; only present when requesting a specific path
     #[serde(skip_serializing_if = "Option::is_none")]
     pub baseline: Option<FileContentView>,
-    /// Current content with explicit status - only present when requesting a specific path
+    /// Current content with explicit status; only present when requesting a specific path
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current: Option<FileContentView>,
 
     // === Legacy fields for backward compatibility ===
-    /// Baseline content (git HEAD) - legacy, use `baseline.content` instead
+    /// Baseline content (git HEAD); legacy, use `baseline.content` instead
     #[serde(skip_serializing_if = "Option::is_none")]
     pub baseline_content: Option<String>,
-    /// Current content (on disk) - legacy, use `current.content` instead
+    /// Current content (on disk); legacy, use `current.content` instead
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_content: Option<String>,
 }
@@ -149,9 +146,8 @@ pub(crate) struct ActionResponse {
 // Helper Functions
 // ═══════════════════════════════════════════════════════════════════════
 
-/// Bridge the workspace RPC's lean wire response type back to the
-/// hunk-tracker's `FileContentEntry`: the RPC returns the wire type while the
-/// shell's ACP DTOs use the hunk-tracker types.
+/// Bridge the workspace RPC's lean wire response type back to the hunk-tracker's `FileContentEntry`.
+/// The RPC returns the wire type while the shell's ACP DTOs use the hunk-tracker types.
 fn file_content_entry_from_wire(w: FileContentEntryWire) -> FileContentEntry {
     FileContentEntry {
         path: w.path,
@@ -178,19 +174,16 @@ fn file_content_status_from_wire(w: FileContentStatusWire) -> FileContentStatus 
         FileContentStatusWire::LfsPointer => FileContentStatus::LfsPointer,
         FileContentStatusWire::Symlink => FileContentStatus::Symlink,
         FileContentStatusWire::Full => FileContentStatus::Full,
-        // A status from a newer peer this build does not know: degrade to
-        // Missing (content unavailable) rather than failing.
+        // A status from a newer peer this build does not know: degrade to Missing (content unavailable) rather than failing
         FileContentStatusWire::Unknown => FileContentStatus::Missing,
     }
 }
 
-/// Session context for hunk tracker operations: the tracker handle plus
-/// optional path rewriting info for forked sessions.
+/// Session context for hunk tracker operations: the tracker handle plus optional path rewriting info for forked sessions.
 struct HunkTrackerContext {
     handle: HunkTrackerHandle,
-    /// When set, rewrite absolute worktree paths (starting with `real_cwd`)
-    /// to `display_cwd` in API responses so the client UI shows the original
-    /// project path, not the worktree path.
+    /// When set, rewrite absolute worktree paths (starting with `real_cwd`) to `display_cwd` in API responses.
+    /// The client UI then shows the original project path, not the worktree path.
     real_cwd: String,
     display_cwd: Option<String>,
 }
@@ -219,7 +212,6 @@ impl HunkTrackerContext {
                 if new_path == h.path {
                     return h;
                 }
-                // Clone the hunk with the rewritten path
                 Arc::new(Hunk {
                     path: new_path,
                     id: h.id.clone(),
@@ -287,7 +279,6 @@ fn compute_file_summaries(
             .map(|t| t.lines().count())
             .unwrap_or(0);
 
-        // Mark as agent file if any hunk is from agent
         if hunk.source.is_agent_edit() {
             entry.is_agent_file = true;
         }
@@ -315,7 +306,7 @@ pub async fn handle(
             let req = parse_params::<GetHunksRequest>(args)?;
             let ctx = get_hunk_tracker(agent, req.session_id.as_ref())?;
 
-            // If path is specified, use get_file_hunk_data to get hunks + content together
+            // If path is specified, use get_file_hunk_data to get hunks and content together
             let (hunks, baseline, current, baseline_content, current_content) =
                 if let Some(path) = req.path {
                     let data = ctx.handle.get_file_hunk_data(PathBuf::from(path)).await;
@@ -363,7 +354,7 @@ pub async fn handle(
             let staged_paths = ctx.handle.get_staged_files().await;
             // Rewrite paths before computing summaries so file paths are stable
             let hunks = ctx.rewrite_hunks(hunks);
-            // Rewrite staged paths for display (worktree → display path)
+            // Rewrite staged paths for display (worktree path to display path)
             let staged_paths: HashSet<PathBuf> =
                 staged_paths.iter().map(|p| ctx.display_path(p)).collect();
             let files = compute_file_summaries(&hunks, &staged_paths);
@@ -375,8 +366,7 @@ pub async fn handle(
             let req = parse_params::<GetFilesRequest>(args)?;
 
             let sid = req.session_id.as_ref().map(|s| s.0.as_ref());
-            // The RPC returns the lean wire type; bridge it back to the
-            // hunk-tracker type so the ACP response shape is unchanged.
+            // The RPC returns the lean wire type; bridge it back to the hunk-tracker type so the ACP response shape is unchanged
             let mut files: Vec<FileContentEntry> = ops
                 .dispatch(&HunkGetAllFileContentsReq {}, sid)
                 .await
@@ -612,18 +602,21 @@ mod tests {
         let files = compute_file_summaries(&hunks, &no_staged);
 
         assert_eq!(files.len(), 2);
-        assert_eq!(files[0].path, PathBuf::from("/repo/a.txt"));
-        assert_eq!(files[1].path, PathBuf::from("/repo/b.txt"));
+        let [a, b] = files.as_slice() else {
+            panic!("expected two file summaries: {files:?}");
+        };
+        assert_eq!(a.path, PathBuf::from("/repo/a.txt"));
+        assert_eq!(b.path, PathBuf::from("/repo/b.txt"));
 
-        assert_eq!(files[0].hunk_count, 2);
-        assert_eq!(files[0].additions, 4);
-        assert_eq!(files[0].deletions, 2);
-        assert!(files[0].is_agent_file);
+        assert_eq!(a.hunk_count, 2);
+        assert_eq!(a.additions, 4);
+        assert_eq!(a.deletions, 2);
+        assert!(a.is_agent_file);
 
-        assert_eq!(files[1].hunk_count, 1);
-        assert_eq!(files[1].additions, 0);
-        assert_eq!(files[1].deletions, 1);
-        assert!(!files[1].is_agent_file);
+        assert_eq!(b.hunk_count, 1);
+        assert_eq!(b.additions, 0);
+        assert_eq!(b.deletions, 1);
+        assert!(!b.is_agent_file);
     }
 
     #[test]
@@ -657,7 +650,10 @@ mod tests {
         let files = compute_file_summaries(&hunks, &no_staged);
 
         assert_eq!(files.len(), 1);
-        assert!(!files[0].is_agent_file);
+        let Some(file) = files.first() else {
+            panic!("expected one file summary: {files:?}");
+        };
+        assert!(!file.is_agent_file);
     }
 
     #[test]
@@ -674,8 +670,11 @@ mod tests {
         let files = compute_file_summaries(&hunks, &no_staged);
 
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].additions, 0);
-        assert_eq!(files[0].deletions, 3);
+        let Some(file) = files.first() else {
+            panic!("expected one file summary: {files:?}");
+        };
+        assert_eq!(file.additions, 0);
+        assert_eq!(file.deletions, 3);
     }
 
     #[test]
@@ -701,17 +700,16 @@ mod tests {
         let files = compute_file_summaries(&hunks, &staged);
 
         assert_eq!(files.len(), 2);
+        let [a, b] = files.as_slice() else {
+            panic!("expected two file summaries: {files:?}");
+        };
         // a.txt is staged
-        assert!(files[0].staged);
+        assert!(a.staged);
         // b.txt is not staged
-        assert!(!files[1].staged);
+        assert!(!b.staged);
     }
 
-    // =========================================================================
-    // GetHunksResponse Serialization Tests
-    // =========================================================================
-    // These tests verify that the ACP get-hunks response correctly serializes
-    // the new explicit status fields (baseline, current) alongside legacy fields.
+    // ========================================================================= GetHunksResponse Serialization Tests ========================================================================= These tests verify the ACP get-hunks response serializes the explicit status fields (baseline, current) alongside the legacy fields
 
     /// GetHunksResponse serializes Full status with all fields
     #[test]
@@ -905,7 +903,9 @@ mod tests {
         let files = json.get("files").unwrap().as_array().unwrap();
         assert_eq!(files.len(), 1);
 
-        let f = &files[0];
+        let Some(f) = files.first() else {
+            panic!("expected one serialized file: {files:?}");
+        };
         assert_eq!(f.get("path").unwrap().as_str().unwrap(), "/repo/foo.txt");
         assert!(f.get("isAgentFile").unwrap().as_bool().unwrap());
         assert!(!f.get("staged").unwrap().as_bool().unwrap());
@@ -943,7 +943,13 @@ mod tests {
         };
 
         let json = serde_json::to_value(&response).unwrap();
-        let f = &json.get("files").unwrap().as_array().unwrap()[0];
+        let Some(f) = json
+            .get("files")
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first())
+        else {
+            panic!("expected one serialized file: {json:?}");
+        };
 
         assert!(f.get("staged").unwrap().as_bool().unwrap());
 
@@ -969,7 +975,13 @@ mod tests {
         };
 
         let json = serde_json::to_value(&response).unwrap();
-        let f = &json.get("files").unwrap().as_array().unwrap()[0];
+        let Some(f) = json
+            .get("files")
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first())
+        else {
+            panic!("expected one serialized file: {json:?}");
+        };
 
         let baseline = f.get("baseline").unwrap();
         assert_eq!(baseline.get("status").unwrap().as_str().unwrap(), "binary");
@@ -1019,12 +1031,15 @@ mod tests {
         let files = json.get("files").unwrap().as_array().unwrap();
         assert_eq!(files.len(), 2);
 
+        let [first, second] = files.as_slice() else {
+            panic!("expected two serialized files: {files:?}");
+        };
         // First file: agent, staged
-        assert!(files[0].get("isAgentFile").unwrap().as_bool().unwrap());
-        assert!(files[0].get("staged").unwrap().as_bool().unwrap());
+        assert!(first.get("isAgentFile").unwrap().as_bool().unwrap());
+        assert!(first.get("staged").unwrap().as_bool().unwrap());
 
         // Second file: not agent, not staged
-        assert!(!files[1].get("isAgentFile").unwrap().as_bool().unwrap());
-        assert!(!files[1].get("staged").unwrap().as_bool().unwrap());
+        assert!(!second.get("isAgentFile").unwrap().as_bool().unwrap());
+        assert!(!second.get("staged").unwrap().as_bool().unwrap());
     }
 }

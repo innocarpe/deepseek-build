@@ -1,4 +1,4 @@
-//! Input flight recorder — rolling buffer of recent key events.
+//! Input flight recorder: a rolling buffer of recent key events.
 //!
 //! Ctrl+Shift+D dumps to `~/.grok/logs/input-debug-<timestamp>.json`.
 //! Can be better utilized once input bugs are fully resolved.
@@ -9,10 +9,8 @@ use std::time::Instant;
 /// Default ring buffer capacity (~10 seconds of fast typing).
 const DEFAULT_CAPACITY: usize = 200;
 /// Snapshot of textarea state captured by `PromptWidget::handle_key`.
-///
-/// Stored on `PromptWidget` after each key; read by `AgentView` when
-/// building `RawInputEntry`. `None` fields mean the key was handled before
-/// reaching the textarea (e.g., file search, slash command).
+/// Stored on `PromptWidget` after each key; read by `AgentView` when building `RawInputEntry`.
+/// `None` fields mean the key was handled before reaching the textarea (e.g., file search, slash command).
 #[derive(Clone, Debug, Default)]
 pub struct LastInputDelta {
     pub cursor_before: Option<usize>,
@@ -31,7 +29,6 @@ pub enum ActivePaneSnapshot {
     Todo,
     Queue,
     Tasks,
-    Catalog,
     Other,
 }
 /// Copy-friendly snapshot of the input outcome. No heap allocation.
@@ -41,8 +38,8 @@ pub enum OutcomeSnapshot {
     Unchanged,
     Action,
 }
-/// Raw entry stored in the ring buffer. No heap allocations —
-/// formatting happens only during [`InputRingBuffer::snapshot_entries`].
+/// Raw entry stored in the ring buffer.
+/// No heap allocations; formatting happens only during [`InputRingBuffer::snapshot_entries`].
 #[derive(Clone, Debug)]
 pub struct RawInputEntry {
     pub wall_ts: u64,
@@ -67,8 +64,7 @@ pub struct InputRecord {
     /// Wall-clock unix millis for log correlation.
     pub wall_ts: u64,
     /// Sanitized key category (see [`sanitize_key_code`]).
-    /// Printable chars are logged as `"Char"` without the character value
-    /// to prevent reconstructing typed text from the dump.
+    /// Printable chars are logged as `"Char"` without the character value to prevent reconstructing typed text from the dump.
     pub key: String,
     /// Modifier flags, e.g. `"NONE"`, `"CONTROL"`.
     pub mods: String,
@@ -138,11 +134,9 @@ impl InputRingBuffer {
             })
             .collect()
     }
-    /// Number of raw entries in the buffer.
     pub fn entry_count(&self) -> usize {
         self.entries.len()
     }
-    /// Time span covered by the buffer in milliseconds.
     pub fn time_span_ms(&self) -> u64 {
         match (self.entries.front(), self.entries.back()) {
             (Some((first, _)), Some((last, _))) => last.duration_since(*first).as_millis() as u64,
@@ -191,7 +185,6 @@ mod tests {
     use super::*;
     use std::thread;
     use std::time::Duration;
-    /// Helper: build a minimal `RawInputEntry` with the given key code.
     fn stub_entry(key_code: KeyCode) -> RawInputEntry {
         RawInputEntry {
             wall_ts: 0,
@@ -249,13 +242,19 @@ mod tests {
         }
         let entries = buf.snapshot_entries();
         assert_eq!(entries.len(), 5);
-        assert_eq!(entries[0].ts_ms, 0);
+        let Some(first) = entries.first() else {
+            panic!("expected ring entries: {entries:?}");
+        };
+        assert_eq!(first.ts_ms, 0);
         for w in entries.windows(2) {
-            assert!(w[1].ts_ms >= w[0].ts_ms);
+            let [a, b] = w else {
+                continue;
+            };
+            assert!(b.ts_ms >= a.ts_ms);
         }
-        assert_eq!(entries[0].key, "Char");
-        assert_eq!(entries[0].mods, format!("{:?}", KeyModifiers::NONE));
-        assert_eq!(entries[0].pane, "Prompt");
+        assert_eq!(first.key, "Char");
+        assert_eq!(first.mods, format!("{:?}", KeyModifiers::NONE));
+        assert_eq!(first.pane, "Prompt");
     }
     #[test]
     fn ring_buffer_capacity() {
@@ -266,7 +265,7 @@ mod tests {
         assert_eq!(buf.entry_count(), DEFAULT_CAPACITY);
         let entries = buf.snapshot_entries();
         assert_eq!(entries.len(), DEFAULT_CAPACITY);
-        assert_eq!(entries[0].key, "Backspace");
+        assert_eq!(entries.first().map(|e| e.key.as_str()), Some("Backspace"));
     }
     #[test]
     fn ring_buffer_empty() {

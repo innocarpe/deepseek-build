@@ -1,9 +1,9 @@
-//! Welcome screen — the first thing users see.
+//! Welcome screen: the first thing users see.
 //!
 //! Layout (top to bottom):
 //! - Top margin row (always preserved)
-//! - Top bar: repo_root:branch (left), version (right)
-//! - Vertically centered content: logo → gap → menu → gap → prompt
+//! - Top bar: `{branch} worktree {cwd}` from [`location_parts`](crate::views::location::location_parts)
+//! - Vertically centered content: logo, gap, menu, gap, prompt
 //! - Bottom margin
 
 use ratatui::buffer::Buffer;
@@ -15,9 +15,14 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::app_view::{AuthMode, AuthState, SessionPickerEntry, TrustState};
+use crate::app::consent::ConsentState;
 use crate::startup::StartupWarning;
 use crate::theme::Theme;
 use crate::views::prompt_widget::{PromptFlag, PromptInfo, PromptWidget};
+use crate::views::session_picker_surface::{
+    SessionPickerRenderCtx, SessionPickerRenderMode, render_session_picker,
+};
+mod consent;
 mod hero_box;
 pub(crate) mod logo;
 mod menu;
@@ -27,11 +32,13 @@ mod top_bar;
 #[cfg(feature = "local-workspace")]
 pub(crate) mod workspace_mode;
 
+/// Compact welcome/session/waiting/dock share this one-col left gutter.
+pub(crate) const PROMPT_GUTTER: u16 = 1;
+
 pub(crate) use logo::shimmer_frame;
-use logo::{logo_line_count, render_logo};
+use logo::{LogoTier, logo_line_count, render_logo, render_logo_tier};
 use menu::render_menu;
 pub(crate) use toast::paint_welcome_toast;
-pub(crate) use top_bar::location_line_at;
 use top_bar::render_top_bar;
 #[cfg(feature = "local-workspace")]
 pub use workspace_mode::{
@@ -39,8 +46,7 @@ pub use workspace_mode::{
     render_workspace_mode_picker,
 };
 
-/// True for VS Code and xterm.js embeds (VS Code-family IDEs and Zed) where
-/// quit is `Ctrl+D` (canonical: [`TerminalName::is_vscode_family`]).
+/// True for VS Code and xterm.js embeds (VS Code-family IDEs and Zed) where quit is `Ctrl+D` (canonical: [`TerminalName::is_vscode_family`]).
 fn welcome_in_vscode_family() -> bool {
     crate::terminal::terminal_context().brand.is_vscode_family()
 }
@@ -63,14 +69,41 @@ fn quit_hint_spans(theme: &Theme) -> Vec<Span<'static>> {
     ]
 }
 
-/// Style for a clickable welcome block: bright primary while `hovered`, else
-/// `base`. Shared by the announcement and changelog renderers.
+/// Style for a clickable welcome block: bright primary while `hovered`, else `base`.
+/// Shared by the announcement and changelog renderers.
 pub(super) fn hover_style(theme: &Theme, hovered: bool, base: Style) -> Style {
     if hovered {
-        Style::default().fg(theme.text_primary)
+        // Brighten to the primary fg; on the terminal palette the base fgs
+        // and text_primary are all Reset, so bold carries the cue instead.
+        if theme.is_bandless() {
+            Style::default()
+                .fg(theme.text_primary)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.text_primary)
+        }
     } else {
         base
     }
+}
+
+/// Takes the version badge's row on screens with no shortcuts bar.
+pub(super) fn render_pending_hint(
+    area: Rect,
+    buf: &mut Buffer,
+    theme: &Theme,
+    pending: &crate::views::shortcuts_bar::PendingHint,
+) {
+    let key_style = Style::default()
+        .fg(theme.text_primary)
+        .add_modifier(Modifier::BOLD);
+    let action_style = Style::default().fg(theme.gray);
+    let line = Line::from(vec![
+        Span::styled(format!("  {}", pending.shortcut.display()), key_style),
+        Span::styled(":", action_style),
+        Span::styled(format!("press again to {}", pending.label), action_style),
+    ]);
+    buf.set_line(area.x, area.y, &line, area.width);
 }
 
 /// Horizontal margin (left and right) in normal mode.
@@ -78,9 +111,9 @@ const H_MARGIN: u16 = 2;
 /// Horizontal margin in compact mode.
 const H_MARGIN_COMPACT: u16 = 1;
 
-/// Minimum width for menu + changelog sections so they don't resize when the import row toggles.
+/// Minimum width for the menu and changelog sections so they don't resize when the import row toggles.
 /// Derivation: "[ " (2) + import-claude label (22) + gap (4) + "ctrl+i  [x]" (11) + " ]" (2) = 41.
-/// Bumped to 51 for comfortable breathing room.
+/// The extra 10 columns leave breathing room.
 const MENU_MIN_WIDTH: u16 = 51;
 
 /// Whether the welcome prompt is currently focused (accepting text input).
@@ -114,9 +147,12 @@ pub struct WelcomeRenderResult {
     pub refresh_rect: Option<Rect>,
     /// Hit-test rect for the gate URL link (click to open in browser).
     pub gate_url_rect: Option<Rect>,
-    /// Whether a "Changelog" menu action was rendered (above Quit), so the
-    /// input handler can map the extra menu row to the release-notes action
-    /// once markdown is available.
+    /// Hit-test rects for the inline links, tagged with their index, one per row a link wraps to.
+    pub consent_link_rects: Vec<(usize, Rect)>,
+    /// `None` when this frame did not paint the notice.
+    pub consent_legibility: Option<crate::app::consent::ConsentLegibility>,
+    /// Whether a "Changelog" menu action was rendered (above Quit).
+    /// The input handler uses it to map the extra menu row to the release-notes action once markdown is available.
     pub changelog_action_present: bool,
     /// Hit-test rect for the clickable changelog info block (opens release notes).
     pub changelog_cta_rect: Option<Rect>,
@@ -124,7 +160,7 @@ pub struct WelcomeRenderResult {
     pub announcement_truncated: bool,
     /// Hit-test rect for the full announcement block (click anywhere to toggle).
     pub announcement_rect: Option<Rect>,
-    /// Hit-test rect for the promo upgrade CTA `[label]` button (click → open).
+    /// Hit-test rect for the promo upgrade CTA `[label]` button (click to open).
     pub upgrade_cta_rect: Option<Rect>,
     pub privacy_banner_opt_in_rect: Option<Rect>,
     pub privacy_banner_opt_out_rect: Option<Rect>,
@@ -137,8 +173,94 @@ pub struct WelcomeRenderResult {
 
 use hero_box::HERO_BOX_MIN_WIDTH;
 
-/// Prompt input height (shared across hero and stacked layout paths).
+/// Prompt input height for a one-line draft (shared across hero and stacked layout paths).
 const PROMPT_HEIGHT: u16 = 3;
+
+/// Half the content area, as in the session view, but never more than the logo-less stacked column leaves beside the menu, tip, version and announcement rows.
+/// The draft can therefore push the logo out, never the announcement.
+fn prompt_max_height(input: &WelcomeLayoutInput<'_>) -> u16 {
+    let content_height = input.content_area.height;
+    let column = StackedColumn::new(input, 0);
+    let info = stacked_announcement_rows(input);
+    let info_gap = if info > 0 { 1u16 } else { 0 };
+    let column_fit = content_height.saturating_sub(
+        column.fixed_above(LogoTier::Hidden)
+            + input.menu_height
+            + info_gap
+            + info
+            + 1
+            + column.fixed_below,
+    );
+    (content_height / 2).min(column_fit).max(PROMPT_HEIGHT)
+}
+
+/// Rows the stacked info slot gives the announcement: its desired rows at the stacked slot width, clamped to what fits
+/// beside a one-line prompt with the logo hidden. Independent of the draft, so a growing draft never reflows it.
+/// Zero without an announcement or in compact mode (the picker owns the column).
+fn stacked_announcement_rows(input: &WelcomeLayoutInput<'_>) -> u16 {
+    let Some(ann) = input.announcement else {
+        return 0;
+    };
+    if input.compact {
+        return 0;
+    }
+    let content_area = input.content_area;
+    let avail = content_area
+        .width
+        .saturating_sub(prompt::prompt_inset(input.prompt_compact) * 2);
+    let width = stacked_info_width(avail, content_area.height, MENU_MIN_WIDTH);
+    let column = StackedColumn::new(input, PROMPT_HEIGHT);
+    // +1 info-slot gap, +1 min flex gap above the tip
+    let budget = content_area.height.saturating_sub(
+        column.fixed_above(LogoTier::Hidden) + input.menu_height + 1 + column.fixed_below + 1,
+    );
+    hero_box::announcement_desired_rows(ann, width, input.expanded, input.has_upgrade_cta)
+        .min(budget)
+}
+
+/// The stacked column's rows around the logo, for one prompt height.
+struct StackedColumn {
+    content_height: u16,
+    gap_after_logo: u16,
+    error_height: u16,
+    menu_height: u16,
+    fixed_below: u16,
+}
+
+impl StackedColumn {
+    fn new(input: &WelcomeLayoutInput<'_>, prompt_height: u16) -> Self {
+        Self {
+            content_height: input.content_area.height,
+            gap_after_logo: if input.error_height > 0 { 1 } else { 0 },
+            error_height: input.error_height,
+            menu_height: input.menu_height,
+            fixed_below: WelcomeLayout::fixed_below(input.tip_height, prompt_height),
+        }
+    }
+
+    /// Logo rows, the gap after them, and the error block.
+    fn fixed_above(&self, tier: LogoTier) -> u16 {
+        tier.rows() + 1 + self.gap_after_logo + self.error_height
+    }
+
+    /// Whether the column fits with this tier beside `reserved` info rows (slot + gap) and a one-row flex gap.
+    fn fits(&self, tier: LogoTier, reserved: u16) -> bool {
+        self.fixed_above(tier) + self.menu_height + reserved + 1 + self.fixed_below
+            <= self.content_height
+    }
+
+    /// The tier the terminal height allows, stepped down only while the column would overflow beside the draft and the reserved rows.
+    fn logo_tier(&self, reserved: u16) -> LogoTier {
+        let mut tier = LogoTier::for_height(self.content_height);
+        while !self.fits(tier, reserved) {
+            match tier.step_down() {
+                Some(smaller) => tier = smaller,
+                None => break,
+            }
+        }
+        tier
+    }
+}
 /// Gap between prompt and version line.
 const VERSION_GAP: u16 = 1;
 
@@ -147,9 +269,8 @@ pub(super) struct WelcomeLayout {
     pub(super) logo: Rect,
     pub(super) error: Rect,
     pub(super) menu: Rect,
-    /// Stacked info slot below the menu (narrow layout only) — shows either the
-    /// announcement or the changelog (one at a time; the announcement takes
-    /// priority). Zero in the hero box layout, which uses `hero_info` instead.
+    /// Stacked info slot below the menu (narrow layout only): it shows either the announcement or the changelog (the announcement takes priority).
+    /// Zero in the hero box layout, which uses `hero_info` instead.
     pub(super) changelog: Rect,
     pub(super) tip: Rect,
     pub(super) prompt: Rect,
@@ -159,16 +280,16 @@ pub(super) struct WelcomeLayout {
     pub(super) hero_logo: Rect,
     pub(super) hero_version: Rect,
     pub(super) hero_subtitle: Rect,
-    /// In-box info slot — shows either the announcement or the changelog
-    /// (only one at a time; the announcement takes priority).
+    /// In-box info slot: it shows either the announcement or the changelog (the announcement takes priority).
     pub(super) hero_info: Rect,
     pub(super) hero_menu: Rect,
+    /// The art the stacked `logo` rows were reserved for; paint it with [`render_logo_tier`].
+    pub(super) logo_tier: LogoTier,
 }
 
 /// Inputs to [`WelcomeLayout::compute`] / [`WelcomeLayout::compute_stacked`].
 ///
-/// Bundled (and `Default`-able) so call sites name each field — in particular
-/// the two distinct compaction flags can't be silently transposed.
+/// Bundled (and `Default`-able) so call sites name each field; in particular the two distinct compaction flags can't be silently transposed.
 #[derive(Default)]
 struct WelcomeLayoutInput<'a> {
     content_area: Rect,
@@ -178,26 +299,29 @@ struct WelcomeLayoutInput<'a> {
     tip_height: u16,
     /// Desired changelog height (collapsed to 0 if the terminal is too short).
     changelog_height: u16,
-    /// Vertical compaction (session picker visible): skip the logo + info slot.
+    /// Vertical compaction (session picker visible): skip the logo and the info slot.
     compact: bool,
     /// Horizontal-inset compaction (appearance setting) for the stacked slot.
     prompt_compact: bool,
     announcement: Option<&'a xai_grok_announcements::RemoteAnnouncement>,
     /// Whether a long announcement is expanded inline (vs. collapsed to 2 lines).
     expanded: bool,
-    /// Whether the info slot reserves a promo upgrade CTA (spacer + button).
+    /// Whether the info slot reserves a promo upgrade CTA (spacer and button).
     has_upgrade_cta: bool,
+    /// Rows reserved for the prompt box.
+    /// `None` keeps the default; the blocking screens that paint no prompt pass 0 to give the rows back to their message.
+    prompt_height: Option<u16>,
 }
 
 impl WelcomeLayout {
-    /// Whether the hero box (side-by-side logo + menu inside a border) is active.
+    /// Whether the hero box (side-by-side logo and menu inside a border) is active.
     pub(super) fn has_hero_box(&self) -> bool {
         self.hero_box.width > 0 && self.hero_box.height > 0
     }
 
-    pub(super) fn fixed_below(tip_height: u16) -> u16 {
+    pub(super) fn fixed_below(tip_height: u16, prompt_height: u16) -> u16 {
         let tip_gap = if tip_height > 0 { 1u16 } else { 0 };
-        tip_height + tip_gap + PROMPT_HEIGHT + VERSION_GAP + 1
+        tip_height + tip_gap + prompt_height + VERSION_GAP + 1
     }
 
     pub(super) fn effective_changelog(
@@ -221,23 +345,24 @@ impl WelcomeLayout {
         Self::compute_inner(input, true)
     }
 
-    /// Compute the welcome screen layout, forced to the stacked variant.
-    ///
-    /// The blocked screens (login, ZDR gate) render through
-    /// `render_welcome_blocked`, which only paints the stacked `logo`/`menu`
-    /// rects (and never an announcement). The hero-box layout zeroes those, so
-    /// the blocked path must stay stacked regardless of terminal size.
+    /// That renderer only paints the stacked `logo`/`menu` rects (and never an announcement). The
+    /// hero-box layout zeroes those, so the blocked path must stay stacked regardless of terminal size.
     fn compute_stacked(input: WelcomeLayoutInput<'_>) -> Self {
         Self::compute_inner(input, false)
     }
 
-    /// Compute the welcome screen layout.
-    ///
-    /// Picks hero vs stacked, then measures the info slot (announcement, else
-    /// changelog) at that layout's slot width before placing rects — width is
-    /// content-size-only, so it's a clean two-phase computation. `allow_hero_box`
-    /// gates the wide variant; stacked-only callers pass `false`.
+    /// Width depends only on content size, so the two phases cannot disagree. `allow_hero_box` gates
+    /// the wide variant; stacked-only callers pass `false`.
     fn compute_inner(input: WelcomeLayoutInput<'_>, allow_hero_box: bool) -> Self {
+        if allow_hero_box
+            && !input.compact
+            && input.content_area.width >= HERO_BOX_MIN_WIDTH
+            && input.menu_height > 0
+            && let Some(layout) = hero_box::compute_hero_box(&input)
+        {
+            return layout;
+        }
+
         let WelcomeLayoutInput {
             content_area,
             error_height,
@@ -245,76 +370,43 @@ impl WelcomeLayout {
             tip_height,
             changelog_height,
             compact,
-            prompt_compact,
             announcement,
-            expanded,
-            has_upgrade_cta,
+            prompt_height,
+            ..
         } = input;
         let zero = Rect::default();
-        // Pick hero vs stacked first, independent of the announcement's height:
-        // the changelog isn't clamped so it must fit as-is, but an announcement
-        // clamps to fit, so with one present the box only needs to fit empty.
-        let gate_info = if announcement.is_some() {
-            0
-        } else {
-            changelog_height
-        };
-        let use_hero_box = allow_hero_box
-            && !compact
-            && content_area.width >= HERO_BOX_MIN_WIDTH
-            && menu_height > 0
-            && content_area.height
-                >= hero_box::min_content_height(error_height, menu_height, tip_height, gate_info);
-
-        if use_hero_box {
-            // The hero box measures + clamps the announcement itself.
-            return hero_box::compute_hero_box(
-                content_area,
-                error_height,
-                menu_height,
-                tip_height,
-                changelog_height,
-                announcement,
-                expanded,
-                has_upgrade_cta,
-            );
-        }
-
-        // Stacked info slot: the announcement clamped to the column budget, else
-        // the changelog. Measure at the centered menu width inside the inset.
-        let info_height = match announcement {
-            Some(ann) => {
-                let avail = content_area
-                    .width
-                    .saturating_sub(prompt::prompt_inset(prompt_compact) * 2);
-                let width = stacked_info_width(avail, content_area.height, MENU_MIN_WIDTH);
-                hero_box::announcement_desired_rows(ann, width, expanded, has_upgrade_cta).min(
-                    stacked_info_budget(
-                        content_area,
-                        error_height,
-                        menu_height,
-                        tip_height,
-                        compact,
-                    ),
-                )
-            }
-            None => changelog_height,
-        };
-
-        // Stacked layout: skip the logo in compact mode (the session picker
-        // needs the space); otherwise pick small/full/none by height.
-        let logo_rows = if compact {
-            0
-        } else {
-            logo_line_count(content_area.height)
-        };
+        let prompt_height = prompt_height.unwrap_or(PROMPT_HEIGHT);
+        // Centering and the info budget see the one-line box, so a growing draft does not shift the column or reflow the slot
+        // The consent screen passes 0 rows and must not be charged for a box it never paints
+        let one_line_prompt = prompt_height.min(PROMPT_HEIGHT);
 
         let gap_after_logo = if error_height > 0 { 1 } else { 0 };
         let tip_gap = if tip_height > 0 { 1u16 } else { 0 };
-        let fixed_below = Self::fixed_below(tip_height);
-        let fixed_above = logo_rows + 1 + gap_after_logo + error_height; // +1 for gap after logo
-        // The stacked info slot below the menu holds whichever block is shown
-        // (announcement or changelog), matching the hero box's single-slot rule.
+        let fixed_below = Self::fixed_below(tip_height, prompt_height);
+        let column = StackedColumn::new(&input, prompt_height);
+
+        // Stacked info slot: the announcement at its draft-independent rows, else the changelog
+        // The announcement outranks the logo, so the tier steps down to keep it on screen; the changelog yields to the logo as before
+        let announcement_rows = stacked_announcement_rows(&input);
+        let info_height = if announcement.is_some() {
+            announcement_rows
+        } else {
+            changelog_height
+        };
+        let reserved = if announcement_rows > 0 {
+            announcement_rows + 1
+        } else {
+            0
+        };
+        // Stacked layout: skip the logo in compact mode (the session picker needs the space); otherwise the height picks the tier and only an overflowing column steps it down
+        let logo_tier = if compact {
+            LogoTier::Hidden
+        } else {
+            column.logo_tier(reserved)
+        };
+        let fixed_above = column.fixed_above(logo_tier);
+
+        // The stacked info slot below the menu holds whichever block is shown (announcement or changelog), matching the hero box's single-slot rule
         let (eff_changelog_height, _) = if !compact {
             Self::effective_changelog(
                 content_area.height,
@@ -327,21 +419,29 @@ impl WelcomeLayout {
             (0, 0)
         };
         let eff_changelog_gap = if eff_changelog_height > 0 { 1u16 } else { 0 };
-        // Compute top_pad using the *default* menu height (4 items = 7 rows) so
-        // the logo position stays constant regardless of picker/focus state.
+        let logo_gap = 1u16;
+        let flex_gap = 1u16;
+        // Compute top_pad using the *default* menu height (4 items, 7 rows) and the one-line prompt so the logo position stays constant regardless of picker/focus state or draft length
         let top_pad = if compact {
             0
         } else {
             let default_menu_height = 4u16;
             let remaining = content_area.height.saturating_sub(fixed_above);
-            remaining
+            let centered = remaining
                 .saturating_sub(default_menu_height)
                 .saturating_sub(eff_changelog_gap + eff_changelog_height)
-                .saturating_sub(fixed_below)
-                / 3
+                .saturating_sub(Self::fixed_below(tip_height, one_line_prompt))
+                / 3;
+            // A growing draft consumes the flex gap before the padding
+            centered.min(content_area.height.saturating_sub(
+                fixed_above
+                    + menu_height
+                    + eff_changelog_gap
+                    + eff_changelog_height
+                    + flex_gap
+                    + fixed_below,
+            ))
         };
-        let logo_gap = 1u16;
-        let flex_gap = 1u16;
         let [
             _,
             logo,
@@ -359,7 +459,7 @@ impl WelcomeLayout {
             version,
         ] = Layout::vertical([
             Constraint::Length(top_pad),
-            Constraint::Length(logo_rows),
+            Constraint::Length(logo_tier.rows()),
             Constraint::Length(logo_gap), // gap after logo
             Constraint::Length(gap_after_logo),
             Constraint::Length(error_height),
@@ -369,7 +469,7 @@ impl WelcomeLayout {
             Constraint::Min(flex_gap),
             Constraint::Length(tip_height),
             Constraint::Length(tip_gap),
-            Constraint::Length(PROMPT_HEIGHT),
+            Constraint::Length(prompt_height),
             Constraint::Length(VERSION_GAP),
             Constraint::Length(1), // version
         ])
@@ -388,6 +488,7 @@ impl WelcomeLayout {
             hero_subtitle: zero,
             hero_info: zero,
             hero_menu: zero,
+            logo_tier,
         }
     }
 }
@@ -498,10 +599,8 @@ pub(super) fn render_version_badge(
     Paragraph::new(version_line).render(version_area, buf);
 }
 
-/// Render the prompt box and version line (shared across welcome states).
-///
-/// When `skip_version` is true the version badge is not rendered (it was
-/// already drawn inside the hero box).
+/// Render the prompt box and version line (shared across welcome states). When `skip_version` is
+/// true the version badge is not rendered (it was already drawn inside the hero box).
 #[allow(clippy::too_many_arguments)]
 fn render_prompt_and_version(
     layout: &WelcomeLayout,
@@ -547,29 +646,12 @@ fn render_prompt_and_version(
             width: tip_centered.width.saturating_sub(inset * 2),
             height: tip_centered.height,
         };
-        crate::tips::render::render_tip(tip_inset, buf, tip_text);
+        crate::tips::render::render_tip(tip_inset, buf, tip_text, crate::tips::render::HINT_INSET);
     }
-    let prompt_result =
-        prompt::render_prompt(prompt_centered, buf, focus, prompt, info, 2, 2, compact);
+    let prompt_result = prompt::render_prompt(prompt_centered, buf, focus, prompt, info, compact);
 
     if let Some(pending) = &pending_hint {
-        let key_style = Style::default()
-            .fg(theme.text_primary)
-            .add_modifier(Modifier::BOLD);
-        let action_style = Style::default().fg(theme.gray);
-        let key_text = pending.shortcut.display();
-        let label = format!("press again to {}", pending.label);
-        let line = Line::from(vec![
-            Span::styled(format!("  {key_text}"), key_style),
-            Span::styled(":", action_style),
-            Span::styled(label, action_style),
-        ]);
-        buf.set_line(
-            layout.version.x,
-            layout.version.y,
-            &line,
-            layout.version.width,
-        );
+        render_pending_hint(layout.version, buf, theme, pending);
     } else if !skip_version {
         render_version_badge(
             layout.version,
@@ -601,9 +683,11 @@ fn render_prompt_and_version(
 pub struct WelcomeRenderParams<'a> {
     pub prompt_focus: WelcomePromptFocus,
     pub auth_state: &'a AuthState,
-    /// Folder-trust state. When `Pending` (auth done, access granted), the
-    /// welcome screen renders the trust question instead of the normal prompt.
+    /// Folder-trust state.
+    /// When `Pending` (auth done, access granted), the welcome screen renders the trust question instead of the normal prompt.
     pub trust_state: &'a TrustState,
+    pub consent_state: &'a crate::app::consent::ConsentState,
+    pub consent_hover_link: Option<usize>,
     pub login_label: Option<&'a str>,
     pub auth_code_input: &'a str,
     pub auth_code_cursor_byte: usize,
@@ -626,50 +710,45 @@ pub struct WelcomeRenderParams<'a> {
     pub startup_warnings: &'a [StartupWarning],
     pub pending_update_version: Option<&'a str>,
     /// Recent foreign session offered on ctrl+u, suppressed by a pending update.
-    pub foreign_resume_hint: Option<&'a xai_grok_workspace::foreign_sessions::RecentForeignSession>,
+    pub foreign_resume_hint: Option<&'a xai_grok_foreign_sessions::RecentForeignSession>,
     pub is_api_key_auth: bool,
     pub session_picker_content_results:
         Option<&'a [xai_grok_shell::extensions::session_search::SearchSessionHit]>,
     pub session_picker_content_loading: bool,
-    /// The query the picker entries were server-fetched with (see
-    /// [`crate::views::session_picker::effective_filter_query`]).
+    /// The query the picker entries were server-fetched with (see [`crate::views::session_picker::effective_filter_query`]).
     pub session_picker_entries_query: Option<&'a str>,
     pub welcome_tick: u64,
-    pub gate: Option<&'a xai_grok_shell::auth::GateInfo>,
+    pub gate: Option<&'a xai_grok_login::GateInfo>,
     pub subscription_tier: Option<&'a str>,
     pub session_picker_grouped: bool,
     /// Source filter for the session picker.
     pub session_picker_source_filter: crate::views::session_picker::SourceFilter,
     pub session_picker_pending_delete: bool,
-    /// Process-wide `--chat`: the picker lists backend conversations only, so
-    /// the source filter and local deep search are hidden.
+    /// Process-wide `--chat`: the picker lists backend conversations only, so the source filter and local deep search are hidden.
     pub chat_mode: bool,
-    /// Live working directory (tracks `Effect::SetWorkingDir`), used to pin
-    /// the current repo's session group to the top of the picker.
+    /// Live working directory (tracks `Effect::SetWorkingDir`), used to pin the current repo's session group to the top of the picker.
     pub cwd: &'a std::path::Path,
     /// App-level credit balance for showing the usage warning on the welcome screen.
     pub credit_balance: Option<&'a crate::views::credit_bar::CreditBalance>,
     /// Auto top-up rule paired with `credit_balance` for the welcome warning.
     pub auto_topup: Option<&'a crate::views::credit_bar::AutoTopupInfo>,
-    /// Consumer billing surface (false for team / API-key — no credit warning).
+    /// Whether the consumer billing UI applies (false for team / API-key, which get no credit warning).
     pub usage_visible: bool,
     /// Cached changelog bullets for the welcome screen (up to 3).
     pub changelog_bullets: &'a [String],
     /// Whether full release notes markdown is available (controls the CTA hint).
     pub changelog_has_full_notes: bool,
-    /// Whether a long managed-config announcement is expanded inline (vs the
-    /// default 2-line collapsed view with a trailing `…`).
+    /// Whether a long managed-config announcement is expanded inline (vs the default 2-line collapsed view with a trailing `…`).
     pub welcome_announcement_expanded: bool,
-    /// Promo upgrade CTA `[label]` to paint below the hero announcement: `Some`
-    /// drives both the reserved row height and the `[label]` button. `None` = no
-    /// CTA on the welcome screen.
+    /// Promo upgrade CTA `[label]` to paint below the hero announcement: `Some` drives both the reserved row height and the `[label]` button.
+    /// `None` means no CTA on the welcome screen.
     pub upgrade_cta: Option<&'a str>,
     /// Non-blocking welcome privacy banner above the prompt.
     pub privacy_banner: bool,
     /// Chat-mode workspace picker selection (`local-workspace` feature).
     #[cfg(feature = "local-workspace")]
     pub workspace_mode: WelcomeWorkspaceMode,
-    /// CLI/env already stamped local workspace — picker is display-only.
+    /// CLI/env already stamped the local workspace, so the picker is display-only.
     #[cfg(feature = "local-workspace")]
     pub workspace_mode_startup_locked: bool,
     /// In-TUI ACK confirm pending for Local.
@@ -783,14 +862,23 @@ pub fn render_welcome(
                 ..Default::default()
             }
         }
-        // Folder-trust question: shown after auth, before any session is
-        // created, when the cwd has untrusted repo-local config. Mirrors the
-        // Pending login screen. Skipped under ZDR/access gates (the ZDR arm
-        // above and the !has_access arm below) since those already block
-        // sessions. The `if let` destructure makes the `Pending`-only render
-        // structurally exhaustive (no `unreachable!`).
+        // The `if let` destructure makes the `Pending`-only render structurally exhaustive (no
+        // `unreachable!`).
         AuthState::Done if params.has_access => {
-            if let TrustState::Pending { workspace } = params.trust_state {
+            // Consent is account-level, so it resolves before the workspace-level trust question.
+            if let ConsentState::Pending { notice, .. } = params.consent_state {
+                consent::render_consent(
+                    content_area,
+                    buf,
+                    &theme,
+                    notice,
+                    params.selected,
+                    params.consent_hover_link,
+                    params.pending_hint,
+                    h_margin,
+                    params.compact,
+                )
+            } else if let TrustState::Pending { workspace } = params.trust_state {
                 render_welcome_trust(
                     content_area,
                     buf,
@@ -828,14 +916,8 @@ pub fn render_welcome(
     result
 }
 
-/// Render a blocked welcome screen: logo + optional message + menu + version.
-///
-/// Used for both the login screen (Pending) and the ZDR gate. The layout is:
-///   Logo
-///   {message}
-///   Menu items
-///   {prompt}      (optional)
-///   Version badge
+/// Render a blocked welcome screen: logo, optional message, menu, version. Used for both the login
+/// screen (Pending) and the ZDR gate. The layout is: Logo. {prompt} (optional). Version badge.
 #[allow(clippy::too_many_arguments)]
 fn render_welcome_blocked(
     content_area: Rect,
@@ -851,18 +933,27 @@ fn render_welcome_blocked(
 
     let msg_height = if message.is_some() { 2u16 } else { 0u16 };
     let menu_height = menu_items.len() as u16;
-    // Force the stacked layout: this renderer only paints the stacked
-    // logo/menu rects, which the hero-box layout would leave empty.
-    let layout = WelcomeLayout::compute_stacked(WelcomeLayoutInput {
+    let mut layout_input = WelcomeLayoutInput {
         content_area,
         error_height: msg_height,
         menu_height,
         compact,
         prompt_compact: compact,
         ..Default::default()
-    });
+    };
+    // The login screen paints the home draft (logout keeps it), so it measures the box the same way home does
+    if let Some((prompt_widget, _)) = prompt.as_ref() {
+        layout_input.prompt_height = Some(prompt::desired_prompt_height(
+            prompt_widget,
+            content_area.width,
+            compact,
+            prompt_max_height(&layout_input),
+        ));
+    }
+    // Force the stacked layout: this renderer only paints the stacked logo/menu rects, which the hero-box layout would leave empty
+    let layout = WelcomeLayout::compute_stacked(layout_input);
 
-    render_logo(layout.logo, buf, &theme, content_area.height);
+    render_logo_tier(layout.logo, buf, &theme, layout.logo_tier);
 
     if let Some((text, color)) = message {
         let line =
@@ -870,8 +961,8 @@ fn render_welcome_blocked(
         Paragraph::new(line).render(layout.error, buf);
     }
 
-    // Inset the menu the same as the input bar / post-auth menu so the actions
-    // keep side spacing instead of touching the window edge on narrow terminals.
+    // Inset the menu the same as the input bar / post-auth menu
+    // The actions keep side spacing instead of touching the window edge on narrow terminals
     let menu_area = inset_horizontal(layout.menu, prompt::prompt_inset(compact));
     let menu_rects = render_menu(menu_area, buf, &theme, menu_items, selected, None, 0);
 
@@ -889,8 +980,6 @@ fn render_welcome_blocked(
             WelcomePromptFocus::Unfocused,
             prompt_widget,
             info,
-            2,
-            2,
             compact,
         )
         .1
@@ -912,12 +1001,8 @@ fn render_welcome_blocked(
     (menu_rects, post_flush_escapes)
 }
 
-/// Render the folder-trust question. Mirrors [`render_welcome_blocked`]'s
-/// stacked layout (logo + message + menu + version badge), but the message is a
-/// multi-line block showing the workspace path and the warning that Grok Build
-/// may run or modify contents in this directory (a security risk). The y/N
-/// answer is handled by the welcome input interceptor, so this only paints;
-/// `menu_rects` are returned for parity with the other welcome arms.
+/// The y/N answer is handled by the welcome input interceptor, so this only paints; `menu_rects`
+/// are returned for parity with the other welcome arms.
 fn render_welcome_trust(
     content_area: Rect,
     buf: &mut Buffer,
@@ -940,8 +1025,7 @@ fn render_welcome_trust(
         ))
         .alignment(Alignment::Center),
         Line::default(),
-        // Two lines so the warning never clips at narrow / compact widths
-        // (a single ~78-char line would truncate "...posing security risks").
+        // Two lines so the warning never clips at narrow / compact widths (a single ~78-char line would truncate "...posing security risks")
         Line::from(Span::styled(
             "DeepSeek Build may run or modify contents in this directory,",
             Style::default().fg(theme.gray),
@@ -967,7 +1051,7 @@ fn render_welcome_trust(
         ..Default::default()
     });
 
-    render_logo(layout.logo, buf, theme, content_area.height);
+    render_logo_tier(layout.logo, buf, theme, layout.logo_tier);
     Paragraph::new(lines).render(layout.error, buf);
 
     let menu_area = inset_horizontal(layout.menu, prompt::prompt_inset(compact));
@@ -985,9 +1069,8 @@ fn render_welcome_trust(
         },
     );
 
-    // Only `menu_rects` are meaningful here; the rest are absent (no prompt,
-    // picker, auth/gate links) -- `Default` keeps this honest without a 13-field
-    // all-`None` literal.
+    // Only `menu_rects` are meaningful here; the rest are absent (no prompt, picker, auth/gate links)
+    // `Default` keeps this honest without a 13-field all-`None` literal
     WelcomeRenderResult {
         menu_rects,
         ..Default::default()
@@ -1001,9 +1084,8 @@ const DEVICE_AUTH_HEADER: &str = "Approve in your browser to finish signing in."
 /// Caption beneath the device code.
 const DEVICE_CODE_CAPTION: &str = "Make sure your browser shows this code.";
 
-/// Extract `user_code` from a device verification URL (`None` if absent or
-/// malformed). Shown on-screen so the user can confirm it matches the browser
-/// before approving (anti-phishing).
+/// Extract `user_code` from a device verification URL (`None` if absent or malformed).
+/// It is shown on-screen so the user can confirm it matches the browser before approving (anti-phishing).
 fn extract_user_code(url: &str) -> Option<&str> {
     let code = url
         .split('?')
@@ -1033,7 +1115,7 @@ fn auth_copy_line(theme: &Theme) -> Line<'static> {
     .alignment(Alignment::Center)
 }
 
-/// Number of physical rows the header + blank occupy before the copy line.
+/// Number of physical rows the header and the blank row occupy before the copy line.
 fn auth_copy_preceding_rows(header: &str, inner_width: u16) -> u16 {
     let header_rows = (header.len() as u16).div_ceil(inner_width);
     header_rows + 1 // header + blank
@@ -1073,7 +1155,7 @@ fn push_auth_copy_block(
                 .alignment(Alignment::Center)
         }
         Some(crate::clipboard::ClipboardDelivery::Unverified) => Line::from(Span::styled(
-            "copy sent—verify paste",
+            "copy sent: verify paste",
             Style::default().fg(theme.gray),
         ))
         .alignment(Alignment::Center),
@@ -1092,8 +1174,7 @@ fn auth_copy_block_rows(inner_width: u16) -> u16 {
     auth_copy_line_rows(inner_width) + 5
 }
 
-/// Click hit-rects for the copy line and fallback link. `header`'s wrapped row
-/// count sets the copy line's vertical offset.
+/// Click hit-rects for the copy line and fallback link. `header`'s wrapped row count sets the copy line's vertical offset.
 fn auth_hit_rects(
     msg_area: Rect,
     h_pad: u16,
@@ -1109,7 +1190,7 @@ fn auth_hit_rects(
         width: inner_width,
         height: copy_rows,
     };
-    // fallback line is after: copy_rows + blank + copied_slot + blank
+    // The fallback line is after: copy_rows + blank + copied_slot + blank
     let fallback_y = msg_area.y + preceding + copy_rows + 3;
     let fb_rect = Rect {
         x: msg_area.x + h_pad,
@@ -1120,8 +1201,7 @@ fn auth_hit_rects(
     (Some(copy_rect), Some(fb_rect))
 }
 
-/// Render the "raw URL" mode: shows the full URL with mouse capture disabled
-/// so the user can select and copy it natively.
+/// Render the "raw URL" mode: shows the full URL with mouse capture disabled so the user can select and copy it natively.
 fn render_raw_url_mode(
     content_area: Rect,
     buf: &mut Buffer,
@@ -1130,8 +1210,7 @@ fn render_raw_url_mode(
     logo_line_count: u16,
     auth_url: Option<&str>,
 ) -> (Option<Rect>, Option<Rect>) {
-    // Use full terminal width for the URL so the terminal wraps it
-    // naturally without inserting spaces (important for copy-paste).
+    // Use full terminal width for the URL so the terminal wraps it naturally without inserting spaces (important for copy-paste)
     let full_width = content_area.width.max(1);
     let url_lines = auth_url
         .map(|u| (u.len() as u16).div_ceil(full_width))
@@ -1164,19 +1243,12 @@ fn render_raw_url_mode(
         buf,
     );
 
-    // Write the URL directly to the buffer character-by-character so the
-    // terminal wraps naturally at the screen edge. Ratatui's Paragraph
-    // wrap inserts spaces at break points which corrupts the URL on copy.
-    //
-    // When the URL fits on a single line, center it to match the rest of the
-    // screen. When it's longer, keep it flush-left at the full terminal width
-    // so the natural wrap preserves copy-paste (centering a wrapped URL would
-    // inject leading spaces into the selection).
+    // Write the URL directly to the buffer character-by-character so the terminal wraps naturally at
+    // the screen edge.
     if let Some(url) = auth_url {
         let url_style = Style::default().fg(theme.accent_user);
         let url_y = msg_area.y + 2; // after hint + blank
-        // Control characters are skipped below to prevent terminal escape
-        // injection, so measure the URL without them.
+        // Control characters are skipped below to prevent terminal escape injection, so measure the URL without them
         let url_len = url.chars().filter(|c| !c.is_control()).count() as u16;
         let x_offset = if url_len <= full_width {
             (full_width - url_len) / 2
@@ -1196,7 +1268,9 @@ fn render_raw_url_mode(
             if col >= buf_max_col || row >= buf_max_row {
                 continue;
             }
-            buf[(col, row)].set_char(ch).set_style(url_style);
+            if let Some(cell) = buf.cell_mut((col, row)) {
+                cell.set_char(ch).set_style(url_style);
+            }
         }
     }
 
@@ -1212,24 +1286,21 @@ fn render_raw_url_mode(
     let hints = Line::from(hint_spans).alignment(Alignment::Center);
     Paragraph::new(hints).render(hint_area, buf);
 
-    (None, None) // no click rects — mouse capture is disabled
+    (None, None) // no click rects; mouse capture is disabled
 }
 
-/// Which "browser opened, now waiting" arm to render; owns the header,
-/// waiting caption, and (for `Device`) the device-code derivation.
+/// Which "browser opened, now waiting" arm to render; owns the header, waiting caption, and (for `Device`) the device-code derivation.
 #[derive(Clone, Copy)]
 enum BrowserStatusKind {
     /// External auth provider opened its own browser.
     Command,
-    /// RFC 8628 device flow — also shows the device code.
+    /// RFC 8628 device flow; also shows the device code.
     Device,
 }
 
-/// Render a "browser opened, now waiting" auth arm (Command + Device).
-///
-/// Shared status layout: logo, then a centered block of header, optional device
-/// code + caption, optional copy/fallback links (when there's a URL), and the
-/// waiting caption; finally quit hints.
+/// Render a "browser opened, now waiting" auth arm (Command and Device). Shared status layout:
+/// logo, then a centered block, then quit hints. The block holds the header, an optional device
+/// code and caption, optional copy/fallback links (when there's a URL), and the waiting caption.
 #[allow(clippy::too_many_arguments)]
 fn render_browser_status_arm(
     content_area: Rect,
@@ -1353,7 +1424,7 @@ fn render_welcome_authenticating(
 
     match mode {
         AuthMode::Loopback => {
-            // Manual token paste: show copy prompt + input box
+            // Manual token paste: show copy prompt and input box
             let h_pad: u16 = content_area.width / 6;
             let inner_width = content_area.width.saturating_sub(h_pad * 2).max(1);
 
@@ -1517,9 +1588,8 @@ fn inset_horizontal(rect: Rect, inset: u16) -> Rect {
     }
 }
 
-/// Render the changelog section (header + bullets), centered to the menu width.
-/// When `clickable` (full notes exist) the whole block opens the notes on click
-/// and brightens while hovered; returns that clickable rect.
+/// Render the changelog section (header and bullets), centered to the menu width.
+/// When `clickable` (full notes exist) the whole block opens the notes on click and brightens while hovered; returns that clickable rect.
 #[allow(clippy::too_many_arguments)]
 fn render_changelog_section(
     area: Rect,
@@ -1565,7 +1635,7 @@ fn render_changelog_section(
     );
 
     let bullet_style = hover_style(theme, hovered, Style::default().fg(theme.gray_bright));
-    let max_text_width = centered.width.saturating_sub(2) as usize; // "• " prefix = 2 cols
+    let max_text_width = centered.width.saturating_sub(2) as usize; // The "• " prefix is 2 cols
     for (i, bullet) in bullets.iter().enumerate() {
         let row = centered.y + 2 + i as u16;
         if row >= centered.y + centered.height {
@@ -1584,37 +1654,14 @@ fn render_changelog_section(
     clickable.then_some(centered)
 }
 
-/// Wrap width of the stacked info slot, centered at the menu width inside the
-/// inset. Both `compute`'s height measurement and `render_announcement_section`
-/// go through here — same width, no drift. `logo_height` selects the min menu
-/// width.
+/// Wrap width of the stacked info slot, centered at the menu width inside the inset.
+/// Both `compute`'s height measurement and `render_announcement_section` go through here, so the widths cannot drift.
+/// `logo_height` selects the min menu width.
 fn stacked_info_width(avail_width: u16, logo_height: u16, min_width_hint: u16) -> u16 {
     logo::logo_visual_width(logo_height)
         .max(30)
         .max(min_width_hint)
         .min(avail_width)
-}
-
-/// Largest info-slot height the stacked column can allocate, mirroring
-/// [`WelcomeLayout::effective_changelog`]. Compact never shows the slot.
-fn stacked_info_budget(
-    content_area: Rect,
-    error_height: u16,
-    menu_height: u16,
-    tip_height: u16,
-    compact: bool,
-) -> u16 {
-    if compact {
-        return 0;
-    }
-    let logo_rows = logo_line_count(content_area.height);
-    let gap_after_logo = if error_height > 0 { 1u16 } else { 0 };
-    let fixed_above = logo_rows + 1 + gap_after_logo + error_height;
-    let fixed_below = WelcomeLayout::fixed_below(tip_height);
-    // +1 info-slot gap, +1 min flex gap above the tip.
-    content_area
-        .height
-        .saturating_sub(fixed_above + menu_height + 1 + fixed_below + 1)
 }
 
 /// Render the announcement in the stacked info slot, centered to the menu width.
@@ -1645,8 +1692,7 @@ fn render_announcement_section(
         return (None, false, None);
     }
 
-    // Mirror the hero: reserve the CTA rows at the bottom, draw the text into
-    // what's left, then place the `[label]` button right after the drawn text.
+    // Mirror the hero: reserve the CTA rows at the bottom, draw the text into what's left, then place the `[label]` button right after the drawn text
     let (text_area, truncated, cta_rect) = hero_box::render_announcement_with_upgrade_cta(
         buf,
         theme,
@@ -1659,7 +1705,7 @@ fn render_announcement_section(
     (Some(text_area), truncated, cta_rect)
 }
 
-/// Render the normal welcome screen (Done state -- already authenticated).
+/// Render the normal welcome screen (Done state, already authenticated).
 fn render_welcome_done(
     content_area: Rect,
     buf: &mut Buffer,
@@ -1670,9 +1716,8 @@ fn render_welcome_done(
     h_margin: u16,
 ) -> WelcomeRenderResult {
     let show_picker = p.session_picker.is_some() || p.session_picker_loading;
-    // Only use compact layout when the session picker is visible — it needs
-    // the logo/centering space for its list. Plain compact mode keeps the
-    // normal welcome layout.
+    // Only use compact layout when the session picker is visible; it needs the logo/centering space for its list
+    // Plain compact mode keeps the normal welcome layout
     let welcome_compact = show_picker;
 
     let cta = p
@@ -1686,10 +1731,8 @@ fn render_welcome_done(
         if in_vscode_family { "ctrl+d" } else { "ctrl+q" },
     );
 
-    // Heights that don't depend on the menu — computed first so the menu
-    // builder can probe the layout to decide whether to add a Changelog row.
-    // Startup-warning hint height (multi-line aware). Must pick the same
-    // entry `render_startup_warnings` draws — see `startup::banner_warning`.
+    // Heights that don't depend on the menu, computed first so the menu builder can probe the layout to decide whether to add a Changelog row
+    // Startup-warning hint height (multi-line aware). It must pick the same entry `render_startup_warnings` draws; see `startup::banner_warning`.
     let hint_height = crate::startup::banner_warning(p.startup_warnings).map_or(0u16, |w| {
         let msg_lines = w.message.lines().count() as u16;
         let action_line = if w.action.is_some() { 1 } else { 0 };
@@ -1697,16 +1740,13 @@ fn render_welcome_done(
     });
     let has_update_tip = p.pending_update_version.is_some();
     let has_resume_tip = !has_update_tip && p.foreign_resume_hint.is_some();
-    // Tip slot precedence: pending update > privacy banner (wraps, so its
-    // height depends on width) > resume hint > random tip. The update
-    // outranks the upsell so a ready update is never invisible; the banner
-    // takes the slot back once it's applied.
+    // Tip slot precedence: pending update, then privacy banner (wraps, so its height depends on width), then resume hint, then random tip
+    // The update outranks the upsell so a ready update is never invisible; the banner takes the slot back once it's applied
     let tip_height = if !show_picker {
         if has_update_tip {
             1u16
         } else if p.privacy_banner {
-            // Same inset the banner paint below uses, so the reserved rows
-            // and the wrapped row count can't drift.
+            // Same inset the banner paint below uses, so the reserved rows and the wrapped row count can't drift
             let inset = prompt::prompt_inset(p.compact);
             crate::views::privacy_banner::height(content_area.width.saturating_sub(inset * 2))
         } else if has_resume_tip {
@@ -1726,8 +1766,7 @@ fn render_welcome_done(
     } else {
         0
     };
-    // Changelog is reachable via this menu row (ctrl+l). Show from the first
-    // frame so the menu doesn't shift while the CDN fetch completes.
+    // Changelog is reachable via this menu row (ctrl+l). Show from the first frame so the menu doesn't shift while the CDN fetch completes.
     let show_changelog_action = p.has_access && !show_picker;
 
     let gate_menu;
@@ -1736,26 +1775,23 @@ fn render_welcome_done(
         gate_menu = [(key_g, cta), (key_l, "Logout"), (key_q, "Quit")];
         &gate_menu
     } else {
-        let (key_w, key_s, key_q, key_i_with_x) = (
+        let (key_w, key_resume, key_q, key_i_with_x) = (
             "ctrl+w",
-            "ctrl+s",
+            "ctrl+r",
             if in_vscode_family { "ctrl+d" } else { "ctrl+q" },
             "ctrl+i  [x]",
         );
-        // Insert the import row at the top when there are pending `.claude/`
-        // settings to import — it's the most actionable item right now.
+        // Insert the import row at the top when there are pending `.claude/` settings to import; it's the most actionable item right now
         let mut items: Vec<(&str, &str)> = Vec::with_capacity(5);
         if p.has_claude_import {
-            // The trailing "[x]" is a clickable dismiss affordance — the
-            // welcome screen mouse handler treats clicks on the rightmost
-            // 3 cells of this row as dismiss instead of open. Keyboard:
-            // ctrl-shift-i. The key string is right-aligned by render_menu,
-            // so [x] sits at the very end of the row.
+            // The trailing "[x]" is a clickable dismiss control
+            // The welcome screen mouse handler treats clicks on the rightmost 3 cells of this row as dismiss instead of open. Keyboard: ctrl-shift-i.
+            // The key string is right-aligned by render_menu, so [x] sits at the very end of the row
             items.push((key_i_with_x, "Import Claude settings"));
         }
         items.push((key_w, "New worktree"));
-        items.push((key_s, "Resume session"));
-        // "Changelog" above Quit; no shortcut — opened by click (row or block).
+        items.push((key_resume, "Resume session"));
+        // "Changelog" above Quit; no shortcut, opened by click (row or block)
         if show_changelog_action {
             items.push(("", "Changelog"));
         }
@@ -1765,9 +1801,8 @@ fn render_welcome_done(
     };
 
     #[cfg(feature = "local-workspace")]
-    // Keep the segmented control (and ACK y/N) visible when history is open
-    // if first-run Local ACK is pending — otherwise the confirm is unpainted
-    // while the ACK handler still swallows keys.
+    // Keep the segmented control (and ACK y/N) visible when history is open if first-run Local ACK is pending
+    // Otherwise the confirm is unpainted while the ACK handler still swallows keys
     let show_workspace_picker =
         p.chat_mode && p.has_access && (!show_picker || p.workspace_mode_ack_pending);
     #[cfg(feature = "local-workspace")]
@@ -1806,9 +1841,9 @@ fn render_welcome_done(
         0
     };
     let content_height = menu_height + picker_height;
-    // The layout measures the announcement slot itself (collapsed: title + up to
-    // 2 wrapped lines; expanded: the full message, clamped so the box fits).
-    let layout = WelcomeLayout::compute(WelcomeLayoutInput {
+    // The layout measures the announcement slot itself
+    // Collapsed is the title plus up to 2 wrapped lines; expanded is the full message, clamped so the box fits
+    let mut layout_input = WelcomeLayoutInput {
         content_area,
         error_height: hint_height,
         menu_height: content_height,
@@ -1819,7 +1854,18 @@ fn render_welcome_done(
         announcement: p.announcement,
         expanded: p.welcome_announcement_expanded,
         has_upgrade_cta: p.upgrade_cta.is_some(),
-    });
+        prompt_height: None,
+    };
+    // The picker and the access gate paint no composer
+    if !show_picker && p.has_access {
+        layout_input.prompt_height = Some(prompt::desired_prompt_height(
+            prompt,
+            content_area.width,
+            p.compact,
+            prompt_max_height(&layout_input),
+        ));
+    }
+    let layout = WelcomeLayout::compute(layout_input);
 
     // Render startup warning in the error area (same slot as auth errors).
     let import_banner_rect = render_startup_warnings(layout.error, buf, theme, p.startup_warnings);
@@ -1833,8 +1879,7 @@ fn render_welcome_done(
     #[cfg(feature = "local-workspace")]
     let mut workspace_mode_rects = WorkspaceModeHitRects::default();
     let (menu_rects, picker_close_button) = if show_picker {
-        // Use the full area since logo/menu are hidden and shortcuts
-        // are now rendered inside the picker content area.
+        // Use the full area since logo/menu are hidden and shortcuts are now rendered inside the picker content area
         let picker_area = Rect {
             x: content_area.x,
             y: content_area.y,
@@ -1845,6 +1890,7 @@ fn render_welcome_done(
             picker_area,
             buf,
             theme,
+            SessionPickerRenderMode::Fullscreen,
             &mut SessionPickerRenderCtx {
                 state: session_picker_state,
                 sessions: p.session_picker,
@@ -1864,7 +1910,7 @@ fn render_welcome_done(
         );
         (vec![], Some(hit_areas))
     } else if layout.has_hero_box() {
-        // Wide layout: render bordered hero box with logo left, version + menu right.
+        // Wide layout: render the bordered hero box with the logo left, version and menu right
         let rects = hero_box::render_hero_box(
             &layout,
             buf,
@@ -1894,10 +1940,9 @@ fn render_welcome_done(
         }
         (rects.menu_rects, None)
     } else {
-        // Narrow layout: stacked logo above, menu below. Inset the menu the
-        // same as the input bar (`prompt_inset`) so it keeps side spacing
-        // instead of touching the window edge on narrow terminals.
-        render_logo(layout.logo, buf, theme, content_area.height);
+        // Narrow layout: stacked logo above, menu below
+        // Inset the menu the same as the input bar (`prompt_inset`) so it keeps side spacing instead of touching the window edge on narrow terminals
+        render_logo_tier(layout.logo, buf, theme, layout.logo_tier);
         let menu_area = inset_horizontal(layout.menu, prompt::prompt_inset(p.compact));
         #[cfg(feature = "local-workspace")]
         let menu_area = if show_workspace_picker {
@@ -1935,8 +1980,7 @@ fn render_welcome_done(
         )
     };
 
-    // Stacked info slot below the menu (narrow layout): show the announcement
-    // or the changelog (announcement takes priority), mirroring the hero box.
+    // Stacked info slot below the menu (narrow layout): show the announcement or the changelog (announcement takes priority), mirroring the hero box
     // Inset to match the input bar so it lines up with the menu above.
     if layout.changelog.height > 0 {
         let info_area = inset_horizontal(layout.changelog, prompt::prompt_inset(p.compact));
@@ -1969,8 +2013,7 @@ fn render_welcome_done(
         }
     }
 
-    // Skip the prompt input when picker is visible to save space;
-    // shortcuts are rendered inside the picker content area.
+    // Skip the prompt input when picker is visible to save space; shortcuts are rendered inside the picker content area
     let mut refresh_hit_rect: Option<Rect> = None;
     let mut gate_url_hit_rect: Option<Rect> = None;
     let mut privacy_banner_opt_in_rect: Option<Rect> = None;
@@ -1988,7 +2031,7 @@ fn render_welcome_done(
         ])
         .flex(Flex::Center)
         .areas(layout.prompt);
-        // Show the user's current tier + clickable refresh button above the gate message.
+        // Show the user's current tier and a clickable refresh button above the gate message
         let tier_label = p.subscription_tier.unwrap_or("Free");
         let tier_prefix = format!("Tier: {tier_label}  ");
         let refresh_text = "[Refresh]";
@@ -2086,8 +2129,7 @@ fn render_welcome_done(
         );
         (None, None)
     } else {
-        // Privacy banner owns the tip slot when visible (above the prompt),
-        // except a pending-update notification, which outranks it.
+        // Privacy banner owns the tip slot when visible (above the prompt), except a pending-update notification, which outranks it
         if p.privacy_banner && p.pending_update_version.is_none() && layout.tip.height > 0 {
             let [_, tip_centered, _] = Layout::horizontal([
                 Constraint::Min(0),
@@ -2135,7 +2177,7 @@ fn render_welcome_done(
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    format!("v{ver} available \u{2014} press {key_name} to restart"),
+                    format!("v{ver} available, press {key_name} to restart"),
                     Style::default().fg(theme.accent_user),
                 ),
             ]);
@@ -2144,8 +2186,7 @@ fn render_welcome_done(
                 .render(tip_inset, buf);
         }
 
-        // Recent foreign session: offer a one-click resume in the tip area
-        // (only when no update is pending — the update shares ctrl+u and wins).
+        // Recent foreign session: offer a one-click resume in the tip area (only when no update is pending; the update shares ctrl+u and wins)
         if !p.privacy_banner
             && p.pending_update_version.is_none()
             && let Some(hint) = p.foreign_resume_hint
@@ -2241,6 +2282,8 @@ fn render_welcome_done(
         auth_fallback_rect: None,
         refresh_rect: refresh_hit_rect,
         gate_url_rect: gate_url_hit_rect,
+        consent_link_rects: Vec::new(),
+        consent_legibility: None,
         changelog_action_present: show_changelog_action,
         changelog_cta_rect,
         announcement_truncated,
@@ -2255,38 +2298,7 @@ fn render_welcome_done(
     }
 }
 
-/// Context for session picker rendering.
-pub(crate) struct SessionPickerRenderCtx<'a> {
-    pub(crate) state: &'a mut crate::views::picker::PickerState,
-    pub(crate) sessions: Option<&'a [SessionPickerEntry]>,
-    /// Live working directory (tracks `Effect::SetWorkingDir`), used to pin
-    /// the current repo's group to the top.
-    pub(crate) cwd: &'a std::path::Path,
-    pub(crate) loading: bool,
-    pub(crate) pending_hint: Option<crate::views::shortcuts_bar::PendingHint>,
-    pub(crate) shortcuts_area: Option<Rect>,
-    pub(crate) content_results:
-        Option<&'a [xai_grok_shell::extensions::session_search::SearchSessionHit]>,
-    pub(crate) content_loading: bool,
-    /// The query `sessions` were server-fetched with (see
-    /// [`crate::views::session_picker::effective_filter_query`]).
-    pub(crate) entries_query: Option<&'a str>,
-    pub(crate) tick: u64,
-    /// When true, entries are grouped by `repo_name` with non-selectable headers.
-    pub(crate) grouped: bool,
-    /// Source filter for filtering session entries.
-    pub(crate) source_filter: crate::views::session_picker::SourceFilter,
-    pub(crate) pending_delete: bool,
-    /// Process-wide `--chat`: hides the source-filter chip and the
-    /// deep-search/filter footer hints (see `WelcomeRenderParams::chat_mode`).
-    pub(crate) chat_mode: bool,
-}
-
-/// Render the session picker list on the welcome screen.
-///
-/// Builds `PickerEntry` items from `SessionPickerEntry` data and delegates to
-/// `render_picker`. Returns `PickerHitAreas` for mouse hit-testing.
-pub(crate) fn render_session_picker(
+pub(crate) fn render_session_picker_body(
     area: Rect,
     buf: &mut Buffer,
     theme: &Theme,
@@ -2302,10 +2314,9 @@ pub(crate) fn render_session_picker(
         None => &[],
     };
 
-    // Filter entries by query and source (shared helper). The same effective
-    // query must drive filtering AND the content header/rows gates below, or
-    // this render disagrees with `handle_welcome_input`'s `build_entry_map`
-    // (which receives the effective query) on row indices.
+    // Filter entries by query and source (shared helper)
+    // The same effective query must drive filtering AND the content header/rows gates below
+    // Otherwise this render disagrees with `handle_welcome_input`'s `build_entry_map` (which receives the effective query) on row indices
     let filter_query =
         crate::views::session_picker::effective_filter_query(ctx.state.query(), ctx.entries_query);
     let filtered_indices =
@@ -2367,7 +2378,7 @@ pub(crate) fn render_session_picker(
     // Content rows will start after fuzzy rows + 1 header row.
     let content_start = picker_entries.len() + 1;
     let content_entry_data: Vec<SessionEntryData> = if let Some(hits) = ctx.content_results
-        && ctx.source_filter != crate::views::session_picker::SourceFilter::External
+        && !ctx.source_filter.is_content_search_disabled()
         && !filter_query.is_empty()
     {
         build_content_entry_data(
@@ -2383,16 +2394,11 @@ pub(crate) fn render_session_picker(
 
     // Show header only if there are actual deduped content rows to display.
     let has_content_rows = !content_entry_data.is_empty();
-    let content_loading = ctx.content_loading
-        && ctx.source_filter != crate::views::session_picker::SourceFilter::External;
+    let content_loading = ctx.content_loading && !ctx.source_filter.is_content_search_disabled();
     let spinner_label = build_content_header_label(content_loading, has_content_rows, ctx.tick);
-    // Only show the header when content results exist or when content
-    // search is in progress with a non-empty query.  This must match the
-    // header condition inside `build_entry_map` as called from
-    // `handle_welcome_input` (app_view.rs) so the input handler's
-    // `entry_count` agrees with the rendered entry list — a mismatch causes
-    // arrow-key selection to target the wrong row. Both sides therefore gate
-    // on the same EFFECTIVE query (`filter_query`), not the live one.
+    // Only show the header when content results exist or when content search is in progress with a
+    // non-empty query. This must match the header condition inside `build_entry_map` as called from
+    // `handle_welcome_input` (app_view.rs).
     let show_content_header =
         has_content_rows || (content_loading && !filter_query.trim().is_empty());
     if show_content_header {
@@ -2429,7 +2435,7 @@ pub(crate) fn render_session_picker(
             expanded: b.is_expanded,
             fields,
             description_lines: if has_snippet {
-                &content_snippets[i]
+                content_snippets.get(i).map(|s| s.as_slice()).unwrap_or(&[])
             } else {
                 &[]
             },
@@ -2443,21 +2449,21 @@ pub(crate) fn render_session_picker(
         }));
     }
 
-    let hidden_hint = if ctx.chat_mode {
+    let controls_hidden = ctx.chat_mode;
+    let hidden_hint = if controls_hidden {
         None
     } else {
         crate::views::session_picker::hidden_external_hint(ctx.sessions, ctx.source_filter)
     };
 
-    // Build shortcuts for fullscreen mode. Chat mode drops the worktree /
-    // deep-search / filter hints (local-Build-row actions).
+    // Build shortcuts for fullscreen mode. Chat mode drops the worktree / deep-search / filter hints (local-Build-row actions).
     let worktree_shortcut: &'static str = "ctrl+w";
     use crate::views::shortcuts_bar::HintItem;
     let mut default_shortcuts: Vec<HintItem> = vec![
         HintItem::new(crate::key!(Esc), "back"),
         HintItem::new(crate::key!(Enter), "select"),
     ];
-    if !ctx.chat_mode {
+    if !controls_hidden {
         default_shortcuts.push(HintItem {
             keys: vec![],
             label: "worktree".into(),
@@ -2489,7 +2495,7 @@ pub(crate) fn render_session_picker(
             description: None,
             pinned: false,
         });
-    } else if !ctx.chat_mode {
+    } else if !controls_hidden {
         default_shortcuts.push(HintItem {
             keys: vec![],
             label: "filter".into(),
@@ -2518,11 +2524,11 @@ pub(crate) fn render_session_picker(
         shortcuts_area: ctx.shortcuts_area,
         tabs: None,
         active_tab: 0,
-        filter_label: (!ctx.chat_mode).then(|| ctx.source_filter.label()),
-        filter_key_hint: (!ctx.chat_mode).then_some("f"),
-        filter_active: !ctx.chat_mode && ctx.source_filter.is_active(),
+        filter_label: (!controls_hidden).then(|| ctx.source_filter.label()),
+        filter_key_hint: (!controls_hidden).then_some("f"),
+        filter_active: !controls_hidden && ctx.source_filter.is_active(),
         header_note: hidden_hint.as_deref(),
-        action_keys: if ctx.chat_mode || ctx.pending_delete {
+        action_keys: if controls_hidden || ctx.pending_delete {
             &[]
         } else {
             &[('d', "delete")]
@@ -2586,21 +2592,14 @@ fn render_auth_input_box(
         if input_width > 0 {
             let cursor_x = inner.x + prompt_width + cursor_column as u16;
             if let Some(cell) = buf.cell_mut((cursor_x, inner.y)) {
-                cell.set_style(Style::default().fg(theme.bg_base).bg(theme.text_primary));
+                cell.set_style(theme.block_cursor_over(theme.bg_base));
             }
         }
     }
 }
 
-/// Render one startup warning centered in the given area.
-///
-/// `startup_warnings` can hold more than one entry (the WezTerm
-/// kitty-keyboard banner is prepended ahead of `summarize_warnings()`
-/// output — see `diagnostics::assemble_startup_warnings`), but only one is
-/// rendered — the severity-aware pick from `startup::banner_warning`, so a
-/// runtime-pushed Warning displaces an earlier Info entry. One message line,
-/// one optional action line, plus a buffer row for spacing.
-/// Severity controls color (yellow for `Warning`, dim for `Info`).
+/// Only one is rendered: the severity-aware pick from `startup::banner_warning`, so a
+/// runtime-pushed Warning displaces an earlier Info entry.
 fn render_startup_warnings(
     area: Rect,
     buf: &mut Buffer,
@@ -2609,10 +2608,9 @@ fn render_startup_warnings(
 ) -> Option<Rect> {
     let w = crate::startup::banner_warning(warnings)?;
 
-    // Skip the import-claude startup warning entirely — the import row in the
-    // menu now carries the call-to-action with the same visual weight as
-    // every other welcome menu item. Showing the warning text in addition to
-    // the menu row would be redundant noise.
+    // Skip the import-claude startup warning entirely
+    // The import row in the menu carries the call-to-action with the same visual weight as every other welcome menu item
+    // Showing the warning text in addition to the menu row would be redundant
     if w.message.starts_with("Import Claude settings")
         || w.message.starts_with("Claude settings detected")
     {
@@ -2676,7 +2674,11 @@ fn masked_auth_token_view(input: &str, cursor_byte: usize, width: usize) -> (Str
         xai_ratatui_textarea::EditBuffer::from_parts(masked.display.as_str(), masked.cursor_byte);
     let viewport = buffer.single_line_viewport(width);
     (
-        masked.display[viewport.visible_byte_range].to_owned(),
+        masked
+            .display
+            .get(viewport.visible_byte_range)
+            .unwrap_or("")
+            .to_owned(),
         viewport.cursor_display_column,
     )
 }
@@ -2740,13 +2742,16 @@ mod tests {
             (crate::clipboard::ClipboardDelivery::Confirmed, "copied!"),
             (
                 crate::clipboard::ClipboardDelivery::Unverified,
-                "copy sent—verify paste",
+                "copy sent: verify paste",
             ),
             (crate::clipboard::ClipboardDelivery::Failed, "copy failed"),
         ] {
             let mut lines = Vec::new();
             push_auth_copy_block(&mut lines, &theme, Some(delivery));
-            let feedback = lines[3]
+            let Some(line) = lines.get(3) else {
+                panic!("expected copy-feedback line: {lines:?}");
+            };
+            let feedback = line
                 .spans
                 .iter()
                 .map(|span| span.content.as_ref())
@@ -2824,7 +2829,11 @@ mod tests {
         let theme = Theme::current();
         let mut buffer = Buffer::empty(area);
         render_auth_input_box(area, &mut buffer, &theme, token, cursor);
-        assert!((0..area.width).any(|x| buffer[(x, 1)].bg == theme.text_primary));
+        assert!((0..area.width).any(|x| {
+            buffer
+                .cell((x, 1))
+                .is_some_and(|c| c.bg == theme.text_primary)
+        }));
     }
 
     fn make_entry(id: &str, summary: &str, repo_name: &str) -> SessionPickerEntry {
@@ -2843,6 +2852,8 @@ mod tests {
             repo_name: repo_name.into(),
             worktree_label: None,
             last_turn_summary: None,
+            last_recap: None,
+            session_kind: None,
             card_detail: None,
         }
     }
@@ -2856,6 +2867,8 @@ mod tests {
             prompt_focus: WelcomePromptFocus::Unfocused,
             auth_state,
             trust_state,
+            consent_state: &ConsentState::Done,
+            consent_hover_link: None,
             login_label: None,
             auth_code_input: "",
             auth_code_cursor_byte: 0,
@@ -2918,7 +2931,7 @@ mod tests {
 
     #[test]
     fn foreign_resume_tip_names_each_tool_and_age() {
-        use xai_grok_workspace::foreign_sessions::ForeignSessionTool;
+        use xai_grok_foreign_sessions::ForeignSessionTool;
 
         let auth = AuthState::Done;
         let trust = TrustState::Done;
@@ -2927,7 +2940,7 @@ mod tests {
             (ForeignSessionTool::Codex, "Codex"),
             (ForeignSessionTool::Cursor, "Cursor"),
         ] {
-            let hint = xai_grok_workspace::foreign_sessions::RecentForeignSession {
+            let hint = xai_grok_foreign_sessions::RecentForeignSession {
                 tool,
                 native_id: "native-id".into(),
                 age: std::time::Duration::from_secs(125),
@@ -2945,8 +2958,8 @@ mod tests {
     fn pending_update_suppresses_foreign_resume_tip() {
         let auth = AuthState::Done;
         let trust = TrustState::Done;
-        let hint = xai_grok_workspace::foreign_sessions::RecentForeignSession {
-            tool: xai_grok_workspace::foreign_sessions::ForeignSessionTool::Cursor,
+        let hint = xai_grok_foreign_sessions::RecentForeignSession {
+            tool: xai_grok_foreign_sessions::ForeignSessionTool::Cursor,
             native_id: "native-id".into(),
             age: std::time::Duration::from_secs(30),
         };
@@ -2977,14 +2990,14 @@ mod tests {
         let before_write =
             crate::terminal::overlay::static_image(&png(), 20, 10, 0, 0, owner_id).unwrap();
         assert!(
-            !before_write.as_str().contains("a=t"),
+            !before_write.as_str().contains("a=T"),
             "constructing the clear must not commit ownership"
         );
         post_flush.write_to(&mut Vec::new()).unwrap();
         let after_write =
             crate::terminal::overlay::static_image(&png(), 20, 10, 0, 0, owner_id).unwrap();
         assert!(
-            after_write.as_str().contains("a=t"),
+            after_write.as_str().contains("a=T"),
             "writing the clear must commit ownership"
         );
     }
@@ -3033,11 +3046,9 @@ mod tests {
         assert_promptless_clear(result, 82);
     }
 
-    /// RENDER half of the header-gate invariant (input half:
-    /// `session_picker::tests::grouped_entry_map_empty_query_with_loading_has_no_header`):
-    /// with stamp==live and a re-search in flight, the "Searching…" header
-    /// must NOT render — a render-only header row shifts arrow-key row
-    /// indices. Control leg: the same search WITHOUT the stamp keeps it.
+    /// RENDER half of the header-gate invariant (the input half is
+    /// `session_picker::tests::grouped_entry_map_empty_query_with_loading_has_no_header`). A
+    /// render-only header row shifts arrow-key row indices.
     #[test]
     fn render_header_gate_uses_effective_query() {
         use ratatui::buffer::Buffer;
@@ -3056,6 +3067,7 @@ mod tests {
                 area,
                 &mut buf,
                 &theme,
+                SessionPickerRenderMode::Fullscreen,
                 &mut SessionPickerRenderCtx {
                     state: &mut state,
                     sessions: Some(&entries),
@@ -3096,8 +3108,6 @@ mod tests {
             "stamped server hit must render:\n{stamped}"
         );
 
-        // Control: unstamped in-flight search keeps the header, proving the
-        // negative assertion above exercises the gate.
         let unstamped = render(None);
         assert!(
             unstamped.contains("Searching session content"),
@@ -3105,81 +3115,69 @@ mod tests {
         );
     }
 
-    /// The hidden-external hint stays pinned on the welcome picker's default
-    /// Grok view when scanned foreign rows exist — even when the native list
-    /// overflows the viewport — and never renders under `--chat` (foreign
-    /// scanning is disabled there, so the hint is dead weight).
     #[test]
-    fn hidden_external_hint_renders_outside_chat_mode() {
+    fn headless_hidden_external_hint_pins_above_list() {
         use ratatui::buffer::Buffer;
         use ratatui::layout::Rect;
 
         let theme = crate::theme::Theme::default();
-        let area = Rect::new(0, 0, 80, 20);
-        // More native rows than the viewport fits: a trailing list row would
-        // scroll out of view, a pinned row must not.
-        let mut entries: Vec<SessionPickerEntry> = (0..30)
-            .map(|i| make_entry(&format!("s{i}"), &format!("native session {i}"), "repo"))
+        let area = Rect::new(0, 0, 80, 24);
+        let mut entries: Vec<SessionPickerEntry> = (0..20)
+            .map(|i| {
+                let mut entry =
+                    make_entry(&format!("s{i}"), &format!("native session {i}"), "repo");
+                entry.session_kind = Some("headless".into());
+                entry
+            })
             .collect();
         let mut foreign = make_entry("f1", "Claude work", "repo");
         foreign.source = "claude".into();
         entries.push(foreign);
 
-        let render = |chat_mode: bool| -> String {
-            let mut buf = Buffer::empty(area);
-            let mut state = PickerState::default();
-            render_session_picker(
-                area,
-                &mut buf,
-                &theme,
-                &mut SessionPickerRenderCtx {
-                    state: &mut state,
-                    sessions: Some(&entries),
-                    cwd: std::path::Path::new("/repo"),
-                    loading: false,
-                    pending_hint: None,
-                    shortcuts_area: None,
-                    content_results: None,
-                    content_loading: false,
-                    entries_query: None,
-                    tick: 0,
-                    grouped: false,
-                    source_filter: crate::views::session_picker::SourceFilter::default(),
-                    pending_delete: false,
-                    chat_mode,
-                },
-            );
-            (0..area.height)
-                .map(|y| {
-                    (0..area.width)
-                        .map(|x| {
-                            buf.cell((x, y))
-                                .map_or(' ', |c| c.symbol().chars().next().unwrap_or(' '))
-                        })
-                        .collect::<String>()
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-
-        let build_mode = render(false);
+        let mut buf = Buffer::empty(area);
+        let mut state = PickerState::default();
+        render_session_picker(
+            area,
+            &mut buf,
+            &theme,
+            SessionPickerRenderMode::Fullscreen,
+            &mut SessionPickerRenderCtx {
+                state: &mut state,
+                sessions: Some(&entries),
+                cwd: std::path::Path::new("/repo"),
+                loading: false,
+                pending_hint: None,
+                shortcuts_area: None,
+                content_results: None,
+                content_loading: false,
+                entries_query: None,
+                tick: 0,
+                grouped: false,
+                source_filter: crate::views::session_picker::SourceFilter::Headless,
+                pending_delete: false,
+                chat_mode: false,
+            },
+        );
+        let screen = (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| {
+                        buf.cell((x, y))
+                            .map_or(' ', |c| c.symbol().chars().next().unwrap_or(' '))
+                    })
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let hint = screen.find("external session");
+        let first_row = screen.find("native session 0");
         assert!(
-            build_mode.contains("1 external session hidden \u{b7} f to show"),
-            "default Grok filter must pin the hidden-external hint:\n{build_mode}"
+            hint.is_some(),
+            "Headless page must show the hidden-external hint:\n{screen}"
         );
         assert!(
-            build_mode.find("external session hidden") < build_mode.find("native session 0"),
-            "the hint must be pinned above the first list row:\n{build_mode}"
-        );
-        assert!(
-            !build_mode.contains("Claude work"),
-            "the foreign row itself stays hidden under the default filter:\n{build_mode}"
-        );
-
-        let chat = render(true);
-        assert!(
-            !chat.contains("external session"),
-            "chat mode must not render the hidden-external hint:\n{chat}"
+            first_row.is_none() || hint.unwrap() < first_row.unwrap(),
+            "hint must stay pinned above the first list row:\n{screen}"
         );
     }
 
@@ -3199,31 +3197,30 @@ mod tests {
         let (result, non_sel) =
             build_grouped_picker_entries(&entries, &indices, &built, &fields_vecs, &state, None);
 
-        // 2 headers + 3 rows = 5 entries
+        // Two headers and three rows make five entries
         assert_eq!(result.len(), 5);
         // Groups are sorted alphabetically: fw-1 before xai.
         // Header positions: 0 (fw-1), 2 (xai)
         assert_eq!(non_sel.len(), 5);
-        assert!(non_sel[0], "first entry should be header (non-selectable)");
-        assert!(!non_sel[1], "second entry should be selectable row");
-        assert!(non_sel[2], "third entry should be header (non-selectable)");
-        assert!(!non_sel[3], "fourth entry should be selectable row");
-        assert!(!non_sel[4], "fifth entry should be selectable row");
+        assert_eq!(
+            non_sel,
+            vec![true, false, true, false, false],
+            "header/row selectability: {non_sel:?}"
+        );
 
         // Verify headers
         assert!(
-            matches!(&result[0], crate::views::picker::PickerEntry::Header { label } if label == &"fw-1")
+            matches!(result.first(), Some(crate::views::picker::PickerEntry::Header { label }) if label == &"fw-1")
         );
         assert!(
-            matches!(&result[2], crate::views::picker::PickerEntry::Header { label } if label == &"xai")
+            matches!(result.get(2), Some(crate::views::picker::PickerEntry::Header { label }) if label == &"xai")
         );
     }
 
     #[test]
     fn grouped_entries_pin_current_repo_first() {
-        // Render path (build_grouped_picker_entries) must pin the current
-        // working directory's repo group ahead of the alphabetical rest,
-        // matching build_entry_map's index ordering.
+        // The render path (build_grouped_picker_entries) must pin the current working directory's repo group ahead of the alphabetical rest
+        // That matches build_entry_map's index ordering
         let entries = vec![
             make_entry("s1", "Fix auth", "aaa"),
             make_entry("s2", "Add streaming", "zzz"),
@@ -3244,11 +3241,11 @@ mod tests {
             Some("zzz"),
         );
         assert!(
-            matches!(&result[0], crate::views::picker::PickerEntry::Header { label } if label == &"zzz"),
+            matches!(result.first(), Some(crate::views::picker::PickerEntry::Header { label }) if label == &"zzz"),
             "current repo group pinned first"
         );
         assert!(
-            matches!(&result[2], crate::views::picker::PickerEntry::Header { label } if label == &"aaa"),
+            matches!(result.get(2), Some(crate::views::picker::PickerEntry::Header { label }) if label == &"aaa"),
             "remaining group follows alphabetically"
         );
     }
@@ -3268,10 +3265,8 @@ mod tests {
         let (result, non_sel) =
             build_grouped_picker_entries(&entries, &indices, &built, &fields_vecs, &state, None);
 
-        assert_eq!(result.len(), 3); // 1 header + 2 rows
-        assert!(non_sel[0]);
-        assert!(!non_sel[1]);
-        assert!(!non_sel[2]);
+        assert_eq!(result.len(), 3); // one header and two rows
+        assert_eq!(non_sel, vec![true, false, false]);
     }
 
     #[test]
@@ -3301,8 +3296,8 @@ mod tests {
         let (result, _) =
             build_grouped_picker_entries(&entries, &indices, &built, &fields_vecs, &state, None);
 
-        // The row (second entry) should have indent=1
-        if let crate::views::picker::PickerEntry::Row(row) = &result[1] {
+        // Grouped rows are indented one column under their header
+        if let Some(crate::views::picker::PickerEntry::Row(row)) = result.get(1) {
             assert_eq!(row.indent, 1);
         } else {
             panic!("expected Row, got Header");
@@ -3385,9 +3380,8 @@ mod tests {
 
     #[test]
     fn stacked_slot_sized_for_announcement_over_changelog() {
-        // Narrow terminal (80 cols < 90 → no hero box). With both present, the
-        // stacked info slot is sized for the announcement (priority), not the
-        // changelog.
+        // Narrow terminal: 80 cols is under the 90 the hero box needs
+        // With both present, the stacked info slot is sized for the announcement (priority), not the changelog
         let area = Rect::new(0, 0, 80, 50);
         let a = long_ann();
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
@@ -3403,8 +3397,7 @@ mod tests {
 
     #[test]
     fn stacked_slot_uses_announcement_when_no_changelog() {
-        // Narrow terminal, announcement but no changelog: the stacked slot is
-        // still allocated for the announcement (it used to be changelog-only).
+        // Narrow terminal, announcement but no changelog: the stacked slot is still allocated for the announcement (it used to be changelog-only)
         let area = Rect::new(0, 0, 80, 50);
         let a = long_ann();
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
@@ -3444,9 +3437,8 @@ mod tests {
 
     #[test]
     fn changelog_boundary_exact_fit() {
-        // No logo at h < 22. fixed_above = 0 + 1 + 0 + 0 = 1.
-        // fixed_below = 0 (tip) + 0 (tip_gap) + 3 (prompt) + 1 (ver_gap) + 1 (ver) = 5.
-        // min_without_changelog = 1 + 4 (menu) + 1 (flex) + 5 = 11.
+        // No logo at h < 22. fixed_above = 0 + 1 + 0 + 0 = 1. fixed_below = 0 (tip) + 0 (tip_gap) + 3
+        // (prompt) + 1 (ver_gap) + 1 (ver) = 5. min_without_changelog = 1 + 4 (menu) + 1 (flex) + 5 = 11.
         // changelog slot = 1 (gap) + 5 (height) = 6. Threshold = 11 + 6 = 17.
         let just_fits = Rect::new(0, 0, 80, 17);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
@@ -3514,6 +3506,333 @@ mod tests {
         assert_eq!(layout.hero_version.height, 1);
     }
 
+    /// Every reserved `Length` row kept its requested height; ratatui shrinks over-committed rows instead of placing them outside the area.
+    fn places_every_row(layout: &WelcomeLayout, input: &WelcomeLayoutInput<'_>) -> bool {
+        let prompt_height = input.prompt_height.unwrap_or(PROMPT_HEIGHT);
+        let stacked_rows =
+            layout.menu.height == input.menu_height && layout.error.height == input.error_height;
+        (layout.has_hero_box() || stacked_rows)
+            && layout.tip.height == input.tip_height
+            && layout.prompt.height == prompt_height
+            && layout.version.height == 1
+    }
+
+    fn assert_places_every_row(layout: &WelcomeLayout, input: &WelcomeLayoutInput<'_>) {
+        assert!(
+            places_every_row(layout, input),
+            "a row lost height: menu {} tip {} prompt {} version {} for prompt {:?} in {:?}",
+            layout.menu.height,
+            layout.tip.height,
+            layout.prompt.height,
+            layout.version.height,
+            input.prompt_height,
+            input.content_area
+        );
+    }
+
+    #[test]
+    fn hero_box_prompt_grows_into_the_flex_gap_and_holds_the_box_still() {
+        let area = Rect::new(0, 0, 90, 50);
+        let input = |prompt_height| WelcomeLayoutInput {
+            content_area: area,
+            menu_height: 4,
+            prompt_height,
+            ..Default::default()
+        };
+        let one_line = WelcomeLayout::compute(input(None));
+        let five_lines = WelcomeLayout::compute(input(Some(PROMPT_HEIGHT + 4)));
+        assert!(one_line.has_hero_box() && five_lines.has_hero_box());
+        assert_eq!(one_line.prompt.height, PROMPT_HEIGHT);
+        assert_eq!(five_lines.prompt.height, PROMPT_HEIGHT + 4);
+        assert_eq!(five_lines.version, one_line.version);
+        assert_eq!(five_lines.prompt.bottom(), one_line.prompt.bottom());
+        assert_eq!(
+            five_lines.hero_box, one_line.hero_box,
+            "a taller draft eats the flex gap before moving the hero box"
+        );
+        assert_places_every_row(&five_lines, &input(Some(PROMPT_HEIGHT + 4)));
+    }
+
+    #[test]
+    fn hero_box_moves_up_only_once_the_flex_gap_is_gone() {
+        // 90x26: an 11-row box, a one-row flex gap and an 11-row prompt fit exactly (min_content_height 25)
+        let area = Rect::new(0, 0, 90, 26);
+        let input = |prompt_height| WelcomeLayoutInput {
+            content_area: area,
+            menu_height: 4,
+            prompt_height,
+            ..Default::default()
+        };
+        let one_line = WelcomeLayout::compute(input(None));
+        let tall = WelcomeLayout::compute(input(Some(PROMPT_HEIGHT + 8)));
+        assert!(one_line.has_hero_box() && tall.has_hero_box());
+        assert_eq!(one_line.hero_box.y, 3, "centered with the one-line prompt");
+        assert_eq!(tall.hero_box.y, 1, "clamped to the real slack");
+        assert_eq!(tall.hero_box.height, one_line.hero_box.height);
+        assert_places_every_row(&tall, &input(Some(PROMPT_HEIGHT + 8)));
+    }
+
+    #[test]
+    fn hero_box_yields_to_stacked_when_the_draft_needs_its_rows() {
+        // 26 rows fit the 11-row box beside a one-line prompt, not beside a 13-row draft
+        let area = Rect::new(0, 0, 90, 26);
+        let input = |prompt_height| WelcomeLayoutInput {
+            content_area: area,
+            menu_height: 4,
+            prompt_height,
+            ..Default::default()
+        };
+        assert!(WelcomeLayout::compute(input(None)).has_hero_box());
+        let max = prompt_max_height(&input(None));
+        assert_eq!(max, 13);
+        let tall = WelcomeLayout::compute(input(Some(max)));
+        assert!(!tall.has_hero_box());
+        // Compact logo 5 + gap 1 + menu 4 + flex 1 + prompt 13 + version 2 = 26 fits exactly
+        assert_eq!(tall.logo_tier, LogoTier::Compact);
+        assert_places_every_row(&tall, &input(Some(max)));
+    }
+
+    /// iTerm2's default 80x25 (content 22): the compact logo stays while the column fits and steps down only when it does not.
+    #[test]
+    fn stacked_logo_keeps_its_tier_until_the_column_overflows() {
+        let area = Rect::new(0, 0, 80, 22);
+        let input = |prompt_height| WelcomeLayoutInput {
+            content_area: area,
+            menu_height: 4,
+            prompt_height,
+            ..Default::default()
+        };
+        let one_line = WelcomeLayout::compute(input(None));
+        assert_eq!(one_line.logo_tier, LogoTier::Compact);
+        // Compact logo 5 + gap 1 + menu 4 + flex 1 + prompt + version 2 = 13 + prompt: fits up to a 9-row draft
+        // The one-line layout has a 5-row flex gap, so the first 4 extra rows move nothing; the next two shift the column up
+        for extra in 1..=6u16 {
+            let layout = WelcomeLayout::compute(input(Some(PROMPT_HEIGHT + extra)));
+            assert_eq!(layout.logo_tier, LogoTier::Compact, "{extra} extra rows");
+            if extra <= 4 {
+                assert_eq!(
+                    layout.logo, one_line.logo,
+                    "{extra} extra rows: the logo holds still"
+                );
+                assert_eq!(
+                    layout.menu.y, one_line.menu.y,
+                    "{extra} extra rows: the menu holds still"
+                );
+            } else {
+                assert_eq!(
+                    layout.logo.y,
+                    one_line.logo.y - (extra - 4),
+                    "{extra} extra rows"
+                );
+            }
+            assert_places_every_row(&layout, &input(Some(PROMPT_HEIGHT + extra)));
+        }
+        let max = prompt_max_height(&input(None));
+        assert_eq!(max, 11);
+        let tall = WelcomeLayout::compute(input(Some(max)));
+        assert_eq!(tall.logo_tier, LogoTier::Hidden);
+        assert_places_every_row(&tall, &input(Some(max)));
+    }
+
+    /// 80x33: the full logo fits beside every draft up to the cap, so it never steps down.
+    #[test]
+    fn stacked_full_logo_survives_the_whole_draft_range_when_it_fits() {
+        let area = Rect::new(0, 0, 80, 33);
+        let input = |prompt_height| WelcomeLayoutInput {
+            content_area: area,
+            menu_height: 4,
+            prompt_height: Some(prompt_height),
+            ..Default::default()
+        };
+        let max = prompt_max_height(&input(PROMPT_HEIGHT));
+        for prompt_height in PROMPT_HEIGHT..=max {
+            let layout = WelcomeLayout::compute(input(prompt_height));
+            assert_eq!(layout.logo_tier, LogoTier::Full, "prompt {prompt_height}");
+            assert_places_every_row(&layout, &input(prompt_height));
+        }
+    }
+
+    /// The cap must leave room for every other stacked row: default tip, privacy banner (2), a startup warning, the import menu row.
+    /// Where even the one-line box is squeezed on main (under ~14 rows), the cap must simply refuse to grow.
+    #[test]
+    fn stacked_prompt_grows_and_keeps_rows_inside_short_terminals() {
+        for height in [12u16, 14, 16, 18, 20, 22, 25, 30] {
+            for (error_height, menu_height, tip_height) in [
+                (0u16, 4u16, 0u16),
+                (0, 4, 1),
+                (0, 4, 2),
+                (2, 5, 1),
+                (3, 5, 2),
+            ] {
+                let area = Rect::new(0, 0, 60, height);
+                let case = format!(
+                    "height {height} error {error_height} menu {menu_height} tip {tip_height}"
+                );
+                let input = |prompt_height| WelcomeLayoutInput {
+                    content_area: area,
+                    error_height,
+                    menu_height,
+                    tip_height,
+                    prompt_height: Some(prompt_height),
+                    ..Default::default()
+                };
+                let max = prompt_max_height(&input(PROMPT_HEIGHT));
+                let one_line = WelcomeLayout::compute(input(PROMPT_HEIGHT));
+                if places_every_row(&one_line, &input(PROMPT_HEIGHT)) {
+                    let tall = WelcomeLayout::compute(input(max));
+                    assert!(
+                        places_every_row(&tall, &input(max)),
+                        "{case}: tall draft squeezed a row"
+                    );
+                } else {
+                    assert_eq!(max, PROMPT_HEIGHT, "{case}: no room to grow");
+                }
+            }
+        }
+    }
+
+    /// A draft that no longer fits beside the full logo steps the reserved rows AND the painted art down together.
+    #[test]
+    fn stacked_logo_art_matches_the_rows_reserved_for_a_tall_draft() {
+        // Full logo 7 + gap 1 + menu 4 + flex 1 + prompt + version 2 = 15 + prompt: 26 rows fit an 11-row draft under the full logo; 13 rows need the compact one
+        let area = Rect::new(0, 0, 60, 26);
+        let input = |prompt_height| WelcomeLayoutInput {
+            content_area: area,
+            menu_height: 4,
+            prompt_height,
+            ..Default::default()
+        };
+        let one_line = WelcomeLayout::compute(input(None));
+        assert_eq!(one_line.logo_tier, LogoTier::Full);
+        assert_eq!(one_line.logo.height, logo::full_logo_line_count());
+
+        let tall = WelcomeLayout::compute(input(Some(13)));
+        assert_eq!(tall.logo_tier, LogoTier::Compact);
+        assert_eq!(tall.logo.height, logo::compact_logo_line_count());
+        assert_eq!(tall.logo.height, tall.logo_tier.rows());
+        assert_places_every_row(&tall, &input(Some(13)));
+    }
+
+    #[test]
+    fn prompt_max_height_is_half_the_area_unless_the_column_needs_the_rows() {
+        let cap = |content_height, tip_height| {
+            prompt_max_height(&WelcomeLayoutInput {
+                content_area: Rect::new(0, 0, 60, content_height),
+                menu_height: 4,
+                tip_height,
+                ..Default::default()
+            })
+        };
+        assert_eq!(cap(4, 0), PROMPT_HEIGHT);
+        assert_eq!(cap(50, 1), 25);
+        // 18 rows with the default tip: gap 1 + menu 4 + flex 1 + tip 2 + version 2 leaves 8, not 9
+        assert_eq!(cap(18, 1), 8);
+        assert_eq!(cap(18, 0), 9);
+    }
+
+    /// The consent screen passes 0 prompt rows and must sit exactly where it did before the composer could grow.
+    #[test]
+    fn zero_row_prompt_is_not_charged_for_a_one_line_box_when_centering() {
+        // 80x28, a 9-row body, a 2-row menu: full logo 7 + gap 1 + gap 1 + body 9 leaves 10 rows
+        // (10 - 4 - 2) / 3 = 1 with the zero-row box; a phantom 3-row box would give (10 - 4 - 5) / 3 = 0
+        let area = Rect::new(0, 0, 80, 28);
+        let layout = WelcomeLayout::compute_stacked(WelcomeLayoutInput {
+            content_area: area,
+            error_height: 9,
+            menu_height: 2,
+            prompt_height: Some(0),
+            ..Default::default()
+        });
+        assert_eq!(layout.logo_tier, LogoTier::Full);
+        assert_eq!(layout.logo.y, 1);
+        assert_eq!(layout.prompt.height, 0);
+    }
+
+    /// End to end: the draft measured in `render_welcome` is what sizes the box, not a hand-fed `prompt_height`.
+    #[test]
+    fn render_welcome_sizes_the_composer_from_the_draft() {
+        let auth = AuthState::Done;
+        let trust = TrustState::Done;
+        let params = render_params(&auth, &trust, None);
+        let area = Rect::new(0, 0, 100, 40);
+        let mut picker = PickerState::default();
+
+        let mut prompt = PromptWidget::new();
+        let mut buf = Buffer::empty(area);
+        let empty = render_welcome(area, &mut buf, &params, &mut prompt, &mut picker);
+        assert_eq!(empty.prompt_rect.map(|r| r.height), Some(PROMPT_HEIGHT));
+
+        prompt.set_text("a\nb\nc");
+        let mut buf = Buffer::empty(area);
+        let three_lines = render_welcome(area, &mut buf, &params, &mut prompt, &mut picker);
+        assert_eq!(
+            three_lines.prompt_rect.map(|r| r.height),
+            Some(PROMPT_HEIGHT + 2)
+        );
+        assert_eq!(
+            three_lines.prompt_rect.map(|r| r.bottom()),
+            empty.prompt_rect.map(|r| r.bottom()),
+            "the box grows upward from its anchored bottom"
+        );
+    }
+
+    /// Logout keeps the home draft and lands on the login screen, which must show the whole draft rather than one scrolled row.
+    #[test]
+    fn login_screen_sizes_the_composer_from_the_kept_draft() {
+        let auth = AuthState::Pending { error: None };
+        let trust = TrustState::Done;
+        let params = render_params(&auth, &trust, None);
+        let area = Rect::new(0, 0, 100, 40);
+        let mut picker = PickerState::default();
+        let mut prompt = PromptWidget::new();
+        prompt.set_text("alpha-one\nbravo-two\ncharlie-three");
+        let mut buf = Buffer::empty(area);
+        let _ = render_welcome(area, &mut buf, &params, &mut prompt, &mut picker);
+        let text = buffer_text(&buf);
+        for token in ["alpha-one", "bravo-two", "charlie-three"] {
+            assert!(text.contains(token), "{token} missing:\n{text}");
+        }
+    }
+
+    /// Rows of the painted buffer that hold braille logo art.
+    fn painted_logo_rows(buf: &Buffer) -> u16 {
+        let area = buf.area;
+        (area.top()..area.bottom())
+            .filter(|&y| {
+                (area.left()..area.right()).any(|x| {
+                    buf.cell((x, y))
+                        .map(|c| c.symbol())
+                        .unwrap_or("")
+                        .chars()
+                        .any(|c| ('\u{2800}'..='\u{28FF}').contains(&c))
+                })
+            })
+            .count() as u16
+    }
+
+    /// End to end: a draft that steps the logo tier down paints the compact art, not the full art clipped into fewer rows.
+    #[test]
+    fn render_welcome_paints_the_logo_tier_the_draft_leaves_room_for() {
+        let auth = AuthState::Done;
+        let trust = TrustState::Done;
+        let params = render_params(&auth, &trust, None);
+        // 60 cols keeps the stacked layout; the top bar and margins take 3 rows, so 29 rows give the 26-row content area
+        // whose full logo fits beside an 11-row draft but not the 13-row cap
+        let area = Rect::new(0, 0, 60, 29);
+        let mut picker = PickerState::default();
+        let mut prompt = PromptWidget::new();
+
+        let mut buf = Buffer::empty(area);
+        let _ = render_welcome(area, &mut buf, &params, &mut prompt, &mut picker);
+        assert_eq!(painted_logo_rows(&buf), logo::full_logo_line_count());
+
+        prompt.set_text(&["line"; 30].join("\n"));
+        let mut buf = Buffer::empty(area);
+        let tall = render_welcome(area, &mut buf, &params, &mut prompt, &mut picker);
+        assert_eq!(tall.prompt_rect.map(|r| r.height), Some(13));
+        assert_eq!(painted_logo_rows(&buf), logo::compact_logo_line_count());
+    }
+
     #[test]
     fn hero_box_inactive_on_narrow_terminal() {
         // 80 cols is below the 90-col threshold.
@@ -3575,8 +3894,7 @@ mod tests {
 
     #[test]
     fn hero_box_inactive_on_short_terminal() {
-        // 16 rows is one short of the 17 the box needs (11 box + 1 flex gap +
-        // 5 fixed-below), so it falls back to the stacked layout.
+        // 16 rows is one short of the 17 the box needs (11 box + 1 flex gap + 5 fixed-below), so it falls back to the stacked layout
         let area = Rect::new(0, 0, 90, 16);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
@@ -3591,10 +3909,9 @@ mod tests {
 
     #[test]
     fn hero_box_inactive_when_warning_would_overflow() {
-        // Regression: the box is forced to the full 7-row logo, so even a
-        // 3-item menu needs 11 box rows. A startup warning (error_height = 2)
-        // pushes the total past height 19, so the gate must fall back to the
-        // stacked layout instead of overflowing by a row.
+        // Regression: the box is forced to the full 7-row logo, so even a 3-item menu needs 11 box rows
+        // A startup warning (error_height = 2) pushes the total past height 19
+        // The gate must therefore fall back to the stacked layout instead of overflowing by a row
         let area = Rect::new(0, 0, 90, 19);
         let with_warning = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
@@ -3614,10 +3931,9 @@ mod tests {
 
     #[test]
     fn blocked_layout_stays_stacked_on_wide_terminal() {
-        // The login / ZDR screens render through render_welcome_blocked, which
-        // only paints the stacked logo/menu rects. compute_stacked must never
-        // hand them a hero-box layout (which zeroes those rects), even on a
-        // wide, tall terminal where the normal path picks the hero box.
+        // The login / ZDR screens render through render_welcome_blocked, which only paints the stacked logo/menu rects
+        // compute_stacked must never hand them a hero-box layout (which zeroes those rects)
+        // That holds even on a wide, tall terminal where the normal path picks the hero box
         let area = Rect::new(0, 0, 120, 40);
         assert!(
             WelcomeLayout::compute(WelcomeLayoutInput {
@@ -3646,11 +3962,9 @@ mod tests {
 
     #[test]
     fn hero_box_does_not_overflow_with_tall_menu() {
-        // A 6-item menu makes the box 2 rows taller than the default-4 box, so
-        // the centering pad (derived from the default box) must be clamped or
-        // the box gets pushed down and the version row clips at exactly
-        // min_content_height. 19 == min_content_height(0, 6, 0, 0): a 13-row box
-        // + 1 flex gap + 5 fixed-below.
+        // A 6-item menu makes the box 2 rows taller than the default-4 box. The centering pad (derived
+        // from the default box) must be clamped. Otherwise the box gets pushed down and the version row
+        // clips at exactly min_content_height.
         let area = Rect::new(0, 0, 100, 19);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
@@ -3704,8 +4018,7 @@ mod tests {
 
     #[test]
     fn hero_box_with_changelog() {
-        // With no announcement, the changelog renders inside the box (info
-        // slot), not in a separate area below it.
+        // With no announcement, the changelog renders inside the box (info slot), not in a separate area below it
         let area = Rect::new(0, 0, 100, 50);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
@@ -3737,7 +4050,7 @@ mod tests {
         // The subtitle is hidden when the info slot is shown.
         assert_eq!(layout.hero_subtitle.height, 0);
         assert!(layout.hero_info.y > layout.hero_version.y);
-        // The menu sits one blank row below the info block — no divider line.
+        // The menu sits one blank row below the info block, with no divider line
         assert_eq!(
             layout.hero_menu.y,
             layout.hero_info.y + layout.hero_info.height + 1
@@ -3746,8 +4059,7 @@ mod tests {
 
     #[test]
     fn hero_box_announcement_takes_priority_over_changelog() {
-        // When both are present, the info slot is sized for the announcement
-        // and the changelog is suppressed (never shown outside the box).
+        // When both are present, the info slot is sized for the announcement and the changelog is suppressed (never shown outside the box)
         let area = Rect::new(0, 0, 100, 50);
         let a = long_ann();
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
@@ -3764,7 +4076,15 @@ mod tests {
 
     #[test]
     fn hero_box_announcement_clamped_when_tight() {
-        let boundary_height = hero_box::min_content_height(0, 3, 0, 0);
+        // A real announcement can't disable the hero box: the slot is clamped to whatever still fits (the renderer trails a `…`)
+        // The box stays active rather than falling back to the stacked layout
+        // The boundary is measured, not hardcoded: DSB's logo raster is 8 rows, so a fixed height would drift.
+        let measure = WelcomeLayoutInput {
+            content_area: Rect::new(0, 0, 100, 0),
+            menu_height: 3,
+            ..Default::default()
+        };
+        let boundary_height = hero_box::min_content_height(&measure, 0, PROMPT_HEIGHT);
         let boundary = Rect::new(0, 0, 100, boundary_height);
         let a = long_ann();
         let without = WelcomeLayout::compute(WelcomeLayoutInput {
@@ -3773,10 +4093,16 @@ mod tests {
             ..Default::default()
         });
         assert!(without.has_hero_box());
-        assert_eq!(hero_box::min_content_height(0, 3, 0, 0), boundary.height);
-        assert_eq!(hero_box::min_content_height(0, 3, 0, 2), boundary.height);
         assert_eq!(
-            hero_box::min_content_height(0, 3, 0, 3),
+            hero_box::min_content_height(&measure, 0, PROMPT_HEIGHT),
+            boundary.height
+        );
+        assert_eq!(
+            hero_box::min_content_height(&measure, 2, PROMPT_HEIGHT),
+            boundary.height
+        );
+        assert_eq!(
+            hero_box::min_content_height(&measure, 3, PROMPT_HEIGHT),
             boundary.height + 1
         );
         let too_tight_with_ann = WelcomeLayout::compute(WelcomeLayoutInput {
@@ -3799,17 +4125,23 @@ mod tests {
             "announcement clamps to fit instead of disabling the box"
         );
         assert_eq!(with_ann.hero_info.height, 3);
+        let input = WelcomeLayoutInput {
+            content_area: area,
+            menu_height: 3,
+            announcement: Some(&a),
+            ..Default::default()
+        };
         assert!(
-            hero_box::min_content_height(0, 3, 0, with_ann.hero_info.height) <= area.height,
+            hero_box::min_content_height(&input, with_ann.hero_info.height, PROMPT_HEIGHT)
+                <= area.height,
             "clamped slot must keep the box within the area"
         );
     }
 
     #[test]
     fn hero_box_keeps_one_bottom_pad_below_actions() {
-        // With a changelog/announcement the subtitle is hidden, but there's
-        // still exactly one padding row between the actions and the bottom
-        // border. (menu=4 + info=3 fills the inner, so the menu reaches the pad.)
+        // With a changelog/announcement the subtitle is hidden, but there's still exactly one padding row between the actions and the bottom border
+        // (menu=4 + info=3 fills the inner, so the menu reaches the pad.)
         let area = Rect::new(0, 0, 100, 50);
         let a = long_ann();
         let no_info = WelcomeLayout::compute(WelcomeLayoutInput {
@@ -3840,7 +4172,9 @@ mod tests {
         let mut out = String::new();
         for y in area.y..area.y + area.height {
             for x in area.x..area.x + area.width {
-                out.push_str(buf[(x, y)].symbol());
+                if let Some(cell) = buf.cell((x, y)) {
+                    out.push_str(cell.symbol());
+                }
             }
             out.push('\n');
         }
@@ -3903,17 +4237,17 @@ mod tests {
             text.contains("Make sure your browser shows this code"),
             "device arm must show the code caption, got:\n{text}"
         );
-        // Copy affordance (click-to-copy line) is present.
+        // The click-to-copy line is present
         assert!(
             text.contains("to copy"),
             "device arm must show the copy-URL affordance, got:\n{text}"
         );
-        // No manual-paste affordance in device mode.
+        // No manual-paste box in device mode
         assert!(
             !text.contains("Paste your token"),
             "device arm must NOT render the token paste box, got:\n{text}"
         );
-        // Copy + fallback links are clickable.
+        // Copy and fallback links are clickable
         assert!(
             copy_rect.is_some(),
             "device arm must expose a copy hit-rect"
@@ -3992,8 +4326,7 @@ mod tests {
         let area = Rect::new(0, 0, 40, 40);
         let mut buf = Buffer::empty(area);
         let theme = Theme::current();
-        // 40-col terminal; URL longer than one row must wrap at the exact
-        // screen edge with no leading spaces so copy-paste stays intact.
+        // 40-col terminal; a URL longer than one row must wrap at the exact screen edge with no leading spaces so copy-paste stays intact
         let url = "https://accounts.x.ai/oauth2/device?user_code=WXYZ-1234&extra=0123456789";
 
         render_welcome_authenticating(
@@ -4016,15 +4349,14 @@ mod tests {
             .find(|l| l.contains("https://"))
             .expect("raw URL mode must render the URL");
         let second = lines.next().expect("URL must wrap to a second row");
-        // First row flush against both edges (full width), remainder on the
-        // next row starting at column 0.
+        // The first row is flush against both edges (full width); the remainder starts at column 0 on the next row
         assert_eq!(
             first,
-            &url[..40],
+            url.get(..40).unwrap_or(url),
             "long URL row must span the full terminal width:\n{text}"
         );
         assert!(
-            second.starts_with(&url[40..]),
+            url.get(40..).is_some_and(|rest| second.starts_with(rest)),
             "wrapped remainder must start at column 0:\n{text}"
         );
     }
@@ -4058,17 +4390,17 @@ mod tests {
             text.contains("Waiting for login to complete"),
             "command arm must show the waiting status, got:\n{text}"
         );
-        // No device code — that's device-flow only.
+        // No device code; that's device-flow only
         assert!(
             !text.contains("Make sure your browser shows this code"),
             "command arm must NOT show the device-code caption, got:\n{text}"
         );
-        // No manual-paste affordance in command mode.
+        // No manual-paste box in command mode
         assert!(
             !text.contains("Paste your token"),
             "command arm must NOT render the token paste box, got:\n{text}"
         );
-        // Copy + fallback links are clickable.
+        // Copy and fallback links are clickable
         assert!(
             copy_rect.is_some(),
             "command arm must expose a copy hit-rect"
@@ -4091,9 +4423,112 @@ the usual channels. "
         }
     }
 
+    /// A growing draft never reflows the announcement: the hero box keeps the slot the one-line layout gave it, or yields to stacked whole.
+    #[test]
+    fn draft_never_shrinks_the_hero_announcement() {
+        let area = Rect::new(0, 0, 100, 32);
+        let ann = xai_grok_announcements::RemoteAnnouncement {
+            title: Some("Upgrade".into()),
+            message: Some("SuperGrok Heavy is available for your team today.".into()),
+            ..Default::default()
+        };
+        let input = |prompt_height| WelcomeLayoutInput {
+            content_area: area,
+            menu_height: 4,
+            announcement: Some(&ann),
+            has_upgrade_cta: true,
+            prompt_height,
+            ..Default::default()
+        };
+        let one_line = WelcomeLayout::compute(input(None));
+        assert!(one_line.has_hero_box());
+        // title + one message line + the CTA's spacer and button rows
+        assert_eq!(one_line.hero_info.height, 4);
+
+        let max = prompt_max_height(&input(None));
+        let mut saw_stacked = false;
+        for prompt_height in PROMPT_HEIGHT..=max {
+            let layout = WelcomeLayout::compute(input(Some(prompt_height)));
+            if layout.has_hero_box() {
+                assert_eq!(
+                    layout.hero_info.height, one_line.hero_info.height,
+                    "prompt {prompt_height}: the slot must not shrink under the draft"
+                );
+                assert_eq!(layout.hero_box.height, one_line.hero_box.height);
+            } else {
+                saw_stacked = true;
+                // The stacked slot shows the announcement whole or not at all
+                assert!(
+                    layout.changelog.height == 0 || layout.changelog.height == 4,
+                    "prompt {prompt_height}: stacked slot {}",
+                    layout.changelog.height
+                );
+            }
+            assert_places_every_row(&layout, &input(Some(prompt_height)));
+        }
+        assert!(saw_stacked, "the cap must push the box out at 100x32");
+    }
+
+    /// The stacked announcement outranks the logo and the draft: the cap reserves its rows, and the logo steps down before it would yield.
+    #[test]
+    fn stacked_announcement_stays_visible_for_every_draft_height() {
+        let area = Rect::new(0, 0, 70, 30);
+        let ann = long_ann();
+        let input = |prompt_height| WelcomeLayoutInput {
+            content_area: area,
+            menu_height: 4,
+            announcement: Some(&ann),
+            prompt_height,
+            ..Default::default()
+        };
+        let one_line = WelcomeLayout::compute(input(None));
+        assert!(!one_line.has_hero_box());
+        let slot = one_line.changelog.height;
+        assert!(slot > 0);
+        assert_eq!(one_line.logo_tier, LogoTier::Full);
+        let max = prompt_max_height(&input(None));
+        let mut saw_logo_yield = false;
+        for prompt_height in PROMPT_HEIGHT..=max {
+            let layout = WelcomeLayout::compute(input(Some(prompt_height)));
+            assert_eq!(
+                layout.changelog.height, slot,
+                "prompt {prompt_height}: the announcement must keep its rows"
+            );
+            saw_logo_yield |= layout.logo_tier != LogoTier::Full;
+            assert_places_every_row(&layout, &input(Some(prompt_height)));
+        }
+        assert!(
+            saw_logo_yield,
+            "the cap must be high enough to push the logo out at 70x30"
+        );
+    }
+
+    /// Production hides the logo on a short terminal and keeps the announcement; a one-line draft must still do that.
+    #[test]
+    fn short_stacked_terminal_keeps_the_announcement_and_drops_the_logo() {
+        let ann = xai_grok_announcements::RemoteAnnouncement {
+            title: Some("Grok 4.6 is here!".into()),
+            message: Some("Select 'Grok 4.6' under /model.".into()),
+            ..Default::default()
+        };
+        // Compact logo 5 + gap 1 + menu 4 + slot gap 1 + slot 2 + tip 2 + flex 1 + prompt 3 + version 2 = 21 > 20
+        let area = Rect::new(0, 0, 80, 20);
+        let input = || WelcomeLayoutInput {
+            content_area: area,
+            menu_height: 4,
+            tip_height: 1,
+            announcement: Some(&ann),
+            ..Default::default()
+        };
+        let layout = WelcomeLayout::compute(input());
+        assert_eq!(layout.changelog.height, 2, "announcement stays");
+        assert_eq!(layout.logo_tier, LogoTier::Hidden, "logo yields");
+        assert_places_every_row(&layout, &input());
+    }
+
     #[test]
     fn announcement_expands_for_long_message() {
-        // Wide + tall → hero box; the measured info slot grows when expanded.
+        // Wide and tall enough for the hero box; the measured info slot grows when expanded
         let area = Rect::new(0, 0, 120, 60);
         let a = long_ann();
         let collapsed = WelcomeLayout::compute(WelcomeLayoutInput {
@@ -4174,15 +4609,25 @@ the usual channels. "
             tall_expanded.hero_info.height
         );
         // ...and the clamped height still keeps the hero box within the area.
+        let short_input = WelcomeLayoutInput {
+            content_area: short,
+            menu_height: 4,
+            announcement: Some(&a),
+            expanded: true,
+            ..Default::default()
+        };
         assert!(
-            hero_box::min_content_height(0, 4, 0, short_expanded.hero_info.height) <= short.height
+            hero_box::min_content_height(
+                &short_input,
+                short_expanded.hero_info.height,
+                PROMPT_HEIGHT
+            ) <= short.height
         );
     }
 
     #[test]
     fn no_announcement_uses_changelog_for_info_slot() {
-        // Without an announcement the info slot falls back to the changelog
-        // height (0 here → empty slot).
+        // Without an announcement the info slot falls back to the changelog height (0 here, so the slot is empty)
         let area = Rect::new(0, 0, 120, 60);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
@@ -4202,9 +4647,9 @@ the usual channels. "
 
     #[test]
     fn stacked_expanded_announcement_allocates_slot() {
-        // Narrow terminal → stacked layout. A long expanded announcement must
-        // still get a nonzero info slot wherever the column has room (regression:
-        // over-reserving once collapsed the whole slot to zero, hiding it).
+        // Narrow terminal, so the stacked layout applies
+        // A long expanded announcement must still get a nonzero info slot wherever the column has room
+        // Regression: over-reserving once collapsed the whole slot to zero, hiding it
         let a = long_ann();
         for height in 20u16..=60 {
             let area = Rect::new(0, 0, 80, height);
@@ -4217,7 +4662,15 @@ the usual channels. "
                 ..Default::default()
             });
             assert!(!layout.has_hero_box());
-            let budget = stacked_info_budget(area, 0, 4, 0, false);
+            // logo + gap, menu, info gap, flex gap, prompt + version rows
+            let budget = height.saturating_sub(
+                logo_line_count(height)
+                    + 1
+                    + 4
+                    + 1
+                    + 1
+                    + WelcomeLayout::fixed_below(0, PROMPT_HEIGHT),
+            );
             if budget > 0 {
                 assert!(
                     layout.changelog.height > 0,

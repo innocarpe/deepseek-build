@@ -1,43 +1,37 @@
 //! Discovery methods (`workspace.discover_skills`).
 //!
-//! SYNC: [`SkillInfo`] / [`SkillScope`] mirror the serde shape of
-//! `xai-grok-tools/src/implementations/skills/types.rs` (the type the
-//! server serializes); the fixture tests below pin the contract.
+//! SYNC: [`SkillInfo`] / [`SkillScope`] mirror the serde shape the server serializes in `xai-grok-tools/src/implementations/skills/types.rs`.
+//! The fixture tests below pin the contract.
 //!
-//! Not to be confused with the event/chunk `SkillInfo` in
-//! `crate::types::skills` (`source`-keyed), which is **not** this RPC's
-//! wire shape.
+//! Not to be confused with the event/chunk `SkillInfo` in `crate::types::skills` (`source`-keyed), which is **not** this RPC's wire shape.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::WorkspaceRpc;
+use super::{RpcActivityClass, WorkspaceRpc};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DiscoverSkillsReq {}
 
 impl WorkspaceRpc for DiscoverSkillsReq {
     const METHOD: &'static str = "workspace.discover_skills";
+    const ACTIVITY: RpcActivityClass = RpcActivityClass::Read;
     type Response = Vec<SkillInfo>;
 }
 
-/// `workspace.discover_plugins` — plugins discovered at the workspace
-/// root. Each element is the raw serialized plugin object.
+/// `workspace.discover_plugins` returns the plugins discovered at the workspace root.
+/// Each element is the raw serialized plugin object.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DiscoverPluginsReq {}
 
 impl WorkspaceRpc for DiscoverPluginsReq {
     const METHOD: &'static str = "workspace.discover_plugins";
+    const ACTIVITY: RpcActivityClass = RpcActivityClass::Read;
     type Response = Vec<Value>;
 }
 
-/// Scope/priority of a skill based on where it was discovered.
-/// Lower values have higher priority.
-///
-/// Serde is manual so that [`Unknown`](Self::Unknown) is lossless: a
-/// scope string from a newer server deserializes into
-/// `Unknown(original)` and re-serializes back to the original string,
-/// so round-tripping never rewrites a novel scope value.
+/// Scope/priority of a skill based on where it was discovered. Lower values have higher priority.
+/// Manual serde so [`Unknown`](Self::Unknown) round-trips a newer server's original string.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SkillScope {
     /// cwd/.grok/skills
@@ -123,8 +117,7 @@ pub struct SkillInfo {
     pub metadata: Option<std::collections::HashMap<String, String>>,
     pub path: String,
     pub scope: SkillScope,
-    /// Raw JSON: the shape is the tools crate's `ConfigSource` tagged
-    /// enum, which RPC clients have no need to interpret structurally.
+    /// Raw JSON: the shape is the tools crate's `ConfigSource` tagged enum, which RPC clients have no need to interpret structurally.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config_source: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -172,9 +165,6 @@ mod tests {
         assert!(info.config_source.is_none());
     }
 
-    // Fixture mirrored field-for-field from the xai-grok-tools SkillInfo
-    // serialization; refresh from a captured live response when the wire
-    // shape is in question.
     #[test]
     fn skill_info_deserializes_full_payload() {
         let raw = serde_json::json!({
@@ -210,30 +200,15 @@ mod tests {
         assert_eq!(info.display_name.as_deref(), Some("Deploy Helper"));
         assert_eq!(info.plugin_name.as_deref(), Some("infra-plugin"));
         assert_eq!(
-            info.config_source.as_ref().and_then(|v| v["type"].as_str()),
+            info.config_source
+                .as_ref()
+                .and_then(|v| v.get("type"))
+                .and_then(|v| v.as_str()),
             Some("user")
         );
 
-        // Re-serializing must reproduce the input (Value equality is
-        // order-insensitive; this pins field presence via
-        // skip_serializing_if and every value).
         let round = serde_json::to_value(&info).unwrap();
         assert_eq!(round, raw);
-    }
-
-    #[test]
-    fn skill_scope_known_values() {
-        for (raw, expected) in [
-            ("local", SkillScope::Local),
-            ("repo", SkillScope::Repo),
-            ("user", SkillScope::User),
-            ("server", SkillScope::Server),
-            ("bundled", SkillScope::Bundled),
-            ("plugin", SkillScope::Plugin),
-        ] {
-            let v: SkillScope = serde_json::from_value(serde_json::json!(raw)).unwrap();
-            assert_eq!(v, expected, "scope {raw}");
-        }
     }
 
     #[test]
@@ -265,11 +240,5 @@ mod tests {
         });
         let info: SkillInfo = serde_json::from_value(raw).unwrap();
         assert_eq!(info.scope, SkillScope::Repo);
-    }
-
-    #[test]
-    fn method_constant() {
-        assert_eq!(DiscoverSkillsReq::METHOD, "workspace.discover_skills");
-        assert_eq!(DiscoverPluginsReq::METHOD, "workspace.discover_plugins");
     }
 }

@@ -13,14 +13,22 @@ path = "src/bin/cli.rs"
 name = "pool-perf-bench"
 path = "src/bin/pool_perf_bench.rs"
 required-features = ["bench"]
+[[bin]]
+name = "worktree-lifecycle-bench"
+path = "src/bin/worktree_lifecycle_bench.rs"
+required-features = ["lifecycle-bench"]
 
 [features]
 default-bazel = ["metadata"]
-bench = ["dep:tempfile"]
-# SQLite metadata DB for worktree tracking. On Linux, serde/serde_json are
-# already pulled in unconditionally (overlay metadata), so this feature
-# effectively only gates rusqlite there.
-metadata = ["dep:rusqlite", "dep:serde", "dep:serde_json", "dep:xai-sqlite-journal"]
+bench = []
+lifecycle-bench = [
+    "metadata",
+    "dep:sha2",
+    "dep:url",
+    "dep:uuid",
+]
+# SQLite metadata DB for worktree tracking.
+metadata = ["dep:rusqlite", "dep:xai-sqlite-journal"]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -29,24 +37,30 @@ clap = { workspace = true }
 crossbeam = { workspace = true }
 dashmap = { workspace = true }
 dunce = { workspace = true }
+xai-dirs = { workspace = true }
 gix = { workspace = true, features = ["status", "parallel"] }
 gix-status = { version = "0.30.0" }
 globset = { workspace = true }
 ignore = { workspace = true }
+libc = { workspace = true }
 num_cpus = { workspace = true }
 
 reflink-copy = { workspace = true }
 rapidhash = "4.2.0"
 rusqlite = { version = "0.37", features = ["bundled"], optional = true }
-serde = { workspace = true, features = ["derive"], optional = true }
-serde_json = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+strum = { workspace = true }
+sha2 = { workspace = true, optional = true }
 tokio-util = { workspace = true }
-tempfile = { workspace = true, optional = true }
+tempfile = { workspace = true }
 tracing = { workspace = true }
 xai-gix-status = { workspace = true }
 xai-sqlite-journal = { workspace = true, optional = true }
 xai-tty-utils = { workspace = true }
 tracing-subscriber = { workspace = true }
+url = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -58,6 +72,8 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 nix = { version = "0.30", features = ["fs"] }

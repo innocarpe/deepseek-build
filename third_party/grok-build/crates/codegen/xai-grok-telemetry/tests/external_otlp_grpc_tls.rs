@@ -1,16 +1,16 @@
-//! HTTPS (TLS) gRPC transport coverage for the external OTEL stream —
-//! regression test for GB-4580, where `https://` collector endpoints were
-//! rejected at exporter build time and the stream silently disabled itself.
+//! HTTPS (TLS) gRPC transport coverage for the external OTEL stream.
+//! Regression test: `https://` collector endpoints were once rejected at exporter build time and the stream silently disabled itself.
 //!
-//! The collector presents a certificate signed by a freshly generated CA and
-//! the client trusts it via the standard `OTEL_EXPORTER_OTLP_CERTIFICATE`
-//! variable, so the full TLS handshake + OTLP export path is exercised.
-//! Lives in its own integration-test binary because the external telemetry
-//! registry is a process-global `OnceLock`.
+//! The collector presents a certificate signed by a freshly generated CA.
+//! The client trusts it via the standard `OTEL_EXPORTER_OTLP_CERTIFICATE` variable, so the full TLS handshake and OTLP export path is exercised.
+//! It lives in its own integration-test binary because the external telemetry registry is a process-global `OnceLock`.
 
 mod otlp_collector;
 
+use std::time::Duration;
+
 use otlp_collector as col;
+use xai_grok_test_support::{OtelRecorder, OtelSignal};
 
 #[test]
 fn external_stream_grpc_over_tls_end_to_end() {
@@ -19,9 +19,9 @@ fn external_stream_grpc_over_tls_end_to_end() {
     std::fs::write(ca_file.path(), &tls.ca_cert_pem).expect("write CA pem");
     let ca_path = ca_file.path().to_str().expect("utf-8 CA path").to_string();
 
-    let collected = col::Collected::default();
+    let recorder = OtelRecorder::new();
     let endpoint = col::start_grpc_tls_collector(
-        collected.clone(),
+        recorder.clone(),
         tls.server_cert_pem.clone(),
         tls.server_key_pem.clone(),
     );
@@ -54,9 +54,8 @@ fn external_stream_grpc_over_tls_end_to_end() {
         "https gRPC exporters must build and activate the stream (GB-4580)"
     );
 
-    // `SessionNew` maps to the `session.count` metric; `SessionHarness` maps
-    // to the `session_start` log record — emit both so each signal's TLS
-    // export path is exercised.
+    // `SessionNew` maps to the `session.count` metric; `SessionHarness` maps to the `session_start` log record
+    // Emitting both exercises each signal's TLS export path
     xai_grok_telemetry::log_event(xai_grok_telemetry::events::SessionNew {
         session_id: "sess-grpc-tls-1".into(),
         client_identifier: None,
@@ -77,31 +76,23 @@ fn external_stream_grpc_over_tls_end_to_end() {
         hook_names: vec![],
         agents_md_dir_names: vec![],
         memory_enabled: false,
+        memory_retrieval_mode: xai_grok_telemetry::events::MemoryRetrievalMode::Disabled,
         is_git_repo: true,
         auto_update: None,
     });
 
     xai_grok_telemetry::external::flush();
-    assert!(
-        col::wait_until(std::time::Duration::from_secs(10), || {
-            collected.logs_len() > 0
-        }),
-        "log records must arrive over TLS"
-    );
-    let names = col::event_names(&collected);
+    col::block_on(recorder.wait_for_signals(Duration::from_secs(10), &[OtelSignal::Logs]))
+        .expect("log records must arrive over TLS");
+    let names = recorder.event_names();
     assert!(
         names.iter().any(|n| n == "grok_code.session_start"),
         "expected grok_code.session_start in {names:?}"
     );
 
-    // Metrics ride the same TLS channel config; make sure at least one
-    // periodic export lands too.
-    assert!(
-        col::wait_until(std::time::Duration::from_secs(10), || {
-            collected.metrics_len() > 0
-        }),
-        "metric exports must arrive over TLS"
-    );
+    // Metrics ride the same TLS channel config; make sure at least one periodic export lands too
+    col::block_on(recorder.wait_for_signals(Duration::from_secs(10), &[OtelSignal::Metrics]))
+        .expect("metric exports must arrive over TLS");
 
     xai_grok_telemetry::external::shutdown();
 }

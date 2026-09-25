@@ -1,26 +1,15 @@
-//! Syntax highlighting initialization.
-//!
 //! Provides lazily-initialized `Syntect` instances for code highlighting.
-//! DeepSeek Night v2, the classic/neutral compatibility skins, GrokNight,
-//! TokyoNight, RosePineMoon, and OscuraMidnight share `grok-night.tmTheme`;
-//! GrokDay uses `grok-day.tmTheme` with deepened colors for light backgrounds.
+//! DeepSeek Night v2, the classic/neutral DeepSeek skins, GrokNight,
+//! TokyoNight, RosePineMoon and OscuraMidnight share `grok-night.tmTheme`; GrokDay uses `grok-day.tmTheme` with deepened colors for light backgrounds.
 //!
-//! ## Minimal / terminal-native lock
+//! ## Terminal-native palette (minimal lock + `terminal` theme)
 //!
-//! While [`crate::theme::cache::terminal_native_locked`] is set, chrome uses
-//! [`Theme::terminal_default`](crate::theme::Theme::terminal_default) and
-//! `current_kind()` is a nominal `GrokNight` (so leftover kind-keyed paths
-//! still resolve). Syntect therefore loads the night `.tmTheme` whose pastel
-//! RGB tokens, after naive ANSI-16 quantization, collapse to **White** —
-//! invisible on light terminal profiles.
+//! While [`crate::theme::cache::terminal_native_active`] holds (minimal mode's lock, or the `Terminal` kind), syntect still loads a night `.tmTheme`.
+//! Its pastel RGB tokens collapse to **White** after naive ANSI-16 quantization, which is invisible on light terminal profiles.
 //!
-//! Under the lock we do **not** detect light/dark. Instead:
-//! 1. Near-gray tokens → `Color::Reset` (terminal default fg; always readable).
-//! 2. Chromatic tokens → base ANSI-16 accents (Red/Green/Yellow/Blue/Magenta/Cyan),
-//!    never White/Black/bright variants.
-//!
-//! That matches the "first + second" minimal syntax policy: default-fg baseline
-//! plus a dual-polarity accent map, with zero polarity detection.
+//! On that palette we do **not** detect light/dark. Instead:
+//! 1. Near-gray tokens become `Color::Reset` (terminal default fg; always readable).
+//! 2. Chromatic tokens map to base ANSI-16 accents (Red/Green/Yellow/Blue/Magenta/Cyan), never White/Black/bright variants.
 
 use std::sync::OnceLock;
 
@@ -35,8 +24,7 @@ static SYNTECT_GROKNIGHT: OnceLock<Syntect> = OnceLock::new();
 static SYNTECT_TOKYONIGHT: OnceLock<Syntect> = OnceLock::new();
 static SYNTECT_GROKDAY: OnceLock<Syntect> = OnceLock::new();
 
-/// Convert syntect style to ratatui foreground-only style, quantized for
-/// terminal color support (or polarity-safe under the terminal-native lock).
+/// Convert syntect style to ratatui foreground-only style, quantized for terminal color support (or polarity-safe under the terminal-native lock).
 pub fn syntect_to_ratatui_fg(style: syntect::highlighting::Style) -> Style {
     let fg = syntect_rgb_to_fg(style.foreground.r, style.foreground.g, style.foreground.b);
     let mut out = Style::default().fg(fg);
@@ -55,24 +43,17 @@ pub fn syntect_to_ratatui_fg(style: syntect::highlighting::Style) -> Style {
 
 /// Map a syntect RGB triplet to a ratatui foreground color.
 ///
-/// Under the terminal-native lock, uses [`polarity_safe_syntax_fg`]; otherwise
-/// quantizes via the normal theme color pipeline.
+/// On the terminal-native palette, uses [`polarity_safe_syntax_fg`]; otherwise quantizes via the normal theme color pipeline.
 pub fn syntect_rgb_to_fg(r: u8, g: u8, b: u8) -> Color {
-    if crate::theme::cache::terminal_native_locked() {
+    if crate::theme::cache::terminal_native_active() {
         polarity_safe_syntax_fg(r, g, b)
     } else {
         crate::theme::quantize(Color::Rgb(r, g, b))
     }
 }
 
-/// Dual-polarity-safe ANSI mapping for syntax tokens on a transparent canvas.
-///
-/// - Low chroma (gray / near-gray body text) → [`Color::Reset`] so the host
-///   default fg carries contrast on both light and dark profiles.
-/// - Saturated hues → base ANSI Red/Green/Yellow/Blue/Magenta/Cyan only.
-///
-/// Never returns White, Black, or bright (Light*) variants — those are the
-/// colors that vanish on the opposite polarity after naive RGB→ANSI16.
+/// Low-chroma tokens use [`Color::Reset`] so host fg keeps contrast on both polarities.
+/// Saturated hues map to base ANSI only — never White, Black, or Light*, which vanish on the opposite polarity.
 pub fn polarity_safe_syntax_fg(r: u8, g: u8, b: u8) -> Color {
     let max = r.max(g).max(b) as i32;
     let min = r.min(g).min(b) as i32;
@@ -94,8 +75,7 @@ pub fn polarity_safe_syntax_fg(r: u8, g: u8, b: u8) -> Color {
     } else {
         (ri - gi) * 60 / chroma + 240
     };
-    // Magenta starts at 255° so Tokyo Night purple (#bb9af7, ~261°) lands
-    // Magenta rather than Blue; pure blues (~221°) stay Blue.
+    // Magenta starts at 255° so Tokyo Night purple (#bb9af7, ~261°) lands Magenta rather than Blue; pure blues (~221°) stay Blue
     match h {
         0..30 | 330..=360 => Color::Red,
         30..90 => Color::Yellow,
@@ -106,11 +86,8 @@ pub fn polarity_safe_syntax_fg(r: u8, g: u8, b: u8) -> Color {
     }
 }
 
-/// Highlight a single line of source, falling back to plain text style.
-///
-/// Under the terminal-native lock, syntect tokens are remapped via
-/// [`polarity_safe_syntax_fg`]; if highlighting fails, `fallback` (typically
-/// [`Theme::primary`](crate::theme::Theme::primary) = Reset) is used.
+/// Under the terminal-native lock, syntect tokens are remapped via [`polarity_safe_syntax_fg`].
+/// Highlight failure uses `fallback` (typically Reset) so contrast is not lost.
 pub fn highlight_line(
     text: &str,
     highlighter: &mut Option<syntect::easy::HighlightLines<'_>>,
@@ -138,12 +115,8 @@ pub fn highlight_line(
     vec![Span::styled(text.to_string(), fallback)]
 }
 
-/// Returns the syntect instance matching the active theme.
-///
-/// Note: while the terminal-native lock is engaged, [`Theme::current_kind`]
-/// reports a nominal `GrokNight`, so this returns the night theme. Token
-/// colors are remapped in [`syntect_to_ratatui_fg`] — do not load a day
-/// theme based on OS/terminal polarity detection.
+/// Terminal-native lock reports nominal `GrokNight`, so this returns the night theme.
+/// Colors are remapped later; do not load a day theme from OS/terminal polarity.
 pub fn get_syntect() -> &'static Syntect {
     match crate::theme::Theme::current_kind() {
         ThemeKind::DeepSeekNightV2
@@ -152,6 +125,9 @@ pub fn get_syntect() -> &'static Syntect {
         | ThemeKind::GrokNight
         | ThemeKind::RosePineMoon
         | ThemeKind::OscuraMidnight
+        // Terminal remaps every token in `syntect_rgb_to_fg`, so the
+        // source palette only has to be a full one — polarity is irrelevant.
+        | ThemeKind::Terminal
         | ThemeKind::Auto => SYNTECT_GROKNIGHT
             .get_or_init(|| Syntect::new(include_bytes!("../assets/grok-night.tmTheme"))),
         ThemeKind::TokyoNight => SYNTECT_TOKYONIGHT
@@ -226,7 +202,7 @@ mod tests {
     fn polarity_safe_chromatic_buckets() {
         assert_eq!(polarity_safe_syntax_fg(0xf7, 0x76, 0x8e), Color::Red);
         assert_eq!(polarity_safe_syntax_fg(0xe0, 0xaf, 0x68), Color::Yellow);
-        assert_eq!(polarity_safe_syntax_fg(0x9e, 0xce, 0x6a), Color::Yellow); // lime → yellow bucket
+        assert_eq!(polarity_safe_syntax_fg(0x9e, 0xce, 0x6a), Color::Yellow); // Lime lands in the yellow bucket
         assert_eq!(polarity_safe_syntax_fg(0x7d, 0xcf, 0xff), Color::Cyan);
         assert_eq!(polarity_safe_syntax_fg(0x7a, 0xa2, 0xf7), Color::Blue);
         assert_eq!(polarity_safe_syntax_fg(0xbb, 0x9a, 0xf7), Color::Magenta);
@@ -248,8 +224,11 @@ mod tests {
         let fallback = Style::default().fg(Color::Reset);
         let spans = highlight_line("fn main() {}", &mut hl, syn, fallback);
         assert_eq!(spans.len(), 1);
-        assert_eq!(spans[0].content.as_ref(), "fn main() {}");
-        assert_eq!(spans[0].style.fg, Some(Color::Reset));
+        let [span] = spans.as_slice() else {
+            panic!("expected one span: {spans:?}");
+        };
+        assert_eq!(span.content.as_ref(), "fn main() {}");
+        assert_eq!(span.style.fg, Some(Color::Reset));
     }
 
     #[test]
@@ -269,5 +248,84 @@ mod tests {
                 );
             }
         });
+    }
+
+    fn markdown_atx_tokens(theme_bytes: &[u8], line: &str) -> Vec<(String, String, (u8, u8, u8))> {
+        let syn = Syntect::new(theme_bytes);
+        let syntax = syn
+            .syntax_set
+            .find_syntax_by_extension("md")
+            .expect("two-face markdown");
+        let mut parse_state = syntect::parsing::ParseState::new(syntax);
+        let ops = parse_state
+            .parse_line(line, &syn.syntax_set)
+            .expect("parse markdown");
+        let highlighter = syntect::highlighting::Highlighter::new(&syn.theme);
+        let mut stack = syntect::parsing::ScopeStack::new();
+        let mut tokens = Vec::new();
+        let mut last = 0usize;
+        for (i, op) in ops {
+            if i > last {
+                let style = highlighter.style_for_stack(stack.as_slice());
+                tokens.push((
+                    line.get(last..i).unwrap_or("").to_owned(),
+                    stack.to_string(),
+                    (style.foreground.r, style.foreground.g, style.foreground.b),
+                ));
+            }
+            stack.apply(&op).expect("scope op");
+            last = i;
+        }
+        if last < line.len() {
+            let style = highlighter.style_for_stack(stack.as_slice());
+            tokens.push((
+                line.get(last..).unwrap_or("").to_owned(),
+                stack.to_string(),
+                (style.foreground.r, style.foreground.g, style.foreground.b),
+            ));
+        }
+        tokens
+    }
+
+    fn atx_token<'a>(
+        tokens: &'a [(String, String, (u8, u8, u8))],
+        name: &str,
+    ) -> &'a (String, String, (u8, u8, u8)) {
+        tokens
+            .iter()
+            .find(|(text, _, _)| text == name)
+            .unwrap_or_else(|| panic!("missing {name:?} token in {tokens:?}"))
+    }
+
+    #[test]
+    fn markdown_atx_h2_emits_markup_heading_scope_and_theme_color() {
+        const LINE: &str = "## Heading\n";
+        let night_h2 = (0x61, 0xbd, 0xf2);
+        let night = markdown_atx_tokens(include_bytes!("../assets/grok-night.tmTheme"), LINE);
+        let (_, scopes, rgb) = atx_token(&night, "Heading");
+        assert!(
+            scopes
+                .split_whitespace()
+                .any(|s| s == "markup.heading.2.markdown"),
+            "two-face must emit markup.heading.2.markdown, got {scopes}"
+        );
+        assert_eq!(*rgb, night_h2);
+        assert_eq!(atx_token(&night, "##").2, night_h2);
+
+        for (bytes, want) in [
+            (
+                include_bytes!("../assets/tokyo-night.tmTheme").as_slice(),
+                night_h2,
+            ),
+            (
+                include_bytes!("../assets/grok-day.tmTheme").as_slice(),
+                (0x2f, 0x64, 0xd2),
+            ),
+        ] {
+            assert_eq!(
+                atx_token(&markdown_atx_tokens(bytes, LINE), "Heading").2,
+                want
+            );
+        }
     }
 }

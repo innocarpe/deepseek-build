@@ -3,7 +3,7 @@ use xai_grok_shell::session::unified_list::ListScope;
 
 use crate::views::modal::ActiveModal;
 use crate::views::session_picker::{PickerItem, SourceFilter, build_entry_map};
-use xai_grok_workspace::foreign_sessions::ForeignSessionTool;
+use xai_grok_foreign_sessions::ForeignSessionTool;
 
 fn make_foreign_entry(
     id: &str,
@@ -25,23 +25,14 @@ fn at(
     entry
 }
 
-fn content_hit(id: &str) -> xai_grok_shell::extensions::session_search::SearchSessionHit {
-    xai_grok_shell::extensions::session_search::SearchSessionHit {
-        session_id: id.into(),
-        summary: id.into(),
-        cwd: "/repo".into(),
-        updated_at: chrono::Utc::now().to_rfc3339(),
-        snippet: Some("native transcript match".into()),
-        score: 1.0,
-        matched_fields: vec![],
-    }
-}
-
 fn modal_entries(app: &AppView) -> &[crate::app::app_view::SessionPickerEntry] {
     let Some(ActiveModal::SessionPicker {
         entries: Some(entries),
         ..
-    }) = app.agents[&AgentId(0)].active_modal.as_ref()
+    }) = app
+        .agents
+        .get(&AgentId(0))
+        .and_then(|a| a.active_modal.as_ref())
     else {
         panic!("modal picker missing");
     };
@@ -87,7 +78,10 @@ fn foreign_result_interleaves_deduplicates_and_empty_clears_only_external() {
     );
     let entries = app.session_picker_entries.as_ref().unwrap();
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].id, "native");
+    let Some(entry) = entries.first() else {
+        panic!("expected a picker entry: {entries:?}");
+    };
+    assert_eq!(entry.id, "native");
 }
 
 #[test]
@@ -127,20 +121,22 @@ fn foreign_generation_drops_stale_closed_and_pre_reopen_results() {
         &mut app,
     );
     assert_eq!(
-        app.session_picker_entries.as_ref().unwrap()[0].id,
-        "reopened"
+        app.session_picker_entries
+            .as_ref()
+            .and_then(|e| e.first())
+            .map(|e| e.id.as_str()),
+        Some("reopened")
     );
 }
 
 #[test]
 fn modal_refetch_clears_orphaned_welcome_foreign_loading() {
     let mut app = test_app_with_agent();
-    app.foreign_session_compat =
-        xai_grok_workspace::foreign_sessions::EnabledForeignSessionSources {
-            claude: true,
-            codex: true,
-            cursor: true,
-        };
+    app.foreign_session_compat = xai_grok_foreign_sessions::EnabledForeignSessionSources {
+        claude: true,
+        codex: true,
+        cursor: true,
+    };
     app.session_picker_lanes.foreign_loading = true;
     open_session_picker_with(&mut app, vec![]);
 
@@ -152,8 +148,10 @@ fn modal_refetch_clears_orphaned_welcome_foreign_loading() {
             .any(|effect| matches!(effect, Effect::ScanForeignSessions { .. }))
     );
     assert!(!app.session_picker_lanes.foreign_loading);
-    let Some(ActiveModal::SessionPicker { lanes, .. }) =
-        app.agents[&AgentId(0)].active_modal.as_ref()
+    let Some(ActiveModal::SessionPicker { lanes, .. }) = app
+        .agents
+        .get(&AgentId(0))
+        .and_then(|a| a.active_modal.as_ref())
     else {
         panic!("modal picker missing");
     };
@@ -165,12 +163,11 @@ fn modal_foreign_scan_uses_native_list_cwd() {
     let mut app = test_app_with_agent();
     app.cwd = PathBuf::from("/native-list-cwd");
     app.agents.get_mut(&AgentId(0)).unwrap().session.cwd = PathBuf::from("/agent-worktree-cwd");
-    app.foreign_session_compat =
-        xai_grok_workspace::foreign_sessions::EnabledForeignSessionSources {
-            claude: true,
-            codex: true,
-            cursor: true,
-        };
+    app.foreign_session_compat = xai_grok_foreign_sessions::EnabledForeignSessionSources {
+        claude: true,
+        codex: true,
+        cursor: true,
+    };
     open_session_picker_with(&mut app, vec![]);
 
     let effects = dispatch(Action::FetchSessionList, &mut app);
@@ -201,7 +198,10 @@ fn modal_without_foreign_lane_does_not_consume_welcome_result() {
         &mut app,
     );
 
-    assert_eq!(modal_entries(&app)[0].id, "modal-native");
+    assert_eq!(
+        modal_entries(&app).first().map(|e| e.id.as_str()),
+        Some("modal-native")
+    );
     assert!(
         app.session_picker_entries
             .as_ref()
@@ -222,6 +222,8 @@ fn native_empty_waits_for_foreign_and_foreign_only_rows_survive() {
 
     let _ = dispatch(
         Action::TaskComplete(TaskResult::SessionListLoaded {
+            host: SessionPickerHost::Welcome,
+            generation: app.session_picker_generation,
             scope: ListScope::Cwd,
             sessions: vec![],
             partial: None,
@@ -245,8 +247,11 @@ fn native_empty_waits_for_foreign_and_foreign_only_rows_survive() {
     assert!(!app.session_picker_lanes.foreign_loading);
     assert!(app.session_picker_lanes.pending_notice.is_none());
     assert_eq!(
-        app.session_picker_entries.as_ref().unwrap()[0].id,
-        "foreign-only"
+        app.session_picker_entries
+            .as_ref()
+            .and_then(|e| e.first())
+            .map(|e| e.id.as_str()),
+        Some("foreign-only")
     );
 }
 
@@ -270,6 +275,8 @@ fn foreign_empty_then_native_empty_finishes_once_without_resurrecting() {
 
     let _ = dispatch(
         Action::TaskComplete(TaskResult::SessionListLoaded {
+            host: SessionPickerHost::Welcome,
+            generation: app.session_picker_generation,
             scope: ListScope::Cwd,
             sessions: vec![],
             partial: None,
@@ -300,13 +307,19 @@ fn modal_native_failure_waits_for_foreign_rows_before_toast() {
 
     let _ = dispatch(
         Action::TaskComplete(TaskResult::SessionListFailed {
+            host: SessionPickerHost::AgentModal,
+            generation: modal_picker_generation(&app),
             error: "native failed".into(),
             seq: 6,
             query: None,
         }),
         &mut app,
     );
-    assert!(app.agents[&AgentId(0)].toast.is_none());
+    assert!(
+        app.agents
+            .get(&AgentId(0))
+            .is_some_and(|a| a.toast.is_none())
+    );
 
     let _ = dispatch(
         Action::TaskComplete(TaskResult::ForeignSessionsScanned {
@@ -315,7 +328,10 @@ fn modal_native_failure_waits_for_foreign_rows_before_toast() {
         }),
         &mut app,
     );
-    assert_eq!(modal_entries(&app)[0].id, "foreign-only");
+    assert_eq!(
+        modal_entries(&app).first().map(|e| e.id.as_str()),
+        Some("foreign-only")
+    );
     assert!(read_toast(&app).contains("native failed"));
 }
 
@@ -335,6 +351,8 @@ fn modal_empty_notice_waits_until_both_lanes_are_empty() {
     }
     let _ = dispatch(
         Action::TaskComplete(TaskResult::SessionListLoaded {
+            host: SessionPickerHost::AgentModal,
+            generation: modal_picker_generation(&app),
             scope: ListScope::Cwd,
             sessions: vec![],
             partial: None,
@@ -343,7 +361,11 @@ fn modal_empty_notice_waits_until_both_lanes_are_empty() {
         }),
         &mut app,
     );
-    assert!(app.agents[&AgentId(0)].toast.is_none());
+    assert!(
+        app.agents
+            .get(&AgentId(0))
+            .is_some_and(|a| a.toast.is_none())
+    );
 
     let _ = dispatch(
         Action::TaskComplete(TaskResult::ForeignSessionsScanned {
@@ -380,7 +402,9 @@ fn welcome_selection_survives_foreign_insertion_with_viewport_offset() {
 
     assert_eq!(app.session_picker_state.selected, 2);
     assert_eq!(app.session_picker_state.scroll_offset, Some(2));
-    let selected = &app.session_picker_entries.as_ref().unwrap()[2];
+    let Some(selected) = app.session_picker_entries.as_ref().and_then(|e| e.get(2)) else {
+        panic!("expected picker entry at index 2");
+    };
     assert_eq!(
         (selected.source.as_str(), selected.id.as_str()),
         ("local", "b")
@@ -423,8 +447,10 @@ fn modal_selection_survives_native_and_foreign_completion_races() {
         }),
         &mut app,
     );
-    let Some(ActiveModal::SessionPicker { state, .. }) =
-        app.agents[&AgentId(0)].active_modal.as_ref()
+    let Some(ActiveModal::SessionPicker { state, .. }) = app
+        .agents
+        .get(&AgentId(0))
+        .and_then(|a| a.active_modal.as_ref())
     else {
         panic!("modal picker missing");
     };
@@ -439,13 +465,20 @@ fn modal_selection_survives_native_and_foreign_completion_races() {
         SourceFilter::All,
         Some("repo"),
     );
-    let Some(PickerItem::Fuzzy { original_index }) = map[state.selected].as_ref() else {
+    let Some(PickerItem::Fuzzy { original_index }) =
+        map.get(state.selected).and_then(|item| item.as_ref())
+    else {
         panic!("selection must remain on a row");
     };
-    assert_eq!(modal_entries(&app)[*original_index].id, "b");
+    let Some(entry) = modal_entries(&app).get(*original_index) else {
+        panic!("missing picker row {original_index}");
+    };
+    assert_eq!(entry.id, "b");
 
     let _ = dispatch(
         Action::TaskComplete(TaskResult::SessionListLoaded {
+            host: SessionPickerHost::AgentModal,
+            generation: modal_picker_generation(&app),
             scope: ListScope::Cwd,
             sessions: vec![
                 at(make_picker_entry("a", "/repo"), 20),
@@ -457,8 +490,10 @@ fn modal_selection_survives_native_and_foreign_completion_races() {
         }),
         &mut app,
     );
-    let Some(ActiveModal::SessionPicker { state, .. }) =
-        app.agents[&AgentId(0)].active_modal.as_ref()
+    let Some(ActiveModal::SessionPicker { state, .. }) = app
+        .agents
+        .get(&AgentId(0))
+        .and_then(|a| a.active_modal.as_ref())
     else {
         panic!("modal picker missing");
     };
@@ -471,10 +506,15 @@ fn modal_selection_survives_native_and_foreign_completion_races() {
         SourceFilter::All,
         Some("repo"),
     );
-    let Some(PickerItem::Fuzzy { original_index }) = map[state.selected].as_ref() else {
+    let Some(PickerItem::Fuzzy { original_index }) =
+        map.get(state.selected).and_then(|item| item.as_ref())
+    else {
         panic!("selection must remain on a row");
     };
-    assert_eq!(modal_entries(&app)[*original_index].id, "b");
+    let Some(entry) = modal_entries(&app).get(*original_index) else {
+        panic!("missing picker row {original_index}");
+    };
+    assert_eq!(entry.id, "b");
 }
 
 #[test]
@@ -488,18 +528,20 @@ fn external_filter_clears_and_suppresses_native_content_state() {
     app.session_picker_content_results = Some(vec![content_hit("native-hit")]);
     app.session_picker_content_loading = true;
     app.session_picker_state.expanded.insert(0);
-    // Grok cycles straight into External.
-    app.session_picker_source_filter = SourceFilter::Grok;
-    let old_detail_generation = app.session_picker_detail_generation;
+    app.session_picker_source_filter = SourceFilter::Headless;
+    let old_detail_seq = app.session_picker_detail_seq;
 
     let effects = dispatch(Action::CycleSessionSourceFilter, &mut app);
 
-    assert!(effects.is_empty());
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::FetchSessionList { .. }]
+    ));
     assert_eq!(app.session_picker_source_filter, SourceFilter::External);
     assert!(app.session_picker_content_results.is_none());
     assert!(!app.session_picker_content_loading);
     assert!(app.session_picker_state.expanded.is_empty());
-    assert!(app.session_picker_detail_generation > old_detail_generation);
+    assert!(app.session_picker_detail_seq > old_detail_seq);
     assert!(dispatch(Action::TriggerDeepSearch, &mut app).is_empty());
     assert!(
         dispatch(
@@ -553,12 +595,16 @@ fn external_filter_clears_and_suppresses_native_content_state() {
         None,
     );
     assert_eq!(map.len(), 1);
-    let Some(PickerItem::Fuzzy { original_index }) = map[0].as_ref() else {
+    let Some(PickerItem::Fuzzy { original_index }) = map.first().and_then(|item| item.as_ref())
+    else {
         panic!("external row missing");
     };
     assert_eq!(
-        app.session_picker_entries.as_ref().unwrap()[*original_index].id,
-        "foreign"
+        app.session_picker_entries
+            .as_ref()
+            .and_then(|e| e.get(*original_index))
+            .map(|e| e.id.as_str()),
+        Some("foreign")
     );
 }
 
@@ -583,8 +629,7 @@ fn modal_external_filter_clears_native_content_and_blocks_forced_search() {
         .active_modal
         .as_mut()
     {
-        // Grok cycles straight into External.
-        *source_filter = SourceFilter::Grok;
+        *source_filter = SourceFilter::Headless;
         *content_results = Some(vec![content_hit("native-hit")]);
         *content_loading = true;
         state.set_query("native");
@@ -599,7 +644,10 @@ fn modal_external_filter_clears_native_content_and_blocks_forced_search() {
         content_loading,
         source_filter,
         ..
-    }) = app.agents[&AgentId(0)].active_modal.as_ref()
+    }) = app
+        .agents
+        .get(&AgentId(0))
+        .and_then(|a| a.active_modal.as_ref())
     else {
         panic!("modal picker missing");
     };
@@ -612,14 +660,13 @@ fn modal_external_filter_clears_native_content_and_blocks_forced_search() {
 
 #[test]
 fn cycle_reaches_every_filter_with_foreign_present() {
-    // One press from the default reveals externals, and Local/Remote stay
-    // reachable on the same plain cycle even with foreign rows loaded.
     let mut app = test_app();
     app.session_picker_entries = Some(vec![
         make_picker_entry("native", "/repo"),
         make_foreign_entry("foreign", "claude", "/repo"),
     ]);
     for expected in [
+        SourceFilter::Headless,
         SourceFilter::External,
         SourceFilter::All,
         SourceFilter::Local,
@@ -628,6 +675,276 @@ fn cycle_reaches_every_filter_with_foreign_present() {
     ] {
         let _ = dispatch(Action::CycleSessionSourceFilter, &mut app);
         assert_eq!(app.session_picker_source_filter, expected);
+    }
+}
+
+#[test]
+fn empty_headless_welcome_keeps_picker_open() {
+    let mut app = test_app();
+    app.session_picker_entries = Some(vec![make_picker_entry("native", "/repo")]);
+    app.session_picker_loading = false;
+
+    let effects = dispatch(Action::CycleSessionSourceFilter, &mut app);
+    assert_eq!(app.session_picker_source_filter, SourceFilter::Headless);
+    let seq = match effects.as_slice() {
+        [Effect::FetchSessionList { seq, .. }] => *seq,
+        other => panic!("expected FetchSessionList, got {other:?}"),
+    };
+
+    let _ = dispatch(
+        Action::TaskComplete(TaskResult::SessionListLoaded {
+            host: SessionPickerHost::Welcome,
+            generation: app.session_picker_generation,
+            scope: ListScope::Cwd,
+            sessions: vec![],
+            partial: None,
+            seq,
+            query: None,
+        }),
+        &mut app,
+    );
+
+    assert!(
+        app.session_picker_entries
+            .as_ref()
+            .is_some_and(|entries| entries.is_empty()),
+        "empty Headless must keep Some([]) so show_picker stays true"
+    );
+    assert!(!app.session_picker_loading);
+    assert!(
+        app.welcome_toast.is_none(),
+        "a filtered-empty page is not 'no sessions in this directory'"
+    );
+    assert_eq!(app.session_picker_source_filter, SourceFilter::Headless);
+
+    let effects = dispatch(Action::CycleSessionSourceFilter, &mut app);
+    assert_eq!(app.session_picker_source_filter, SourceFilter::External);
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::FetchSessionList { .. })),
+        "leaving Headless must still refetch under Exclude"
+    );
+}
+
+#[test]
+fn failed_headless_welcome_keeps_picker_open() {
+    let mut app = test_app();
+    app.session_picker_entries = Some(vec![make_picker_entry("native", "/repo")]);
+    app.session_picker_loading = false;
+
+    let effects = dispatch(Action::CycleSessionSourceFilter, &mut app);
+    assert_eq!(app.session_picker_source_filter, SourceFilter::Headless);
+    let seq = match effects.as_slice() {
+        [Effect::FetchSessionList { seq, .. }] => *seq,
+        other => panic!("expected FetchSessionList, got {other:?}"),
+    };
+
+    let _ = dispatch(
+        Action::TaskComplete(TaskResult::SessionListFailed {
+            host: SessionPickerHost::Welcome,
+            generation: app.session_picker_generation,
+            error: "boom".into(),
+            seq,
+            query: None,
+        }),
+        &mut app,
+    );
+
+    assert!(
+        app.session_picker_entries
+            .as_ref()
+            .is_some_and(|entries| entries.is_empty()),
+        "failed Headless must keep Some([]) so show_picker stays true"
+    );
+    assert!(!app.session_picker_loading);
+    assert_eq!(app.session_picker_source_filter, SourceFilter::Headless);
+
+    let effects = dispatch(Action::CycleSessionSourceFilter, &mut app);
+    assert_eq!(app.session_picker_source_filter, SourceFilter::External);
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::FetchSessionList { .. })),
+        "leaving Headless must still refetch under Exclude"
+    );
+}
+
+#[test]
+fn cycle_refetches_when_crossing_headless() {
+    use xai_grok_shell::session::unified_list::HeadlessPolicy;
+
+    let mut app = test_app();
+    app.session_picker_entries = Some(vec![make_picker_entry("native", "/repo")]);
+    app.session_picker_loading = false;
+    app.session_picker_pending_delete = Some(crate::views::session_picker::PendingDelete {
+        source: "local".into(),
+        session_id: "native".into(),
+        cwd: "/repo".into(),
+    });
+    let seq_before = app.session_picker_list_seq;
+
+    let effects = dispatch(Action::CycleSessionSourceFilter, &mut app);
+    assert_eq!(app.session_picker_source_filter, SourceFilter::Headless);
+    match effects.as_slice() {
+        [
+            Effect::FetchSessionList {
+                query: None,
+                seq,
+                headless_policy,
+                ..
+            },
+        ] => {
+            assert_eq!(*headless_policy, HeadlessPolicy::Only);
+            assert_eq!(*seq, seq_before + 1, "stale in-flight lists must drop");
+        }
+        other => panic!("expected FetchSessionList, got {other:?}"),
+    }
+    assert!(
+        app.session_picker_loading,
+        "the page cannot be served from cache, so it is loading"
+    );
+    assert!(
+        app.session_picker_pending_delete.is_none(),
+        "welcome filter changes must disarm deletion"
+    );
+
+    let effects = dispatch(Action::CycleSessionSourceFilter, &mut app);
+    assert_eq!(app.session_picker_source_filter, SourceFilter::External);
+    match effects.as_slice() {
+        [
+            Effect::FetchSessionList {
+                headless_policy, ..
+            },
+        ] => assert_eq!(*headless_policy, HeadlessPolicy::Exclude),
+        other => panic!("expected FetchSessionList, got {other:?}"),
+    }
+
+    let effects = dispatch(Action::CycleSessionSourceFilter, &mut app);
+    assert_eq!(app.session_picker_source_filter, SourceFilter::All);
+    assert!(effects.is_empty());
+}
+
+#[test]
+fn leaving_headless_drops_stale_natives_and_spins_on_all() {
+    let mut app = test_app();
+    let mut headless = make_picker_entry("h1", "/repo");
+    headless.session_kind = Some("headless".into());
+    app.session_picker_entries = Some(vec![headless, make_foreign_entry("f1", "claude", "/repo")]);
+    app.session_picker_source_filter = SourceFilter::Headless;
+    app.session_picker_loading = false;
+
+    let effects = dispatch(Action::CycleSessionSourceFilter, &mut app);
+    assert_eq!(app.session_picker_source_filter, SourceFilter::External);
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::FetchSessionList { .. })),
+        "leaving Headless must refetch under Exclude"
+    );
+    let entries = app
+        .session_picker_entries
+        .as_ref()
+        .expect("picker stays up");
+    assert!(
+        entries
+            .iter()
+            .all(|entry| crate::app::is_foreign_picker_source(&entry.source)),
+        "stale Headless natives must not remain after the policy change"
+    );
+    assert!(app.session_picker_loading);
+    assert!(
+        !crate::views::session_picker::loading_spinner_active(
+            app.session_picker_entries.as_deref(),
+            app.session_picker_source_filter,
+            app.session_picker_loading,
+            &app.session_picker_lanes,
+        ),
+        "External must keep showing cached foreign rows during the Exclude refetch"
+    );
+
+    let _ = dispatch(Action::CycleSessionSourceFilter, &mut app);
+    assert_eq!(app.session_picker_source_filter, SourceFilter::All);
+    assert!(
+        crate::views::session_picker::loading_spinner_active(
+            app.session_picker_entries.as_deref(),
+            app.session_picker_source_filter,
+            app.session_picker_loading,
+            &app.session_picker_lanes,
+        ),
+        "All must spin while the Exclude refetch is in flight"
+    );
+}
+
+#[test]
+fn modal_cycle_refetches_when_entering_headless() {
+    use xai_grok_shell::session::unified_list::HeadlessPolicy;
+
+    let mut app = test_app_with_agent();
+    open_session_picker_with(&mut app, vec![make_picker_entry("native", "/repo")]);
+
+    let effects = dispatch(Action::CycleSessionSourceFilter, &mut app);
+    match effects.as_slice() {
+        [
+            Effect::FetchSessionList {
+                headless_policy, ..
+            },
+        ] => assert_eq!(*headless_policy, HeadlessPolicy::Only),
+        other => panic!("expected FetchSessionList, got {other:?}"),
+    }
+    let Some(ActiveModal::SessionPicker {
+        source_filter,
+        loading,
+        ..
+    }) = app
+        .agents
+        .get(&AgentId(0))
+        .and_then(|a| a.active_modal.as_ref())
+    else {
+        panic!("modal picker missing");
+    };
+    assert_eq!(*source_filter, SourceFilter::Headless);
+    assert!(*loading);
+}
+
+#[test]
+fn headless_page_content_search_uses_only_policy() {
+    use xai_grok_shell::session::unified_list::HeadlessPolicy;
+
+    let mut app = test_app();
+    app.session_picker_entries = Some(vec![make_picker_entry("native", "/repo")]);
+    app.session_picker_state.set_query("batch");
+    app.session_picker_content_results = Some(vec![content_hit("grok-page-hit")]);
+
+    let effects = dispatch(Action::CycleSessionSourceFilter, &mut app);
+    assert_eq!(app.session_picker_source_filter, SourceFilter::Headless);
+    match effects.as_slice() {
+        [
+            Effect::FetchSessionList { .. },
+            Effect::DeepSearchSessions {
+                query,
+                headless_policy,
+                ..
+            },
+        ] => {
+            assert_eq!(query, "batch");
+            assert_eq!(*headless_policy, HeadlessPolicy::Only);
+        }
+        other => panic!("expected refetch + search restart, got {other:?}"),
+    }
+    assert!(
+        app.session_picker_content_loading,
+        "the restarted search must show as in flight"
+    );
+
+    let effects = dispatch(Action::ForceDeepSearch, &mut app);
+    match effects.as_slice() {
+        [
+            Effect::DeepSearchSessions {
+                headless_policy, ..
+            },
+        ] => assert_eq!(*headless_policy, HeadlessPolicy::Only),
+        other => panic!("expected DeepSearchSessions, got {other:?}"),
     }
 }
 
@@ -654,6 +971,8 @@ fn active_modal_owns_stale_and_external_deep_search_results() {
 
         let _ = dispatch(
             Action::TaskComplete(TaskResult::DeepSearchResults {
+                host: SessionPickerHost::AgentModal,
+                generation: modal_picker_generation(&app),
                 results: vec![content_hit("must-not-reach-welcome")],
                 seq: 7,
             }),
@@ -663,7 +982,10 @@ fn active_modal_owns_stale_and_external_deep_search_results() {
         assert!(app.session_picker_content_results.is_none());
         let Some(ActiveModal::SessionPicker {
             content_results, ..
-        }) = app.agents[&AgentId(0)].active_modal.as_ref()
+        }) = app
+            .agents
+            .get(&AgentId(0))
+            .and_then(|a| a.active_modal.as_ref())
         else {
             panic!("modal picker missing");
         };
@@ -672,7 +994,7 @@ fn active_modal_owns_stale_and_external_deep_search_results() {
 }
 
 #[test]
-fn detail_result_revalidates_source_id_and_generation_after_reorder() {
+fn detail_result_revalidates_source_id_and_detail_seq_after_reorder() {
     let mut app = test_app_with_agent();
     open_session_picker_with(
         &mut app,
@@ -697,9 +1019,10 @@ fn detail_result_revalidates_source_id_and_generation_after_reorder() {
     );
     let [
         Effect::LoadCardDetail {
+            host: SessionPickerHost::AgentModal,
             source,
             session_id,
-            generation,
+            seq,
             ..
         },
     ] = effects.as_slice()
@@ -708,7 +1031,7 @@ fn detail_result_revalidates_source_id_and_generation_after_reorder() {
     };
     assert_eq!(source, "local");
     assert_eq!(session_id, "target");
-    let stale_generation = *generation;
+    let stale_seq = *seq;
 
     app.foreign_session_scan_seq = 4;
     let _ = dispatch(
@@ -725,9 +1048,11 @@ fn detail_result_revalidates_source_id_and_generation_after_reorder() {
     };
     let _ = dispatch(
         Action::TaskComplete(TaskResult::CardDetailLoaded {
+            host: SessionPickerHost::AgentModal,
+            generation: modal_picker_generation(&app),
             source: "local".into(),
             session_id: "target".into(),
-            generation: stale_generation,
+            seq: stale_seq,
             detail: detail.clone(),
         }),
         &mut app,
@@ -754,9 +1079,11 @@ fn detail_result_revalidates_source_id_and_generation_after_reorder() {
     }
     let _ = dispatch(
         Action::TaskComplete(TaskResult::CardDetailLoaded {
+            host: SessionPickerHost::AgentModal,
+            generation: modal_picker_generation(&app),
             source: "local".into(),
             session_id: "target".into(),
-            generation: app.session_picker_detail_generation,
+            seq: modal_picker_detail_seq(&app),
             detail: detail.clone(),
         }),
         &mut app,
@@ -783,9 +1110,11 @@ fn detail_result_revalidates_source_id_and_generation_after_reorder() {
 
     let _ = dispatch(
         Action::TaskComplete(TaskResult::CardDetailLoaded {
+            host: SessionPickerHost::AgentModal,
+            generation: modal_picker_generation(&app),
             source: "local".into(),
             session_id: "target".into(),
-            generation: app.session_picker_detail_generation,
+            seq: modal_picker_detail_seq(&app),
             detail,
         }),
         &mut app,
@@ -915,14 +1244,17 @@ fn gated_foreign_pick_replaces_all_prior_startup_intents() {
             .iter()
             .any(|effect| matches!(effect, Effect::CreateWorktreeSession { .. }))
     );
-    assert!(app.agents[&old_id].session.pending_prompts.is_empty());
+    assert!(
+        app.agents
+            .get(&old_id)
+            .is_some_and(|a| a.session.pending_prompts.is_empty())
+    );
     let new_id = AgentId(1);
     assert_eq!(app.active_view, ActiveView::Agent(new_id));
     assert_eq!(
-        app.agents[&new_id]
-            .session
-            .pending_prompts
-            .front()
+        app.agents
+            .get(&new_id)
+            .and_then(|a| a.session.pending_prompts.front())
             .map(|prompt| prompt.text.as_str()),
         Some("/resume-codex codex-deferred")
     );
@@ -940,10 +1272,10 @@ fn welcome_and_modal_foreign_picks_always_target_fresh_sessions() {
             .any(|effect| matches!(effect, Effect::CreateSession { .. }))
     );
     assert_eq!(
-        welcome.agents[&AgentId(0)]
-            .session
-            .pending_prompts
-            .front()
+        welcome
+            .agents
+            .get(&AgentId(0))
+            .and_then(|a| a.session.pending_prompts.front())
             .map(|prompt| prompt.text.as_str()),
         Some("/resume-codex codex-native")
     );
@@ -959,12 +1291,17 @@ fn welcome_and_modal_foreign_picks_always_target_fresh_sessions() {
             .iter()
             .any(|effect| matches!(effect, Effect::CreateSession { .. }))
     );
-    assert!(modal.agents[&AgentId(0)].session.pending_prompts.is_empty());
+    assert!(
+        modal
+            .agents
+            .get(&AgentId(0))
+            .is_some_and(|a| a.session.pending_prompts.is_empty())
+    );
     assert_eq!(
-        modal.agents[&AgentId(1)]
-            .session
-            .pending_prompts
-            .front()
+        modal
+            .agents
+            .get(&AgentId(1))
+            .and_then(|a| a.session.pending_prompts.front())
             .map(|prompt| prompt.text.as_str()),
         Some("/resume-cursor cursor-native")
     );
@@ -999,19 +1336,22 @@ fn foreign_selection_and_mutation_guards_remain_central() {
         )
         .is_empty()
     );
-    assert!(app.agents[&AgentId(0)].active_modal.is_some());
+    assert!(
+        app.agents
+            .get(&AgentId(0))
+            .is_some_and(|a| a.active_modal.is_some())
+    );
 }
 
 #[test]
 fn chat_picker_never_launches_or_accepts_foreign_scan() {
     let mut app = test_app();
     app.chat_mode = true;
-    app.foreign_session_compat =
-        xai_grok_workspace::foreign_sessions::EnabledForeignSessionSources {
-            claude: true,
-            codex: true,
-            cursor: true,
-        };
+    app.foreign_session_compat = xai_grok_foreign_sessions::EnabledForeignSessionSources {
+        claude: true,
+        codex: true,
+        cursor: true,
+    };
     let effects = dispatch(Action::FetchSessionList, &mut app);
     assert!(matches!(
         effects.as_slice(),
@@ -1031,12 +1371,11 @@ fn chat_picker_never_launches_or_accepts_foreign_scan() {
 #[test]
 fn native_fetch_effect_precedes_background_foreign_gate() {
     let mut app = test_app();
-    app.foreign_session_compat =
-        xai_grok_workspace::foreign_sessions::EnabledForeignSessionSources {
-            claude: true,
-            codex: true,
-            cursor: true,
-        };
+    app.foreign_session_compat = xai_grok_foreign_sessions::EnabledForeignSessionSources {
+        claude: true,
+        codex: true,
+        cursor: true,
+    };
 
     let effects = dispatch(Action::FetchSessionList, &mut app);
 

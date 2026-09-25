@@ -2,9 +2,11 @@
 
 use crate::api::{CopyReport, WorktreeReport};
 use anyhow::{Context, Result};
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 /// Environment variables set on every git command to suppress interactive prompts.
 pub const GIT_AUTH_SUPPRESSION_ENVS: [(&str, &str); 4] = [
@@ -48,13 +50,8 @@ pub(crate) fn git_reset_hard_command(worktree_path: &Path, target: Option<&str>)
     Ok(())
 }
 
-/// Run `git clean -fd` (or `-fdx`) to remove untracked files and directories.
-///
-/// When `include_ignored` is `true`, also removes files covered by `.gitignore`
-/// (equivalent to `git clean -fdx`). This is useful when recycling worktrees
-/// in a pool, where leftover build artifacts must be purged.
-///
-/// This is a blocking operation.
+/// Blocking `git clean -fd`, or `-fdx` when `include_ignored` (pool recycle
+/// must purge leftover build artifacts).
 pub(crate) fn git_clean_fd(worktree_path: &Path, include_ignored: bool) -> Result<()> {
     let flags = if include_ignored { "-fdx" } else { "-fd" };
     let output = git_command()
@@ -94,17 +91,18 @@ pub(crate) fn checkout_ref(worktree_path: &Path, git_ref: &str) -> Result<()> {
     Ok(())
 }
 
-/// Whether the worktree has uncommitted changes to *tracked* files, via
-/// `git diff-index --quiet HEAD` (tracked-only, far cheaper than `git status`).
-/// It only ever over-reports, so a `false` result is safe to skip the reset on.
-/// Blocking.
+/// Blocking tracked-only dirty check. `cached` skips the worktree stat walk.
+/// Only over-reports (error counts as dirty), so `false` is safe to skip reset.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub(crate) fn worktree_has_tracked_changes(worktree_path: &Path) -> Result<bool> {
-    let status = git_command()
-        .current_dir(worktree_path)
-        .args(["diff-index", "--quiet", "HEAD", "--"])
-        .status()
-        .context("failed to run git diff-index")?;
+fn diff_index_dirty(worktree_path: &Path, cached: bool) -> Result<bool> {
+    let mut cmd = git_command();
+    cmd.current_dir(worktree_path)
+        .args(["diff-index", "--quiet"]);
+    if cached {
+        cmd.arg("--cached");
+    }
+    cmd.args(["HEAD", "--"]);
+    let status = cmd.status().context("failed to run git diff-index")?;
     match status.code() {
         Some(0) => Ok(false),
         Some(1) => Ok(true),
@@ -114,29 +112,23 @@ pub(crate) fn worktree_has_tracked_changes(worktree_path: &Path) -> Result<bool>
     }
 }
 
+/// Blocking tracked-only dirty check. Only over-reports, so `false` is safe
+/// to skip the reset on.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn worktree_has_tracked_changes(worktree_path: &Path) -> Result<bool> {
+    diff_index_dirty(worktree_path, false)
+}
+
 /// Whether the index has staged changes vs `HEAD` (`diff-index --cached`).
 /// Unlike [`worktree_has_tracked_changes`], `--cached` skips the working-tree
 /// stat walk (cheap over FUSE). Over-reports on error. Blocking.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn has_staged_changes(worktree_path: &Path) -> Result<bool> {
-    let status = git_command()
-        .current_dir(worktree_path)
-        .args(["diff-index", "--quiet", "--cached", "HEAD", "--"])
-        .status()
-        .context("failed to run git diff-index --cached")?;
-    match status.code() {
-        Some(0) => Ok(false),
-        Some(1) => Ok(true),
-        // Unborn HEAD or other error: treat as "staged changes" so the caller
-        // still runs the reset (correctness over the optimization).
-        _ => Ok(true),
-    }
+    diff_index_dirty(worktree_path, true)
 }
 
-/// Whether `HEAD` already resolves to the same commit as `git_ref` (cheap
-/// `rev-parse`, no tree walk), letting the caller skip a redundant `git checkout`.
-/// Returns `false` if either side can't be resolved, so the caller falls back to
-/// a real `checkout`. Blocking.
+/// Cheap `rev-parse` equality so the caller can skip a redundant checkout.
+/// `false` if either side cannot be resolved — fall back to a real checkout.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn worktree_at_ref(worktree_path: &Path, git_ref: &str) -> Result<bool> {
     let rev = |what: &str| -> Option<String> {
@@ -158,27 +150,47 @@ pub(crate) fn worktree_at_ref(worktree_path: &Path, git_ref: &str) -> Result<boo
     )
 }
 
-/// Run a git command inside `worktree_path` with `envs` applied on top of the
-/// base `git_command()` environment, returning trimmed stdout on success.
-fn git_capture_in(worktree_path: &Path, args: &[&str], envs: &[(&str, &str)]) -> Result<String> {
+/// Hang bound for every [`git_capture_in`] call, not a slow-tree budget. A
+/// large `git add -A` is minutes of honest work; a filter that never returns
+/// would otherwise run forever.
+const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Hook path so nothing a repo ships runs unwatched. A missing directory is
+/// wrong: git-lfs `install` creates it with hooks. A device file cannot be
+/// created and cannot hold a hook.
+#[cfg(not(windows))]
+pub(crate) const NO_HOOKS: &str = "/dev/null";
+#[cfg(windows)]
+pub(crate) const NO_HOOKS: &str = "NUL";
+
+/// Git in `worktree_path` with extra env. Killed at the process group so a
+/// filter cannot outlive the call and hold a worktree about to be deleted.
+fn git_capture_in<S: AsRef<OsStr>>(
+    worktree_path: &Path,
+    args: &[S],
+    envs: &[(&str, &OsStr)],
+) -> Result<String> {
     let mut cmd = git_command();
-    cmd.current_dir(worktree_path).args(args);
+    // Same reason the probes do it: the snapshot runs unattended, and the
+    // hooks are the worktree's own.
+    cmd.current_dir(worktree_path)
+        .args(["-c", &format!("core.hooksPath={NO_HOOKS}")])
+        .args(args);
+    // Before the caller's own, which is what carries the scratch index: the
+    // snapshot has to read the configuration the gate's probes read, or the
+    // two halves judge different repositories.
+    super::probe::forget_inherited_git_environment(&mut cmd);
     for &(key, val) in envs {
         cmd.env(key, val);
     }
 
-    let output = cmd.output().with_context(|| {
-        format!(
-            "failed to run git {} in {}",
-            args.join(" "),
-            worktree_path.display()
-        )
-    })?;
+    let shown = display_args(args);
+    let output = super::probe::run_with_timeout(cmd, Vec::new(), SNAPSHOT_TIMEOUT)
+        .with_context(|| format!("failed to run git {shown} in {}", worktree_path.display()))?;
 
     if !output.status.success() {
         anyhow::bail!(
-            "git {} failed in {}: {}",
-            args.join(" "),
+            "git {shown} failed in {}: {}",
             worktree_path.display(),
             String::from_utf8_lossy(&output.stderr)
         );
@@ -187,15 +199,17 @@ fn git_capture_in(worktree_path: &Path, args: &[&str], envs: &[(&str, &str)]) ->
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-/// Git config overrides (`-c key=val`, applied before the subcommand) used on
-/// every snapshot git call so capture is independent of the user's/enterprise
-/// git config and round-trips cleanly. Restore must apply the SAME flags.
-///
-/// - `core.autocrlf=false`  never mangle line endings
-/// - `core.longpaths=true`  tolerate long paths (Windows/enterprise)
-/// - `core.symlinks=true`   record symlinks as symlinks
-/// - `core.quotepath=false` raw UTF-8 paths (stable output parsing)
-/// - `core.fsmonitor=false` never trigger/depend on a configured fsmonitor
+/// Render git args for an error/context message (paths shown lossily).
+fn display_args<S: AsRef<OsStr>>(args: &[S]) -> String {
+    args.iter()
+        .map(|arg| arg.as_ref().to_string_lossy().into_owned())
+        .collect::<Vec<String>>()
+        .join(" ")
+}
+
+/// `-c` overrides on every snapshot git call so capture ignores user config.
+/// Restore must apply the same flags or the round-trip mangles endings, paths,
+/// symlinks, or stat checks.
 pub(crate) const SNAPSHOT_GIT_CONFIG: &[&str] = &[
     "-c",
     "core.autocrlf=false",
@@ -207,17 +221,26 @@ pub(crate) const SNAPSHOT_GIT_CONFIG: &[&str] = &[
     "core.quotepath=false",
     "-c",
     "core.fsmonitor=false",
+    "-c",
+    "core.checkStat=default",
+    "-c",
+    "core.trustctime=true",
 ];
 
 /// Like [`git_capture_in`], but prepends [`SNAPSHOT_GIT_CONFIG`] so the call is
 /// insulated from the ambient git config. Scoped to the snapshot path; other
 /// fast-worktree operations keep the plain `git_command()` behavior.
-fn snapshot_git(worktree_path: &Path, args: &[&str], envs: &[(&str, &str)]) -> Result<String> {
-    let full: Vec<&str> = SNAPSHOT_GIT_CONFIG
+fn snapshot_git<S: AsRef<OsStr>>(
+    worktree_path: &Path,
+    args: &[S],
+    envs: &[(&str, &OsStr)],
+) -> Result<String> {
+    let mut full: Vec<OsString> = SNAPSHOT_GIT_CONFIG
         .iter()
         .copied()
-        .chain(args.iter().copied())
+        .map(OsString::from)
         .collect();
+    full.extend(args.iter().map(|arg| arg.as_ref().to_os_string()));
     git_capture_in(worktree_path, &full, envs)
 }
 
@@ -234,11 +257,8 @@ impl Drop for ScratchIndexGuard {
     }
 }
 
-/// Allocate a process-unique path under the temp dir for a scratch index.
-///
-/// Hand-rolled (pid + nanos + counter) on purpose: `tempfile` is only an
-/// optional/dev/bench dependency here, and promoting it to a mandatory prod
-/// dependency for this alone is undesirable — do not "simplify" into `tempfile`.
+/// Process-unique scratch-index path. Hand-rolled on purpose: `tempfile` is
+/// only an optional/dev dependency and must not become a prod dependency.
 fn scratch_index_path() -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let nanos = std::time::SystemTime::now()
@@ -252,47 +272,25 @@ fn scratch_index_path() -> PathBuf {
     ))
 }
 
-/// Capture a worktree's full working state into the git ref `ref_name`,
-/// returning the snapshot commit SHA. The captured state is HEAD plus all
-/// working-tree changes: tracked modifications, deletions, and
-/// untracked-non-ignored additions. Files tracked in HEAD are always captured
-/// (even if they also match a `.gitignore` rule); only *untracked* files
-/// matching `.gitignore` are excluded.
-///
-/// `ref_name` must be a fully-qualified ref (e.g. `refs/grok/subagents/<id>`);
-/// it is overwritten unconditionally. The worktree must have a valid `HEAD`
-/// (subagent worktrees are detached at their base commit), which becomes the
-/// snapshot commit's parent (provenance only).
-///
-/// Staging is done against a throwaway scratch index (`GIT_INDEX_FILE`), so the
-/// worktree's real index is never mutated. The snapshot commit's tree is a
-/// complete copy of the working state, so it is self-contained: rehydration
-/// needs only the tree.
-///
-/// NOTE on durability: the commit + ref are written into the git store that
-/// `worktree_path` resolves to. For a *linked* worktree that is the shared
-/// common dir (the main repo), so the ref survives the worktree's deletion. For
-/// a *standalone* worktree (its own `.git`), the ref lives inside the worktree
-/// and is destroyed when the directory is removed — callers that intend to
-/// delete the worktree must first transfer the ref into a durable repo via
-/// [`transfer_snapshot_to_repo`].
-///
-/// Every git call applies [`SNAPSHOT_GIT_CONFIG`] (`core.autocrlf=false`,
-/// `core.quotepath=false`, `core.fsmonitor=false`, …) so capture is independent
-/// of the user's/enterprise git config (line endings, path quoting, fsmonitor,
-/// long paths, symlinks); restore MUST apply the same flags for a clean
-/// round-trip. Blocking.
+/// Capture HEAD plus dirty state into `ref_name` (fully-qualified, overwritten).
+/// Scratch index so the real index is never mutated. A standalone worktree's
+/// ref dies with the dir — transfer it first via [`transfer_snapshot_to_repo`].
+#[tracing::instrument(name = "worktree.snapshot", skip_all)]
 pub fn snapshot_worktree_to_ref(
     worktree_path: &Path,
     ref_name: &str,
     message: &str,
 ) -> Result<String> {
-    snapshot_worktree_to_ref_inner(worktree_path, ref_name, message).with_context(|| {
-        format!(
-            "failed to snapshot worktree {} into ref {ref_name}",
-            worktree_path.display()
-        )
-    })
+    let start = std::time::Instant::now();
+    let snap =
+        snapshot_worktree_to_ref_inner(worktree_path, ref_name, message).with_context(|| {
+            format!(
+                "failed to snapshot worktree {} into ref {ref_name}",
+                worktree_path.display()
+            )
+        })?;
+    crate::metrics::record_grove_wt_snapshot(start.elapsed());
+    Ok(snap)
 }
 
 fn snapshot_worktree_to_ref_inner(
@@ -304,29 +302,15 @@ fn snapshot_worktree_to_ref_inner(
     const NAME: &str = "Grok Snapshot";
     const EMAIL: &str = "grok-snapshot@example.com";
 
-    // Stage against a throwaway index so the worktree's real index is untouched.
-    let scratch = ScratchIndexGuard {
-        path: scratch_index_path(),
-    };
-    let scratch_str = scratch.path.to_string_lossy();
-    let index_env = [("GIT_INDEX_FILE", scratch_str.as_ref())];
-
-    // Seed the scratch index from HEAD first so files tracked in HEAD but also
-    // matching a .gitignore rule (e.g. a committed-then-ignored config) survive:
-    // `add -A` never re-ignores already-tracked files. `add -A` then layers on
-    // working-tree changes (modifications, deletions, untracked-non-ignored
-    // additions); `write-tree` yields the full-state tree.
-    snapshot_git(worktree_path, &["read-tree", "HEAD"], &index_env)?;
-    snapshot_git(worktree_path, &["add", "-A"], &index_env)?;
-    let tree = snapshot_git(worktree_path, &["write-tree"], &index_env)?;
+    let tree = write_worktree_tree(worktree_path, IndexSeed::Head)?;
 
     // commit-tree takes the tree directly (no index) and needs an author/
     // committer; supply the identity per-call via env vars. HEAD is the parent.
     let ident = [
-        ("GIT_AUTHOR_NAME", NAME),
-        ("GIT_AUTHOR_EMAIL", EMAIL),
-        ("GIT_COMMITTER_NAME", NAME),
-        ("GIT_COMMITTER_EMAIL", EMAIL),
+        ("GIT_AUTHOR_NAME", OsStr::new(NAME)),
+        ("GIT_AUTHOR_EMAIL", OsStr::new(EMAIL)),
+        ("GIT_COMMITTER_NAME", OsStr::new(NAME)),
+        ("GIT_COMMITTER_EMAIL", OsStr::new(EMAIL)),
     ];
     let snap = snapshot_git(
         worktree_path,
@@ -345,19 +329,62 @@ fn snapshot_worktree_to_ref_inner(
     Ok(snap)
 }
 
-/// Make a snapshot `ref_name` (created by [`snapshot_worktree_to_ref`] in
-/// `worktree_path`'s git) durable in `source_repo`, then verify it resolves
-/// there. This is required for STANDALONE subagent worktrees, whose `.git` (and
-/// thus the snapshot commit + ref) is destroyed when the worktree directory is
-/// deleted; copying the commit + objects into the surviving `source_repo` lets
-/// resume rehydrate from it. For linked worktrees the objects/ref already live
-/// in the shared common dir, so this is effectively a no-op that just confirms
-/// the ref is present.
-///
-/// Fetches the snapshot ref (with its reachable objects) from `worktree_path`
-/// into `source_repo`, then verifies it resolves to a commit there — returning
-/// an error (so the caller does NOT delete the worktree) if it does not. Every
-/// git call applies [`SNAPSHOT_GIT_CONFIG`] for parity with capture. Blocking.
+/// Where the scratch index starts before `add -A` layers the working tree on.
+enum IndexSeed {
+    /// `HEAD`'s tree, so a file that is tracked but also matches a `.gitignore`
+    /// rule survives: `add -A` never re-ignores what is already tracked. It
+    /// carries no stat cache, so every tracked file is hashed.
+    Head,
+    /// A copy of the worktree's own index, whose stat cache means `add -A`
+    /// hashes only what changed: ten seconds on a monorepo checkout rather
+    /// than two minutes.
+    WorktreeIndex,
+}
+
+/// Stage the whole working state into a throwaway index and write out its tree,
+/// leaving the worktree's real index untouched. `add -A` layers modifications,
+/// deletions and untracked additions on top of `seed`.
+fn write_worktree_tree(worktree_path: &Path, seed: IndexSeed) -> Result<String> {
+    let scratch = ScratchIndexGuard {
+        path: scratch_index_path(),
+    };
+    let index_env = [("GIT_INDEX_FILE", scratch.path.as_os_str())];
+    match seed {
+        IndexSeed::Head => {
+            snapshot_git(worktree_path, &["read-tree", "HEAD"], &index_env)?;
+        }
+        IndexSeed::WorktreeIndex => {
+            let git_dir = snapshot_git(worktree_path, &["rev-parse", "--absolute-git-dir"], &[])?;
+            std::fs::copy(Path::new(&git_dir).join("index"), &scratch.path)?;
+        }
+    }
+    snapshot_git(worktree_path, &["add", "-A"], &index_env)?;
+    snapshot_git(worktree_path, &["write-tree"], &index_env)
+}
+
+/// Whether the worktree still matches `snapshot`. Writes in the decide-then-delete
+/// window are in no ref. Ignored staged/unstaged disagreement counts as a change
+/// and keeps the worktree — that over-keep is the point.
+pub(crate) fn worktree_matches_snapshot(worktree_path: &Path, snapshot: &str) -> Result<bool> {
+    let snapshot_tree = snapshot_git(
+        worktree_path,
+        &["rev-parse", "--verify", &format!("{snapshot}^{{tree}}")],
+        &[],
+    )
+    .with_context(|| format!("failed to resolve snapshot {snapshot} to a tree"))?;
+    let current =
+        write_worktree_tree(worktree_path, IndexSeed::WorktreeIndex).with_context(|| {
+            format!(
+                "failed to re-read the working state of {}",
+                worktree_path.display()
+            )
+        })?;
+    Ok(current == snapshot_tree)
+}
+
+/// Copy a standalone snapshot ref into `source_repo` before the worktree's
+/// `.git` is deleted. Error if it does not resolve there — the caller must not
+/// delete the worktree. Linked worktrees already share the common dir.
 pub fn transfer_snapshot_to_repo(
     worktree_path: &Path,
     source_repo: &Path,
@@ -377,15 +404,17 @@ fn transfer_snapshot_to_repo_inner(
     source_repo: &Path,
     ref_name: &str,
 ) -> Result<()> {
-    // Copy the snapshot commit + reachable tree/blobs and the ref from the
-    // worktree's git into the source repo. Force (`+`) matches the unconditional
-    // overwrite semantics of `snapshot_worktree_to_ref`; `--no-tags` avoids
-    // pulling unrelated tag refs.
-    let worktree_str = worktree_path.to_string_lossy();
+    // Force (`+`) matches unconditional overwrite of `snapshot_worktree_to_ref`.
+    // `--no-tags` avoids pulling unrelated tag refs.
     let refspec = format!("+{ref_name}:{ref_name}");
     snapshot_git(
         source_repo,
-        &["fetch", "--no-tags", worktree_str.as_ref(), &refspec],
+        &[
+            OsStr::new("fetch"),
+            OsStr::new("--no-tags"),
+            worktree_path.as_os_str(),
+            OsStr::new(&refspec),
+        ],
         &[],
     )?;
 
@@ -403,38 +432,41 @@ fn transfer_snapshot_to_repo_inner(
     Ok(())
 }
 
-/// Recreate a worktree at `dest` from a `snapshot_commit` produced by
-/// [`snapshot_worktree_to_ref`]. `snapshot_commit` may be a ref name or SHA;
-/// `source_repo` is any path inside the repo that owns the snapshot's objects.
-///
-/// The snapshot was created with `commit-tree -p HEAD`, so the snapshot's first
-/// parent is the original base. When that base is still reachable, the worktree
-/// is added detached at the base and the snapshot tree is read into the working
-/// tree: HEAD sits at the real base so restored changes show as modifications
-/// and the user's future commits build on (and sign against) the real base.
-/// When the base is unreachable (e.g. a parent-repo `git reset --hard` pruned
-/// it), the worktree is added at the snapshot commit instead — the content is
-/// still exact, only HEAD differs.
-///
-/// Every git call applies [`SNAPSHOT_GIT_CONFIG`] so restore round-trips
-/// symmetrically with capture (line endings, path quoting, fsmonitor, …). The
-/// rehydrated worktree is re-registered in the metadata DB as
-/// [`WorktreeKind::Subagent`](crate::db::WorktreeKind::Subagent), tagged with
-/// `session_id` (mirroring `WorktreeBuilder::create()`). Blocking.
+/// Recreate `dest` from a snapshot. Prefer detached at the original base so
+/// restored changes stay modifications; if that base was pruned, add at the
+/// snapshot commit (content exact, HEAD differs). Same config as capture.
+#[tracing::instrument(name = "worktree.rehydrate", skip_all)]
 pub fn rehydrate_worktree_from_ref(
     dest: &Path,
     source_repo: &Path,
     snapshot_commit: &str,
     session_id: Option<&str>,
 ) -> Result<WorktreeReport> {
-    rehydrate_worktree_from_ref_inner(dest, source_repo, snapshot_commit, session_id).with_context(
-        || {
+    let start = std::time::Instant::now();
+    let report = rehydrate_worktree_from_ref_inner(dest, source_repo, snapshot_commit, session_id)
+        .with_context(|| {
             format!(
                 "failed to rehydrate worktree {} from snapshot {snapshot_commit}",
                 dest.display()
             )
-        },
-    )
+        })?;
+    crate::metrics::record_grove_wt_rehydrate(start.elapsed());
+    Ok(report)
+}
+
+fn dispose_fallback_rm(dest: &Path) {
+    let span = tracing::info_span!(
+        "worktree.dispose_fallback_rm",
+        method = crate::metrics::DisposeMethod::RemoveFallback.as_str()
+    );
+    let _enter = span.enter();
+    let start = std::time::Instant::now();
+    if std::fs::remove_dir_all(dest).is_ok() {
+        crate::metrics::record_grove_wt_dispose(
+            crate::metrics::DisposeMethod::RemoveFallback,
+            start.elapsed(),
+        );
+    }
 }
 
 fn rehydrate_worktree_from_ref_inner(
@@ -443,8 +475,6 @@ fn rehydrate_worktree_from_ref_inner(
     snapshot_commit: &str,
     session_id: Option<&str>,
 ) -> Result<WorktreeReport> {
-    let dest_str = dest.to_string_lossy();
-
     // The snapshot's first parent is the original base. Resolve it, then confirm
     // the object is actually present — a parent-repo `git reset --hard` + gc can
     // leave the parent pointer dangling, which `rev-parse` alone would not catch.
@@ -475,7 +505,7 @@ fn rehydrate_worktree_from_ref_inner(
     if dest.exists() {
         let _ = crate::remove_worktree(dest);
         if dest.exists() {
-            let _ = std::fs::remove_dir_all(dest);
+            dispose_fallback_rm(dest);
         }
     }
     // `git worktree add` refuses a path another registration still claims,
@@ -485,20 +515,19 @@ fn rehydrate_worktree_from_ref_inner(
     snapshot_git(
         source_repo,
         &[
-            "worktree",
-            "add",
-            "--detach",
-            "--no-checkout",
-            dest_str.as_ref(),
-            add_target,
+            OsStr::new("worktree"),
+            OsStr::new("add"),
+            OsStr::new("--detach"),
+            OsStr::new("--no-checkout"),
+            dest.as_os_str(),
+            OsStr::new(add_target),
         ],
         &[],
     )?;
 
-    // Past this point the dest dir + its registration exist. Populate the index
-    // and working tree from the snapshot tree without moving HEAD, so restored
-    // content appears as changes against the base. If any step fails, tear down
-    // the partial worktree so a later resume can't reuse a corrupt directory.
+    // Populate index and worktree from the snapshot without moving HEAD. On
+    // failure tear down the partial worktree so a later resume cannot reuse a
+    // corrupt directory.
     let populate = || -> Result<String> {
         snapshot_git(dest, &["read-tree", "--reset", "-u", snapshot_commit], &[])?;
         snapshot_git(dest, &["rev-parse", "HEAD"], &[])
@@ -520,6 +549,7 @@ fn rehydrate_worktree_from_ref_inner(
     let _ = session_id;
     #[cfg(feature = "metadata")]
     crate::api::register_worktree(
+        None,
         dest,
         source_repo,
         crate::db::WorktreeKind::Subagent,
@@ -544,6 +574,10 @@ fn rehydrate_worktree_from_ref_inner(
         commit,
         unignored_copy: CopyReport::default(),
         ignored_copy: None,
+        resolved_strategy: crate::worktree::STRATEGY_GIT,
+        strategy_metadata: None,
+        skipped: Vec::new(),
+        daemon_capability_class: None,
     })
 }
 
@@ -664,14 +698,18 @@ mod tests {
         assert!(!worktree_at_ref(temp.path(), "does-not-exist").unwrap());
     }
 
-    /// Create a source repo (one committed file) plus a worktree of it.
-    fn repo_with_worktree(temp: &TempDir) -> (PathBuf, PathBuf) {
+    fn repo_with_one_commit(temp: &TempDir) -> PathBuf {
         let repo_path = temp.path().join("repo");
         std::fs::create_dir(&repo_path).unwrap();
         init_git_repo(&repo_path);
         std::fs::write(repo_path.join("tracked.txt"), "original").unwrap();
         git_commit_all(&repo_path, "initial");
+        repo_path
+    }
 
+    /// Create a source repo (one committed file) plus a worktree of it.
+    fn repo_with_worktree(temp: &TempDir) -> (PathBuf, PathBuf) {
+        let repo_path = repo_with_one_commit(temp);
         let wt = temp.path().join("wt");
         crate::WorktreeBuilder::new(&repo_path, &wt)
             .create()
@@ -1056,10 +1094,10 @@ mod tests {
         let snap = snapshot_worktree_to_ref(&wt, "refs/grok/snapshots/orphan-src", "src").unwrap();
         let tree = git_capture_in(&wt, &["rev-parse", &format!("{snap}^{{tree}}")], &[]).unwrap();
         let ident = [
-            ("GIT_AUTHOR_NAME", "T"),
-            ("GIT_AUTHOR_EMAIL", "t@example.com"),
-            ("GIT_COMMITTER_NAME", "T"),
-            ("GIT_COMMITTER_EMAIL", "t@example.com"),
+            ("GIT_AUTHOR_NAME", OsStr::new("T")),
+            ("GIT_AUTHOR_EMAIL", OsStr::new("t@example.com")),
+            ("GIT_COMMITTER_NAME", OsStr::new("T")),
+            ("GIT_COMMITTER_EMAIL", OsStr::new("t@example.com")),
         ];
         let orphan = git_capture_in(&wt, &["commit-tree", &tree, "-m", "orphan"], &ident).unwrap();
         assert!(
@@ -1120,10 +1158,8 @@ mod tests {
         );
     }
 
-    /// Rehydrate must clear its own stale registration (so re-adding the
-    /// same path succeeds) while leaving every other entry alone — its
-    /// cleanup once pruned repo-wide and destroyed user registrations whose
-    /// paths were not visible from the container mount namespace.
+    /// Clear only this path's stale registration. Repo-wide prune destroyed
+    /// user registrations invisible from the container mount namespace.
     #[test]
     fn test_rehydrate_clears_only_its_own_stale_registration() {
         xai_test_utils::require_git!();
@@ -1264,9 +1300,12 @@ mod tests {
             .filter(|r| r.path == dest || r.path == dest_canon)
             .collect();
         assert_eq!(mine.len(), 1, "exactly one rehydrated subagent record");
-        assert_eq!(mine[0].kind, crate::db::WorktreeKind::Subagent);
-        assert_eq!(mine[0].head_commit.as_deref(), Some(report.commit.as_str()));
+        let Some(rec) = mine.first() else {
+            panic!("expected one subagent record: {mine:?}");
+        };
+        assert_eq!(rec.kind, crate::db::WorktreeKind::Subagent);
+        assert_eq!(rec.head_commit.as_deref(), Some(report.commit.as_str()));
         // session_id is threaded through to the DB record (create-path parity).
-        assert_eq!(mine[0].session_id.as_deref(), Some("subagent-42"));
+        assert_eq!(rec.session_id.as_deref(), Some("subagent-42"));
     }
 }

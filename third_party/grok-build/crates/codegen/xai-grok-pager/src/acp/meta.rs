@@ -1,15 +1,14 @@
 //! Strongly-typed notification metadata.
 //!
-//! Parses the `_meta` JSON from `SessionNotification` into a struct with
-//! typed fields.  All fields are `Option` — gracefully degrades when
-//! grok-shell hasn't been updated or meta is absent.
+//! Parses the `_meta` JSON from `SessionNotification` into a struct with typed fields.
+//! All fields are `Option`, so parsing degrades gracefully when grok-shell hasn't been updated or meta is absent.
 
+use agent_client_protocol as acp;
 use serde::{Deserialize, Serialize};
 
 /// Parsed fields from `SessionNotification._meta`.
 ///
-/// Extracted once in [`acp_handler`](super::super::app::acp_handler) and passed
-/// downstream to the tracker and agent state.
+/// Extracted once in [`acp_handler`](super::super::app::acp_handler) and passed downstream to the tracker and agent state.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct NotificationMeta {
     /// Accumulated token count across the session (`totalTokens`).
@@ -23,37 +22,23 @@ pub struct NotificationMeta {
     /// Constant for the entire turn.
     pub turn_start_ms: Option<i64>,
     /// Stable id for the prompt this notification belongs to (`promptId`).
-    /// The client passes a UUID in `PromptRequest._meta.promptId`; the agent
-    /// echoes it on every notification it emits while processing that
-    /// prompt. Used to drop chunks for cancelled / rewound turns.
+    /// The client passes a UUID in `PromptRequest._meta.promptId`; the agent echoes it on every notification it emits while processing that prompt.
+    /// Used to drop chunks for cancelled / rewound turns.
     pub prompt_id: Option<String>,
     /// Whether this notification is historical replay from `session/load`.
     pub is_replay: bool,
-    /// Raw `eventId` string (`"{sessionId}-{counter}"`). Tracked per session
-    /// as the reconnect cursor (`_meta.cursor` on `session/load`): the agent
-    /// resolves it by exact string match against persisted lines, so the full
-    /// id is kept — the numeric suffix alone is ambiguous across the
-    /// non-monotonic counter runs of a multi-resume history.
+    /// Raw `eventId` string (`"{sessionId}-{counter}"`). The agent resolves it by exact string match against persisted
+    /// lines, so the full id is kept.
     pub event_id: Option<String>,
-    /// Monotonic per-process sequence parsed from `eventId`
-    /// (`"{sessionId}-{counter}"`, see `xai-grok-shell util::event_id`). The
-    /// agent stamps the SAME `eventId` on the live emission and on the persisted
-    /// line that is later replayed, so a client can dedup an event it receives
-    /// twice (replay/live overlap, a re-emit after the reconnect gate, or
-    /// duplicate routing). Per-session events arrive in increasing order, so the
-    /// pager keeps a highwater and drops anything `<=` it. `None` when the agent
-    /// didn't stamp an `eventId` (older shell) — such updates always apply.
+    /// Monotonic per-process sequence parsed from `eventId` (`"{sessionId}-{counter}"`, see `xai-grok-shell
+    /// util::event_id`). Per-session events arrive in increasing order, so the pager keeps a highwater and drops
+    /// anything at or below it. such updates always apply.
     pub event_seq: Option<u64>,
 }
 
-/// Serializable counterpart of the replay stamp the agent injects on
-/// replayed notifications (`_meta.isReplay`, stamped by xai-grok-shell's
-/// `forward_raw_replay_line` during `session/load`).
-///
-/// [`NotificationMeta::from_json`] is the parse side; this is the build
-/// side, so code that constructs a replay-stamped `_meta` (test fixtures,
-/// playgrounds) shares the wire key with the parser instead of hand-writing
-/// `json!` literals.
+/// Serializable counterpart of the replay stamp the agent injects on replayed notifications.
+/// [`NotificationMeta::from_json`] is the parse side. this is the build side. That spares those sites from
+/// hand-writing `json!` literals.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReplayMetaStamp {
@@ -65,12 +50,19 @@ impl ReplayMetaStamp {
     pub fn replayed() -> serde_json::Value {
         serde_json::to_value(Self { is_replay: true }).expect("serialize replay meta stamp")
     }
+
+    /// The replay stamp as an ACP `Meta`.
+    pub fn replayed_meta() -> acp::Meta {
+        Self::replayed()
+            .as_object()
+            .cloned()
+            .expect("replay meta stamp is an object")
+    }
 }
 
-/// User-prompt content-block `_meta` keys (`TextContent.meta`), shared by the
-/// producers (`dispatch/queue.rs` drain, `effects.rs` prompt send) and the
-/// replay consumer (`acp/tracker.rs` `handle_user_message`) so the wire keys
-/// cannot drift. Tests keep raw literals — they pin the wire values.
+/// User-prompt content-block `_meta` keys (`TextContent.meta`). Shared by the producers (`dispatch/queue.rs` drain,
+/// `effects.rs` prompt send) and the replay consumer (`acp/tracker.rs` `handle_user_message`). Sharing the
+/// constants keeps the wire keys from drifting. Tests keep raw literals; they pin the wire values.
 pub mod user_prompt_meta {
     /// Clean display text shown in scrollback instead of the wire text.
     pub const DISPLAY_TEXT: &str = "displayText";
@@ -78,9 +70,8 @@ pub mod user_prompt_meta {
     pub const DISPLAY_AS_SKILL: &str = "displayAsSkill";
     /// Render the display text as a scheduled (cron) prompt.
     pub const DISPLAY_AS_CRON: &str = "displayAsCron";
-    /// `[[start, end], …]` byte ranges of recognized slash tokens into the
-    /// block's `text`; only meaningful when that text is displayed verbatim
-    /// (never stamped alongside `displayText`).
+    /// `[[start, end], …]` byte ranges of recognized slash tokens into the block's `text`.
+    /// Only meaningful when that text is displayed verbatim (never stamped alongside `displayText`).
     pub const SKILL_TOKEN_RANGES: &str = "skillTokenRanges";
     /// See [`xai_prompt_queue::COMBINED_DISPLAY_TEXTS_META`].
     pub const COMBINED_DISPLAY_TEXTS: &str = xai_prompt_queue::COMBINED_DISPLAY_TEXTS_META;
@@ -91,9 +82,22 @@ pub mod user_prompt_meta {
 pub mod user_message_chunk_meta {
     /// Prompt index for rewind / attribution.
     pub const PROMPT_INDEX: &str = "promptIndex";
-    /// When true, the chunk must not become a scrollback user prompt
-    /// ([`xai_grok_shell::session::PromptOrigin::hide_user_echo_from_scrollback`]).
+    /// When true, the chunk must not become a scrollback user prompt.
+    /// See [`xai_grok_shell::session::PromptOrigin::hide_user_echo_from_scrollback`].
     pub const HIDE_FROM_SCROLLBACK: &str = "hideFromScrollback";
+    /// When true, the chunk is a persisted mid-turn interjection; replay renders its `displayText` as an interjection block.
+    pub const INTERJECTION: &str = xai_grok_shell::session::storage::INTERJECTION_META_KEY;
+    /// Daemon `UserMessage.message_id`. An interjection stamps this with its injection id.
+    pub const MESSAGE_ID: &str = "messageId";
+}
+
+/// Extract the numeric counter from an `eventId` (`"{sessionId}-{counter}"`).
+/// The counter is the part after the last `-` (session ids themselves contain `-`).
+pub fn event_id_counter(event_id: &str) -> Option<u64> {
+    event_id
+        .rsplit('-')
+        .next()
+        .and_then(|c| c.parse::<u64>().ok())
 }
 
 impl NotificationMeta {
@@ -106,12 +110,7 @@ impl NotificationMeta {
             .get("eventId")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        // `eventId` is `"{sessionId}-{counter}"`; the counter is the part
-        // after the LAST '-' (session ids themselves contain '-').
-        let event_seq = event_id
-            .as_deref()
-            .and_then(|s| s.rsplit('-').next())
-            .and_then(|c| c.parse::<u64>().ok());
+        let event_seq = event_id.as_deref().and_then(event_id_counter);
         Self {
             total_tokens: m.get("totalTokens").and_then(|v| v.as_u64()),
             agent_timestamp_ms: m.get("agentTimestampMs").and_then(|v| v.as_i64()),
@@ -182,9 +181,8 @@ mod tests {
         assert!(meta.is_replay);
     }
 
-    /// The build side ([`ReplayMetaStamp::replayed`]) and the parse side
-    /// ([`NotificationMeta::from_json`]) must agree on the wire key — a
-    /// rename on either side breaks replay detection silently otherwise.
+    /// The build side ([`ReplayMetaStamp::replayed`]) and the parse side ([`NotificationMeta::from_json`]) must agree on the wire key.
+    /// A rename on either side breaks replay detection silently.
     #[test]
     fn replay_meta_stamp_round_trips_through_parser() {
         let stamp = ReplayMetaStamp::replayed();
@@ -205,8 +203,7 @@ mod tests {
         assert_eq!(meta.event_seq, Some(42));
     }
 
-    /// A non-numeric suffix yields no seq (dedup disabled) but the raw id is
-    /// still kept for the reconnect cursor (string-matched agent-side).
+    /// A non-numeric suffix yields no seq (dedup disabled) but the raw id is still kept for the reconnect cursor (string-matched agent-side).
     #[test]
     fn parse_event_id_without_numeric_suffix() {
         let meta_json = json!({

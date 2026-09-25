@@ -10,8 +10,13 @@ pub const MAX_STOP_HOOK_CONTINUATIONS_PER_TURN: u32 = 8;
 
 const SESSION_END_STOP_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// `command` is a shell-only field, so a monitor's watch command is carried in
-/// `description` instead.
+fn commit_stop_report(claim: TurnReportClaim<'_>, prompt_id: &str) {
+    if claim.commit() == CommitOutcome::LostToAnotherReporter {
+        tracing::debug!(prompt_id, "a cancel already reported this turn");
+    }
+}
+
+/// `command` is a shell-only field, so a monitor's watch command is carried in `description` instead.
 fn stop_entry_from_task(task: &xai_grok_tools::types::TaskSnapshot) -> StopBackgroundTask {
     let command_text =
         clip_stop_entry_text(task.display_command.as_deref().unwrap_or(&task.command));
@@ -60,11 +65,9 @@ fn stop_cron_from_scheduled(
     }
 }
 
-const STOP_FEEDBACK_TEXT_MAX: usize = 10_000;
-
 fn format_stop_feedback(blocks: &[dispatcher::StopBlock], additional_context: &[String]) -> String {
     use std::fmt::Write as _;
-    let clip = |text: &str| event::clip_text(text, STOP_FEEDBACK_TEXT_MAX);
+    let clip = |text: &str| event::clip_text(text, event::MAX_HOOK_FEEDBACK_CHARS);
     let mut feedback = String::new();
     if !blocks.is_empty() {
         feedback.push_str("Stop hook feedback:\n");
@@ -81,8 +84,8 @@ fn format_stop_feedback(blocks: &[dispatcher::StopBlock], additional_context: &[
     feedback
 }
 
-/// Downgrade `Blocked` to `Success` for the observe-only session-end fire: the
-/// decision is discarded, so scrollback and telemetry must not report a block.
+/// Downgrade `Blocked` to `Success` for the observe-only session-end fire.
+/// The decision is discarded, so scrollback and telemetry must not report a block.
 pub(super) fn demote_ignored_blocks(
     results: Vec<result::HookRunResult>,
 ) -> Vec<result::HookRunResult> {
@@ -94,11 +97,13 @@ pub(super) fn demote_ignored_blocks(
                 hook_name,
                 elapsed,
                 http_info,
+                system_message,
                 ..
             } => HookRunResult::Success {
                 hook_name,
                 elapsed,
                 http_info,
+                system_message,
             },
             other => other,
         })
@@ -106,11 +111,10 @@ pub(super) fn demote_ignored_blocks(
 }
 
 impl SessionActor {
-    /// Dispatch the observe-only session-end `Stop`: runs in stop-gate mode so
-    /// exit code 2 parses as a block, but the decision is discarded (no turn
-    /// left to continue).
+    /// Dispatch the observe-only session-end `Stop`.
+    /// It runs in stop-gate mode so exit code 2 parses as a block, but the decision is discarded (no turn left to continue).
     pub(crate) async fn dispatch_session_end_stop(&self, reason: &str) {
-        if self.startup_hints.is_subagent || !self.hook_event_active(event::HookEventName::Stop) {
+        if self.startup_hints.is_subagent || !self.may_have_hooks_for(event::HookEventName::Stop) {
             return;
         }
         let envelope = self.fire_hook(
@@ -135,7 +139,7 @@ impl SessionActor {
             return;
         };
         result.results = demote_ignored_blocks(result.results);
-        self.send_hook_execution("stop", None, None, &result.results)
+        self.send_hook_execution(&HookBatch::from_envelope(&envelope), &result.results)
             .await;
         self.emit_hook_executed_telemetry("stop", None, &result.results)
             .await;
@@ -163,9 +167,8 @@ impl SessionActor {
         rx.await.unwrap_or_default()
     }
 
-    /// Snapshot in-flight background work and scheduled wakeups for the Stop
-    /// hook input (filtering out tasks owned by other sessions on the shared
-    /// backend).
+    /// Snapshot still-running background work and scheduled wakeups for the Stop hook input.
+    /// Tasks owned by other sessions on the shared backend are filtered out.
     async fn stop_gate_work_snapshot(&self) -> (Vec<StopBackgroundTask>, Vec<StopSessionCron>) {
         let bridge = self.tool_bridge_handle();
         let my_session = self.session_id_string();
@@ -207,11 +210,20 @@ impl SessionActor {
         .await;
     }
 
+    /// Answering the gate's hook request takes a client, so a test reaches the payload here.
+    #[cfg(test)]
+    pub(super) async fn stop_payload_for_test(&self) -> event::HookPayload {
+        self.build_stop_payload(/* stop_hook_active */ false).await
+    }
+
     async fn build_stop_payload(&self, stop_hook_active: bool) -> event::HookPayload {
+        // The report is joined so a salvaged turn's gate sees the whole answer, not the last fragment; it is identical to the last text otherwise
         let last_assistant_message = self
             .chat_state_handle
-            .get_last_assistant_text_in_turn()
-            .await;
+            .get_trailing_assistant_report()
+            .await
+            .as_deref()
+            .map(event::clip_assistant_message);
         if self.startup_hints.is_subagent {
             event::HookPayload::SubagentStop {
                 phase: event::SubagentStopPhase::Gate,
@@ -232,22 +244,14 @@ impl SessionActor {
         }
     }
 
-    async fn emit_stop_results(
-        &self,
-        event: event::HookEventName,
-        prompt_id: &str,
-        results: &[result::HookRunResult],
-    ) {
-        let name = event.to_string();
-        self.send_hook_execution(&name, None, Some(prompt_id), results)
-            .await;
-        self.emit_hook_executed_telemetry(&name, None, results)
+    async fn emit_stop_results(&self, batch: &HookBatch, results: &[result::HookRunResult]) {
+        self.send_hook_execution(batch, results).await;
+        self.emit_hook_executed_telemetry(&batch.event_name, None, results)
             .await;
     }
 
-    /// Run the turn-end `Stop`/`SubagentStop` hook gate and decide whether the
-    /// agent may stop or must keep working. Hook failures fail open (the agent
-    /// stops normally).
+    /// Run the turn-end `Stop`/`SubagentStop` hook gate and decide whether the agent may stop or must keep working.
+    /// Hook failures fail open (the agent stops normally).
     pub(super) async fn run_stop_gate(
         &self,
         prompt_id: &str,
@@ -258,17 +262,10 @@ impl SessionActor {
         } else {
             event::HookEventName::Stop
         };
-        let has_file_hooks = self
-            .hook_registry
-            .borrow()
-            .as_ref()
-            .is_some_and(|r| r.has_enabled_hooks_for_canonical(event));
-        let has_client_hooks = self.client_hooks.borrow().contains_key(&event);
-        if !has_file_hooks && !has_client_hooks {
+        if !self.has_enabled_hooks_for(event) {
             return StopGateDecision::AllowStop;
         }
-        // At the cap no hook is consulted or notified for this forced stop,
-        // unlike the force-stop path below which still notifies observers.
+        // At the cap no hook is consulted or notified for this forced stop, unlike the force-stop path below which still notifies observers
         if continuations_this_turn >= MAX_STOP_HOOK_CONTINUATIONS_PER_TURN {
             tracing::warn!(
                 continuations_this_turn,
@@ -281,52 +278,73 @@ impl SessionActor {
             return StopGateDecision::AllowStop;
         }
 
+        // Claim before the hooks, not after: a turn already reported is being torn down
+        // The gate then skips instead of running verification hooks for a turn the user cancelled
+        let Some(claim) = self.turn_report.claim_for_gate() else {
+            tracing::debug!(
+                prompt_id,
+                "a cancel already reported this turn; the stop gate did not run"
+            );
+            return StopGateDecision::AllowStop;
+        };
+
         let payload = self.build_stop_payload(continuations_this_turn > 0).await;
-        // Gate envelope via `make_hook_envelope`, not the observe-notify
-        // `fire_hook`: client hooks get the awaited `x.ai/hooks/run` request
-        // below, not a fire-and-forget event.
+        // The gate builds its envelope via `make_hook_envelope`, not the observe-notify `fire_hook`
+        // Client hooks get the awaited `x.ai/hooks/run` request below, not a fire-and-forget event
         let envelope = self.make_hook_envelope(event, Some(prompt_id.to_string()), payload);
 
         let mut result = dispatcher::StopDispatchResult::default();
-        // Clone out of the RefCell before the awaits so no `Ref` is held
-        // across them.
+        // Clone out of the RefCell before the awaits so no `Ref` is held across them
         let registry = self.hook_registry.borrow().clone();
-        if let Some(registry) = registry {
+        let batch = if let Some(registry) = registry {
             let ctx = self.hook_run_ctx();
+            let batch = self.announce_hook_run(&registry, &envelope, &ctx);
             result = dispatcher::dispatch_stop(&registry, event, &envelope, &ctx).await;
-        }
+            batch
+        } else {
+            HookBatch::from_envelope(&envelope)
+        };
 
         if let Some(prevent) = result.prevent_continuation.take() {
-            // Force-stop: skip the client gate (its signals would be discarded)
-            // but still send the observe notification so client callbacks see
-            // the turn end.
-            self.emit_stop_results(event, prompt_id, &result.results)
-                .await;
+            // Force-stop: skip the client gate, its signals would be discarded
+            // Still send the observe notification so client callbacks see the turn end
+            self.emit_stop_results(&batch, &result.results).await;
             self.notify_client_hooks(&envelope);
+            commit_stop_report(claim, prompt_id);
             self.announce_force_stop(&prevent).await;
             return StopGateDecision::AllowStop;
         }
 
-        // Merge file and client results and emit once: one stop gate is one
-        // scrollback entry and one telemetry batch.
+        // Merge file and client results and emit once: one stop gate is one scrollback entry and one telemetry batch
         let client = self.run_stop_client_hooks(&envelope).await;
         let mut all_results = std::mem::take(&mut result.results);
         all_results.extend(client.results);
         if !all_results.is_empty() {
-            self.emit_stop_results(event, prompt_id, &all_results).await;
+            self.emit_stop_results(&batch, &all_results).await;
         }
 
         result.blocks.extend(client.blocks);
         result.additional_context.extend(client.additional_context);
         if let Some(prevent) = client.prevent_continuation {
+            commit_stop_report(claim, prompt_id);
             self.announce_force_stop(&prevent).await;
             return StopGateDecision::AllowStop;
         }
 
         if !result.wants_continuation() {
+            // A gate whose hooks all skipped or crashed told nobody the turn ended
+            // It releases the claim so a later cancel or failure can still report
+            let any_hook_succeeded = all_results
+                .iter()
+                .any(|r| matches!(r, result::HookRunResult::Success { .. }));
+            if any_hook_succeeded {
+                commit_stop_report(claim, prompt_id);
+            }
             return StopGateDecision::AllowStop;
         }
 
+        // The turn has not ended, so a later interrupt must still be able to report it.
+        drop(claim);
         self.announce_keep_working(&result.blocks, &result.additional_context)
             .await;
         StopGateDecision::KeepWorking {
@@ -334,9 +352,8 @@ impl SessionActor {
         }
     }
 
-    /// Annotate the scrollback when a stop gate keeps the agent working: one line
-    /// per block (with `HookBlocked` telemetry), or the context lines when only
-    /// `additionalContext` was returned.
+    /// Annotate the scrollback when a stop gate keeps the agent working.
+    /// Each block gets one line (with `HookBlocked` telemetry); when only `additionalContext` was returned, the context lines are written instead.
     async fn announce_keep_working(
         &self,
         blocks: &[dispatcher::StopBlock],
@@ -350,6 +367,7 @@ impl SessionActor {
             .await;
             xai_grok_telemetry::session_ctx::log_event(xai_grok_telemetry::events::HookBlocked {
                 hook_name: block.hook_name.clone(),
+                cause: xai_grok_telemetry::events::HookBlockCause::StopBlocked,
             });
         }
         if blocks.is_empty() {
@@ -386,6 +404,7 @@ mod stop_gate_snapshot_tests {
             kind,
             block_waited: false,
             explicitly_killed: false,
+            kill_result_delivered: false,
             owner_session_id: None,
             description: None,
             is_backgrounded: false,
@@ -477,24 +496,28 @@ mod stop_gate_snapshot_tests {
                 detail: "blocked stop: run the tests".into(),
                 elapsed: std::time::Duration::from_millis(5),
                 http_info: None,
+                system_message: None,
             },
             HookRunResult::Failed {
                 hook_name: "broken".into(),
                 error: "exit code 1".into(),
                 elapsed: std::time::Duration::from_millis(3),
                 http_info: None,
+                system_message: None,
             },
             HookRunResult::Skipped {
                 hook_name: "disabled".into(),
             },
         ]);
 
+        let [ok, failed, skipped] = results.as_slice() else {
+            panic!("expected three hook results: {results:?}");
+        };
         assert!(
-            matches!(&results[0], HookRunResult::Success { hook_name, .. } if hook_name == "gate"),
-            "a discarded decision must read as success, got {:?}",
-            results[0]
+            matches!(ok, HookRunResult::Success { hook_name, .. } if hook_name == "gate"),
+            "a discarded decision must read as success, got {ok:?}"
         );
-        assert!(matches!(&results[1], HookRunResult::Failed { .. }));
-        assert!(matches!(&results[2], HookRunResult::Skipped { .. }));
+        assert!(matches!(failed, HookRunResult::Failed { .. }));
+        assert!(matches!(skipped, HookRunResult::Skipped { .. }));
     }
 }

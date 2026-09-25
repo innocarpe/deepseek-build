@@ -9,7 +9,7 @@ use xai_grok_test_support::sse::{
 use xai_grok_test_support::{MockInferenceServer, ScriptedResponse};
 
 /// `SessionActor` turn futures overflow the default test thread stack.
-fn block_on_session(f: impl FnOnce() + Send + 'static) {
+pub(super) fn block_on_session(f: impl FnOnce() + Send + 'static) {
     std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
         .spawn(f)
@@ -18,7 +18,7 @@ fn block_on_session(f: impl FnOnce() + Send + 'static) {
         .expect("test thread");
 }
 
-fn current_thread_local<F>(f: F)
+pub(super) fn current_thread_local<F>(f: F)
 where
     F: Future<Output = ()> + 'static,
 {
@@ -29,16 +29,32 @@ where
     tokio::task::LocalSet::new().block_on(&rt, f);
 }
 
-const TODO_ARGS: &str = r#"{"todos":[{"id":"t1","content":"poll","status":"completed"}]}"#;
+pub(super) const TODO_ARGS: &str =
+    r#"{"todos":[{"id":"t1","content":"poll","status":"completed"}]}"#;
 
-fn drain_gateway(mut rx: tokio::sync::mpsc::UnboundedReceiver<xai_acp_lib::AcpClientMessage>) {
+/// Acks like [`drain_gateway`] but keeps the hook events for the one test that asserts on them.
+fn capture_hook_events(
+    mut rx: tokio::sync::mpsc::UnboundedReceiver<xai_acp_lib::AcpClientMessage>,
+) -> std::rc::Rc<std::cell::RefCell<Vec<serde_json::Value>>> {
+    let fired = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let sink = fired.clone();
     tokio::task::spawn_local(async move {
         while let Some(msg) = rx.recv().await {
-            if let xai_acp_lib::AcpClientMessage::SessionNotification(args) = msg {
-                let _ = args.response_tx.send(Ok(()));
+            match msg {
+                xai_acp_lib::AcpClientMessage::SessionNotification(args) => {
+                    let _ = args.response_tx.send(Ok(()));
+                }
+                xai_acp_lib::AcpClientMessage::ExtNotification(args)
+                    if args.request.method.as_ref() == "x.ai/hooks/event" =>
+                {
+                    sink.borrow_mut()
+                        .push(serde_json::from_str(args.request.params.get()).unwrap());
+                }
+                _ => {}
             }
         }
     });
+    fired
 }
 
 fn drain_persistence_flush_enospc(mut rx: tokio::sync::mpsc::UnboundedReceiver<PersistenceMsg>) {
@@ -57,6 +73,18 @@ async fn actor_with_mock_sampler(
     gateway_tx: tokio::sync::mpsc::UnboundedSender<xai_acp_lib::AcpClientMessage>,
     max_turns: Option<usize>,
 ) -> Arc<SessionActor> {
+    actor_with_mock_sampler_configured(server, persistence_tx, gateway_tx, max_turns, |_| {}).await
+}
+
+/// An actor on the Responses backend of `server`, with the todo tool and `max_turns`.
+/// `configure` edits the actor (e.g. swaps `feedback_manager`) before it is shared.
+pub(super) async fn actor_with_mock_sampler_configured(
+    server: &MockInferenceServer,
+    persistence_tx: tokio::sync::mpsc::UnboundedSender<PersistenceMsg>,
+    gateway_tx: tokio::sync::mpsc::UnboundedSender<xai_acp_lib::AcpClientMessage>,
+    max_turns: Option<usize>,
+    configure: impl FnOnce(&mut SessionActor),
+) -> Arc<SessionActor> {
     let sampling_cfg = xai_grok_sampler::SamplerConfig {
         api_key: Some("test-key".to_string()),
         base_url: server.url(),
@@ -73,7 +101,6 @@ async fn actor_with_mock_sampler(
         sampling_cfg,
         xai_grok_sampler::RetryPolicy {
             max_retries: 0,
-            rate_limit_retry_threshold: 0,
             ..Default::default()
         },
         sampler_event_tx,
@@ -83,6 +110,7 @@ async fn actor_with_mock_sampler(
     actor.sampler_handle = sampler_handle;
     actor.max_turns = max_turns;
     *actor.agent.borrow_mut() = test_grok_build_agent_with_todo().await;
+    configure(&mut actor);
 
     let mut cfg = actor
         .chat_state_handle
@@ -121,7 +149,7 @@ async fn actor_with_mock_sampler(
     actor
 }
 
-async fn run_prompt(
+pub(super) async fn run_prompt(
     actor: &Arc<SessionActor>,
     prompt_id: &str,
 ) -> Result<crate::session::commands::PromptTurnOk, acp::Error> {
@@ -139,6 +167,7 @@ async fn run_prompt(
             None,
             None,
             true,
+            /* send_now */ false,
             None,
             None,
             None,
@@ -148,8 +177,10 @@ async fn run_prompt(
     .expect("turn must finish within timeout")
 }
 
+/// This is also the one test that drives a real turn into `StopFailure`.
+/// Deleting the report in the turn's error arm leaves a host that watched the turn start waiting forever.
 #[test]
-fn completed_turn_flush_enospc_returns_error() {
+fn completed_turn_flush_enospc_returns_error_and_reports_stop_failure() {
     block_on_session(|| {
         current_thread_local(async {
             let server = MockInferenceServer::start()
@@ -162,16 +193,39 @@ fn completed_turn_flush_enospc_returns_error() {
 
             let (gateway_tx, gateway_rx) =
                 tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            drain_gateway(gateway_rx);
+            let fired = capture_hook_events(gateway_rx);
             let (persistence_tx, persistence_rx) =
                 tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
             drain_persistence_flush_enospc(persistence_rx);
 
             let actor = actor_with_mock_sampler(&server, persistence_tx, gateway_tx, None).await;
+            let mut hooks = crate::extensions::hooks::ClientHooks::new();
+            hooks.insert(
+                xai_grok_hooks::event::HookEventName::StopFailure,
+                vec![crate::extensions::hooks::ClientHookGroup {
+                    matcher: None,
+                    callback_ids: vec!["cb".to_string()],
+                    timeout: None,
+                }],
+            );
+            *actor.client_hooks.borrow_mut() = hooks;
+            let queue = super::turn_end_hooks::TurnEndQueue::spawn(actor.clone());
+
             let error = run_prompt(&actor, "disk-full-completed")
                 .await
                 .expect_err("completed turn must fail when flush hits ENOSPC");
+            queue.drain().await;
+
             assert_eq!(error.message, "No space left on device");
+            let fired = fired.borrow();
+            assert_eq!(fired.len(), 1);
+            let Some(first) = fired.first() else {
+                panic!("expected one hook payload: {fired:?}");
+            };
+            assert_eq!(
+                first.get("hookEventName"),
+                Some(&serde_json::json!("stop_failure"))
+            );
         });
     });
 }

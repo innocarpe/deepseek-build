@@ -343,17 +343,17 @@ runs all of them.
 Runner: `crates/dsb-agent/tests/cache_guard.rs`; wrapper
 `scripts/cache-guard.sh`.
 
-### 4.6 Pending (§1.5.2 counter)
-
-| Test | Expect |
-|------|--------|
-| `cache_totals_accumulate_and_track_unreported` | §1.5.2 semantics, incl. the unreported-turn rule — *next unit* |
-
 ### 4.5 §1.10 wire placement
 
 | Test | Expect |
 |------|--------|
 | `in_history_update_appends_and_head_rewrite_breaks_the_byte_prefix` | A later stable-body change leaves the leading system bytes intact and appends the new body. A byte-prefix mock, derived from the serialized messages, counts the old body inside the shared prefix. Replacing the leading system with that same new body does not. A second apply of the same body adds nothing. |
+
+### 4.6 Pending (§1.5.2 counter)
+
+| Test | Expect |
+|------|--------|
+| `cache_totals_accumulate_and_track_unreported` | §1.5.2 semantics, incl. the unreported-turn rule — *next unit* |
 
 ## 5. Implementation notes
 

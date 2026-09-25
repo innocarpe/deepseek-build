@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use dsb_agent::{Agent, AgentConfig, Preset, SessionStore, TurnEvent};
-use dsb_config::BuildHome;
+use dsb_config::{BuildHome, Provider};
 use dsb_context::discover_skills_index;
 use dsb_provider_deepseek::{Client, ClientConfig, ReasoningEffort};
 use dsb_tools::{AskChoice, Scope};
@@ -180,10 +180,14 @@ enum Commands {
     /// Skills index (stable prefix names; bodies load via tool `skill`).
     #[command(subcommand)]
     Skills(SkillsCmd),
-    /// First-time setup: save DeepSeek API key (interactive).
+    /// First-time setup: choose DeepSeek API or OpenRouter, then save its key.
     Setup {
-        /// Non-interactive: write key from this flag (prefer env in CI).
-        #[arg(long, env = "DEEPSEEK_API_KEY")]
+        /// Skip the provider question: `deepseek` or `openrouter`.
+        #[arg(long, value_parser = ["deepseek", "openrouter"])]
+        provider: Option<String>,
+        /// Non-interactive: write key from this flag. Without `--provider
+        /// openrouter`, falls back to DEEPSEEK_API_KEY (prefer env in CI).
+        #[arg(long)]
         api_key: Option<String>,
     },
     /// Auth helpers (login / status / logout).
@@ -195,7 +199,10 @@ enum Commands {
 enum AuthCmd {
     /// Interactive login (same as `setup`).
     Login {
-        #[arg(long, env = "DEEPSEEK_API_KEY")]
+        /// Skip the provider question: `deepseek` or `openrouter`.
+        #[arg(long, value_parser = ["deepseek", "openrouter"])]
+        provider: Option<String>,
+        #[arg(long)]
         api_key: Option<String>,
     },
     /// Show whether a key is configured (masked).
@@ -234,13 +241,13 @@ fn parse_cli() -> Cli {
     let long_about = format!(
         "DeepSeek Build — DeepSeek-native full-screen coding agent TUI.\n\n\
 Product entry: type `{name}` on a TTY → DeepSeek Build TUI (whale + DeepSeek blue).\n\
-First-run: `{name} setup` stores API key under ~/.deepseek-build/ (0600).\n\
+First-run: `{name} setup` picks DeepSeek API or OpenRouter and stores the key under ~/.deepseek-build/ (0600).\n\
 Line-mode only (old UI, not the product): `{name} chat`.\n\
 Commands: `deepseek-build` (primary) and `dsb` (alias) are the same program.\n\
 Version is always full SemVer (MAJOR.MINOR.PATCH), e.g. {ver} — never bare \"{bare}\".\n\n\
 Examples:\n  \
   {name}                    # DeepSeek Build full-screen TUI (default)\n  \
-  {name} setup              # first-run API key\n  \
+  {name} setup              # first-run provider + API key\n  \
   {name} chat               # line-mode chat only (legacy)\n  \
   {name} --dogfood          # trusted local coding\n  \
   {name} --resume <id>      # resume a full-screen TUI session\n  \
@@ -344,27 +351,20 @@ async fn real_main() -> Result<()> {
                 );
                 std::process::exit(2);
             }
-            // First-run: ensure credentials when possible (TTY), then agent UI.
-            if !BuildHome::resolve().has_credentials() && onboard::can_prompt_setup() {
-                let home = BuildHome::resolve();
-                let _ = onboard::run_setup_wizard(&home);
-            }
+            maybe_run_first_run_setup();
             agent_launch::exec_agent(&tui_forward_flags(&cli))?;
         }
         Some(Commands::Agent { ref args }) => {
-            if !BuildHome::resolve().has_credentials()
-                && io::stdin().is_terminal()
-                && onboard::can_prompt_setup()
-            {
-                let home = BuildHome::resolve();
-                let _ = onboard::run_setup_wizard(&home);
-            }
+            maybe_run_first_run_setup();
             let mut fwd = tui_forward_flags(&cli);
             fwd.extend(args.iter().cloned());
             agent_launch::exec_agent(&fwd)?;
         }
-        Some(Commands::Setup { ref api_key }) => {
-            run_setup_cmd(api_key.as_deref())?;
+        Some(Commands::Setup {
+            ref provider,
+            ref api_key,
+        }) => {
+            run_setup_cmd(provider.as_deref(), api_key.as_deref())?;
         }
         Some(Commands::Auth(ref cmd)) => {
             run_auth_cmd(cmd)?;
@@ -396,24 +396,52 @@ async fn real_main() -> Result<()> {
     Ok(())
 }
 
-fn run_setup_cmd(api_key: Option<&str>) -> Result<()> {
+/// First-run (bare / `agent` TUI paths): run the two-step setup wizard on a
+/// TTY when the agent has no usable key. The TUI still opens if setup is
+/// cancelled, as before.
+fn maybe_run_first_run_setup() {
     let home = BuildHome::resolve();
-    if let Some(key) = api_key.map(str::trim).filter(|k| !k.is_empty()) {
-        let creds = dsb_config::Credentials::save(&home, dsb_config::Provider::DeepSeek, key)?;
+    if onboard::can_prompt_setup()
+        && onboard::needs_setup(&home)
+        && let Err(e) = onboard::run_setup_wizard(&home, None)
+    {
+        eprintln!("setup: {e:#}");
+    }
+}
+
+fn run_setup_cmd(provider: Option<&str>, api_key: Option<&str>) -> Result<()> {
+    let home = BuildHome::resolve();
+    // clap restricts the spelling, so `parse` only drops `None`.
+    let provider = provider.and_then(Provider::parse);
+    // DEEPSEEK_API_KEY holds a DeepSeek key: never save it as an OpenRouter key.
+    let env_key = match provider {
+        None | Some(Provider::DeepSeek) => std::env::var(dsb_config::ENV_API_KEY).ok(),
+        Some(Provider::OpenRouter) => None,
+    };
+    let key = api_key
+        .map(str::to_string)
+        .or(env_key)
+        .filter(|k| !k.trim().is_empty());
+    if let Some(key) = key {
+        let provider = provider.unwrap_or_default();
+        let creds = onboard::save_provider_key(&home, provider, &key)?;
         println!(
-            "Saved credentials → {} ({})",
+            "Saved credentials → {} ({} · {})",
             home.credentials_path().display(),
+            provider.display_name(),
             creds.masked_key()
         );
         return Ok(());
     }
-    onboard::run_setup_wizard(&home)?;
+    onboard::run_setup_wizard(&home, provider)?;
     Ok(())
 }
 
 fn run_auth_cmd(cmd: &AuthCmd) -> Result<()> {
     match cmd {
-        AuthCmd::Login { api_key } => run_setup_cmd(api_key.as_deref()),
+        AuthCmd::Login { provider, api_key } => {
+            run_setup_cmd(provider.as_deref(), api_key.as_deref())
+        }
         AuthCmd::Status => onboard::print_auth_status(),
         AuthCmd::Logout => onboard::logout(),
     }
@@ -556,6 +584,15 @@ async fn build_agent(cli: &Cli) -> Result<Agent> {
         )
     ) && onboard::can_prompt_setup();
     let creds = onboard::load_or_setup(interactive).context("credentials")?;
+    // Line mode speaks the DeepSeek wire contract (pinned ids, `thinking`
+    // extra body) to api.deepseek.com; never send an OpenRouter key there.
+    if creds.provider() == Provider::OpenRouter {
+        let inv = invocation_name();
+        bail!(
+            "`{inv} run` / `{inv} chat` call the DeepSeek API directly and cannot use the saved OpenRouter key.\n\
+             Use the full-screen agent (`{inv}`), or `{inv} setup --provider deepseek` for line mode."
+        );
+    }
     let mut cfg = ClientConfig::new(creds.api_key());
     if let Some(url) = &cli.base_url {
         cfg = cfg.with_base_url(url);

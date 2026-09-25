@@ -65,6 +65,8 @@ mod tests {
             reasoning_tokens: 0,
             cached_prompt_tokens: 80,
             cache_creation_prompt_tokens: 0,
+            cache_hit_tokens: None,
+            cache_miss_tokens: None,
         };
         stamp_path_a_cache_signal(&usage, Some(dir.path()));
         let body = std::fs::read_to_string(dir.path().join("path_a_cache_signal.txt"))
@@ -86,6 +88,8 @@ mod tests {
             reasoning_tokens: 0,
             cached_prompt_tokens: 0,
             cache_creation_prompt_tokens: 0,
+            cache_hit_tokens: None,
+            cache_miss_tokens: None,
         };
         stamp_path_a_cache_signal(&usage, Some(dir.path()));
         let body = std::fs::read_to_string(dir.path().join("path_a_cache_signal.txt"))

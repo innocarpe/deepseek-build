@@ -103,6 +103,63 @@ fn merge_cost_ticks(a: Option<i64>, b: Option<i64>) -> Option<i64> {
     }
 }
 
+/// Session-cumulative hit/miss for Path A (spec 10 §1.5.2).
+///
+/// Same arithmetic as the overlay counter in `dsb-agent`: a response with no
+/// cache fields increments `unreported` and adds nothing to the token sums.
+/// A missing half of the pair stays missing rather than becoming `0`.
+/// This copy lives on the in-memory session ledger because `xai-grok-shell`
+/// does not depend on `dsb-agent`. It is not serialized; the persisted copy
+/// is the overlay's, on the REPL / `run` path.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CacheSessionTotals {
+    hit_tokens: u64,
+    miss_tokens: u64,
+    reported: u64,
+    unreported: u64,
+}
+
+impl CacheSessionTotals {
+    pub fn record(&mut self, usage: &TokenUsage) {
+        if usage.cache_hit_tokens.is_none() && usage.cache_miss_tokens.is_none() {
+            self.unreported = self.unreported.saturating_add(1);
+            return;
+        }
+        self.reported = self.reported.saturating_add(1);
+        if let Some(hit) = usage.cache_hit_tokens {
+            self.hit_tokens = self.hit_tokens.saturating_add(u64::from(hit));
+        }
+        if let Some(miss) = usage.cache_miss_tokens {
+            self.miss_tokens = self.miss_tokens.saturating_add(u64::from(miss));
+        }
+    }
+
+    pub fn has_evidence(&self) -> bool {
+        self.reported > 0
+    }
+
+    pub fn rate_label(&self) -> String {
+        let total = u128::from(self.hit_tokens) + u128::from(self.miss_tokens);
+        if total == 0 {
+            return "na".to_string();
+        }
+        let rate = u128::from(self.hit_tokens) * 100 / total;
+        rate.to_string()
+    }
+
+    /// `cache_session=hit=<n>,miss=<n>,rate=<pct>,reported=<n>,unreported=<n>`
+    pub fn log_label(&self) -> String {
+        format!(
+            "cache_session=hit={},miss={},rate={},reported={},unreported={}",
+            self.hit_tokens,
+            self.miss_tokens,
+            self.rate_label(),
+            self.reported,
+            self.unreported
+        )
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UsageLedger {
     pub totals: UsageTotals,
@@ -111,6 +168,8 @@ pub struct UsageLedger {
     pub main_loop_model_calls: u64,
     /// Bill may under-count (drain timeout, nested subagent incomplete, apply failure).
     pub incomplete: bool,
+    /// §1.5.2 counter for main-loop responses. Not part of the billed chip.
+    pub cache_session: CacheSessionTotals,
 }
 
 impl UsageLedger {
@@ -126,6 +185,7 @@ impl UsageLedger {
     ) {
         let call = UsageTotals::from_call(usage, api_duration_ms, cost_usd_ticks);
         self.main_loop_model_calls = self.main_loop_model_calls.saturating_add(1);
+        self.cache_session.record(usage);
         self.fold_entry(model_id, &call);
     }
 
@@ -164,6 +224,8 @@ mod tests {
             reasoning_tokens: 0,
             cached_prompt_tokens: 0,
             cache_creation_prompt_tokens: 0,
+            cache_hit_tokens: None,
+            cache_miss_tokens: None,
         }
     }
 
@@ -198,5 +260,41 @@ mod tests {
 
         ledger.record_subagent(&[], true);
         assert!(ledger.incomplete);
+    }
+
+    fn with_cache(hit: Option<u32>, miss: Option<u32>) -> TokenUsage {
+        TokenUsage {
+            prompt_tokens: 100,
+            completion_tokens: 1,
+            cache_hit_tokens: hit,
+            cache_miss_tokens: miss,
+            cached_prompt_tokens: hit.unwrap_or(0),
+            ..TokenUsage::default()
+        }
+    }
+
+    #[test]
+    fn cache_session_sums_reported_halves_and_skips_unreported() {
+        let mut ledger = UsageLedger::default();
+        ledger.record_main_loop_call("m", &with_cache(Some(80), Some(20)), None, None);
+        ledger.record_main_loop_call("m", &with_cache(None, None), None, None);
+        ledger.record_main_loop_call("m", &with_cache(Some(40), None), None, None);
+
+        assert!(ledger.cache_session.has_evidence());
+        assert_eq!(
+            ledger.cache_session.log_label(),
+            "cache_session=hit=120,miss=20,rate=85,reported=2,unreported=1"
+        );
+    }
+
+    #[test]
+    fn cache_session_with_no_fields_logs_nothing() {
+        let mut ledger = UsageLedger::default();
+        ledger.record_main_loop_call("m", &tu(10, 1), None, None);
+        assert!(!ledger.cache_session.has_evidence());
+        assert_eq!(
+            ledger.cache_session.log_label(),
+            "cache_session=hit=0,miss=0,rate=na,reported=0,unreported=1"
+        );
     }
 }

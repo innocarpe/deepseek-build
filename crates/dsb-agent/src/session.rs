@@ -12,6 +12,7 @@ use dsb_provider_deepseek::ChatMessage;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::cache_totals::CacheSessionTotals;
 use crate::pairing::{InterruptedTool, pair_tool_results};
 
 #[derive(Debug, Error)]
@@ -51,6 +52,13 @@ pub enum SessionRecord {
         /// API request.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         prefix_snapshot: Option<PrefixSnapshot>,
+        /// Session-cumulative cache totals (spec 10 §1.5.2). Additive and
+        /// optional: a file written before this contract loads with a zeroed
+        /// counter, which is the honest reading — those turns' evidence was
+        /// never recorded, and inventing totals for them would be a
+        /// measurement of nothing. `meta` never enters the API request.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_totals: Option<CacheSessionTotals>,
     },
     Message {
         message: ChatMessage,
@@ -121,6 +129,18 @@ impl SessionStore {
         workspace: Option<&str>,
         snapshot: Option<&PrefixSnapshot>,
     ) -> Result<String, SessionError> {
+        self.create_with_snapshot_and_totals(id, workspace, snapshot, None)
+    }
+
+    /// [`Self::create_with_snapshot`] also recording the session's cache totals
+    /// (spec 10 §1.5.2).
+    pub fn create_with_snapshot_and_totals(
+        &self,
+        id: Option<&str>,
+        workspace: Option<&str>,
+        snapshot: Option<&PrefixSnapshot>,
+        cache_totals: Option<&CacheSessionTotals>,
+    ) -> Result<String, SessionError> {
         self.ensure_root()?;
         let id = match id {
             Some(s) => {
@@ -139,6 +159,7 @@ impl SessionStore {
             created_at_unix: now,
             workspace: workspace.map(|s| s.to_string()),
             prefix_snapshot: snapshot.cloned(),
+            cache_totals: cache_totals.cloned(),
         };
         let mut f = File::create(&path).map_err(|source| SessionError::Io {
             path: path.clone(),
@@ -223,6 +244,23 @@ impl SessionStore {
         workspace: Option<&str>,
         snapshot: Option<&PrefixSnapshot>,
     ) -> Result<(), SessionError> {
+        self.save_with_snapshot_and_totals(id, messages, workspace, snapshot, None)
+    }
+
+    /// [`Self::save_with_snapshot`] also recording the session's cache totals
+    /// (spec 10 §1.5.2).
+    ///
+    /// `cache_totals: None` **preserves** what the file already holds, for the
+    /// same reason the snapshot does: dropping the counter would silently
+    /// restart a resumed session's totals.
+    pub fn save_with_snapshot_and_totals(
+        &self,
+        id: &str,
+        messages: &[ChatMessage],
+        workspace: Option<&str>,
+        snapshot: Option<&PrefixSnapshot>,
+        cache_totals: Option<&CacheSessionTotals>,
+    ) -> Result<(), SessionError> {
         self.ensure_root()?;
         let path = self.path_for(id)?;
         let existing = self.load(id).ok().and_then(|(_, _, m)| match m {
@@ -230,16 +268,23 @@ impl SessionStore {
                 created_at_unix,
                 workspace: existing_workspace,
                 prefix_snapshot,
+                cache_totals,
                 ..
-            }) => Some((created_at_unix, existing_workspace, prefix_snapshot)),
+            }) => Some((
+                created_at_unix,
+                existing_workspace,
+                prefix_snapshot,
+                cache_totals,
+            )),
             _ => None,
         });
-        let (created, existing_workspace, existing_snapshot) = match existing {
-            Some((created, ws, snap)) => (created, ws, snap),
-            None => (now_unix(), None, None),
+        let (created, existing_workspace, existing_snapshot, existing_totals) = match existing {
+            Some((created, ws, snap, totals)) => (created, ws, snap, totals),
+            None => (now_unix(), None, None, None),
         };
         // An explicit snapshot wins; otherwise keep what the file had.
         let snapshot = snapshot.cloned().or(existing_snapshot);
+        let cache_totals = cache_totals.cloned().or(existing_totals);
         let workspace = workspace.map(|s| s.to_string()).or(existing_workspace);
         let tmp = path.with_extension("jsonl.tmp");
         {
@@ -252,6 +297,7 @@ impl SessionStore {
                 created_at_unix: created,
                 workspace,
                 prefix_snapshot: snapshot,
+                cache_totals,
             };
             writeln!(f, "{}", serde_json::to_string(&meta).unwrap()).map_err(|source| {
                 SessionError::Io {
@@ -528,6 +574,105 @@ mod tests {
             "a pre-§1.5.1 file carries no baseline, and must not be invented"
         );
         assert!(matches!(meta, Some(SessionRecord::Meta { .. })));
+    }
+
+    #[test]
+    fn cache_totals_roundtrip_with_the_session() {
+        let dir = tempdir().unwrap();
+        let store = SessionStore::new(dir.path());
+        let mut totals = CacheSessionTotals::default();
+        totals.record(Some(&dsb_provider_deepseek::CacheEvidence::UsageFields {
+            cache_hit_tokens: Some(80),
+            cache_miss_tokens: Some(20),
+        }));
+        totals.record(None);
+        let id = store.create(Some("totals"), Some("/tmp/ws")).unwrap();
+        store
+            .save_with_snapshot_and_totals(
+                &id,
+                &[ChatMessage::user("hi")],
+                Some("/tmp/ws"),
+                None,
+                Some(&totals),
+            )
+            .unwrap();
+
+        let (_, _, meta) = store.load(&id).unwrap();
+        let Some(SessionRecord::Meta {
+            cache_totals: Some(loaded),
+            ..
+        }) = meta
+        else {
+            panic!("expected stored totals");
+        };
+        assert_eq!(loaded, totals);
+        assert_eq!(loaded.hit_tokens(), 80);
+        assert_eq!(loaded.unreported(), 1);
+        assert_eq!(loaded.rate_pct(), Some(80));
+    }
+
+    /// A save that does not mention totals must not drop them — dropping the
+    /// counter silently restarts a resumed session's numbers.
+    #[test]
+    fn save_without_totals_preserves_the_existing_counter() {
+        let dir = tempdir().unwrap();
+        let store = SessionStore::new(dir.path());
+        let mut totals = CacheSessionTotals::default();
+        totals.record(Some(&dsb_provider_deepseek::CacheEvidence::UsageFields {
+            cache_hit_tokens: Some(5),
+            cache_miss_tokens: Some(5),
+        }));
+        let id = store.create(Some("keep-totals"), Some("/tmp/ws")).unwrap();
+        store
+            .save_with_snapshot_and_totals(
+                &id,
+                &[ChatMessage::user("a")],
+                None,
+                None,
+                Some(&totals),
+            )
+            .unwrap();
+        // The older call shape, with no totals argument.
+        store
+            .save(&id, &[ChatMessage::user("a"), ChatMessage::user("b")], None)
+            .unwrap();
+
+        let (_, _, meta) = store.load(&id).unwrap();
+        match meta {
+            Some(SessionRecord::Meta { cache_totals, .. }) => {
+                assert_eq!(cache_totals, Some(totals));
+            }
+            other => panic!("expected meta, got {other:?}"),
+        }
+    }
+
+    /// A file written before §1.5.2 carries no counter; it loads, and the
+    /// absence is not turned into an invented total.
+    #[test]
+    fn legacy_meta_without_cache_totals_loads() {
+        let dir = tempdir().unwrap();
+        let store = SessionStore::new(dir.path());
+        let id = "legacy-totals";
+        std::fs::write(
+            dir.path().join(format!("{id}.jsonl")),
+            concat!(
+                r#"{"type":"meta","id":"legacy-totals","created_at_unix":1,"workspace":"/tmp/ws"}"#,
+                "\n",
+                r#"{"type":"message","message":{"role":"user","content":"hi"}}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        let (msgs, holes, meta) = store.load(id).unwrap();
+        assert!(holes.is_empty());
+        assert_eq!(msgs.len(), 1);
+        match meta {
+            Some(SessionRecord::Meta { cache_totals, .. }) => assert_eq!(
+                cache_totals, None,
+                "a pre-§1.5.2 file carries no counter, and must not be invented"
+            ),
+            other => panic!("expected meta, got {other:?}"),
+        }
     }
 
     #[test]

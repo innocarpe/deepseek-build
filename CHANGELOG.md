@@ -12,7 +12,7 @@
   fold decision used to be estimated against a fixed 60-column content width,
   so a ~100-column prompt looked like two rows to the fold and the one-row
   narrow budget never applied: the echo stayed at its full body height, five
-  rows in the measured 53-column Orca pane. The fold is now derived from the
+  rows in the measured 55-column Orca pane. The fold is now derived from the
   width the text actually wraps at, and on a pane at or below 60 columns the
   prompt also drops its two blank pad rows, so the echo is exactly one row.
   Widths above 60 keep the three-line budget and the padding, and a prompt

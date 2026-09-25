@@ -1354,10 +1354,12 @@ mod tests {
 
     // ── Width-derived fold decision ─────────────────────────────────
 
-    /// The measured iPhone pane is 53 columns wide. With the default chrome
+    /// The measured iPhone pane is 55 columns wide (`stty -f /dev/<tty>
+    /// size` on the Orca-managed dsb panes — the same measurement PR #199
+    /// recorded, and re-measured for this branch). With the default chrome
     /// (accent + 2+2 pads) and the 10-column timestamp gutter, the prompt's
-    /// text wraps at 53 - 5 - 10 = 38 columns; 34 stands for that narrow band
-    /// with a little margin, so these tests stay valid if the pad widths move
+    /// text wraps at 55 - 5 - 10 = 40 columns; 34 stands for that narrow band
+    /// with a margin, so these tests stay valid if the pad widths move
     /// by a column. This is the user's reported case: a ~100-column one-liner
     /// that the width-blind `is_foldable()` scores as two visual rows (under
     /// the three-row roomy budget), so the block called itself unfolded and the

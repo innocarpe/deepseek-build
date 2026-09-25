@@ -3612,10 +3612,12 @@ mod tests {
 
     // ── Width-derived prompt fold at push and on resize ────────────
 
-    /// The measured iPhone Orca pane is 53 columns. At that pane width the
+    /// The measured iPhone Orca pane is 55 columns (`stty -f /dev/<tty>
+    /// size` on the Orca-managed dsb panes — the same measurement PR #199
+    /// recorded, and re-measured for this branch). At that pane width the
     /// prompt's content column (entry area minus chrome minus the timestamp
     /// gutter) is narrow enough that a ~100-column one-liner needs four rows.
-    const PHONE_PANE: u16 = 53;
+    const PHONE_PANE: u16 = 55;
     /// The narrowest desktop pane observed on the same machine.
     const DESKTOP_PANE: u16 = 80;
 

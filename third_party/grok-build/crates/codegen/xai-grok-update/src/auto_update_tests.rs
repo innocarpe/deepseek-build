@@ -954,17 +954,23 @@ fn test_reinstall_hint_internal_mentions_product_npm() {
     );
 }
 
-
-
-
 #[test]
 fn test_reinstall_hint_ignores_channel_for_the_product() {
     // The product reinstalls through npm / GitHub Releases and has no x.ai
     // bootstrap installer, so no channel is interpolated into a shell command.
-    for channel in ["stable", "alpha", "enterprise", "al pha", "x'; rm -rf ~;'", ""] {
+    for channel in [
+        "stable",
+        "alpha",
+        "enterprise",
+        "al pha",
+        "x'; rm -rf ~;'",
+        "",
+    ] {
         let hint = reinstall_hint("internal", channel);
         assert!(
-            !hint.contains("GROK_CHANNEL") && !hint.contains("install.sh") && !hint.contains("install.ps1"),
+            !hint.contains("GROK_CHANNEL")
+                && !hint.contains("install.sh")
+                && !hint.contains("install.ps1"),
             "channel {channel:?} must not reach a shell bootstrap installer: {hint}"
         );
         assert!(

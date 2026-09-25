@@ -668,8 +668,12 @@ pub(crate) async fn run_read_file(
                 let start_line = resolve_read_start_line(&file_content, input.offset);
                 let remaining = total_lines.saturating_sub(start_line.saturating_sub(1));
                 let capped_limit = Some(input.limit.unwrap_or(usize::MAX).min(max_lines));
-                let extracted =
-                    extract_file_content_lines(&file_content, input.offset, capped_limit, total_lines);
+                let extracted = extract_file_content_lines(
+                    &file_content,
+                    input.offset,
+                    capped_limit,
+                    total_lines,
+                );
                 observed.note_window(
                     input.offset.is_some() || input.limit.is_some(),
                     input.limit,

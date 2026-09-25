@@ -43,7 +43,7 @@ fn main() {
     // alone is not sccache-keyed and shipped a stale version (5.5.1 labeled
     // 5.5.0) across warm-cache release builds.
     println!("cargo:rustc-check-cfg=cfg(dsb_build_marker)");
-    println!("cargo:rustc-cfg=dsb_build_marker=\"{}\"" , version);
+    println!("cargo:rustc-cfg=dsb_build_marker=\"{}\"", version);
 
     println!("cargo:rustc-env=VERSION_WITH_COMMIT={version} ({commit})");
 

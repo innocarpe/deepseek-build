@@ -5,8 +5,6 @@
 
 use super::support::*;
 use super::*;
-use crate::auth::{AuthManager, AuthMode, GrokAuth, GrokComConfig};
-use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
@@ -16,8 +14,9 @@ use xai_grok_test_support::{MockInferenceServer, MockModelEntry, ScriptedRespons
 /// The token the mock server accepts and the refresher mints on success.
 const FRESH_TOKEN: &str = "refreshed-test-token";
 
-use crate::auth::{AuthManager, AuthMode, GrokAuth, GrokComConfig};
-use std::future::Future;
+/// With `fail_pre_request`, mimics the post-wake sequence: `PreRequest` refreshes fail (the send
+/// goes out fail-closed) while 401 recovery mints [`FRESH_TOKEN`] for `mint_ttl` — a TTL inside
+/// the pre-request buffer (< 5 min) stays wire-valid yet keeps later prepares observable in `calls`.
 struct WakeGapRefresher {
     calls: Arc<AtomicU32>,
     fail_pre_request: bool,
@@ -317,33 +316,35 @@ async fn run_prompt_with_cap(
     .expect("turn must finish within timeout")
 }
 
-/// `SessionActor` turn futures overflow the default test thread stack.
-fn block_on_session(f: impl FnOnce() + Send + 'static) {
+/// The turn future needs a session-sized stack (spawn.rs: 8 MiB); default test stacks overflow.
+fn on_session_stack(test: impl FnOnce() + Send + 'static) {
     std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(f)
-        .expect("spawn large-stack test thread")
+        .stack_size(8 * 1024 * 1024)
+        .spawn(test)
+        .expect("spawn test thread")
         .join()
-        .expect("test thread");
+        .expect("test thread panicked");
 }
 
-fn current_thread_local<F>(f: F)
-where
-    F: Future<Output = ()> + 'static,
-{
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("test runtime");
-    tokio::task::LocalSet::new().block_on(&rt, f);
+fn run_current_thread<F: std::future::Future>(paused: bool, fut: impl FnOnce() -> F) {
+    let mut builder = tokio::runtime::Builder::new_current_thread();
+    builder.enable_all();
+    if paused {
+        builder.start_paused(true);
+    }
+    let rt = builder.build().expect("test runtime");
+    let local = tokio::task::LocalSet::new();
+    rt.block_on(local.run_until(async move {
+        fut().await;
+    }));
 }
 
-fn current_thread_local_paused<F>(f: F)
-where
-    F: Future<Output = ()> + 'static,
-{
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
+/// The wake sequence: the resolver has nothing wire-valid, so the send goes out with no `Authorization` header and the server 401s it.
+/// Recovery lands a fresh token; the turn must survive and resubmit with the fresh bearer.
+#[test]
+fn fail_closed_401_is_uncharged_and_turn_survives() {
+    on_session_stack(|| {
+        run_current_thread(false, || async {
             let server = MockInferenceServer::start_with_required_auth(
                 vec![MockModelEntry::new("test")],
                 FRESH_TOKEN,
@@ -470,33 +471,14 @@ async fn park_disabled_recovered_401_still_resubmits() {
         .await;
 }
 
-/// `SessionActor` turn futures overflow the default test thread stack.
-fn block_on_session(f: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(f)
-        .expect("spawn large-stack test thread")
-        .join()
-        .expect("test thread");
-}
-
-fn current_thread_local<F>(f: F)
-where
-    F: Future<Output = ()> + 'static,
-{
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("test runtime");
-    tokio::task::LocalSet::new().block_on(&rt, f);
-}
-
-fn current_thread_local_paused<F>(f: F)
-where
-    F: Future<Output = ()> + 'static,
-{
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
+/// Real credential rejections must still terminate: the escalating budget exhausts after `MAX_RETRIES` when every request carries a rejected bearer.
+/// The failure names authenticated rejections, not a generic budget message.
+/// `start_paused` auto-advances the backoff ladder.
+#[test]
+fn authenticated_401s_still_exhaust_after_three_retries() {
+    on_session_stack(|| {
+        run_current_thread(true, || async {
+            // The server only accepts a token the refresher never mints, so every authenticated send is rejected
             let server = MockInferenceServer::start_with_required_auth(
                 vec![MockModelEntry::new("test")],
                 "never-issued-token",

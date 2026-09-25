@@ -12,10 +12,10 @@
 
 pub mod cache;
 pub mod color_support;
-pub mod env_appearance;
-mod grokday;
 mod deepseeknight;
 mod deepseeknight_v2;
+pub mod env_appearance;
+mod grokday;
 mod groknight;
 pub mod md_style;
 pub mod osc11;

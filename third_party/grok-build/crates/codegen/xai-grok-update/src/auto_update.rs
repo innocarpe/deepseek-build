@@ -191,7 +191,10 @@ pub fn print_update_status(status: &UpdateStatus, json: bool) -> anyhow::Result<
         return Ok(());
     }
 
-    println!("DeepSeek Build - v{}{}", status.current_version, channel_label);
+    println!(
+        "DeepSeek Build - v{}{}",
+        status.current_version, channel_label
+    );
     Ok(())
 }
 

@@ -1,25 +1,34 @@
 use semver::Version;
 use toml::Value as TomlValue;
 
-/// Machine-readable channel name derived from the GCS stable pointer cache.
-/// Reads `stable_version` from `~/.grok/version.json` (written by the auto-updater) and compares the compiled-in version against it: `Some("alpha")` when the current version is ahead of stable, `Some("stable")` when at or behind stable, `None` when no cached pointer is available (first launch, old cache).
-/// This is a lightweight duplicate of `xai_grok_update::channel_name()` for use in `xai-grok-shell` which cannot depend on `xai-grok-update`.
+#[allow(dead_code)] // shell uses channel_name_for; the label helpers are for the updater
+#[path = "../../../../../xai-grok-update/src/product_channel.rs"]
+mod product_channel;
+
+/// Machine-readable channel for `inspect`.
+///
+/// Same rule as `xai_grok_update::channel_name`: a DeepSeek Build release
+/// SemVer is `"stable"` and does not read `version.json`. A pre-release
+/// still compares the compiled version with the cached `stable_version`.
+/// This crate cannot depend on `xai-grok-update`, so it calls the shared
+/// `product_channel` module directly.
 pub(crate) fn channel_name_from_cache() -> Option<&'static str> {
     use std::sync::OnceLock;
     static NAME: OnceLock<Option<&'static str>> = OnceLock::new();
     *NAME.get_or_init(|| {
-        let version_path = crate::util::grok_home::grok_home().join("version.json");
-        let content = std::fs::read_to_string(&version_path).ok()?;
-        let parsed: serde_json::Value = serde_json::from_str(&content).ok()?;
-        let stable = parsed.get("stable_version")?.as_str()?;
-        let current = semver::Version::parse(xai_grok_version::VERSION).ok()?;
-        let stable_v = semver::Version::parse(stable).ok()?;
-        if current > stable_v {
-            Some("alpha")
-        } else {
-            Some("stable")
-        }
+        let stable = cached_stable_for_channel();
+        product_channel::channel_name_for(xai_grok_version::VERSION, stable.as_deref())
     })
+}
+
+fn cached_stable_for_channel() -> Option<String> {
+    if product_channel::release_semver_omits_channel_label(xai_grok_version::VERSION) {
+        return None;
+    }
+    let version_path = crate::util::grok_home::grok_home().join("version.json");
+    let content = std::fs::read_to_string(&version_path).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&content).ok()?;
+    parsed.get("stable_version")?.as_str().map(str::to_owned)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

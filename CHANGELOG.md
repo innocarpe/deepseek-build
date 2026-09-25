@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- `npm i -g` no longer fails and deletes a working installation when the
+  shell happens to carry a version stamp. `DEEPSEEK_BUILD_VERSION` (set by
+  anyone who ran `scripts/build-grok-pager.sh`, and inherited by every child
+  process) leaks into the agent's `--version`, so the postinstall self-check
+  read a correct install as corrupt — and then deleted the binaries to "not
+  leave a broken one around", taking the user's previous `deepseek-build-agent`
+  with them. The check now runs without the runtime version stamps (the same
+  pair the release workflows already strip), and the installer verifies every
+  binary in a staging dir under the bin dir before renaming any of them into
+  place, so a self-check failure leaves the previous installation untouched.
 - Publish releases from CI over npm OIDC trusted publishing instead of a local
   interactive publish: the tag push now waits for the prebuilt asset, verifies
   the packaged agent reports the release version, and publishes with a

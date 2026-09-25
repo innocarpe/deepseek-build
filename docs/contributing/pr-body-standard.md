@@ -68,7 +68,7 @@ no cache/security thinking.
 ### Out of scope
 - Product specs 10–110
 - Runtime crates
-- Changing squash-merge or kind-label CI policy beyond required-path updates
+- Changing the merge method or kind-label CI policy beyond required-path updates
 ```
 
 ### Techniques that make Summary reviewable
@@ -128,7 +128,7 @@ Call out:
 | File list as Summary | No problem statement; no design |
 | All Testing unchecked with no reasons | Unverifiable |
 | Empty AI Review / Security on non-trivial PRs | Review theater |
-| “See commits” | Squash merge discards commit story on `main` — **PR body is the record** |
+| “See commits” | The PR body is the review artifact and the record a reader opens first — commit subjects alone do not carry the problem statement |
 | Mixing three milestones “documented thoroughly” | Narrative cannot rescue wrong unit size |
 
 ## Related

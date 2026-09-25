@@ -4,10 +4,10 @@ description: >
   From the control-tower (primary) checkout of DeepSeek Build, create an Orca
   worktree for one unit of work, open an agent session in it in one step when
   the agent supports it, hand over a brief without losing it to a first-run
-  trust prompt, and clean up after merge — including the launcher and setup
-  tabs the worktree comes with. Use when starting any change from the primary
-  checkout, dispatching work to a new agent session, running units in parallel,
-  or cleaning up merged worktrees.
+  trust prompt, then merge the PR and clean up — including the launcher and
+  setup tabs the worktree comes with. Use when starting any change from the
+  primary checkout, dispatching work to a new agent session, running units in
+  parallel, or merging and cleaning up finished worktrees.
 ---
 
 # Worktree dispatch (control-tower checkout)

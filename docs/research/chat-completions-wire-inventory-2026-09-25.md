@@ -216,9 +216,16 @@ The cold start's five gated units, from this evidence:
 | **U3.1** Prompt/tool update after cached history | Yes for an appended system message. | §3. A tool change is a full `tools` array, not a history event. |
 
 U2.2, U2.3, and the bench still belong on the vendored turn path. They are
-not blocked by the inert `prompt_cache_key`. They are blocked by the
-coordination note already on the board: `feat/cache-attribution` is in
-`crates/`, and Path A does not read `dsb-context` on the turn.
+not blocked by the inert `prompt_cache_key`.
+
+Re-checked against `origin/main` at `1b9bb1c`, after this note was measured
+at `687582c`. That range does not touch `third_party/grok-build`, `turn.rs`,
+or `spec10_path_a_assembly.rs`, so the three wire answers above are unchanged.
+PR #209 merged in that range. It attributes a prefix change inside
+`crates/dsb-context`, and the overlay agent logs it from
+`crates/dsb-cli/src/main.rs` (`report_prefix_change`, on session resume).
+Path A still does not read `dsb-context` on the turn. A Path A attribution
+still has to land in the vendored assembly named in the U2.2 row.
 
 ---
 

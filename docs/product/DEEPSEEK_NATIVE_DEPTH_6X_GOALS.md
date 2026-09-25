@@ -122,7 +122,7 @@ system message is expressible; rewriting the leading system measured
 | Gated unit | After U0.2 |
 |---|---|
 | U2.1 cache-key reachability | Closed by the note. No further wire change. |
-| U2.2 cache-miss attribution | Survives, against usage fields, in `spec10_path_a_assembly.rs` / `turn.rs`. |
+| U2.2 cache-miss attribution | Survives, against usage fields, in `spec10_path_a_assembly.rs` / `turn.rs`. PR #209 merged the overlay attribution in `crates/` only; `origin/main` at `1b9bb1c` still does not touch the vendored turn. |
 | U2.3 cumulative cache surface | Survives. No miss count is retained on Path A. |
 | Scored cache bench (board §1) | Survives, with a wide threshold. Identical bodies were not token-stable. |
 | U3.1 in-history prompt/tool update | Survives for an appended system message. Tool updates are a `tools` array. |

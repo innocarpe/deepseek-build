@@ -38,12 +38,22 @@
 
 ## 快速开始
 
-从 npm 安装、添加你的 DeepSeek API 密钥，然后打开 TUI：
+从 npm 安装、添加你的 DeepSeek API 密钥，然后打开 TUI。
+
+npm 12.0.0 及以上默认不运行依赖的 install 脚本。没有下面的参数时，安装会显示成功，但不会装上代理。
+npm 11 及更早版本带不带该参数都会安装。
 
 ```bash
-npm install -g @innocarpe/deepseek-build
+npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build
 deepseek-build setup
 deepseek-build
+```
+
+若希望之后的全局安装都允许本包，设置一次即可，随后用普通命令安装:
+
+```bash
+npm config set allow-scripts=@innocarpe/deepseek-build --location=user
+npm install -g @innocarpe/deepseek-build
 ```
 
 注册表安装需要 Node.js 18 或更高版本，并在存在匹配的发布资源时使用预编译

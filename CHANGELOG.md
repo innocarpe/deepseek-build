@@ -1,6 +1,27 @@
 # Changelog
 
 ## Unreleased
+
+- `npm install -g` on npm 12 no longer looks successful while running the
+  previous agent. npm 12.0.0 denies dependency install scripts unless the
+  installer opts in, and still prints `added 1 package` (this machine: npm
+  12.1.0). The published tarball does not contain `npm/native-bin/` —
+  postinstall fills it — so a blocked script never downloads the agent. If
+  `~/.deepseek-build/bin` still holds an older binary, the new wrapper execs
+  that binary and stamps `DEEPSEEK_BUILD_VERSION` from the package, so a
+  5.7.0 agent prints `deepseek-build 6.0.0`. The form npm itself suggests,
+  `npm install -g --allow-scripts=@innocarpe/deepseek-build` with no package
+  spec, exits `ENOENT package.json`. The command that works is
+  `npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build`.
+  Plain `npm rebuild -g @innocarpe/deepseek-build` stays blocked too. The
+  wrapper now exits 127 with those commands when no binary exists and
+  `npm/native-bin/` was never filled, and warns without refusing to run when
+  the home binary's own version disagrees with the package. The postinstall
+  retry uses the rebuild form that includes `--allow-scripts`. A script that
+  does run and fails still exits 1, so npm reports that failure. npm 11.20.0
+  runs the script with or without the flag. The READMEs and
+  `docs/user-guide/05-npm.md` show the working command.
+
 ## 6.0.0 — 2026-09-25
 
 - Port the vendored Grok Build base from `1.0.0` to `1.0.41` — 41 upstream

@@ -38,12 +38,23 @@
 
 ## クイックスタート
 
-npm からインストールし、DeepSeek API キーを追加して TUI を開きます:
+npm からインストールし、DeepSeek API キーを追加して TUI を開きます。
+
+npm 12.0.0 以降は依存パッケージの install スクリプトを既定で実行しません。
+下のフラグがないと、成功したように見えてエージェントは入りません。
+npm 11 以前はフラグがあってもなくてもインストールされます。
 
 ```bash
-npm install -g @innocarpe/deepseek-build
+npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build
 deepseek-build setup
 deepseek-build
+```
+
+以後のグローバルインストールを一度だけ許可すれば、普通のコマンドで足ります:
+
+```bash
+npm config set allow-scripts=@innocarpe/deepseek-build --location=user
+npm install -g @innocarpe/deepseek-build
 ```
 
 レジストリ版は Node.js 18 以上が必要で、対応するリリースアセットがあれば

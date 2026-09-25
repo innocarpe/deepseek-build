@@ -38,12 +38,23 @@
 
 ## 빠른 시작
 
-npm에서 설치하고 DeepSeek API 키를 추가한 뒤 TUI를 엽니다:
+npm에서 설치하고 DeepSeek API 키를 추가한 뒤 TUI를 엽니다.
+
+npm 12.0.0 이상은 의존성 install 스크립트를 기본으로 막습니다. 아래 플래그가
+없으면 설치가 성공한 것처럼 보여도 에이전트는 깔리지 않습니다. npm 11 이하는
+플래그가 있어도 없어도 설치됩니다.
 
 ```bash
-npm install -g @innocarpe/deepseek-build
+npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build
 deepseek-build setup
 deepseek-build
+```
+
+이후 전역 설치를 한 번만 허용해 두면 평범한 명령으로 충분합니다:
+
+```bash
+npm config set allow-scripts=@innocarpe/deepseek-build --location=user
+npm install -g @innocarpe/deepseek-build
 ```
 
 레지스트리 설치에는 Node.js 18 이상이 필요하며, 일치하는 릴리스 asset이 있으면

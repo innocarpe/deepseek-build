@@ -24,7 +24,7 @@ Variables used below:
 
 | Name | Value |
 |------|-------|
-| `TOWER` | Primary checkout: `git rev-parse --show-toplevel` run from the tower session |
+| `TOWER` | Primary checkout: `dirname "$(git rev-parse --path-format=absolute --git-common-dir)"` — the same answer from the primary checkout or any worktree (`--show-toplevel` would give a worktree's own path, which `--repo path:` rejects) |
 | `WT_ID` | Orca worktree id `<repoId>::<path>` — always the whole value |
 | `WT` | Worktree path |
 | `H` | Orca terminal handle of the agent tab |
@@ -35,11 +35,12 @@ Variables used below:
   `orca worktree list --repo path:"$TOWER" --json` shows every worktree with its
   branch and card comment. Do not open a second worktree for a unit that has
   one, and do not touch another session's worktree.
-- **Does this unit build vendored Grok?** It does if it touches
-  `third_party/grok-build/**` or `patches/grok-build/**`, or needs
-  `scripts/build-grok-pager.sh`, `scripts/install.sh` or
-  `scripts/package-release-binaries.sh`. Those run **one at a time across all
-  worktrees** (cold build 30–60+ min per tree). A quick check for a build in
+- **Does this unit build vendored Grok?** It does if anything it runs calls
+  `cargo` in `third_party/grok-build` — directly, or through a script
+  (`rg -l grok-build scripts/` lists them: `build-grok-pager.sh`,
+  `install.sh`, `test-grok-vendor-offline.sh`, the `test-path-a-*` scripts, …).
+  Those units run **one at a time across all worktrees** (cold build 30–60+ min
+  per tree). A quick check for a build in
   flight: `pgrep -fl 'grok-build/target'` (the rustc and build-script
   processes carry that output path; the parent `cargo` does not). It is a
   hint, not a lock — when in doubt, ask the other sessions.
@@ -86,7 +87,7 @@ and stay there — target it per command:
 |------|--------|
 | `git` | `git -C "$WT" …` |
 | `cargo`, `scripts/*.sh`, `npm` | subshell: `(cd "$WT" && cargo test -p dsb-cli)` |
-| `gh` | `--repo innocarpe/deepseek-build`, token per command (AGENTS.md) |
+| `gh` | `--repo innocarpe/deepseek-build`, token per command (AGENTS.md); `gh pr create` also needs `--head <type>/<slug>`, since it reads the head branch from cwd |
 | file edits | absolute paths under `$WT` |
 
 ## 3b. Or open an agent session in it
@@ -100,14 +101,16 @@ orca terminal read --terminal "$H" --screen --json                           # l
 
 `<agent launcher>` is whatever starts the agent with your flags — `claude …`,
 `codex …`, or `deepseek-build` (alias `dsb`) to dogfood. A timed-out wait still
-prints a result; read `satisfied`, and if it is `false` wait once more with a
-longer timeout before giving up on the handoff.
+prints a result; read `satisfied`. If it is `false`, **read the screen before
+anything else** — a first-run dialog can hold the agent there (Codex's trust
+prompt did not count as idle in 60 s). Otherwise wait once more with a longer
+timeout, and if it is still unsatisfied, report the handoff as not started.
 
 ### The trust-prompt trap
 
-`tui-idle` is also satisfied while the agent sits on a **first-run dialog**,
-not only at its input box. The first time Claude Code opens in a folder it has
-no trust record for, the screen is:
+An agent opening a folder it has no trust record for first shows a trust
+dialog, and the dialogs differ. With Claude Code, `tui-idle` is satisfied
+while the dialog is up, so "idle" does not mean "at the input box":
 
 ```text
  Quick safety check: Is this a project you created or one you trust? …
@@ -116,19 +119,27 @@ no trust record for, the screen is:
  Enter to confirm · Esc to cancel
 ```
 
-`No, exit` is listed first and selected, and digit keys do not pick an option.
-A brief sent now with `--enter` is typed into the dialog and its Enter confirms
-**No, exit**: Claude Code quits and the brief is lost. This has happened on a
-real handoff. Codex shows its own first-run trust prompt; handle it the same
-way.
+There `No, exit` is listed first and selected, and digit keys do not pick an
+option. A brief sent with `--enter` is typed into the dialog and its Enter
+confirms **No, exit**: Claude Code quits and the brief is lost. This has
+happened on a real handoff.
 
-Whether the dialog appears depends on the machine's trust records (worktrees
-of an already-trusted checkout may skip it; a folder never seen before shows
-it). Do not predict it — read the screen every time, and if it is there:
+| Agent (version seen) | Dialog | Preselected | Pass it with |
+|----------------------|--------|-------------|--------------|
+| Claude Code `2.1.282` | "Quick safety check … trust this folder" | `No, exit` | Down (`$'\e[B'`), check, Enter |
+| Codex `0.155.1` | "Do you trust the contents of this directory?" | `1. Yes, continue` | check, Enter (no Down — it would select *No, quit*) |
+
+Check means: read the screen and confirm that the **text** of the selected line
+says yes. Do not rely on the marker glyph (`❯`, `›`) or on the table above,
+because defaults can change between versions.
+
+Whether a dialog appears depends on the machine's trust records (worktrees of
+an already-trusted checkout may skip it; a folder never seen before shows it).
+Do not predict it — read the screen every time. For Claude Code:
 
 ```sh
 orca terminal send --terminal "$H" --text $'\e[B' --json   # Down arrow → "Yes, I trust this folder"
-orca terminal read --terminal "$H" --screen --json         # confirm ❯ is on the Yes line
+orca terminal read --terminal "$H" --screen --json         # the selected line must read "Yes, I trust this folder"
 orca terminal send --terminal "$H" --enter --json
 orca terminal wait --terminal "$H" --for tui-idle --timeout-ms 60000 --json
 orca terminal read --terminal "$H" --screen --json         # the agent's input box must show now
@@ -183,9 +194,13 @@ it is merged. GitHub deletes the remote branch on merge (repo setting).
 Then refresh the tower — only when it is on `main` and clean:
 
 ```sh
-test "$(git -C "$TOWER" branch --show-current)" = main \
-  && test -z "$(git -C "$TOWER" status --porcelain)" \
-  && git -C "$TOWER" pull --ff-only origin main
+if [ "$(git -C "$TOWER" branch --show-current)" != main ]; then
+  echo "tower is not on main; not pulling"
+elif [ -n "$(git -C "$TOWER" status --porcelain)" ]; then
+  echo "tower has local changes; not pulling:"; git -C "$TOWER" status --short
+else
+  git -C "$TOWER" pull --ff-only origin main
+fi
 ```
 
 Never remove a worktree another session created or is still using, even when

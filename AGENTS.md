@@ -87,10 +87,11 @@ rule is about the sentences a session writes itself.
 artifacts keep the repository's conventions: code, comments, commit messages, PR
 bodies and the docs tree stay English.
 
-Measured 2026-09-25 over this repo's session logs. Of the primary sessions that
-had a standing Korean rule in context, 10 of 12 answered ≥99% of their text turns
-in Korean. Sessions from the same day without one answered 0–1% (3 of 5). So the
-rule works for the session a human is watching — but not automatically.
+Measured 2026-09-25 over this repository's session logs (primary sessions only).
+Of the sessions in this tree that had a standing Korean rule in context, 10 of 12
+answered ≥99% of their text turns in Korean (the other two: 67%, 83%). Sessions
+in this tree with no such rule answered 0–1% (3 of 5; the other two: 56%, 92%).
+So the rule works for the session a human is watching — but not automatically.
 
 Two shapes still leaked, and they are different problems:
 

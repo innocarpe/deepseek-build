@@ -18,6 +18,10 @@ From the repository root:
 ./scripts/install.sh
 ```
 
+`npm install` in this checkout does not install `deepseek-build` or `dsb`.
+It does not download a prebuilt and it does not compile. The registry
+command is `npm install -g @innocarpe/deepseek-build` ([05-npm.md](./05-npm.md)).
+
 Default install directory: `~/.deepseek-build/bin`.
 
 If the script reports that directory is not on `PATH`:

@@ -128,6 +128,10 @@ deepseek-build --version
 dsb --version
 ```
 
+이 체크아웃에서 `npm install` 은 `deepseek-build` 나 `dsb` 를 설치하지 않습니다.
+프리빌트를 받지 않고, 컴파일도 하지 않습니다. 여기서는 `./scripts/install.sh` 를
+쓰고, 레지스트리 패키지는 `npm install -g @innocarpe/deepseek-build` 입니다.
+
 Cargo 및 커스텀 프리픽스 옵션은 [설치 가이드](docs/user-guide/01-install.md)를
 참고하세요.
 

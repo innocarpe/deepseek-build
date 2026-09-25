@@ -33,6 +33,7 @@ const {
   VERSION_STAMP_ENV,
   REQUIRED,
 } = require('../scripts/install-prebuilt');
+const { isSourceCheckout, main: runPostinstall } = require('../scripts/postinstall');
 
 const VERSION = '9.9.9';
 /** Deliberately different from VERSION: if it leaks through, the output differs. */
@@ -335,4 +336,273 @@ test('the mirror copy (npm/native-bin) is only written on success', (t) => {
   for (const name of REQUIRED) {
     assert.ok(fs.existsSync(path.join(mirror, name)), `${name} must be mirrored on success`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// 3. Source checkout must not install; a packed tree still must
+// ---------------------------------------------------------------------------
+
+/** Cargo workspace + source installer. `git` selects the metadata shape. */
+function writeCheckoutMarkers(root, git) {
+  fs.writeFileSync(path.join(root, 'Cargo.toml'), '[workspace]\n');
+  fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'scripts', 'install.sh'), '#!/bin/sh\nexit 99\n');
+  if (git === 'dir') fs.mkdirSync(path.join(root, '.git'));
+  if (git === 'file') {
+    fs.writeFileSync(path.join(root, '.git'), 'gitdir: /tmp/fake.git/worktrees/x\n');
+  }
+  if (git === 'junk') fs.writeFileSync(path.join(root, '.git'), 'not-a-gitdir\n');
+}
+
+function assertInstallerNotCalled(result, calls) {
+  assert.equal(calls, 0, 'postinstall must not download or compile');
+  assert.equal(result.skipped, 'source-checkout');
+}
+
+test('this repository is classified as a source checkout', () => {
+  // Worktree shape: `.git` is a file, not a directory. The predicate has to
+  // accept that or `npm install` in an Orca worktree still installs.
+  const root = path.resolve(__dirname, '..', '..');
+  assert.equal(isSourceCheckout(root), true);
+});
+
+test('postinstall on this checkout does not call the installer', () => {
+  let calls = 0;
+  const result = runPostinstall({
+    env: {},
+    install: () => {
+      calls += 1;
+      return { ok: true, platform: 'test' };
+    },
+    exit: (code) => {
+      throw new Error(`exit ${code}`);
+    },
+  });
+  assertInstallerNotCalled(result, calls);
+});
+
+test('DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD does not install from a checkout', (t) => {
+  const root = withTempDir(t);
+  writeCheckoutMarkers(root, 'file');
+  let calls = 0;
+  const result = runPostinstall({
+    root,
+    env: { DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD: '1', DEEPSEEK_BUILD_HOME: path.join(root, 'home') },
+    install: () => {
+      calls += 1;
+      return { ok: true, platform: 'test' };
+    },
+    exit: (code) => {
+      throw new Error(`exit ${code}`);
+    },
+  });
+  assertInstallerNotCalled(result, calls);
+  assert.equal(fs.existsSync(path.join(root, 'home')), false, 'skip must not create the product home');
+});
+
+test('a clone (.git directory) and a worktree (gitdir file) are checkouts', (t) => {
+  const clone = withTempDir(t);
+  writeCheckoutMarkers(clone, 'dir');
+  assert.equal(isSourceCheckout(clone), true);
+
+  const worktree = withTempDir(t);
+  writeCheckoutMarkers(worktree, 'file');
+  assert.equal(isSourceCheckout(worktree), true);
+});
+
+test('a .git symlink to a directory counts as metadata', (t) => {
+  const root = withTempDir(t);
+  writeCheckoutMarkers(root, null);
+  const gitdir = path.join(root, 'real-git');
+  fs.mkdirSync(gitdir);
+  fs.symlinkSync(gitdir, path.join(root, '.git'));
+  assert.equal(isSourceCheckout(root), true);
+});
+
+test('a junk file named .git is not a checkout', (t) => {
+  const root = withTempDir(t);
+  writeCheckoutMarkers(root, 'junk');
+  assert.equal(isSourceCheckout(root), false);
+});
+
+test('missing any one of the three markers is not a checkout', (t) => {
+  const noGit = withTempDir(t);
+  writeCheckoutMarkers(noGit, null);
+  assert.equal(isSourceCheckout(noGit), false, 'zipball: Cargo.toml + install.sh, no .git');
+
+  const noCargo = withTempDir(t);
+  writeCheckoutMarkers(noCargo, 'dir');
+  fs.rmSync(path.join(noCargo, 'Cargo.toml'));
+  assert.equal(isSourceCheckout(noCargo), false);
+
+  const noInstall = withTempDir(t);
+  writeCheckoutMarkers(noInstall, 'dir');
+  fs.rmSync(path.join(noInstall, 'scripts', 'install.sh'));
+  assert.equal(isSourceCheckout(noInstall), false);
+
+  const cargoDir = withTempDir(t);
+  writeCheckoutMarkers(cargoDir, 'dir');
+  fs.rmSync(path.join(cargoDir, 'Cargo.toml'));
+  fs.mkdirSync(path.join(cargoDir, 'Cargo.toml'));
+  assert.equal(isSourceCheckout(cargoDir), false, 'Cargo.toml must be a file');
+});
+
+test('a packed package nested inside a checkout is not itself a checkout', (t) => {
+  const checkout = withTempDir(t);
+  writeCheckoutMarkers(checkout, 'dir');
+  const packed = path.join(checkout, 'lib', 'node_modules', '@innocarpe', 'deepseek-build');
+  fs.mkdirSync(packed, { recursive: true });
+  fs.writeFileSync(path.join(packed, 'package.json'), '{"version":"9.9.9"}\n');
+  assert.equal(isSourceCheckout(checkout), true);
+  assert.equal(isSourceCheckout(packed), false);
+});
+
+test('a packed tree still calls the installer and does not exit on success', (t) => {
+  const root = withTempDir(t);
+  fs.writeFileSync(path.join(root, 'package.json'), '{"version":"9.9.9"}\n');
+  let got;
+  const result = runPostinstall({
+    root,
+    env: { DEEPSEEK_BUILD_HOME: path.join(root, 'home') },
+    install: (opts) => {
+      got = opts;
+      return { ok: true, platform: 'darwin-arm64' };
+    },
+    exit: (code) => {
+      throw new Error(`exit ${code}`);
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(got.version, '9.9.9');
+  assert.equal(got.binDir, path.join(root, 'home', 'bin'));
+  assert.equal(got.pkgNativeBin, path.join(root, 'npm', 'native-bin'));
+});
+
+test('npm install in the checkout (INIT_CWD is the checkout) skips', (t) => {
+  const root = withTempDir(t);
+  writeCheckoutMarkers(root, 'dir');
+  let calls = 0;
+  const result = runPostinstall({
+    root,
+    env: {
+      INIT_CWD: root,
+      npm_config_prefix: path.join(root, 'user-prefix'),
+      npm_config_global: 'false',
+    },
+    install: () => {
+      calls += 1;
+      return { ok: true };
+    },
+    exit: () => {
+      throw new Error('exit');
+    },
+  });
+  assertInstallerNotCalled(result, calls);
+});
+
+test('npm install --prefix the checkout from elsewhere skips', (t) => {
+  const root = withTempDir(t);
+  writeCheckoutMarkers(root, 'dir');
+  const elsewhere = withTempDir(t);
+  let calls = 0;
+  const result = runPostinstall({
+    root,
+    env: { INIT_CWD: elsewhere, npm_config_prefix: root },
+    install: () => {
+      calls += 1;
+      return { ok: true };
+    },
+    exit: () => {
+      throw new Error('exit');
+    },
+  });
+  assertInstallerNotCalled(result, calls);
+});
+
+test('INIT_CWD through a symlink to the checkout still skips', (t) => {
+  const root = withTempDir(t);
+  writeCheckoutMarkers(root, 'dir');
+  const linkParent = withTempDir(t);
+  const link = path.join(linkParent, 'checkout');
+  fs.symlinkSync(root, link);
+  let calls = 0;
+  const result = runPostinstall({
+    root,
+    env: { INIT_CWD: link, npm_config_prefix: path.join(linkParent, 'prefix') },
+    install: () => {
+      calls += 1;
+      return { ok: true };
+    },
+    exit: () => {
+      throw new Error('exit');
+    },
+  });
+  assertInstallerNotCalled(result, calls);
+});
+
+test('npm install -g . still calls the installer (npm_config_global=true)', (t) => {
+  const root = withTempDir(t);
+  writeCheckoutMarkers(root, 'file');
+  fs.writeFileSync(path.join(root, 'package.json'), '{"version":"9.9.9"}\n');
+  let calls = 0;
+  const result = runPostinstall({
+    root,
+    env: {
+      npm_config_global: 'true',
+      INIT_CWD: root,
+      DEEPSEEK_BUILD_HOME: path.join(root, 'home'),
+    },
+    install: (opts) => {
+      calls += 1;
+      assert.equal(opts.version, '9.9.9');
+      return { ok: true, platform: 'darwin-arm64' };
+    },
+    exit: (code) => {
+      throw new Error(`exit ${code}`);
+    },
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.ok, true);
+});
+
+test('npm install of the checkout from another directory still installs', (t) => {
+  const root = withTempDir(t);
+  writeCheckoutMarkers(root, 'dir');
+  fs.writeFileSync(path.join(root, 'package.json'), '{"version":"9.9.9"}\n');
+  const consumer = withTempDir(t);
+  const prefix = withTempDir(t);
+  let calls = 0;
+  const result = runPostinstall({
+    root,
+    env: {
+      INIT_CWD: consumer,
+      npm_config_prefix: prefix,
+      DEEPSEEK_BUILD_HOME: path.join(root, 'home'),
+    },
+    install: () => {
+      calls += 1;
+      return { ok: true, platform: 'darwin-arm64' };
+    },
+    exit: (code) => {
+      throw new Error(`exit ${code}`);
+    },
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.ok, true);
+});
+
+test('a packed tree that fails install still exits 1', (t) => {
+  const root = withTempDir(t);
+  fs.writeFileSync(path.join(root, 'package.json'), '{"version":"9.9.9"}\n');
+  let code = null;
+  const result = runPostinstall({
+    root,
+    env: { DEEPSEEK_BUILD_HOME: path.join(root, 'home') },
+    install: () => ({ ok: false, error: 'missing asset', url: 'https://example.invalid/x' }),
+    exit: (c) => {
+      code = c;
+    },
+  });
+  assert.equal(code, 1);
+  assert.equal(result.failed, true);
 });

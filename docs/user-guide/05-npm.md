@@ -49,6 +49,20 @@ cd deepseek-build
 ./scripts/install.sh
 ```
 
+`npm install` with no arguments inside that checkout does **not** install
+`deepseek-build` or `dsb`. `postinstall` sees the git checkout and returns
+without downloading a prebuilt and without compiling. Use `./scripts/install.sh` there.
+
+These are not that skip. They still run the product install when npm itself
+runs `postinstall`:
+
+- `npm install -g @innocarpe/deepseek-build`
+- `npm install -g ./innocarpe-deepseek-build-<version>.tgz`
+- `npm install -g .` from the checkout (npm marks this global, even though the script runs in the checkout)
+
+`DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD` applies when a packed install's download
+fails. It does not make `npm install` inside the checkout compile.
+
 ## What `--version` reports
 
 `deepseek-build --version` and `dsb --version` print the **native CLI** the

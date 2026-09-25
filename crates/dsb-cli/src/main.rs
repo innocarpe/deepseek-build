@@ -581,6 +581,11 @@ fn bind_session(agent: &mut Agent, cli: &Cli) -> Result<Option<String>> {
     match store.load(&id) {
         Ok((msgs, holes, meta)) if !msgs.is_empty() => {
             agent.load_transcript(msgs);
+            // Spec 10 §1.5.2: a resumed conversation is the same session, so
+            // its cache counter continues rather than restarting at zero.
+            if let Some(SessionRecord::Meta { cache_totals, .. }) = &meta {
+                agent.set_cache_totals(cache_totals.as_ref());
+            }
             eprintln!(
                 "[session={id} resume messages; repaired_holes={} path={}]",
                 holes.len(),
@@ -902,6 +907,13 @@ fn render_event(ev: TurnEvent, show_reasoning: bool) {
             eprintln!("{}", t.paint(Role::Model, &format!("[{s}]")));
         }
         TurnEvent::CacheEvidence(s) => {
+            eprintln!("{}", t.paint(Role::Model, &format!("[{s}]")));
+        }
+        // Spec 10 §1.5.2: the session-cumulative line, beside the per-turn
+        // evidence line it accumulates. The REPL / `run` turn line is the
+        // surface the contract names; the full-screen TUI status line is a
+        // later unit in the vendored tree, which spec 10 does not govern.
+        TurnEvent::CacheSession(s) => {
             eprintln!("{}", t.paint(Role::Model, &format!("[{s}]")));
         }
         TurnEvent::ReasoningDelta(s) => {

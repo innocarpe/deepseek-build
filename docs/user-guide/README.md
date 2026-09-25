@@ -54,8 +54,9 @@ names and proofs differ; do not treat thin unit greens as sole Path A proof.
 ## Quick start
 
 ```bash
-# Registry install (prebuilt natives on darwin-arm64; no Rust on default path)
-npm install -g @innocarpe/deepseek-build
+# Registry install (prebuilt natives on darwin-arm64; no Rust on default path).
+# npm 12.0.0+ blocks install scripts unless you opt in; npm 11 and older can omit the flag.
+npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build
 
 deepseek-build setup                       # paste API key → credentials.json
 deepseek-build --dogfood --session demo    # bare TTY = full-screen agent

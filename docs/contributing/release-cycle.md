@@ -51,8 +51,33 @@ turn repeated builds into incremental ones.
 | [`bump-version.sh`](../../scripts/bump-version.sh) | Single-command bump: `Cargo.toml`, `package.json`, `Cargo.lock`, `CHANGELOG.md` (moves the `Unreleased` items into the new version section), README.md version literals, `docs/product/versions/README.md`. Requires a clean tree; `--dry-run` previews the move. |
 | [`reorder-changelog.sh`](../../scripts/reorder-changelog.sh) | Reorder CHANGELOG.md to the invariant (Unreleased top, versions newest-first) without touching non-version sections; `--check` exits non-zero if out of order. Reorders only — it does not move items between sections. |
 | [`test-changelog-release.sh`](../../scripts/test-changelog-release.sh) | Hermetic regression test for the `Unreleased` move (`lib/changelog_release.py`); fixture CHANGELOGs in a temp dir, no network, no repo state |
+| [`lib/version_log.py`](../../scripts/lib/version_log.py) | Fill the decision-log row's `PR #_(fill in)_` with the release PR number; called by `release.sh` the moment `gh pr create` returns (idempotent, so a resumed release re-runs safely) |
 | [`release.sh`](../../scripts/release.sh) | Orchestrator: bump → MAJOR/README gate → verify → PR (`chore(release)`) → merge → tag `v{ver}` → wait for prebuilt assets → wait for CI publish → verify the registry. |
 | [`npm-emergency-publish.sh`](../../scripts/npm-emergency-publish.sh) | **Emergency path only.** Local interactive publish that drives `npm login --auth-type=web` and any emailed code through the `aside` browser agent, so no person has to supply a number. |
+| [`cache-guard.sh`](../../scripts/cache-guard.sh) | Release gate for spec 10 §1.9: runs the cache regression bench (scripted turn scenarios vs a prefix-accounting mock provider, two scored layers). Skips unless `DSB_RELEASE_CACHE_GUARD=1`; threshold via `DSB_CACHE_GUARD_THRESHOLD` (default 90). |
+
+### Cache guard (spec 10 §1.9, release gate)
+
+```bash
+DSB_RELEASE_CACHE_GUARD=1 ./scripts/cache-guard.sh
+```
+
+`cache-first` is a claim about a curve, not a turn, and this gate scores it
+before a release. Scenarios (plain and long dialogue, mixed message sizes, tool
+loops, with and without the reasoning round-trip) run through the real turn
+loop against a prefix-accounting mock provider that derives the cache hit from
+the request bytes it receives. Two layers must both pass: the distinct-epoch
+count is exactly 1 on a scenario that changes no §1.1 input (2 when one input
+is changed by design), and the last-3-request hit rate is at or above
+`DSB_CACHE_GUARD_THRESHOLD` (default 90%). A negative control perturbs the
+prefix every turn and must fail the rate layer — if it passes, the bench
+fails, because the mock stopped accounting from the request.
+
+Without `DSB_RELEASE_CACHE_GUARD=1` both the wrapper and the gated test skip, so
+the ordinary `cargo test --workspace` never pays for the bench (the contract
+tests inside it run always). Harness:
+[`crates/dsb-agent/tests/cache_guard.rs`](../../crates/dsb-agent/tests/cache_guard.rs);
+the contract and test names are spec 10 §1.9 / §4.4.
 
 ### `release.sh` flags
 
@@ -106,6 +131,15 @@ turn repeated builds into incremental ones.
   glued junction; `reorder-changelog.sh --check` reports it and the in-place
   run repairs it. Pinned by `test-changelog-release.sh` case 8, which builds
   both merges and asserts one conflicts while the glued one does not.
+- **The release PR number goes into the decision-log row.** `bump-version.sh`
+  opens the row before the PR exists, so it writes `PR #_(fill in)_`; that
+  placeholder used to survive forever — six rows on `main` read it (`4.0.4`,
+  `5.2.0`, `5.2.2`, `5.5.3`, `5.5.4`, `6.0.0`) until they were filled by hand.
+  `release.sh` now fills the row from the number `gh pr create` returns and
+  commits it into the release PR, so the record lands with the release.
+  `scripts/lib/version_log.py` does the edit and refuses a missing row, an
+  absent PR column or a non-numeric number; re-running it (a resumed release)
+  leaves a recorded number alone.
 - Prereleases sort below their release (`4.0.4` > `4.0.4-beta.1` > `4.0.4-alpha.1`).
 
 ### What the Unreleased move prevents

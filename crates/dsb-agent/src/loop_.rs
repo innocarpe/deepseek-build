@@ -20,10 +20,11 @@ use dsb_tools::{
 };
 use thiserror::Error;
 
+use crate::cache_totals::CacheSessionTotals;
 use crate::pairing::{InterruptedTool, pair_tool_results, tools_in_play};
 use crate::repair::{RepairError, repair_tool_arguments};
 use crate::routing::{ModelRouter, Preset, RouteDecision, apply_routing_command};
-use crate::session::{PrefixSnapshot, SessionError, SessionStore};
+use crate::session::{PrefixSnapshot, SessionError, SessionRecord, SessionStore};
 
 #[derive(Debug, Error)]
 pub enum AgentError {
@@ -134,6 +135,12 @@ fn build_policy(cfg: &AgentConfig) -> PermissionPolicy {
 }
 
 /// Events emitted during a turn (for CLI rendering).
+///
+/// `CacheSession` carries the session-cumulative cache line (spec 10 §1.5.2),
+/// printed once per turn once the session has any evidence. It is documented
+/// here rather than on the variant because a variant-level doc comment makes
+/// rustfmt expand the three struct variants above it, which is diff noise
+/// unrelated to this event.
 #[derive(Debug, Clone)]
 pub enum TurnEvent {
     ModelVisibility(String),
@@ -145,6 +152,7 @@ pub enum TurnEvent {
     Warning(String),
     PrefixEpoch(String),
     CacheEvidence(String),
+    CacheSession(String),
 }
 
 #[derive(Debug, Clone)]
@@ -165,6 +173,10 @@ pub struct Agent {
     /// Volatile transcript (user/assistant/tool after stable prefix).
     tail: VolatileTail,
     tools: ToolExecutor,
+    /// Session-cumulative cache evidence (spec 10 §1.5.2). Lives on the agent
+    /// because a session is one process's conversation: it accumulates across
+    /// turns and is never reset by one.
+    cache_totals: CacheSessionTotals,
 }
 
 impl Agent {
@@ -219,6 +231,7 @@ impl Agent {
             stable,
             tail: VolatileTail::new(),
             tools,
+            cache_totals: CacheSessionTotals::default(),
         })
     }
 
@@ -228,6 +241,25 @@ impl Agent {
 
     pub fn prefix_epoch_short(&self) -> &str {
         self.stable.epoch.short()
+    }
+
+    /// Session-cumulative cache totals (spec 10 §1.5.2), for callers that
+    /// render the line themselves rather than through [`TurnEvent`].
+    pub fn cache_totals(&self) -> &CacheSessionTotals {
+        &self.cache_totals
+    }
+
+    /// Restore the cache totals stored with a session (spec 10 §1.5.2).
+    ///
+    /// A resumed conversation is the same session, so its counter continues
+    /// rather than restarting. A file written before this contract carries no
+    /// totals; the counter stays zeroed there, because inventing totals for
+    /// turns whose evidence was never recorded would be a measurement of
+    /// nothing.
+    pub fn set_cache_totals(&mut self, totals: Option<&CacheSessionTotals>) {
+        if let Some(t) = totals {
+            self.cache_totals = t.clone();
+        }
     }
 
     /// Baseline to store with a session so a later process can attribute a
@@ -252,9 +284,15 @@ impl Agent {
     }
 
     /// Load session from store; returns number of repaired interrupted tool holes.
+    ///
+    /// The session's cache totals are restored too (spec 10 §1.5.2): a resumed
+    /// conversation is the same session, so its counter continues.
     pub fn resume_session(&mut self, store: &SessionStore, id: &str) -> Result<usize, AgentError> {
-        let (messages, holes, _) = store.load(id)?;
+        let (messages, holes, meta) = store.load(id)?;
         self.tail.messages = messages;
+        if let Some(SessionRecord::Meta { cache_totals, .. }) = &meta {
+            self.set_cache_totals(cache_totals.as_ref());
+        }
         Ok(holes.len())
     }
 
@@ -278,7 +316,9 @@ impl Agent {
     }
 
     /// Persist the transcript together with the prefix baseline, so a later
-    /// process can attribute a change for this conversation.
+    /// process can attribute a change for this conversation. The session's
+    /// cache totals are stored alongside it (spec 10 §1.5.2), so a resume
+    /// continues the count instead of restarting it.
     pub fn persist_session_with_snapshot(
         &self,
         store: &SessionStore,
@@ -286,7 +326,13 @@ impl Agent {
     ) -> Result<(), AgentError> {
         let ws = self.config.workspace_root.to_string_lossy();
         let snapshot = self.prefix_snapshot();
-        store.save_with_snapshot(id, &self.tail.messages, Some(ws.as_ref()), Some(&snapshot))?;
+        store.save_with_snapshot_and_totals(
+            id,
+            &self.tail.messages,
+            Some(ws.as_ref()),
+            Some(&snapshot),
+            Some(&self.cache_totals),
+        )?;
         Ok(())
     }
 
@@ -397,6 +443,11 @@ impl Agent {
             if let Some(ev) = &completed.cache_evidence {
                 on_event(TurnEvent::CacheEvidence(ev.log_label().to_string()));
             }
+            // Spec 10 §1.5.2: fold this call's evidence into the session counter.
+            // A response that carried no cache fields passes `None` and moves
+            // only the unreported count. The 404 fallback above never reaches
+            // this point — a request that errored produced no response to count.
+            self.cache_totals.record(completed.cache_evidence.as_ref());
 
             last_content = completed.message.content.clone();
             last_reasoning = completed.message.reasoning_content.clone();
@@ -439,6 +490,16 @@ impl Agent {
             // Spec 50 / G4: concurrent read-only tools; mutating serial after.
             self.handle_tool_calls_batch(&tool_calls, &mut on_event)?;
             // continue loop for model to consume tool results
+        }
+
+        // Spec 10 §1.5.2: once per turn, after every round of it has been
+        // counted, and only when the session has evidence somewhere. A session
+        // whose calls all arrived without cache fields has nothing to report
+        // and stays silent — `rate=na` on an all-unreported session would look
+        // like a measurement. Once one call has reported, every later turn
+        // logs, which is how its unreported turns become visible at all.
+        if self.cache_totals.has_evidence() {
+            on_event(TurnEvent::CacheSession(self.cache_totals.log_label()));
         }
 
         Ok(TurnOutcome {
@@ -984,5 +1045,252 @@ mod tests {
         // next turn flash
         let out2 = agent.run_turn("follow up", |_| {}).await.unwrap();
         assert_eq!(out2.route.wire_model, "deepseek-v4-flash");
+    }
+
+    /// The §1.5.2 line through a real turn loop, on the wire format the
+    /// provider actually sends: one `cache_session=` line per turn, printed
+    /// after the turn's rounds, and gated on the session having evidence.
+    #[tokio::test]
+    async fn cache_session_line_is_emitted_once_per_turn_and_accumulates() {
+        let server = MockServer::start().await;
+        // Turn 1 carries cache fields; turn 2 does not (an older provider
+        // response, a proxy that strips usage, …). Turn 2 must not be counted
+        // as a miss — that is the contract's core rule.
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(concat!(
+                        "data: {\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\n",
+                        "data: {\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":1,\"prompt_cache_hit_tokens\":80,\"prompt_cache_miss_tokens\":20}}\n\n",
+                        "data: [DONE]\n\n",
+                    )),
+            )
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(concat!(
+                        "data: {\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"content\":\"b\"}}]}\n\n",
+                        "data: [DONE]\n\n",
+                    )),
+            )
+            .mount(&server)
+            .await;
+
+        let client =
+            Arc::new(Client::new(ClientConfig::new("k").with_base_url(server.uri())).unwrap());
+        let mut agent = Agent::new(
+            client,
+            AgentConfig {
+                workspace_root: std::env::temp_dir(),
+                ..AgentConfig::default()
+            },
+        )
+        .unwrap();
+
+        let mut lines = Vec::new();
+        agent
+            .run_turn("one", |ev| {
+                if let TurnEvent::CacheSession(s) = ev {
+                    lines.push(s);
+                }
+            })
+            .await
+            .unwrap();
+        assert_eq!(lines.len(), 1, "one line per turn");
+        assert_eq!(
+            lines[0],
+            "cache_session=hit=80,miss=20,rate=80,reported=1,unreported=0"
+        );
+
+        lines.clear();
+        agent
+            .run_turn("two", |ev| {
+                if let TurnEvent::CacheSession(s) = ev {
+                    lines.push(s);
+                }
+            })
+            .await
+            .unwrap();
+        assert_eq!(lines.len(), 1);
+        // The unreported turn moved only `unreported`: the rate is the same
+        // 80/20, not diluted by a fabricated miss.
+        assert_eq!(
+            lines[0],
+            "cache_session=hit=80,miss=20,rate=80,reported=1,unreported=1"
+        );
+        assert_eq!(agent.cache_totals().unreported(), 1);
+    }
+
+    /// A session whose every response lacks cache fields prints no line at all.
+    #[tokio::test]
+    async fn an_all_unreported_session_logs_nothing() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(concat!(
+                        "data: {\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n",
+                        "data: [DONE]\n\n",
+                    )),
+            )
+            .mount(&server)
+            .await;
+
+        let client =
+            Arc::new(Client::new(ClientConfig::new("k").with_base_url(server.uri())).unwrap());
+        let mut agent = Agent::new(
+            client,
+            AgentConfig {
+                workspace_root: std::env::temp_dir(),
+                ..AgentConfig::default()
+            },
+        )
+        .unwrap();
+
+        let mut lines = Vec::new();
+        agent
+            .run_turn("quiet", |ev| {
+                if let TurnEvent::CacheSession(s) = ev {
+                    lines.push(s);
+                }
+            })
+            .await
+            .unwrap();
+        assert!(lines.is_empty(), "no evidence anywhere in the session");
+        assert_eq!(agent.cache_totals().unreported(), 1);
+        assert!(!agent.cache_totals().has_evidence());
+    }
+
+    /// The counter is per session: two agents do not share one.
+    #[tokio::test]
+    async fn a_new_agent_starts_the_counter_at_zero() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(concat!(
+                        "data: {\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\n",
+                        "data: {\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":1,\"prompt_cache_hit_tokens\":5,\"prompt_cache_miss_tokens\":5}}\n\n",
+                        "data: [DONE]\n\n",
+                    )),
+            )
+            .mount(&server)
+            .await;
+
+        let client =
+            Arc::new(Client::new(ClientConfig::new("k").with_base_url(server.uri())).unwrap());
+        let cfg = || AgentConfig {
+            workspace_root: std::env::temp_dir(),
+            ..AgentConfig::default()
+        };
+        let mut first = Agent::new(client.clone(), cfg()).unwrap();
+        first.run_turn("one", |_| {}).await.unwrap();
+        assert_eq!(first.cache_totals().reported(), 1);
+
+        let mut second = Agent::new(client, cfg()).unwrap();
+        assert_eq!(second.cache_totals().reported(), 0);
+        assert_eq!(second.cache_totals().hit_tokens(), 0);
+        second.run_turn("fresh", |_| {}).await.unwrap();
+        assert_eq!(second.cache_totals().hit_tokens(), 5);
+        assert_eq!(second.cache_totals().miss_tokens(), 5);
+        assert_eq!(second.cache_totals().rate_pct(), Some(50));
+    }
+
+    /// The persist→resume path, which is how a session's totals actually
+    /// survive: `persist_session_with_snapshot` must store the counter, and a
+    /// resuming agent must load it. Both halves are load-bearing — a persist
+    /// that drops the counter and a resume that ignores it fail the same way
+    /// (totals silently restart), so this test pins the pair.
+    #[tokio::test]
+    async fn a_resumed_session_continues_its_cache_totals() {
+        let server = MockServer::start().await;
+        // Turn 1 carries cache fields; the resumed process's turn does not.
+        // The second shape is what makes the continuation visible: it must
+        // land in `unreported` on top of the restored 80/20.
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(concat!(
+                        "data: {\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\n",
+                        "data: {\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":1,\"prompt_cache_hit_tokens\":80,\"prompt_cache_miss_tokens\":20}}\n\n",
+                        "data: [DONE]\n\n",
+                    )),
+            )
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(concat!(
+                        "data: {\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"content\":\"b\"}}]}\n\n",
+                        "data: [DONE]\n\n",
+                    )),
+            )
+            .mount(&server)
+            .await;
+
+        let dir = tempdir().unwrap();
+        let store = SessionStore::new(dir.path().join("sessions"));
+        let client =
+            Arc::new(Client::new(ClientConfig::new("k").with_base_url(server.uri())).unwrap());
+        let cfg = || AgentConfig {
+            workspace_root: dir.path().to_path_buf(),
+            ..AgentConfig::default()
+        };
+
+        // Process 1: one turn, then persist the session.
+        let mut first = Agent::new(client.clone(), cfg()).unwrap();
+        first.run_turn("one", |_| {}).await.unwrap();
+        assert_eq!(first.cache_totals().reported(), 1);
+        first
+            .persist_session_with_snapshot(&store, "resume-me")
+            .unwrap();
+
+        // Process 2: resume and run an unreported turn.
+        let mut second = Agent::new(client, cfg()).unwrap();
+        assert_eq!(
+            second.cache_totals().reported(),
+            0,
+            "a fresh agent has no totals until it resumes"
+        );
+        second.resume_session(&store, "resume-me").unwrap();
+        assert_eq!(
+            second.cache_totals().reported(),
+            1,
+            "the resume must restore the stored counter"
+        );
+        assert_eq!(second.cache_totals().hit_tokens(), 80);
+        assert_eq!(second.cache_totals().miss_tokens(), 20);
+
+        let mut lines = Vec::new();
+        second
+            .run_turn("two", |ev| {
+                if let TurnEvent::CacheSession(s) = ev {
+                    lines.push(s);
+                }
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            lines.first().map(String::as_str),
+            Some("cache_session=hit=80,miss=20,rate=80,reported=1,unreported=1"),
+            "the resumed session continues the count rather than restarting it"
+        );
     }
 }

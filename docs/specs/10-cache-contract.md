@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|--------|
-| Status | **ready-for-impl** — §1.5.1 and §1.10 enforced with tests; §1.5.2 and §1.9 are contracts fixed here, each pending its own unit |
+| Status | **ready-for-impl** — §1.5.1, §1.5.2, §1.9, and §1.10 enforced with tests |
 | Philosophy | HARNESS §4.2, §5; Deep Code pillar B; Reasonix cache-first |
 | Gate | Part of **G2** |
 | Tests | **Automated golden + negative required** |
@@ -127,7 +127,7 @@ Rules:
 **Landed:** shape, comparison, and resume-time logging (`dsb-context`,
 `dsb-agent`, `dsb-cli`); §4 names the tests.
 
-#### 1.5.2 Session-cumulative hit/miss (contract; enforcement pending)
+#### 1.5.2 Session-cumulative hit/miss (landed)
 
 Per-turn cache evidence (§1.8) answers "how warm was this turn". The cost
 question is the session's, and it needs a counter that survives compaction and
@@ -139,16 +139,48 @@ Log field, emitted once per turn when the session has any evidence:
 cache_session=hit=<n>,miss=<n>,rate=<pct>,reported=<n>,unreported=<n>
 ```
 
-- `hit` / `miss`: summed prompt tokens over turns whose response carried cache
+- `hit` / `miss`: summed prompt tokens over responses that carried cache
   fields. Denominators are token sums, never turn counts.
 - `rate`: `hit * 100 / (hit + miss)`, integer, floor. `rate=na` when
   `hit + miss == 0`.
-- `reported`: turns that carried cache fields. `unreported`: turns that did
-  not. A turn with no cache fields increments `unreported` and contributes
-  **nothing** to `hit`, `miss`, or `rate` — counting it as a miss would invent
-  a number the provider never sent.
+- `reported`: responses that carried cache fields. `unreported`: responses that
+  did not. A response with no cache fields increments `unreported` and
+  contributes **nothing** to `hit`, `miss`, or `rate` — counting it as a miss
+  would invent a number the provider never sent.
 - The counter is per session, reset on a new session, and never reset by a
-  turn.
+  turn. "A new session" means a new conversation, not a new process: a
+  resumed conversation is the same session (spec 100 §1.1 item 4 resumes by
+  id), so its counter is **stored with the session** and continues. Keeping it
+  in process memory only would make every resume silently restart the totals,
+  which is the cost question this section exists to answer. A file written
+  before this contract carries no counter and starts at zero — the evidence of
+  those turns was never recorded, and inventing it would be a measurement of
+  nothing.
+
+**The accumulation unit is the model response, not the user turn.** A turn that
+runs tool rounds makes several requests, and each carries its own usage, so the
+unit a provider reports tokens in is the response. Counting per user turn would
+either discard the tokens of every round but one or invent a "turn usage" the
+provider never sent. This is what "denominators are token sums, never turn
+counts" already implies; it is stated here because the implementation had to
+resolve it.
+
+Two consequences, both load-bearing:
+
+- `reported + unreported` counts **responses**, so a turn with three tool
+  rounds moves those counters by three. The line is still printed once per
+  turn, after its rounds have been counted.
+- A provider that sends only one half of the pair (a hit with no miss, as
+  Path A's mapping does today) adds only what it sent. The missing half stays
+  missing rather than defaulting to `0`, which would read as a measured value
+  in the rate.
+
+**When the line is emitted.** The gate is "the session has any evidence" — once
+`reported > 0`, every later turn logs, including its unreported ones, because
+that is the only way the unreported count is ever observed. A session whose
+responses *all* arrived without cache fields logs nothing at all: `rate=na`
+with `reported=0` on every turn is not a measurement, and printing it would
+read like one.
 
 Surface: the REPL / `run` turn line (spec 20 routing line already prints there).
 The full-screen TUI status line is a later unit (it lands in the vendored tree,
@@ -170,11 +202,12 @@ M1 acceptance:
 2. Provider: parse cache hit/miss from usage when present; else dual-call substitute protocol logged.  
 3. Attribution: §1.5.1 axes are named per component, with no false positive on
    an unchanged prefix and `unattributed` reserved for the coverage bug.  
-4. Cumulative counter: §1.5.2 semantics, including the unreported-turn rule.
-   *Pending — next unit.*  
-5. Bench: §1.9 threshold. *Pending — next unit.*
+4. Cumulative counter: §1.5.2 semantics, including the unreported-turn rule.  
+5. Bench: §1.9 threshold. **Landed** — `cache_guard_*` in
+   `crates/dsb-agent/tests/cache_guard.rs`, release wrapper
+   `scripts/cache-guard.sh`; §4.4 names the tests.
 
-### 1.9 Cache regression bench (contract fixed; harness in a following unit)
+### 1.9 Cache regression bench
 
 `cache-first` is a claim about a curve, not a turn. The bench scores it.
 
@@ -208,6 +241,13 @@ the request — fail the bench, not the scenario.
 Wrapper: `scripts/cache-guard.sh`, release-gated like Reasonix's (env
 `DSB_RELEASE_CACHE_GUARD=1`; skips when unset so it never slows the normal
 suite).
+
+**Landed (2026-09-26).** Harness: `crates/dsb-agent/tests/cache_guard.rs`;
+§4.4 names the tests. It scores the overlay builder and turn loop
+(`dsb-context` + `dsb-agent`, Path B). Path A's assembly is **not covered
+here**: `xai-grok-shell` does not depend on `dsb-context`, so this bench
+cannot see the bytes Path A sends — the `6.1.0` depth board carries that
+wiring (`docs/product/DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md`, U2.2).
 
 ### 1.10 In-history stable-body update (Path A assembly)
 
@@ -256,7 +296,6 @@ serialized messages: the shared byte-prefix length is the hit, and the
 remainder is the miss. It does not hard-code a token count. The §1.9
 scenario harness is not in this tree; the §1.10 test carries this
 byte-prefix mock itself (`in_history_update_appends_and_head_rewrite_breaks_the_byte_prefix`).
-
 ## 2. Non-goals
 
 - Guaranteeing 100% provider cache hits (server policy)  
@@ -274,11 +313,15 @@ byte-prefix mock itself (`in_history_update_appends_and_head_rewrite_breaks_the_
 | Attribution names a component on an unchanged prefix | **Bug**; false positives make the line worthless |
 | Detail line carries instruction content or a cwd value | **Bug**; §1.5.1 rule 3 |
 | Turn without cache fields counted as a miss | **Bug**; §1.5.2 |
+| `rate` computed over turn counts instead of token sums | **Bug**; §1.5.2 — a long turn would weigh the same as a short one |
+| An all-unreported session printing `rate=na` per turn | **Bug**; it reads as a measurement of something |
 
 ## 4. Test plan (automated)
 
 Names below are the real test names; `cargo test -p dsb-context -p dsb-agent`
-runs all of them.
+runs all of them. §4.6's counter tests live in
+`crates/dsb-agent/src/cache_totals.rs`, with the turn-loop and persist→resume
+cases in `crates/dsb-agent/src/loop_.rs`.
 
 ### 4.1 Pre-existing (unchanged, must stay green)
 
@@ -320,18 +363,50 @@ runs all of them.
 | `resume_with_unchanged_inputs_reports_none` | same inputs, two processes → `none` |
 | `a_changed_tool_schema_is_named_tools_on_resume` | changed tool description → `tools` |
 
-### 4.4 Pending (contracts fixed in §1.5.2 and §1.9, no harness yet)
+### 4.4 §1.9 cache guard (landed)
 
 | Test | Expect |
 |------|--------|
-| `cache_totals_accumulate_and_track_unreported` | §1.5.2 semantics, incl. the unreported-turn rule — *next unit* |
-| `cache_guard_negative_control` | §1.9 — a perturbed prefix lands below the threshold, an unchanged one does not — *next unit* |
+| `cache_guard_mock_accounts_from_request_bytes` | the mock computes the carry from the request: zero on the first request, the whole previous prompt on an append, zero when the leading message moved, everything on a replay |
+| `cache_guard_unchanged_prefix_is_one_epoch_and_passes` | no §1.1 input changes → exactly 1 epoch and the last-3 average holds the threshold |
+| `cache_guard_by_design_change_is_two_epochs` | one §1.1 input changed by design (a rebuild = a resume) → exactly 2 epochs, and the tail recovers above the threshold |
+| `cache_guard_negative_control` | a perturbed prefix lands below the threshold, an unchanged one does not |
+| `cache_guard_tool_loop_stays_above_threshold` | the tool-loop shape, real tool execution included → exactly 1 epoch and the last-3 average holds |
+| `cache_guard_mixed_message_sizes_hold_the_threshold` | mixed message sizes move the fresh-tail share without a §1.1 change → exactly 1 epoch and the last-3 average holds |
+| `cache_guard_release_suite` | the full scenario matrix; gated by `DSB_RELEASE_CACHE_GUARD=1`, skips when unset |
+
+Runner: `crates/dsb-agent/tests/cache_guard.rs`; wrapper
+`scripts/cache-guard.sh`.
 
 ### 4.5 §1.10 wire placement
 
 | Test | Expect |
 |------|--------|
 | `in_history_update_appends_and_head_rewrite_breaks_the_byte_prefix` | A later stable-body change leaves the leading system bytes intact and appends the new body. A byte-prefix mock, derived from the serialized messages, counts the old body inside the shared prefix. Replacing the leading system with that same new body does not. A second apply of the same body adds nothing. |
+
+### 4.6 §1.5.2 session counter (landed)
+
+| Test | Expect |
+|------|--------|
+| `cache_totals_accumulate_and_track_unreported` | token sums accumulate; an unreported response moves only `unreported`; `rate=80` for 120/150 |
+| `an_unreported_turn_does_not_contaminate_the_totals` | same totals with and without a gap — the gap shows only in `unreported` |
+| `rate_is_na_when_no_tokens_were_reported` | `hit + miss == 0` → `na`, not `0` |
+| `the_line_is_gated_on_evidence_anywhere_in_the_session` | `has_evidence()` false while every response is unreported |
+| `rate_floors_integer_division` | 1/3 → 33, 2/3 → 66, 100/101 → 99 |
+| `a_missing_half_is_not_defaulted_to_a_zero_miss` | hit-only response → miss stays 0, rate 100 |
+| `substitute_protocol_counts_as_unreported` | dual-call latency measurement is not a cache-field response |
+| `a_new_session_starts_from_zero` | a fresh counter is a fresh session |
+| `rate_survives_token_sums_past_u64_multiplication` | `u128` arithmetic; no wrap |
+| `cache_session_line_is_emitted_once_per_turn_and_accumulates` | the line through a real turn loop: once per turn, and turn 2's missing fields leave `rate=80` alone |
+| `an_all_unreported_session_logs_nothing` | a session with no evidence prints no line |
+| `a_new_agent_starts_the_counter_at_zero` | two agents do not share a counter |
+| `cache_totals_roundtrip_with_the_session` | the counter survives write→load, so a resume continues it |
+| `save_without_totals_preserves_the_existing_counter` | a plain save does not restart a resumed session's totals |
+| `legacy_meta_without_cache_totals_loads` | a pre-§1.5.2 file loads; no counter is invented |
+| `a_resumed_session_continues_its_cache_totals` | the persist→resume pair: both halves of "a resume continues the count" |
+
+Runner: `crates/dsb-agent/src/cache_totals.rs`, with the turn-loop and
+persist→resume cases in `crates/dsb-agent/src/loop_.rs`.
 
 ## 5. Implementation notes
 
@@ -341,4 +416,14 @@ runs all of them.
   disagree. Detail sub-axis hashes are truncated to 16 hex chars; they name a
   change, they do not authenticate it.  
 - `dsb-agent` carries the shape on the built prefix and persists it with the
-  session; `dsb-cli` prints the lines.
+  session; `dsb-cli` prints the lines.  
+- The §1.5.2 counter is `crates/dsb-agent/src/cache_totals.rs`, carried on
+  `Agent` and stored in the session's `meta` line (spec 100 §1 item 7) beside
+  the prefix shape. It is folded in at the model response and printed once per
+  turn, after that turn's rounds. Storing it is what makes "reset on a new
+  session" true of a *conversation*: a resume continues the count.  
+- Path A does not read this counter. Path A's turn is assembled in the vendored
+  tree (`apply_spec10_to_conversation_request`), and `xai-grok-shell` does not
+  depend on `dsb-agent`. Path A already sums `cached_read_tokens` on its own
+  session ledger; §1.5.2's line is the overlay surface the contract named, and
+  the vendored chip is a separate unit.

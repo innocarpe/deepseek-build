@@ -4,8 +4,107 @@ const { spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { readReportedVersion, mismatchWarning } = require('./version-align');
 
 const pkgRoot = path.resolve(__dirname, '..', '..');
+
+/**
+ * Commands that actually install this package on npm 12.
+ *
+ * npm 12.0.0+ denies dependency install scripts unless the installer opts in,
+ * and it still exits 0 (`added 1 package`). The form npm itself prints
+ * (`npm install -g --allow-scripts=<name>` with no package spec) fails with
+ * `ENOENT package.json`. The spec has to be repeated. `npm rebuild -g <name>`
+ * is denied the same way. npm 11 and older run the script with or without
+ * the flag (measured on 11.20.0).
+ *
+ * The package cannot set this itself. allowScripts is read only from the
+ * installer — the CLI flag, user `.npmrc`, or the installing project's
+ * `package.json`, which `npm i -g` skips — and the trusted identity comes
+ * from the lockfile URL, not from the tarball's own manifest.
+ */
+const PKG_NAME = '@innocarpe/deepseek-build';
+const NPM12_INSTALL_COMMAND = `npm install -g --allow-scripts=${PKG_NAME} ${PKG_NAME}`;
+const NPM12_CONFIG_COMMAND = `npm config set allow-scripts=${PKG_NAME} --location=user`;
+const NPM12_REBUILD_COMMAND = `npm rebuild -g --allow-scripts=${PKG_NAME} ${PKG_NAME}`;
+
+/** Binaries postinstall mirrors into npm/native-bin/. Absent from the tarball. */
+const NATIVE_BIN_NAMES = ['deepseek-build', 'dsb', 'deepseek-build-agent'];
+
+function productHome() {
+  return process.env.DEEPSEEK_BUILD_HOME || path.join(os.homedir(), '.deepseek-build');
+}
+
+function nativeBinDirectory(root) {
+  return path.join(root, 'npm', 'native-bin');
+}
+
+/**
+ * True when postinstall has copied the release binaries into the package.
+ *
+ * `npm/native-bin/` is not in the published tarball (`files` whitelist) and
+ * is gitignored. Its absence is the packed state; postinstall is what fills
+ * it. Missing files therefore mean the script did not run.
+ */
+function nativeBinPopulated(root) {
+  const dir = nativeBinDirectory(root);
+  return NATIVE_BIN_NAMES.every((name) => {
+    try {
+      return fs.statSync(path.join(dir, name)).isFile();
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * True when there is nothing to exec and postinstall left no payload.
+ *
+ * That is the npm 12 default: the script is skipped, npm still exits 0, and
+ * the shims are the only thing that landed. A populated native-bin means the
+ * script did run, so a missing binary is a different failure. A resolved
+ * binary is still exec'd — a version mismatch is `mismatchWarning` in
+ * `version-align.js`, which must not refuse to run.
+ */
+function detectBlockedInstall({ pkgRoot: root, resolvedBinary = null } = {}) {
+  if (!root || nativeBinPopulated(root)) return false;
+  return !resolvedBinary;
+}
+
+function blockedInstallMessage(binName, tried) {
+  const triedLine = tried && tried.length ? `Tried: ${tried.join(', ')}\n` : '';
+  return (
+    `deepseek-build: native binary "${binName}" not found.\n` +
+    triedLine +
+    `npm 12 blocks dependency install scripts by default (npm 12.0.0+), so\n` +
+    `postinstall never downloaded the agent. npm still reports a successful install.\n` +
+    `Fix once:\n` +
+    `  ${NPM12_INSTALL_COMMAND}\n` +
+    `Or allow this package for later global installs, then install plainly:\n` +
+    `  ${NPM12_CONFIG_COMMAND}\n` +
+    `  npm install -g ${PKG_NAME}\n` +
+    'npm rebuild needs the same opt-in. Plain `npm rebuild -g ' +
+    PKG_NAME +
+    '` stays blocked:\n' +
+    `  ${NPM12_REBUILD_COMMAND}\n` +
+    `npm 11 and older run install scripts without --allow-scripts.\n` +
+    `Dev/source only: DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD=1 or ./scripts/install.sh`
+  );
+}
+
+function missingBinaryMessage(binName, tried) {
+  return (
+    `deepseek-build: native binary "${binName}" not found.\n` +
+    `Tried: ${tried.join(', ')}\n` +
+    `Fix (no Rust required for registry install):\n` +
+    `  ${NPM12_INSTALL_COMMAND}\n` +
+    `  # downloads prebuilts from GitHub Releases (ADR 0009)\n` +
+    `  # npm 12: or ${NPM12_CONFIG_COMMAND}\n` +
+    `  export PATH="$HOME/.deepseek-build/bin:$PATH"\n` +
+    `Dev/source only: DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD=1 or ./scripts/install.sh\n` +
+    `Then: dsb`
+  );
+}
 
 /**
  * Resolve native binary for deepseek-build / dsb.
@@ -16,9 +115,7 @@ function candidatePaths(binName) {
   if (process.env.DEEPSEEK_BUILD_BIN) {
     out.push(process.env.DEEPSEEK_BUILD_BIN);
   }
-  const envHome = process.env.DEEPSEEK_BUILD_HOME;
-  const home = envHome || path.join(os.homedir(), '.deepseek-build');
-  out.push(path.join(home, 'bin', binName));
+  out.push(path.join(productHome(), 'bin', binName));
 
   const cargoHome = process.env.CARGO_HOME || path.join(os.homedir(), '.cargo');
   out.push(path.join(cargoHome, 'bin', binName));
@@ -26,9 +123,7 @@ function candidatePaths(binName) {
   // npm package-local copies (postinstall may place agent here)
   out.push(path.join(pkgRoot, 'npm', 'native-bin', binName));
   out.push(path.join(pkgRoot, 'target', 'release', binName));
-  out.push(
-    path.join(pkgRoot, 'third_party', 'grok-build', 'target', 'release', 'xai-grok-pager')
-  );
+  out.push(path.join(pkgRoot, 'third_party', 'grok-build', 'target', 'release', 'xai-grok-pager'));
 
   return out;
 }
@@ -50,11 +145,7 @@ function findBinary(binName) {
 function findAgentBinary() {
   const names = [
     process.env.DEEPSEEK_BUILD_AGENT_BIN,
-    path.join(
-      process.env.DEEPSEEK_BUILD_HOME || path.join(os.homedir(), '.deepseek-build'),
-      'bin',
-      'deepseek-build-agent'
-    ),
+    path.join(productHome(), 'bin', 'deepseek-build-agent'),
     path.join(pkgRoot, 'npm', 'native-bin', 'deepseek-build-agent'),
     path.join(pkgRoot, 'third_party', 'grok-build', 'target', 'release', 'xai-grok-pager'),
   ].filter(Boolean);
@@ -76,6 +167,14 @@ function findAgentBinary() {
  * is missing but agent exists, exec agent directly so install still works.
  */
 function run(binName, args) {
+  // Warn and still exec. The package version is not stamped onto the child
+  // (see productEnv), so a mismatched agent reports its own version.
+  const agent = findAgentBinary();
+  if (agent) {
+    const msg = mismatchWarning(productVersion(), readReportedVersion(agent));
+    if (msg) console.error(msg);
+  }
+
   const isBare =
     args.length === 0 ||
     (args.length === 1 && (args[0] === 'agent' || args[0] === '--'));
@@ -87,25 +186,21 @@ function run(binName, args) {
   }
 
   if (!bin) {
-    const agent = findAgentBinary();
     if (agent && (isBare || args[0] === 'agent')) {
       const agentArgs = args[0] === 'agent' ? args.slice(1) : args;
       return exec(agent, agentArgs, productEnv());
     }
-    console.error(
-      `deepseek-build: native binary "${binName}" not found.\n` +
-        `Tried: ${candidatePaths(binName).join(', ')}\n` +
-        `Fix (no Rust required for registry install):\n` +
-        `  npm install -g @innocarpe/deepseek-build\n` +
-        `  # downloads prebuilts from GitHub Releases (ADR 0009)\n` +
-        `  export PATH="$HOME/.deepseek-build/bin:$PATH"\n` +
-        `Dev/source only: DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD=1 or ./scripts/install.sh\n` +
-        `Then: dsb`
-    );
+    const tried = candidatePaths(binName);
+    if (detectBlockedInstall({ pkgRoot, resolvedBinary: null })) {
+      console.error(blockedInstallMessage(binName, tried));
+    } else {
+      console.error(missingBinaryMessage(binName, tried));
+    }
     process.exit(127);
   }
 
-  // Always inject product version/home for both wrapper and agent paths.
+  // Home and installer classification. The package version is not stamped
+  // onto the child — see productEnv().
   return exec(bin, args, productEnv());
 }
 
@@ -123,7 +218,6 @@ function productVersion() {
 
 function productEnv() {
   const home = process.env.DEEPSEEK_BUILD_HOME || path.join(os.homedir(), '.deepseek-build');
-  const version = productVersion();
   const env = {
     ...process.env,
     GROK_HOME: process.env.GROK_HOME || home,
@@ -143,10 +237,12 @@ function productEnv() {
     env.GROK_THEME = userTheme;
     env.LC_GROK_THEME = userTheme;
   }
-  // Product SemVer for agent TUI display + update checks (not vendor 0.2.x).
-  if (version) {
-    env.DEEPSEEK_BUILD_VERSION = process.env.DEEPSEEK_BUILD_VERSION || version;
-  }
+  // Do not stamp DEEPSEEK_BUILD_VERSION from package.json. The agent honours
+  // that variable over the version baked into the binary (`installed()`).
+  // A package older than the agent would then make the TUI and
+  // `deepseek-build-agent --version` report the package. Measured: package
+  // 5.7.0 plus a baked 6.0.0 binary printed `deepseek-build 5.7.0 (…) [alpha]`.
+  // A value the caller already exported is left untouched via `process.env`.
   return env;
 }
 
@@ -162,4 +258,18 @@ function exec(bin, args, env) {
   process.exit(result.status === null ? 1 : result.status);
 }
 
-module.exports = { run, findBinary, findAgentBinary, candidatePaths };
+module.exports = {
+  run,
+  findBinary,
+  findAgentBinary,
+  candidatePaths,
+  productEnv,
+  productVersion,
+  detectBlockedInstall,
+  blockedInstallMessage,
+  missingBinaryMessage,
+  nativeBinPopulated,
+  NPM12_INSTALL_COMMAND,
+  NPM12_CONFIG_COMMAND,
+  NPM12_REBUILD_COMMAND,
+};

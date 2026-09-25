@@ -176,8 +176,12 @@ single clone and no Orca, work as usual: branch, commit, PR
   worktree.
 - **Create, hand off and clean up worktrees with
   [`skills/worktree-dispatch`](skills/worktree-dispatch/SKILL.md)** — branch
-  naming, opening an agent tab in the tree, the first-run trust prompt that
-  swallows a brief, and removal after merge.
+  naming, occupancy, and removal after merge.
+- **Open an Orca tab, or launch grok / dsb / codex / claude, with
+  [`skills/orca-tab`](skills/orca-tab/SKILL.md).** Run those recipes. Do not
+  run `orca skills get orca-cli` for that job, even when another skill says
+  to load the full guide first. Read one command's `--help` only when a
+  recipe flag is rejected.
 - **Operate on a worktree by path; do not `cd` into it and stay.**
 
   | Tool | Target it with |
@@ -218,7 +222,8 @@ single clone and no Orca, work as usual: branch, commit, PR
 
 The opening message, or the brief a dispatch handed over, is this session's
 **one unit**. The order is [`skills/session-unit`](skills/session-unit/SKILL.md).
-Worktree commands stay in [`worktree-dispatch`](skills/worktree-dispatch/SKILL.md);
+Worktree lifecycle stays in [`worktree-dispatch`](skills/worktree-dispatch/SKILL.md);
+opening the Orca tab stays in [`skills/orca-tab`](skills/orca-tab/SKILL.md);
 the PR stays in [`pr-authoring`](skills/pr-authoring/SKILL.md).
 
 - **Write the done-condition in one sentence before editing.** Take it from
@@ -240,9 +245,10 @@ the PR stays in [`pr-authoring`](skills/pr-authoring/SKILL.md).
   session is editing, is part of finishing — its own commit, same unit.
   Anything the opening did not name (a new behavior, a fresh investigation,
   a drive-by in a file this unit is not already changing) is the **next**
-  unit. Do not start it here. Open a new worktree and a `deepseek-build`
-  tab for it, with that unit's done-condition as the first line of the
-  brief. Report the tab. Do not ask whether to open it.
+  unit. Do not start it here. Open a new worktree and a tab for it
+  ([`skills/orca-tab`](skills/orca-tab/SKILL.md)), with that unit's
+  done-condition as the first line of the brief. Report the tab. Do not
+  ask whether to open it.
 - **When the unit is done, say so first.** Name whether the done-condition
   holds, the evidence (including the merge commit), and any unit you handed
   off. Do not offer another unit in this session.

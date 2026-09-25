@@ -38,12 +38,23 @@
 
 ## Quick start
 
-Install from npm, add your DeepSeek API key, and open the TUI:
+Install from npm, add your DeepSeek API key, and open the TUI.
+
+npm 12.0.0 and newer block dependency install scripts unless you opt in.
+Without the flag below, npm reports success and does not install the agent.
+npm 11 and older install with or without the flag.
 
 ```bash
-npm install -g @innocarpe/deepseek-build
+npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build
 deepseek-build setup
 deepseek-build
+```
+
+Allow the package once for later global installs, then the plain command works:
+
+```bash
+npm config set allow-scripts=@innocarpe/deepseek-build --location=user
+npm install -g @innocarpe/deepseek-build
 ```
 
 The registry install requires Node.js 18 or newer and uses a prebuilt binary
@@ -134,6 +145,12 @@ cd deepseek-build
 deepseek-build --version
 dsb --version
 ```
+
+`npm install` in this checkout does not install `deepseek-build` or `dsb`.
+It does not download a prebuilt and it does not compile. Use
+`./scripts/install.sh` here, or
+`npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build`
+for the registry package. npm 12 does not install the agent without that flag.
 
 See the [installation guide](docs/user-guide/01-install.md) for Cargo and custom
 prefix options.

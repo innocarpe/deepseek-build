@@ -65,6 +65,14 @@ gh pr create --base main \
 gh pr view --json title,labels,url
 ```
 
+**Control-tower mode** (parallel sessions in Orca worktrees, AGENTS.md
+§Control-tower checkout): the worktree already has its branch
+(`skills/worktree-dispatch`), so skip the first two lines. Do not
+`git checkout main` there — `main` is checked out in the primary checkout. Run
+the rest against the worktree: `git -C "$WT" push -u origin HEAD`, and add
+`--repo innocarpe/deepseek-build --head <branch>` to the `gh` calls when not
+running from inside the tree.
+
 ## Anti-patterns
 
 | Bad | Why |

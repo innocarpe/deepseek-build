@@ -20,6 +20,12 @@
    file written before this field loads normally, and a resume then makes no
    attribution claim rather than guessing from an absent baseline. `meta` is
    never part of the API request.
+7. The `meta` line also carries the session's **cumulative cache totals**
+   (spec 10 §1.5.2) — hit/miss token sums and reported/unreported response
+   counts — so a resumed conversation continues its counter instead of
+   restarting it. Additive and optional in the same way: a file written before
+   that contract loads with a zeroed counter, because the evidence of those
+   turns was never recorded.
 
 ## 2. Non-goals (minimum)
 
@@ -36,6 +42,8 @@
 | `path_under_home` | files only under build home |
 | `prefix_snapshot_roundtrip` | meta carries the shape; save→load returns it |
 | `legacy_meta_without_snapshot_loads` | pre-§1.5.1 file → no shape, no error |
+| `cache_totals_roundtrip_with_the_session` | meta carries the cache counter; save→load returns it |
+| `legacy_meta_without_cache_totals_loads` | pre-§1.5.2 file → no counter, no error |
 
 ## 4. Implementation notes
 

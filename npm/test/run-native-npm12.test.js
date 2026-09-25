@@ -4,9 +4,12 @@
  * npm 12 denies this package's postinstall unless the installer opts in, and
  * still reports success. The published tarball has no `npm/native-bin/` —
  * postinstall is what fills it — so a skipped script leaves the shims with
- * nothing to run. If `~/.deepseek-build/bin` already holds an older agent,
- * the new shim execs that binary and stamps `DEEPSEEK_BUILD_VERSION` from
- * package.json, so a 5.7.0 agent prints 6.0.0.
+ * nothing to run.
+ *
+ * A home binary whose version disagrees with the package is warned about by
+ * `mismatchWarning` (version-align) and still executed. This wrapper does not
+ * stamp `DEEPSEEK_BUILD_VERSION`. That warning's npm 12 command is pinned in
+ * `version-align.test.js`.
  *
  * Pinned here:
  *
@@ -14,11 +17,8 @@
  * 2. A native-bin that holds the release set is not that failure.
  * 3. The text the user sees names the install and rebuild commands that work
  *    on npm 12. The spec-less form npm itself prints does not.
- * 4. A home binary whose baked version disagrees with the package is a
- *    warning, not a refusal. The probe must ignore `DEEPSEEK_BUILD_VERSION`,
- *    which is the stamp that makes the stale agent look current.
  *
- * Stubs only. Nothing here touches the user's `~/.deepseek-build`.
+ * Nothing here touches the user's `~/.deepseek-build`.
  */
 
 const assert = require('node:assert/strict');
@@ -31,9 +31,6 @@ const {
   detectBlockedInstall,
   blockedInstallMessage,
   missingBinaryMessage,
-  staleHomeInstallWarning,
-  probeBinaryVersion,
-  isUnderProductBin,
   NPM12_INSTALL_COMMAND,
   NPM12_REBUILD_COMMAND,
 } = require('../lib/run-native');
@@ -47,16 +44,6 @@ function withTempDir(t) {
   return dir;
 }
 
-function withEnv(t, key, value) {
-  const saved = Object.prototype.hasOwnProperty.call(process.env, key) ? process.env[key] : undefined;
-  if (value === undefined) delete process.env[key];
-  else process.env[key] = value;
-  t.after(() => {
-    if (saved === undefined) delete process.env[key];
-    else process.env[key] = saved;
-  });
-}
-
 function fillNativeBin(root) {
   const dir = path.join(root, 'npm', 'native-bin');
   fs.mkdirSync(dir, { recursive: true });
@@ -64,23 +51,6 @@ function fillNativeBin(root) {
     fs.writeFileSync(path.join(dir, name), 'x');
   }
   return dir;
-}
-
-/** Stamp-aware stub: prints DEEPSEEK_BUILD_VERSION when the caller left it set. */
-function writeVersionStub(dir, version) {
-  const file = path.join(dir, 'deepseek-build');
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(
-    file,
-    [
-      '#!/bin/sh',
-      'v="${DEEPSEEK_BUILD_VERSION:-' + version + '}"',
-      'printf \'deepseek-build %s (stub000) [stable]\\n\' "$v"',
-      '',
-    ].join('\n')
-  );
-  fs.chmodSync(file, 0o755);
-  return file;
 }
 
 test('detectBlockedInstall is true when postinstall left no binary', (t) => {
@@ -133,39 +103,4 @@ test('blocked install message names the npm 12 commands that work', () => {
 test('the generic missing-binary hint also uses the working install command', () => {
   const text = missingBinaryMessage('dsb', ['/tmp/candidate']);
   assert.match(text, new RegExp(INSTALL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-});
-
-test('a stale home binary warns and still names the working commands', () => {
-  const text = staleHomeInstallWarning({ packageVersion: '6.0.0', reportedVersion: '5.7.0' });
-  assert.match(text, /5\.7\.0/);
-  assert.match(text, /6\.0\.0/);
-  assert.match(text, /DEEPSEEK_BUILD_VERSION/);
-  assert.match(text, new RegExp(INSTALL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  assert.match(text, new RegExp(REBUILD.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-});
-
-test('a matching home version is not a stale install', () => {
-  assert.equal(
-    staleHomeInstallWarning({ packageVersion: '6.0.0', reportedVersion: '6.0.0' }),
-    null
-  );
-  assert.equal(staleHomeInstallWarning({ packageVersion: '6.0.0', reportedVersion: null }), null);
-  assert.equal(staleHomeInstallWarning({}), null);
-});
-
-test('probeBinaryVersion ignores DEEPSEEK_BUILD_VERSION', (t) => {
-  const dir = withTempDir(t);
-  const bin = writeVersionStub(dir, '5.7.0');
-  withEnv(t, 'DEEPSEEK_BUILD_VERSION', '6.0.0');
-  assert.equal(probeBinaryVersion(bin), '5.7.0');
-});
-
-test('isUnderProductBin is only the product home bin', (t) => {
-  const root = withTempDir(t);
-  const bin = writeVersionStub(path.join(root, 'bin'), '6.0.0');
-  const elsewhere = writeVersionStub(path.join(root, 'other'), '6.0.0');
-  withEnv(t, 'DEEPSEEK_BUILD_HOME', root);
-  assert.equal(isUnderProductBin(bin), true);
-  assert.equal(isUnderProductBin(elsewhere), false);
-  assert.equal(isUnderProductBin(''), false);
 });

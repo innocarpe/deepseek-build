@@ -73,8 +73,10 @@ jobs:
               - 'CHANGELOG.md'
               - 'scripts/bump-version.sh'
               - 'scripts/lib/changelog_release.py'
+              - 'scripts/lib/version_log.py'
               - 'scripts/test-changelog-release.sh'
               - 'scripts/reorder-changelog.sh'
+              - 'scripts/release.sh'
               - 'docs/contributing/release-cycle.md'
               - 'skills/release/SKILL.md'
               - '.github/workflows/ci.yml'
@@ -274,7 +276,10 @@ jobs:
           cache-on-failure: true
           cache-provider: github
           save-if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
-      - run: cargo clippy --all-targets --workspace -- -D warnings
+      # Libs and bins only. `--all-targets` also lints tests, benches, and
+      # examples. rust-cache does not keep those kinds, so that work is redone
+      # on every run. Library and binary code stays under `-D warnings`.
+      - run: cargo clippy --workspace -- -D warnings
 
   grok_test:
     name: grok test

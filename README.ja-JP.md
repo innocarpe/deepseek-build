@@ -141,6 +141,12 @@ deepseek-build --version
 dsb --version
 ```
 
+このチェックアウトで `npm install` を実行しても `deepseek-build` と `dsb` は
+インストールされません。プリビルトのダウンロードもコンパイルもしません。ここでは
+`./scripts/install.sh` を使い、レジストリからは
+`npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build`
+です。npm 12 はこのフラグがないとエージェントをインストールしません。
+
 Cargo とカスタムプレフィックスのオプションは
 [インストールガイド](docs/user-guide/01-install.md) を参照してください。
 

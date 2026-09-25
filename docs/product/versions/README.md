@@ -51,22 +51,22 @@ Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** p
 | 2026-08-07 | **`4.0.3`** `dsb --resume` surface + hint branding | PR #92 |
 | 2026-08-07 | **`5.0.0` / tag `v5.0.0`** owner-bar complete (`owner-bar-5x`) | PRD-v5, CUT_5_0_0, dual adversarial reviews |
 | 2026-08-07 | **`5.1.0`** DeepSeek Night v2 measured default theme | (this release) |
-| 2026-08-08 | **`5.2.0`** theme classic default + vision complete + theme picker restore | PR #_(fill in)_ |
+| 2026-08-08 | **`5.2.0`** theme classic default + vision complete + theme picker restore | PR #129 |
 | 2026-08-08 | **`5.2.1`** DeepSeek Night v2 markdown hierarchy restore (h2/code/command hues) | PR #131 |
-| 2026-08-08 | **`5.2.2`** installer self-check + fresh inode (fix silent corrupt install) | PR #_(fill in)_ |
+| 2026-08-08 | **`5.2.2`** installer self-check + fresh inode (fix silent corrupt install) | PR #136 |
 | 2026-08-08 | **`5.3.0`** Spec 45 Path A snippet_id multi-edit R0A Deep Code cut | PR #138 |
 | 2026-08-08 | **`5.4.0`** L3 Path A R0A train cut (multi-tool/bg, subagent/worker-cache, worktree dogfood) + optional live L3 matrix | PR #145 |
 | 2026-08-08 | **`5.5.0`** vision-complete freeze: V1-V4 Path A criteria + V3-60-3 parent snippet after worker R0A (merged on `main`; **published** npm `5.5.0` + GitHub Release `v5.5.0` on 2026-08-08) | PR #147 |
 | 2026-08-09 | **`5.5.1`** fix update banner advertising Grok Build version as available update | PR #167 |
 | 2026-08-09 | **`5.5.2`** Grok Build `1.0.0` port completion, DeepSeek identity correction, and release reliability hardening | PR #173 |
-| 2026-08-09 | **`5.5.3`** fix compiled version injection (sccache-proof) and gate shipped tarball | PR #_(fill in)_ |
-| 2026-08-10 | **`5.5.4`** sync Grok Build through `8a14c91` and restore full vendor CI | PR #_(fill in)_ |
+| 2026-08-09 | **`5.5.3`** fix compiled version injection (sccache-proof) and gate shipped tarball | PR #176 |
+| 2026-08-10 | **`5.5.4`** sync Grok Build through `8a14c91` and restore full vendor CI | PR #184 |
 | 2026-09-25 | **`5.6.0`** first-run provider choice (DeepSeek API or OpenRouter) and the agent config that follows it | PR #189 |
 | 2026-09-25 | **`5.7.0`** phone-width layout and Orca pane status | PR #201 |
-| 2026-09-25 | **`6.0.0`** Grok Build base ported 1.0.0 to 1.0.41 with the DeepSeek overlay re-derived; sync infrastructure | PR #_(fill in)_ |
+| 2026-09-25 | **`6.0.0`** Grok Build base ported 1.0.0 to 1.0.41 with the DeepSeek overlay re-derived; sync infrastructure | PR #208 |
 | 2026-09-25 | **`6.0.0`** Grok Build base ported `1.0.0` → `1.0.41` (41 releases, 472 upstream items) with the DeepSeek overlay re-derived by three-way merge; sync infra (`grok-sync` skill, runbook, ledger, inventory) added so the next sync is a procedure rather than a rediscovery | [CHANGELIST_6_0_0.md](../CHANGELIST_6_0_0.md) · [UPSTREAM_SYNC_LEDGER.md](../UPSTREAM_SYNC_LEDGER.md) |
 | 2026-08-07 | **`5.0.1`** widen the DeepSeek whale logo to official terminal proportions | PR #113 |
-| 2026-08-07 | **`4.0.4`** Image attachments on text-only DeepSeek endpoints (persist to session assets + OCR hint); DeepSeek status line with account balance & cache hit rate; G003 mint file_version on Path A read_file | PR #_(fill in)_ |
+| 2026-08-07 | **`4.0.4`** Image attachments on text-only DeepSeek endpoints (persist to session assets + OCR hint); DeepSeek status line with account balance & cache hit rate; G003 mint file_version on Path A read_file | PR #98 |
 | 2026-08-07 | **release-cycle harness** — `bump-version.sh` + `release.sh` + CI sccache/fast-path + runbook | PR #94 |
 | 2026-08-07 | Owner-bar checklist normative; true complete product = **5.x** only when checklist green | [OWNER_BAR_ACCEPTANCE.md](../OWNER_BAR_ACCEPTANCE.md) |
 | 2026-08-07 | Dual adversarial plan review (Claude Opus + Codex gpt-5.6-sol); train **`owner-bar-5x`** package | [evidence/OWNER_BAR_5X_PLAN_ADVERSARIAL_2026-08-07.md](../evidence/OWNER_BAR_5X_PLAN_ADVERSARIAL_2026-08-07.md) · PRD-v5 · WAVE_5x |

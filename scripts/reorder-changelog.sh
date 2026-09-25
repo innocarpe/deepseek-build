@@ -62,6 +62,16 @@ drifted = [s for s in rest if heading(s) == 'Unreleased']
 rest = [s for s in rest if heading(s) != 'Unreleased']
 run = run + drifted
 
+# A glued junction is not an ordering problem, but it is a filing hazard: a
+# branch that appends an item under Unreleased merges into a glued tree with no
+# conflict and the item lands under the version heading. Measured: #209 landed
+# under 5.7.0 and #206 under 6.0.0. Report it here because this is the check a
+# release is already wired to run.
+if re.search(r'(?m)^## Unreleased[ \t]*\n## ', text):
+    sys.exit('CHANGELOG.md has a glued section junction: "## Unreleased" is '
+             'immediately followed by a version heading — insert the blank line '
+             '(a later merge would silently file new items under a version)')
+
 keys = [vkey(heading(s)) for s in run]
 if keys == sorted(keys, reverse=True):
     print('CHANGELOG.md order ok')
@@ -116,6 +126,10 @@ run = run + drifted
 
 run.sort(key=lambda s: vkey(heading(s)), reverse=True)
 out = header + ''.join(run) + ''.join(rest)
+# Repair the glued junction while we are rewriting the file: the check above
+# rejects it, and this is the command a reader is told to run.
+if re.search(r'(?m)^## Unreleased[ \t]*\n## ', out):
+    out = re.sub(r'(?m)^(## Unreleased[ \t]*)\n(## )', r'\1\n\n\2', out, count=1)
 open('CHANGELOG.md', 'w').write(out)
 print(f'reordered {len(run)} leading sections (Unreleased top, versions newest-first);')
 print(f'  {len(rest)} sections below untouched')

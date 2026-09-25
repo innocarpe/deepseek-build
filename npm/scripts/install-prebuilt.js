@@ -11,6 +11,11 @@ const os = require('os');
 const path = require('path');
 const { platformId, releaseAssetName, releaseDownloadUrl } = require('../lib/platform');
 const { NPM12_REBUILD_COMMAND } = require('../lib/run-native');
+const {
+  VERSION_STAMP_ENV,
+  readReportedVersion,
+  downgradeRefusal,
+} = require('../lib/version-align');
 
 const REQUIRED = ['deepseek-build', 'dsb', 'deepseek-build-agent'];
 
@@ -33,9 +38,9 @@ const REQUIRED = ['deepseek-build', 'dsb', 'deepseek-build-agent'];
  *
  * `GROK_VERSION` is deliberately absent: the vendor `build.rs` reads it at
  * *compile* time only. Measured on a shipped binary, `GROK_VERSION=7.7.7`
- * still prints the built version.
+ * still prints the built version. The list itself lives in
+ * `npm/lib/version-align.js` so the launcher probe strips the same pair.
  */
-const VERSION_STAMP_ENV = ['DEEPSEEK_BUILD_VERSION', 'GROK_TEST_VERSION'];
 
 function ensureDir(p) {
   fs.mkdirSync(p, { recursive: true });
@@ -191,9 +196,18 @@ function installFromStageDir({ stageDir, version, binDir, pkgNativeBin, platform
       }
     }
 
-    // Every binary verified — publish them. rename(2) replaces the destination
-    // atomically, so there is no window where `binDir` holds neither the old
-    // nor the new binary.
+    // Every incoming binary matches this package. Do not publish them over a
+    // newer agent: package X installs agent X, and an older package must not
+    // roll a newer agent backwards. A failed probe (missing or unreadable
+    // agent) does not block — there is no newer version to protect.
+    const existingAgent = readReportedVersion(path.join(binDir, 'deepseek-build-agent'));
+    const refusal = downgradeRefusal(existingAgent, version);
+    if (refusal) {
+      return { ok: false, error: refusal, platform, url };
+    }
+
+    // rename(2) replaces the destination atomically, so there is no window
+    // where `binDir` holds neither the old nor the new binary.
     for (const name of REQUIRED) {
       const dest = path.join(binDir, name);
       try {

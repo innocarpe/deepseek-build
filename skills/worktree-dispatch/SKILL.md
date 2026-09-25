@@ -1,13 +1,6 @@
 ---
 name: worktree-dispatch
-description: >
-  From the control-tower (primary) checkout of DeepSeek Build, create an Orca
-  worktree for one unit of work, open an agent session in it in one step when
-  the agent supports it, hand over a brief without losing it to a first-run
-  trust prompt, and clean up after merge — including the launcher and setup
-  tabs the worktree comes with. Use when starting any change from the primary
-  checkout, dispatching work to a new agent session, running units in parallel,
-  or cleaning up merged worktrees.
+description: "From the control-tower checkout: one Orca worktree per unit, then merge and clean up. Launch grok or dsb with orca-tab, not the orca manual."
 ---
 
 # Worktree dispatch (control-tower checkout)
@@ -16,10 +9,10 @@ The primary checkout is the control tower: it stays on `main`, clean, and
 directs work ([AGENTS.md](../../AGENTS.md) §Control-tower checkout). Code
 changes happen in Orca worktrees — **one worktree = one branch = one PR.**
 
-This skill is the procedure. The version-matched reference for `orca` syntax is
-`orca skills get orca-cli` plus `orca <command> --help`; the commands below were
-checked against Orca CLI `1.4.210`. If a flag is rejected, trust the CLI's help
-over this file.
+This skill is the worktree lifecycle. Launching the agent tab — grok, codex,
+claude, or dsb — is [`orca-tab`](../orca-tab/SKILL.md). Do not run
+`orca skills get orca-cli` to open a tab or launch an agent. If a flag in
+either skill is rejected, read only that command's `--help` and retry once.
 
 Variables used below:
 
@@ -36,6 +29,30 @@ Variables used below:
   `orca worktree list --repo path:"$TOWER" --json` shows every worktree with its
   branch and card comment. Do not open a second worktree for a unit that has
   one, and do not touch another session's worktree.
+
+- **Never decide another worktree is abandoned from a tool that only sees Orca
+  tabs.** `orca terminal list --worktree <id>` and the whole-list `worktreeId`
+  match both returned **0 terminals** for a worktree whose agent was mid-build
+  at that moment (2026-09-25, Orca `1.4.210`): that session ran in a plain
+  terminal on another tty, not an Orca tab. A zero there means *you cannot see
+  it*, not *nobody is there*. Reading activity from it has already produced a
+  wrong report that another session's in-flight work was abandoned.
+
+  Use a signal that reads the machine, in this order:
+
+  | Signal | Reads | Weakness |
+  |---|---|---|
+  | `pgrep -fl "/deepseek-build/<slug>"` | live processes whose argv or cwd names the tree | an idle agent waiting on the model may hold no matching child |
+  | `git -C "$WT" log -1 --format=%ad` + `git -C "$WT" status --short` | last commit time and uncommitted work | a session can be thinking for minutes with no new commit |
+  | `orca worktree list … .workspaceStatus` | Orca's own card state | reads `in-progress` even for trees nobody has touched since creation |
+  | `orca terminal list --worktree <id>` | Orca tabs only | **misses sessions outside Orca** |
+
+  **Treat "no signal" as unknown, not as idle.** When two of the four disagree,
+  or when the last commit is recent, **ask the owning session** — a question
+  costs a minute; deleting or rebasing under a live session destroys work with
+  no undo. This is the same fail-close rule as everywhere else in the harness:
+  an unmeasurable state is not a passing one.
+
 - **Does this unit build vendored Grok?** It does if anything it runs calls
   `cargo` in `third_party/grok-build` — directly, or through a script
   (`rg -l grok-build scripts/` lists them: `build-grok-pager.sh`,
@@ -85,10 +102,12 @@ orca terminal list --worktree "id:$WT_ID" --json    # before you add your own
 not undoable, and a `Setup` tab that failed still holds the error text worth
 reporting.
 
-**This is the whole reason to prefer `--setup skip` plus the one-step path in
-§3b.** Creating the worktree, letting hooks run, and then adding an agent tab by
-hand gives three tabs where one was needed — which is exactly the mistake this
-section exists to prevent.
+**This create does not launch an agent.** To open grok, codex, claude, or dsb,
+follow [`orca-tab`](../orca-tab/SKILL.md) — its §2 or §3 includes the create.
+Do not run the command above and then add an agent tab on top. For grok,
+codex, and claude that one-step launch is one tab. Creating here, letting
+hooks run, and then adding an agent by hand is three. dsb cannot use
+`--agent`, so `orca-tab` §3 is the create and §1 is the tab.
 
 ## 2. Name the branch
 
@@ -117,119 +136,15 @@ and stay there — target it per command:
 | `gh` | `--repo innocarpe/deepseek-build`, token per command (AGENTS.md); `gh pr create` also needs `--head <type>/<slug>`, since it reads the head branch from cwd |
 | file edits | absolute paths under `$WT` |
 
-## 3b. Open the agent session — prefer one step
+## 3b. Open the agent session
 
-### The one-step path (use this when the agent id exists)
+Follow [`orca-tab`](../orca-tab/SKILL.md). Do not restate its commands here,
+and do not run `orca skills get orca-cli` to fill them in.
 
-`create` takes the agent and the brief itself, so the worktree never exists
-without its session:
-
-```sh
-orca worktree create \
-  --repo path:"$TOWER" \
-  --name <slug> \
-  --no-parent \
-  --setup skip \
-  --agent <claude|codex|grok> \
-  --prompt "<brief, or one line pointing at a brief file>" \
-  --json
-```
-
-`--activate` only when a **human** asked to look at that tree. It is not a
-signal for where the session lives.
-
-With `--agent --json`, read the head handle from `result.agentTerminalHandle`;
-older runtimes return only `result.startupTerminal.handle`, and a folder-based
-repo may return neither — then `terminal list` the new worktree and find the
-one tab whose `agentIdentity` matches what you asked for.
-
-### `--agent` does **not** accept every agent — measure before assuming
-
-**`--agent` is validated against Orca's `TuiAgent` list** (34 ids:
-`claude`, `codex`, `grok`, `gemini`, `cursor`, `droid`, …). An id outside it
-fails the whole create:
-
-```text
-$ orca worktree create … --agent dsb
-Unknown TUI agent "dsb"
-```
-
-**Measured 2026-09-25.** So for **this repo's own product (`dsb` /
-`deepseek-build`) the one-step path is unavailable**, and the two-step path
-below is the only route. For a unit worked by **Grok Build** or **Codex** —
-which is most units in this repo, and what `--agent grok` is for — the one-step
-path works and is preferred.
-
-### The two-step path (only when the launcher needs custom argv)
-
-```sh
-orca terminal create --worktree "id:$WT_ID" --title "<slug>" --command "deepseek-build" --json
-# H = result.terminal.handle
-orca terminal wait --terminal "$H" --for tui-idle --timeout-ms 60000 --json   # need result.wait.satisfied: true
-orca terminal read --terminal "$H" --screen --json                           # look before you type
-```
-
-The launcher is `deepseek-build` (alias `dsb`): work on this repo runs under the
-product the repo ships ([AGENTS.md](../../AGENTS.md) §Control-tower checkout).
-A timed-out wait still prints a result; read `satisfied`. If it is `false` or
-absent, **read the screen before anything else** — a first-run dialog can hold
-the agent there. Otherwise wait once more with a longer timeout, and if it is
-still unsatisfied, report the handoff as not started.
-
-**A parse failure is not a create failure.** If you cannot read the handle out
-of the JSON, do **not** re-run `create` — the side effect already happened. Ask
-`orca terminal list --worktree "id:$WT_ID" --json` whether the tab exists. This
-is how a second tab gets created by mistake.
-
-### A first-run dialog can swallow the brief
-
-An agent opening a folder it has no trust record for may show a trust dialog
-before its input box exists, and `tui-idle` does not have to mean "ready for
-input":
-
-```text
- Quick safety check: Is this a project you created or one you trust? …
- ❯ No, exit
-   Yes, I trust this folder
- Enter to confirm · Esc to cancel
-```
-
-A brief sent with `--enter` while such a dialog is up is typed into the dialog,
-and the Enter confirms whatever its default is — the agent exits and the brief
-is lost. This has happened on a real handoff.
-
-Read the screen after the wait. If a dialog is up, pass it *deliberately*: move
-the selection to the "yes" line, read the screen again to confirm the **text**
-of the selected line says yes (not the marker glyph, and not a table from a
-previous version), then press Enter — and read again before sending the brief.
-If the screen shows a dialog you do not recognise, stop and report; do not
-press keys blind.
-
-**Measured 2026-09-25 (`grok`, Orca `1.4.210`):** `tui-idle` returned
-`satisfied: true` **while this dialog was still up**, so the wait agreeing is
-not evidence the agent is ready. Reading the screen is the only check that
-works. Grok Build's dialog offers `y` / `n`.
-
-### Send the brief
-
-```sh
-orca terminal send --terminal "$H" --text "<brief>" --enter --wait-submit 15 --json
-```
-
-The handoff is done when the receipt says `accepted: true` and its `stages`
-include `turn_started`. **A receipt that stops at `input_accepted` is unproven,
-not failed** — some providers report `provider: unsupported` and can never
-advance the stage. Read the screen and confirm the agent is working; **never
-resend on silence**, because the first send may already have landed. After a
-transport error, repeat the exact command with `--retry-request <id>` from the
-receipt.
-
-**Measured 2026-09-25 (`grok`):** the receipt stopped at `input_accepted` with
-the warning *"input was accepted, but this provider cannot report delivery"*,
-and the screen showed the brief was submitted and the agent had started.
-
-For a long brief, write it to a file **outside** the repo (the worktree stays
-clean) and send one line: `Read <file> and do what it says.`
+- grok, codex, claude: `orca-tab` §2. One create. Do not also run §1.
+- dsb / deepseek-build: `orca-tab` §3, then §1 with `--command dsb`.
+  `--agent dsb` is rejected.
+- A tab in a worktree that already exists: `orca-tab` §1.
 
 What a brief carries:
 
@@ -237,9 +152,9 @@ What a brief carries:
   `Depends on #N` if stacked
 - **Boundaries** — which worktree is theirs; the primary checkout and other
   worktrees are off-limits; the one-Grok-build-at-a-time rule
-- **Harness** — follow `AGENTS.md`, `skills/session-unit`, and
-  `skills/pr-authoring`; `gh` with `--repo` and a per-command token; push
-  to `origin`
+- **Harness** — follow `AGENTS.md`, `skills/session-unit`,
+  `skills/orca-tab`, and `skills/pr-authoring`; `gh` with `--repo` and a
+  per-command token; push to `origin`
 - **Language** — a delegated run answers in the language its brief *asks for*,
   and `AGENTS.md` alone is not reliable there: subagent runs from the same batch
   on 2026-09-25, with near-identical English briefs, came back 0%, 0%, 1%, 98%.
@@ -333,7 +248,9 @@ stop every refresh. `pull --ff-only` already refuses by itself if an incoming
 file would overwrite an untracked one.
 
 Never remove a worktree another session created or is still using, even when
-it looks finished — ask its session first.
+it looks finished — ask its session first. If "it looks finished" came from
+`orca terminal list` showing nothing, re-read §0: that command returned 0 for a
+worktree whose agent was mid-build (2026-09-25).
 
 ## Anti-patterns
 
@@ -342,9 +259,11 @@ it looks finished — ask its session first.
 | Edit or commit in the primary checkout | Tower sessions share its index; the change lands in someone else's diff |
 | Create the worktree, then add an agent tab by hand when `--agent <id>` would have worked | Leaves `Terminal 1` and `Setup` tabs the unit never needed — three tabs for one job |
 | Re-run `create` because you could not parse the handle | The side effect already happened; ask `terminal list` instead |
-| `terminal send … --enter` right after `tui-idle` without reading the screen | A first-run dialog swallows the brief and exits the agent |
+| `orca skills get orca-cli` before launching grok or dsb | The recipes are in `orca-tab`. The full guide is what stalls the turn |
+| `terminal send … --enter` right after `tui-idle` without reading the screen | A first-run dialog swallows the brief and exits the agent (`orca-tab` §4) |
 | `cd "$WT"` and keep working | The next command meant for the tower runs in the tree, or the reverse |
 | `gh auth switch` | Flips the active account for every session on the machine |
 | Two vendored Grok builds at once | 30–60+ min cold each; parallel builds starve each other |
 | `--name feat/x` | Becomes `feat-x`; name the worktree by slug and rename the branch |
+| Report a worktree as "no active session" from `orca terminal list` alone | It returned 0 for a live, mid-build worktree (§0); that report tells the owner to abandon in-flight work |
 | `worktree rm --force` on a tree you did not read | Deletes uncommitted work with no undo |

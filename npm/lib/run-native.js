@@ -4,6 +4,7 @@ const { spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { readReportedVersion, mismatchWarning } = require('./version-align');
 
 const pkgRoot = path.resolve(__dirname, '..', '..');
 
@@ -62,8 +63,8 @@ function nativeBinPopulated(root) {
  * That is the npm 12 default: the script is skipped, npm still exits 0, and
  * the shims are the only thing that landed. A populated native-bin means the
  * script did run, so a missing binary is a different failure. A resolved
- * binary is still exec'd — a version mismatch is `staleHomeInstallWarning`,
- * which must not refuse to run.
+ * binary is still exec'd — a version mismatch is `mismatchWarning` in
+ * `version-align.js`, which must not refuse to run.
  */
 function detectBlockedInstall({ pkgRoot: root, resolvedBinary = null } = {}) {
   if (!root || nativeBinPopulated(root)) return false;
@@ -103,99 +104,6 @@ function missingBinaryMessage(binName, tried) {
     `Dev/source only: DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD=1 or ./scripts/install.sh\n` +
     `Then: dsb`
   );
-}
-
-/**
- * Parse `deepseek-build 6.0.0 (hash) [channel]` (the shipped `--version` line).
- * Returns null when the line is not that shape — callers must not guess.
- */
-function versionFromAgentOutput(text) {
-  const match = String(text || '').match(/deepseek-build\s+(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)/);
-  return match ? match[1] : null;
-}
-
-/**
- * Warning when the home binary's own version disagrees with this package.
- *
- * The wrapper stamps `DEEPSEEK_BUILD_VERSION` from package.json, and the agent
- * prints that stamp instead of the version baked into the binary. After npm 12
- * skips postinstall, an older agent in `~/.deepseek-build/bin` therefore
- * reports the new version. Return the warning text, or null when there is
- * nothing to say. Callers print it and still exec — refusing to run would
- * break a home install whose version already matches (`install.sh`, npm 11).
- */
-function staleHomeInstallWarning({ packageVersion, reportedVersion, homeBin } = {}) {
-  if (!packageVersion || !reportedVersion) return null;
-  if (packageVersion === reportedVersion) return null;
-  const where = homeBin || path.join('~', '.deepseek-build', 'bin');
-  return (
-    `deepseek-build: warning: ${where} reports ${reportedVersion}, ` +
-    `but this package is ${packageVersion}.\n` +
-    `npm 12 blocks dependency install scripts by default, so postinstall did not\n` +
-    `replace the agent. This launch still runs that binary, and it can print\n` +
-    `${packageVersion} because the wrapper sets DEEPSEEK_BUILD_VERSION.\n` +
-    `Fix once:\n` +
-    `  ${NPM12_INSTALL_COMMAND}\n` +
-    `Or: ${NPM12_CONFIG_COMMAND}\n` +
-    'npm rebuild needs --allow-scripts (plain `npm rebuild -g ' +
-    PKG_NAME +
-    '` stays blocked):\n' +
-    `  ${NPM12_REBUILD_COMMAND}`
-  );
-}
-
-/**
- * `--version` with the runtime stamps removed, so the binary reports the
- * version it was built with rather than the package we are launching from.
- * A probe that fails or times out returns null; the launch must still proceed.
- */
-function probeBinaryVersion(bin, spawnImpl = spawnSync) {
-  const env = { ...process.env };
-  delete env.DEEPSEEK_BUILD_VERSION;
-  delete env.GROK_TEST_VERSION;
-  let result;
-  try {
-    result = spawnImpl(bin, ['--version'], {
-      encoding: 'utf8',
-      timeout: 5000,
-      env,
-    });
-  } catch {
-    return null;
-  }
-  if (!result || result.status !== 0) return null;
-  return versionFromAgentOutput(`${result.stdout || ''}${result.stderr || ''}`);
-}
-
-function isUnderProductBin(binPath) {
-  if (!binPath) return false;
-  let binReal;
-  let dirReal;
-  try {
-    binReal = fs.realpathSync(binPath);
-    dirReal = fs.realpathSync(path.join(productHome(), 'bin'));
-  } catch {
-    return false;
-  }
-  const rel = path.relative(dirReal, binReal);
-  return rel !== '' && !rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel);
-}
-
-/**
- * Warn only. Runs when postinstall left no package-local binaries and the
- * file we are about to exec lives in the product home — the half-install
- * where a new shim quietly runs the previous agent. A cargo or
- * `target/release` binary is a dev checkout, not that failure.
- */
-function noteStaleHome(bin) {
-  if (!bin || nativeBinPopulated(pkgRoot)) return;
-  if (!isUnderProductBin(bin)) return;
-  const warning = staleHomeInstallWarning({
-    packageVersion: productVersion(),
-    reportedVersion: probeBinaryVersion(bin),
-    homeBin: path.join(productHome(), 'bin'),
-  });
-  if (warning) console.error(warning);
 }
 
 /**
@@ -259,7 +167,17 @@ function findAgentBinary() {
  * is missing but agent exists, exec agent directly so install still works.
  */
 function run(binName, args) {
-  const isBare = args.length === 0 || (args.length === 1 && (args[0] === 'agent' || args[0] === '--'));
+  // Warn and still exec. The package version is not stamped onto the child
+  // (see productEnv), so a mismatched agent reports its own version.
+  const agent = findAgentBinary();
+  if (agent) {
+    const msg = mismatchWarning(productVersion(), readReportedVersion(agent));
+    if (msg) console.error(msg);
+  }
+
+  const isBare =
+    args.length === 0 ||
+    (args.length === 1 && (args[0] === 'agent' || args[0] === '--'));
 
   // Always prefer installed wrapper when present.
   let bin = findBinary(binName);
@@ -268,10 +186,8 @@ function run(binName, args) {
   }
 
   if (!bin) {
-    const agent = findAgentBinary();
     if (agent && (isBare || args[0] === 'agent')) {
       const agentArgs = args[0] === 'agent' ? args.slice(1) : args;
-      noteStaleHome(agent);
       return exec(agent, agentArgs, productEnv());
     }
     const tried = candidatePaths(binName);
@@ -283,8 +199,8 @@ function run(binName, args) {
     process.exit(127);
   }
 
-  // Always inject product version/home for both wrapper and agent paths.
-  noteStaleHome(bin);
+  // Home and installer classification. The package version is not stamped
+  // onto the child — see productEnv().
   return exec(bin, args, productEnv());
 }
 
@@ -302,7 +218,6 @@ function productVersion() {
 
 function productEnv() {
   const home = process.env.DEEPSEEK_BUILD_HOME || path.join(os.homedir(), '.deepseek-build');
-  const version = productVersion();
   const env = {
     ...process.env,
     GROK_HOME: process.env.GROK_HOME || home,
@@ -322,10 +237,12 @@ function productEnv() {
     env.GROK_THEME = userTheme;
     env.LC_GROK_THEME = userTheme;
   }
-  // Product SemVer for agent TUI display + update checks (not vendor 0.2.x).
-  if (version) {
-    env.DEEPSEEK_BUILD_VERSION = process.env.DEEPSEEK_BUILD_VERSION || version;
-  }
+  // Do not stamp DEEPSEEK_BUILD_VERSION from package.json. The agent honours
+  // that variable over the version baked into the binary (`installed()`).
+  // A package older than the agent would then make the TUI and
+  // `deepseek-build-agent --version` report the package. Measured: package
+  // 5.7.0 plus a baked 6.0.0 binary printed `deepseek-build 5.7.0 (…) [alpha]`.
+  // A value the caller already exported is left untouched via `process.env`.
   return env;
 }
 
@@ -346,14 +263,12 @@ module.exports = {
   findBinary,
   findAgentBinary,
   candidatePaths,
+  productEnv,
+  productVersion,
   detectBlockedInstall,
   blockedInstallMessage,
   missingBinaryMessage,
-  staleHomeInstallWarning,
-  versionFromAgentOutput,
-  probeBinaryVersion,
   nativeBinPopulated,
-  isUnderProductBin,
   NPM12_INSTALL_COMMAND,
   NPM12_CONFIG_COMMAND,
   NPM12_REBUILD_COMMAND,

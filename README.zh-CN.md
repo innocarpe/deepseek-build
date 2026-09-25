@@ -135,6 +135,11 @@ deepseek-build --version
 dsb --version
 ```
 
+在此检出中运行 `npm install` 不会安装 `deepseek-build` 或 `dsb`。它既不下载预编译包，
+也不编译。请在这里使用 `./scripts/install.sh`，或通过
+`npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build`
+从注册表安装。npm 12 没有该参数时不会装上代理。
+
 Cargo 与自定义前缀选项见[安装指南](docs/user-guide/01-install.md)。
 
 ## 工作原理

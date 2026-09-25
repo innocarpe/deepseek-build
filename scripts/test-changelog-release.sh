@@ -317,7 +317,128 @@ AFTER_HASH="$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[
   || bad "--dry-run rewrote CHANGELOG.md"
 
 # ---------------------------------------------------------------------------
-head_ "8. wiring: bump-version.sh runs the shared mover"
+head_ "8. the junction after Unreleased keeps its blank line"
+# A glued junction (`## Unreleased` immediately followed by `## <version>`) is
+# how two shipped items got mis-filed: a branch that appends an item under
+# Unreleased merges into a glued tree *without a conflict*, and the item lands
+# under the version heading. Measured: #209 (cache attribution) landed under
+# 5.7.0, #206 (SSH paste) under 6.0.0 — each byte-identical to `git merge-tree`.
+cat > "$TMP/glued.md" <<EOF
+# Changelog
+
+## Unreleased
+## 5.7.0 ${DASH} 2026-09-25
+
+- An older released thing.
+EOF
+python3 "$MOVER" apply "$TMP/glued.md" 6.0.0 2026-09-26 'note' > /dev/null
+if [[ "$(sed -n '3,5p' "$TMP/glued.md" | tr '\n' '|')" == "## Unreleased||## 6.0.0 "* ]]; then
+  ok "a glued junction is repaired on the next bump"
+else
+  bad "the glued junction survived the bump: $(sed -n '1,6p' "$TMP/glued.md" | tr '\n' '|')"
+fi
+
+# The guard is not only a fix-up: a real two-branch merge must CONFLICT (so a
+# human files the item) instead of silently filing it under a version.
+MERGE_TMP="$(mktemp -d)"
+(
+  cd "$MERGE_TMP" || exit 1
+  git init -q; git config user.email t@t; git config user.name t
+  cat > CHANGELOG.md <<EOF
+# Changelog
+
+## Unreleased
+
+- The TUI fits a phone-width pane.
+
+## 5.6.0 ${DASH} 2026-09-25
+
+- An older thing.
+EOF
+  git add -A; git commit -qm base
+  BASE_BRANCH="$(git symbolic-ref --short HEAD)"
+  git checkout -qb mainside
+  python3 "$MOVER" apply CHANGELOG.md 6.0.0 2026-09-26 'release note' > /dev/null
+  git add -A; git commit -qm 'release opens 6.0.0'
+  git checkout -q "$BASE_BRANCH"; git checkout -qb feature
+  python3 - <<'PY'
+import pathlib
+p = pathlib.Path('CHANGELOG.md'); s = p.read_text()
+p.write_text(s.replace('- The TUI fits a phone-width pane.',
+                       '- A cache epoch change now says what moved.\n- The TUI fits a phone-width pane.'))
+PY
+  git add -A; git commit -qm 'feature adds an item under Unreleased'
+  git checkout -q mainside
+) > /dev/null 2>&1
+if (cd "$MERGE_TMP" && git merge --no-edit feature > /dev/null 2>&1); then
+  bad "the merge did not conflict — the item would be silently mis-filed"
+else
+  ok "merging a new Unreleased item into a released tree conflicts (not silent)"
+fi
+# With the glue present the same merge is silent — the failure this pins.
+(
+  cd "$MERGE_TMP" || exit 1
+  git merge --abort 2>/dev/null || true
+  python3 - <<'PY'
+import pathlib, re
+p = pathlib.Path('CHANGELOG.md'); s = p.read_text()
+p.write_text(re.sub(r'(?m)^(## Unreleased)\n\n', r'\1\n', s))
+PY
+  git add -A; git commit -qm 'glue the junction (the defect)'
+) > /dev/null 2>&1
+if (cd "$MERGE_TMP" && git merge --no-edit feature > /dev/null 2>&1); then
+  ok "with a glued junction the same merge is silent (reproduces the mis-filing)"
+else
+  bad "expected the glued merge to be silent; the reproduction does not hold"
+fi
+rm -rf "$MERGE_TMP"
+
+# ---------------------------------------------------------------------------
+head_ "9. the version-log row gets its PR number"
+# `bump-version.sh` writes `PR #_(fill in)_` and that was the end of it - six
+# rows on `main` shipped unrecorded. `release.sh` now fills the row from the
+# number `gh pr create` returns, so the placeholder is a state that must not
+# survive a release.
+VLOG="$ROOT/scripts/lib/version_log.py"
+cat > "$TMP/vlog.md" <<'VEOF'
+# Product versions
+
+| Date | Version | Link |
+|------|---------|------|
+| 2026-09-25 | **`5.7.0`** an older release | PR #201 |
+VEOF
+if python3 "$VLOG" set-pr "$TMP/vlog.md" 9.9.9 7 > /dev/null 2>&1; then
+  bad "a version with no row was accepted"
+else
+  ok "a missing decision-log row is an error (not a silent no-op)"
+fi
+
+printf '| 2026-09-25 | **`6.0.0`** a release | PR #_(fill in)_ |\n' >> "$TMP/vlog.md"
+python3 "$VLOG" set-pr "$TMP/vlog.md" 6.0.0 208 > /dev/null
+grep -q 'PR #208' "$TMP/vlog.md" \
+  && ok "the placeholder is replaced with the real PR number" \
+  || bad "the placeholder survived: $(grep 6.0.0 "$TMP/vlog.md")"
+
+# Resumed releases re-run this step; it must not clobber a recorded number.
+python3 "$VLOG" set-pr "$TMP/vlog.md" 6.0.0 999 > /dev/null
+if grep -q 'PR #208' "$TMP/vlog.md" && ! grep -q '999' "$TMP/vlog.md"; then
+  ok "a second run leaves a recorded number alone (resume-safe)"
+else
+  bad "re-running overwrote a recorded PR number"
+fi
+
+if python3 "$VLOG" set-pr "$TMP/vlog.md" 6.0.0 abc > /dev/null 2>&1; then
+  bad "a non-numeric PR was accepted"
+else
+  ok "a non-numeric PR number is rejected"
+fi
+
+grep -q 'version_log.py set-pr' "$ROOT/scripts/release.sh" \
+  && ok "release.sh records the number it got from gh pr create" \
+  || bad "release.sh does not call version_log.py"
+
+# ---------------------------------------------------------------------------
+head_ "10. wiring: bump-version.sh runs the shared mover"
 grep -q 'changelog_release.py apply CHANGELOG.md' "$BUMP" \
   && ok "bump-version.sh calls the mover on the real path" \
   || bad "bump-version.sh does not call the mover"

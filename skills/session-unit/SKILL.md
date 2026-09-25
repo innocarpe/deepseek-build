@@ -7,7 +7,8 @@ description: "Use when a session starts, drifts off the opening ask, a follow-up
 
 The rules live in [AGENTS.md](../../AGENTS.md) §One session, one unit. If this
 file and that section disagree, that section wins. This file is only the
-order. Do not copy commands out of `worktree-dispatch` or `pr-authoring`.
+order. Do not copy commands out of `orca-tab`, `worktree-dispatch`, or
+`pr-authoring`.
 
 ## Order
 
@@ -27,12 +28,17 @@ order. Do not copy commands out of `worktree-dispatch` or `pr-authoring`.
    - Open the PR with `pr-authoring`, which includes the push. From the
      control tower, use that skill's control-tower mode (`--repo`, `--head`,
      per-command token).
-   - Merge only when the opening granted it.
-5. **Hand off** each next unit with `worktree-dispatch` §1–§3b. One worktree,
-   one `deepseek-build` tab. The brief file lives outside the repo, and its
-   first line is that unit's done-condition. Do not ask first. After the
-   receipt shows `turn_started`, report the handle and that sentence, then
-   leave the unit alone.
+   - Merge it: the merge is part of the unit, not a separate permission
+     ([AGENTS.md](../../AGENTS.md) §One session, one unit). Stop short only
+     when the opening said so — a review-only unit, a stacked child whose
+     parent is unmerged, or a PR the user asked to look at first.
+   - Clean up the worktree with `worktree-dispatch` §4.
+5. **Hand off** each next unit with `worktree-dispatch` §1–§3b. The tab
+   itself is `orca-tab` — do not run `orca skills get orca-cli` to invent
+   the launch. One worktree, one tab. The brief file lives outside the
+   repo, and its first line is that unit's done-condition. Do not ask
+   first. After the receipt shows `turn_started`, report the handle and
+   that sentence, then leave the unit alone.
 6. **Close.** The first sentence of the report is that this unit is done.
    Then: whether the done-condition holds, or which part does not; commits;
    PR URL; the check you ran; handles you opened. Stop. Do not offer another

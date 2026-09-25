@@ -9,6 +9,9 @@ use tokio::process::Command;
 use xai_grok_shell::env::GrokBuildEnvironment;
 use xai_grok_shell::util::grok_home::grok_home;
 
+#[path = "product_channel.rs"]
+mod product_channel;
+
 const TTL_SECONDS_BEFORE_AUTO_UPDATE: Duration = Duration::from_secs(60 * 30);
 // DeepSeek Build product packages (not upstream Grok / x.ai channels).
 const NPM_PACKAGE: &str = "@innocarpe/deepseek-build";
@@ -481,6 +484,11 @@ pub(crate) fn is_stable_channel(channel: &str) -> bool {
 }
 
 /// Returns `Some("alpha")` when `current > stable`, `Some("stable")` when `current <= stable`, or `None` when either version fails to parse.
+///
+/// Display does not call this for a release SemVer (`product_channel`).
+/// The function stays so `test_derive_channel_matrix` keeps the upstream
+/// contract, and so a grok-sync can see the comparison the overlay sits on.
+#[cfg_attr(not(test), allow(dead_code))]
 fn derive_channel<'a>(current: &str, stable: &str) -> Option<&'a str> {
     let current_v = semver::Version::parse(current).ok()?;
     let stable_v = semver::Version::parse(stable).ok()?;
@@ -491,35 +499,44 @@ fn derive_channel<'a>(current: &str, stable: &str) -> Option<&'a str> {
     }
 }
 
-/// Machine-readable channel name derived from the cached stable pointer. Returns `Some("alpha")` when the current version
-/// is ahead of the cached stable pointer, `Some("stable")` when at or behind. Returns `None` when no cached pointer is
-/// available (first launch, old cache format, parse error).
+/// Machine-readable channel for telemetry.
+///
+/// A DeepSeek Build release SemVer is `"stable"` and does not consult
+/// `version.json` (see `product_channel`). A pre-release still compares the
+/// compiled version with the cached pointer via `compare_channel`, the same
+/// rule as [`derive_channel`].
 pub fn channel_name() -> Option<&'static str> {
     use std::sync::OnceLock;
     static NAME: OnceLock<Option<&'static str>> = OnceLock::new();
     *NAME.get_or_init(|| {
-        let stable = cached_stable_version()?;
-        derive_channel(xai_grok_version::VERSION, &stable)
+        let stable = cached_stable_for_channel();
+        product_channel::channel_name_for(xai_grok_version::VERSION, stable.as_deref())
     })
 }
 
-/// Compares the compiled-in `VERSION` against the stable pointer stored in `~/.grok/version.json` (written by the
-/// auto-updater): `" [alpha]"` when the current version is ahead of stable,; `" [stable]"` when at or behind stable,;
-/// `""` when no cached pointer is available (first launch, old cache format).
+/// Suffix for `--version`: `" [alpha]"`, `" [stable]"`, or `""`.
+///
+/// A release SemVer returns `""` even when `version.json`'s `stable_version`
+/// is older than the binary. Reading that file also creates the home
+/// directory, so a release skips the read. Pre-releases keep the upstream
+/// pointer comparison: `product_channel::channel_label_for` calls
+/// `compare_channel`, which matches [`derive_channel`].
 pub fn channel_label() -> &'static str {
     use std::sync::OnceLock;
     static LABEL: OnceLock<&'static str> = OnceLock::new();
     LABEL.get_or_init(|| {
-        let stable = match cached_stable_version() {
-            Some(s) => s,
-            None => return "",
-        };
-        match derive_channel(xai_grok_version::VERSION, &stable) {
-            Some("alpha") => " [alpha]",
-            Some(_) => " [stable]",
-            None => "",
-        }
+        let stable = cached_stable_for_channel();
+        product_channel::channel_label_for(xai_grok_version::VERSION, stable.as_deref())
     })
+}
+
+/// `None` for a release SemVer, so `--version` does not create the home
+/// directory just to paint a channel. Pre-releases still read the cache.
+fn cached_stable_for_channel() -> Option<String> {
+    if product_channel::release_semver_omits_channel_label(xai_grok_version::VERSION) {
+        return None;
+    }
+    cached_stable_version()
 }
 
 #[cfg(test)]

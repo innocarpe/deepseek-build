@@ -57,9 +57,9 @@ name comes from the lockfile URL, not from the tarball manifest.
 The published tarball does not contain the agent. `postinstall` downloads it
 into `~/.deepseek-build/bin/` and mirrors it at `npm/native-bin/`. A blocked
 script leaves the npm shims in place and the agent missing. If an older agent
-is already in `~/.deepseek-build/bin`, the new shim runs that binary and sets
-`DEEPSEEK_BUILD_VERSION` from the package, so the old agent can print the new
-version. With no binary at all, `deepseek-build` / `dsb` exits 127 and prints
+is already in `~/.deepseek-build/bin`, the shim runs that binary and warns.
+It does not stamp `DEEPSEEK_BUILD_VERSION`, so `--version` reports the older
+binary. With no binary at all, `deepseek-build` / `dsb` exits 127 and prints
 the commands below.
 
 Allow it per install:
@@ -101,6 +101,38 @@ git clone https://github.com/innocarpe/deepseek-build.git
 cd deepseek-build
 ./scripts/install.sh
 ```
+
+`npm install` with no arguments inside that checkout does **not** install
+`deepseek-build` or `dsb`. `postinstall` sees the git checkout and returns
+without downloading a prebuilt and without compiling. Use `./scripts/install.sh` there.
+
+These are not that skip. They still run the product install when npm itself
+runs `postinstall`. On npm 12 that only happens after the allow-scripts opt-in
+above; without it the script never starts:
+
+- `npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build`
+- `npm install -g --allow-scripts=@innocarpe/deepseek-build ./innocarpe-deepseek-build-<version>.tgz`
+- `npm install -g --allow-scripts=@innocarpe/deepseek-build .` from the checkout (npm marks this global, even though the script runs in the checkout)
+
+`DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD` applies when a packed install's download
+fails. It does not make `npm install` inside the checkout compile.
+
+## What `--version` reports
+
+`deepseek-build --version` and `dsb --version` print the **native CLI** the
+shim executes (`dsb 6.0.0` — the installed CLI's own SemVer).
+`deepseek-build-agent --version` prints the **agent**
+(`deepseek-build 6.0.0 (<commit>)`). Neither line is rewritten from the npm
+package's `package.json`, and a release SemVer does not wear `[alpha]`.
+`[alpha]` / `[stable]` remain only for a pre-release build compared with
+the updater's cached pointer.
+
+`npm i -g @innocarpe/deepseek-build@X` installs agent `X` (ADR 0009). If the
+agent already on disk is **newer** than `X`, postinstall leaves it in place
+and the install fails, so a stale package cannot roll the agent backwards.
+Set `DEEPSEEK_BUILD_ALLOW_DOWNGRADE=1` to install that older package on
+purpose. When the package and the agent disagree, the shim prints a warning
+on stderr before the command runs.
 
 ## How wrappers work
 

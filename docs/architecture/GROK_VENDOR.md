@@ -61,8 +61,8 @@ measurement:
 
 | Method | When |
 |---|---|
-| **Patch re-apply** (below) | `./scripts/apply-grok-build-patches.sh --check` passes |
-| **Three-way merge** (runbook §2) | patches conflict — the general case once the overlay is large |
+| **Patch re-apply** (below) | the series is non-empty **and** `./scripts/apply-grok-build-patches.sh --check` passes |
+| **Three-way merge** (runbook §2) | the series is empty (overlay in-tree), any patch conflicts, or the overlay is large |
 
 ### Patch re-apply path (small overlay)
 
@@ -108,6 +108,8 @@ survived.
 | `crates/codegen/xai-grok-pager/src/notifications/{agent_status.rs,mod.rs}` | OSC 9999 explicit agent-status frames for hosts that read them (Orca): `working` / `waiting` / `done`, ridden on the same tick as the title, and closed explicitly on turn end and pane exit | A host that reads the status stream needs the turn boundary stated rather than inferred from the tab title; silent on every other host |
 | `crates/codegen/xai-grok-pager/src/scrollback/blocks/user.rs` | `collapsed_max_lines(width, mode)` replaces the fixed `COLLAPSED_MAX_LINES` budget: at or below `COLLAPSED_NARROW_TERMINAL_COLS` (60) a collapsed prompt folds to `COLLAPSED_NARROW_MAX_LINES` (1); wider keeps 3; `Expanded` still never folds | The measured iPhone Orca pane is 55 columns, where a three-line echo of the submitted prompt eats a third of the viewport; desktop widths (80+) keep today's three-line budget |
 | `crates/codegen/xai-grok-pager/src/views/prompt_widget/mod.rs` | The bottom info line's rect is inset one cell per corner (`area.x + 1`, `area.width - 2`) instead of starting at `content_area.x` | The label no longer paints the divider rule immediately after `╰` when it overflows a phone-width pane, and keeps a blank pad before `╯` |
+| `crates/codegen/xai-grok-pager/src/app/agent_view/paste.rs` | `try_handle_dropped_paths_paste()` drops its `is_ssh` early-return: an image path pasted into a remote pane is classified like any other, and the PTY case `ssh_image_path_attaches` pins it | The host that runs the pager is the host that can resolve the path and read its bytes, so SSH changes nothing about the classification. Hosts that paste images this way upload the bytes to that same host first — an Orca SSH pane writes the temp file over SFTP to the remote `$TMPDIR` and pastes the remote path. The early-return made such a paste land as literal path text, so image attachment was impossible over SSH |
+| `crates/codegen/xai-grok-shell/src/session/helpers/spec10_path_a_assembly.rs` | `place_stable_body`: the first Spec 10 body is written into the leading system message; a later body is appended and the earlier system message stays byte-for-byte | Spec 10 §1.10. Rewriting the leading system measured `cached_tokens = 0`; an appended system message did not force that |
 
 Tests: `resume_hint_line_brands_invocation_name` and
 `failed_relaunch_hint_brands_invocation_name` pin the `dsb` output; upstream
@@ -117,69 +119,63 @@ invariants, the classic dark/GrokDay light resolution defaults, and the picker
 contract. Settings preview coverage retains legacy theme kinds while both
 catalogs expose `deepseeknight-v2`, `DeepSeek Night (classic)` and
 `DeepSeek Night Neutral`.
+ The SSH paste deviation is pinned by the PTY case
+`ssh_image_path_attaches`, which spawns the pager with `SSH_CONNECTION` set —
+a unit test cannot, because `terminal_context()` is a process-wide static
+computed once from the environment.
 
-### Patch series (historic)
+### Patch series
 
-DSB carries local feature work on the vendored tree as patches under
-`patches/grok-build/` — **outside** the vendor tree, so an `rsync --delete`
-refresh cannot wipe them.
+The overlay is carried **in the tree**. `patches/grok-build/` has no `*.patch`
+files. Git does not keep that directory once the last patch is deleted; the
+script treats a missing directory the same as an empty one and exits 0.
 
-| Patch | Commit it derives from |
-|-------|------------------------|
-| `0001-*.patch` | `feat(sampling-types): map DeepSeek prompt_cache_hit_tokens into cached_read_tokens` |
-| `0002-*.patch` | `feat(shell): add x.ai/deepseek/status extension for balance and session usage` |
-| `0003-*.patch` | `fix(shell): preserve one-pass repair and repair pre-existing lib-test build breakage` |
-| `0004-*.patch` | `test(pager): cover DeepSeekNight kinds in settings preview test` |
-| `0005-*.patch` | `feat(pager): render DeepSeek status with session-safe polling` |
-| `0006-*.patch` | `test(shell): cover large MCP image persistence and resume` |
-| `0007-*.patch` | `fix(vendor): drop hardcoded released-by-xAI identity text` |
-| `0008-*.patch` | `fix(vendor): sync encrypted agent prompt with the identity edit` |
-| `0009-*.patch` | `test(grok): expect DeepSeek status effects` |
-| `0010-*.patch` | `test(pager): align product baseline expectations` |
-| `0011-*.patch` | `test(pager): stabilize prompt history tick delivery` |
-| `0012-*.patch` | `fix(vendor): satisfy the strict clippy baseline` |
-| `0013-*.patch` | `fix(shell): preserve the seeded product changelog` |
-| `0014-*.patch` | `feat(pager): report explicit OSC 9999 agent status to Orca` |
+Sync 2 (ledger: `1.0.0` → `1.0.41`) measured **0 of 13** patches applying.
+`844c7be` deleted `0001`–`0013` and moved that overlay in with a three-way
+merge. `0014` (OSC 9999 agent status) was the one file left in the directory.
+On parent `0ff7d8c` it applies neither way:
 
-These patches carry the **DeepSeek status line**, its shell-side repair
-dependency, the focused large-MCP-image persistence/resume regression, prompt
-identity, product-specific pager expectations, strict vendor lint repairs,
-seeded product changelog preservation, and explicit OSC 9999 agent status for
-hosts that read it. The status patch records session-bound unsupported
-capability handling, transient retry, and stale-result safety;
-patch 0006 keeps the DSB image regression durable instead of relying on the
-upstream changelog claim. A refresh must never silently drop any of the complete
-14-patch series.
+| Direction | Result |
+|---|---|
+| `git apply --check` | `agent_status.rs` already exists, and `mod.rs` does not apply |
+| `git apply --reverse --check` | `mod.rs` does not apply |
 
-- **Re-apply after refresh:** `./scripts/apply-grok-build-patches.sh`
-  (add `--check` for a dry run; already-applied patches are skipped).
-- **Regenerate** when the patch set changes:
+Those sources stay in the tree (`notifications/agent_status.rs` and the
+`mod.rs` registration — the overlay table above). `0014` is removed the same
+way `0001`–`0013` were. Restoring any of `0001`–`0014` on top of the in-tree
+overlay double-applies or fails `--check`. Do not put them back to recreate
+the old 14-row table.
+
+What keeps that behavior across a refresh is the three-way merge in the
+runbook, judged against the overlay table in this file. The ledger records
+what Sync 2 carried; this table is the inventory, including overlay added
+after that sync (OSC 9999, the narrow-terminal prompt fold). A patch series
+does not guard it. The old "never silently drop the 14-patch series" line
+described files that are not in the directory.
+
+| `patches/grok-build/*.patch` | `--check` | Refresh method |
+|---|---|---|
+| one or more, all applicable or already applied | exit 0 | patch re-apply (small-overlay path above) |
+| one or more, any conflict | exit 1 | fix or drop the entry; do not `rsync --delete` |
+| none, or the directory is absent | exit 0, nothing to apply | overlay is in-tree — three-way merge |
+
+A series is still the right shape when a **small** overlay must survive an
+`rsync --delete` refresh. Regenerate with
+`git format-patch <base>..HEAD -- third_party/grok-build -o patches/grok-build`
+only if that method is chosen again. An empty directory is not that case:
+`--check` exiting 0 because there is nothing to apply does **not** make the
+patch re-apply path safe. The runbook's size check still decides.
+
+- **Re-apply** when the series is non-empty:
+  `./scripts/apply-grok-build-patches.sh` (`--check` for a dry run;
+  already-applied patches are skipped).
+- **Regenerate** when a small series changes:
   `git format-patch <base>..HEAD -- third_party/grok-build -o patches/grok-build`
   where `<base>` is the merge-base of the vendor PR that carried the patches.
-- **Refresh conflicts:** if `apply-grok-build-patches.sh` fails after an
-  upstream refresh, fix the conflicts by hand, re-run
-  `./scripts/build-grok-pager.sh check`, and regenerate the patches before
-  merging the refresh PR.
-- **Known-stale entries:** `0009-*` and `0010-*` fail `--check` on `main`
-  today. Their content is already committed in the tree
-  (`d9f5dc8`, `1ac8864`), so neither forward nor reverse apply succeeds and the
-  gate stops on `0009` before reaching the rest of the series. This predates
-  patch `0014`; drop or regenerate the two entries so the gate can report on
-  the series again.
+- **Refresh conflicts:** if the script fails after an upstream refresh, fix
+  the conflicts by hand, re-run `./scripts/build-grok-pager.sh check`, and
+  regenerate before merging the refresh PR.
 
-Refresh procedure step 2 therefore becomes:
-
-2. `rsync -a --delete --exclude target --exclude .git <src>/ third_party/grok-build/`  
-   (or `git subtree pull` if that workflow is adopted later), then  
-   `./scripts/apply-grok-build-patches.sh` to re-apply the local patches.
-
----
-
-A series is still the right shape when a **small** overlay must survive a
-`rsync --delete` refresh; regenerate one with
-`git format-patch <base>..HEAD -- third_party/grok-build -o patches/grok-build`
-if that method is chosen again.
-|------|-------|-----|
 ## CI plan
 
 ### Default CI workflow (`ci.yml`)

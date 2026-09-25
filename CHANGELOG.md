@@ -2,25 +2,52 @@
 
 ## Unreleased
 
-- `npm install -g` on npm 12 no longer looks successful while running the
-  previous agent. npm 12.0.0 denies dependency install scripts unless the
+- `npm install -g` on npm 12 no longer looks finished when the agent was
+  never downloaded. npm 12.0.0 denies dependency install scripts unless the
   installer opts in, and still prints `added 1 package` (this machine: npm
-  12.1.0). The published tarball does not contain `npm/native-bin/` —
-  postinstall fills it — so a blocked script never downloads the agent. If
-  `~/.deepseek-build/bin` still holds an older binary, the new wrapper execs
-  that binary and stamps `DEEPSEEK_BUILD_VERSION` from the package, so a
-  5.7.0 agent prints `deepseek-build 6.0.0`. The form npm itself suggests,
-  `npm install -g --allow-scripts=@innocarpe/deepseek-build` with no package
-  spec, exits `ENOENT package.json`. The command that works is
+  12.1.0). The published tarball does not contain `npm/native-bin/`. With no
+  binary on disk, `dsb` exits 127 and prints the command that works:
   `npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build`.
-  Plain `npm rebuild -g @innocarpe/deepseek-build` stays blocked too. The
-  wrapper now exits 127 with those commands when no binary exists and
-  `npm/native-bin/` was never filled, and warns without refusing to run when
-  the home binary's own version disagrees with the package. The postinstall
-  retry uses the rebuild form that includes `--allow-scripts`. A script that
-  does run and fails still exits 1, so npm reports that failure. npm 11.20.0
-  runs the script with or without the flag. The READMEs and
-  `docs/user-guide/05-npm.md` show the working command.
+  The form npm itself prints, with no package spec, exits `ENOENT package.json`.
+  Plain `npm rebuild -g @innocarpe/deepseek-build` stays blocked. When an
+  older agent is already installed, the shim still runs it and warns — it
+  does not stamp `DEEPSEEK_BUILD_VERSION`, so `--version` reports that older
+  binary — and the warning names the same command. The postinstall retry
+  uses the rebuild form that includes `--allow-scripts`. A script that does
+  run and fails still exits 1. npm 11.20.0 runs the script with or without
+  the flag. The READMEs and `docs/user-guide/05-npm.md` show the working
+  command.
+
+- A published release no longer prints `[alpha]` because `version.json`
+  still names an older stable pointer. `6.0.0` with `stable_version`
+  `5.7.0` reported `deepseek-build 6.0.0 (…) [alpha]`. That file is an
+  updater cache, not this product's channel: install does not write it.
+  A release SemVer omits the suffix. A pre-release (`6.1.0-alpha.1`)
+  still uses the upstream comparison, and that comparison itself is
+  unchanged.
+- The npm package and `deepseek-build-agent` are one install. postinstall
+  of an older package replaced a newer agent (a `5.7.0` package over a
+  `6.0.0` agent). The installer now leaves the newer agent in place
+  unless `DEEPSEEK_BUILD_ALLOW_DOWNGRADE=1`. The wrapper no longer stamps
+  its package version onto the agent, and it warns when the two versions
+  differ. `dsb --version` reports the native binary.
+- Pasting an image into a pane on a remote host now attaches it. A pasted image
+  path is resolved by the host the pager runs on, and a terminal that works
+  this way uploads the bytes to that host first — an Orca SSH pane writes the
+  temp file to the remote `$TMPDIR` and pastes the remote path. An earlier
+  `is_ssh` early-return skipped the classifier there, so the paste landed as
+  literal path text and the attachment was impossible over SSH.
+- A cache epoch change now says *what* moved, not just *that* something did.
+  The stable prefix is built once per process and reused, so the only moment a
+  conversation's prefix actually moves is when a later process rebuilds it —
+  a resumed session. dsb stores each session's prefix shape beside its
+  transcript and, on resume, prints `prefix_change=<axes>` with a detail line
+  naming the entries (`tools.added=mcp__demo__pong`,
+  `skills.removed=old-skill`, `environment.cwd`). A session that carries no
+  stored shape — any file written before this change — logs nothing rather
+  than guess, and an unchanged prefix logs `none`. The shape is observational:
+  `stable_prefix_bytes` and every existing epoch are byte-identical, pinned by
+  a golden test that fails loudly when a change would invalidate live caches.
 
 ## 6.0.0 — 2026-09-25
 
@@ -54,17 +81,6 @@
 
 ## 5.7.0 — 2026-09-25
 
-- A cache epoch change now says *what* moved, not just *that* something did.
-  The stable prefix is built once per process and reused, so the only moment a
-  conversation's prefix actually moves is when a later process rebuilds it —
-  a resumed session. dsb stores each session's prefix shape beside its
-  transcript and, on resume, prints `prefix_change=<axes>` with a detail line
-  naming the entries (`tools.added=mcp__demo__pong`,
-  `skills.removed=old-skill`, `environment.cwd`). A session that carries no
-  stored shape — any file written before this change — logs nothing rather
-  than guess, and an unchanged prefix logs `none`. The shape is observational:
-  `stable_prefix_bytes` and every existing epoch are byte-identical, pinned by
-  a golden test that fails loudly when a change would invalidate live caches.
 - The TUI fits a phone-width pane. A collapsed prompt echo now folds to one
   line plus an ellipsis at or below 60 columns (the measured iPhone pane is 55
   columns by 41 rows) instead of the fixed three rows it used to spend — about

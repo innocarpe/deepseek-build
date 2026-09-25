@@ -7,6 +7,7 @@ pub mod path_a_cache_signal;
 pub mod prepared_compaction_history;
 pub mod prompt_suggest;
 pub mod replay;
+pub mod request_log_invariant;
 pub mod session_compact;
 pub mod session_recap;
 pub mod session_summary;

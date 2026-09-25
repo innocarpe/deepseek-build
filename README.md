@@ -146,6 +146,12 @@ deepseek-build --version
 dsb --version
 ```
 
+`npm install` in this checkout does not install `deepseek-build` or `dsb`.
+It does not download a prebuilt and it does not compile. Use
+`./scripts/install.sh` here, or
+`npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build`
+for the registry package. npm 12 does not install the agent without that flag.
+
 See the [installation guide](docs/user-guide/01-install.md) for Cargo and custom
 prefix options.
 

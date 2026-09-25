@@ -11,10 +11,10 @@ use crate::types::PruningConfig;
 
 /// Placeholder inserted when a tool result is hard-cleared.
 /// `pub(super)` so `mutations.rs` can use the same string on the retained conversation.
-pub(super) const HARD_CLEAR_PLACEHOLDER: &str = "[Tool result omitted — too old]";
+pub const HARD_CLEAR_PLACEHOLDER: &str = "[Tool result omitted — too old]";
 
 /// Separator inserted between head and tail in soft-trimmed results.
-const SOFT_TRIM_SEPARATOR: &str = "\n\n[…trimmed…]\n\n";
+pub const SOFT_TRIM_SEPARATOR: &str = "\n\n[…trimmed…]\n\n";
 
 impl ChatStateActor {
     /// Build a `ConversationRequest` from current actor state (image eviction, prune, memory reminder).

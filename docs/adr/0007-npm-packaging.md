@@ -36,7 +36,8 @@ Overnight agents and humans need a **non-inventable** npm path: dual bins (`deep
 `DEEPSEEK_BUILD_BIN` → `~/.deepseek-build/bin/` → `~/.cargo/bin/` → package `npm/native-bin/` → dev `target/release/`.
 
 **Skip:** `DEEPSEEK_BUILD_SKIP_POSTINSTALL=1`.  
-**Optional source fallback:** `DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD=1` (dev only).
+**Optional source fallback:** `DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD=1` (dev only; not inside a checkout `npm install`).  
+**Source checkout:** `npm install` in the git checkout does not run the product install. See the source-checkout amendment in [ADR 0009](./0009-npm-prebuilt-binaries.md). `npm i -g .` is a global install and still runs it.
 
 ### Agent vs human DoD
 

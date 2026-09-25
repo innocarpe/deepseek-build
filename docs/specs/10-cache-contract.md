@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|--------|
-| Status | **ready-for-impl** — §1.5.1 enforced with tests; §1.5.2 and §1.9 are contracts fixed here, each pending its own unit |
+| Status | **ready-for-impl** — §1.5.1, §1.9, and §1.10 enforced with tests; §1.5.2 is a contract fixed here, pending its own unit |
 | Philosophy | HARNESS §4.2, §5; Deep Code pillar B; Reasonix cache-first |
 | Gate | Part of **G2** |
 | Tests | **Automated golden + negative required** |
@@ -172,9 +172,11 @@ M1 acceptance:
    an unchanged prefix and `unattributed` reserved for the coverage bug.  
 4. Cumulative counter: §1.5.2 semantics, including the unreported-turn rule.
    *Pending — next unit.*  
-5. Bench: §1.9 threshold. *Pending — next unit.*
+5. Bench: §1.9 threshold. **Landed** — `cache_guard_*` in
+   `crates/dsb-agent/tests/cache_guard.rs`, release wrapper
+   `scripts/cache-guard.sh`; §4.4 names the tests.
 
-### 1.9 Cache regression bench (contract fixed; harness in a following unit)
+### 1.9 Cache regression bench
 
 `cache-first` is a claim about a curve, not a turn. The bench scores it.
 
@@ -209,6 +211,60 @@ Wrapper: `scripts/cache-guard.sh`, release-gated like Reasonix's (env
 `DSB_RELEASE_CACHE_GUARD=1`; skips when unset so it never slows the normal
 suite).
 
+**Landed (2026-09-26).** Harness: `crates/dsb-agent/tests/cache_guard.rs`;
+§4.4 names the tests. It scores the overlay builder and turn loop
+(`dsb-context` + `dsb-agent`, Path B). Path A's assembly is **not covered
+here**: `xai-grok-shell` does not depend on `dsb-context`, so this bench
+cannot see the bytes Path A sends — the `6.1.0` depth board carries that
+wiring (`docs/product/DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md`, U2.2).
+
+### 1.10 In-history stable-body update (Path A assembly)
+
+`apply_spec10_to_conversation_request` builds the §1.1 stable body on every
+Path A turn (`turn.rs`). U0.2 measured two shapes on Chat Completions.
+Replacing the bytes of the leading system message returned
+`cached_tokens = 0` on every sample. A later system message on an unchanged
+leading system was accepted (HTTP 200) and did not force that zero, except
+one identical insert that returned 0. Identical bodies were not
+token-stable (641, 712, and 768 on one 792-token request). This section
+therefore binds **bytes of system messages**, not a live token count.
+
+The product template is still recovered from the earliest system message, as
+the text before the `\n\n## Tools\n` marker. Every system message this
+section writes is a full stable body, not a delta.
+
+1. **The latest system message is the effective prompt.** The model treats
+   the last system message as the current stable body. Earlier system
+   messages stay in the transcript. This section does not delete them.
+2. **Unchanged body.** When the newly assembled body equals the latest
+   system message, ignoring trailing newlines, no system message is edited
+   and none is added.
+3. **First placement.** When no system message contains the `\n\n## Tools\n`
+   marker, the body is written into the leading system message, or inserted
+   at index 0 when the request has none. There is no earlier stable body
+   to keep.
+4. **Later change.** When a system message already contains that marker and
+   the assembled body differs from the latest system message, every earlier
+   system message stays byte-for-byte, and the new body is appended after
+   the current items.
+5. **What can move the body.** The tools document is inside the stable body
+   (§1.1 item 2), so a tools, skills, environment, or project-instruction
+   change appends under rule 4. The request `tools` array is still the full
+   list on every request. This section does not define a tool-addition or
+   tool-removal history message. Chat Completions has no field for one.
+6. **Not this section.** `replace_or_insert_system_head` rewrites the stored
+   leading system (model switch, memory) before this assembly runs. That
+   rewrite is a different byte change. This section does not turn it into
+   an append.
+7. **Epoch.** The epoch stays the hash of the latest stable body (§1.5). An
+   append changes the epoch. It does not change the bytes of the earlier
+   system message.
+
+A test that claims the append preserves a prefix derives the split from the
+serialized messages: the shared byte-prefix length is the hit, and the
+remainder is the miss. It does not hard-code a token count. The §1.9
+scenario harness is not in this tree; the §1.10 test carries this
+byte-prefix mock itself (`in_history_update_appends_and_head_rewrite_breaks_the_byte_prefix`).
 ## 2. Non-goals
 
 - Guaranteeing 100% provider cache hits (server policy)  
@@ -272,12 +328,32 @@ runs all of them.
 | `resume_with_unchanged_inputs_reports_none` | same inputs, two processes → `none` |
 | `a_changed_tool_schema_is_named_tools_on_resume` | changed tool description → `tools` |
 
-### 4.4 Pending (contracts fixed in §1.5.2 and §1.9, no harness yet)
+### 4.4 §1.9 cache guard (landed)
+
+| Test | Expect |
+|------|--------|
+| `cache_guard_mock_accounts_from_request_bytes` | the mock computes the carry from the request: zero on the first request, the whole previous prompt on an append, zero when the leading message moved, everything on a replay |
+| `cache_guard_unchanged_prefix_is_one_epoch_and_passes` | no §1.1 input changes → exactly 1 epoch and the last-3 average holds the threshold |
+| `cache_guard_by_design_change_is_two_epochs` | one §1.1 input changed by design (a rebuild = a resume) → exactly 2 epochs, and the tail recovers above the threshold |
+| `cache_guard_negative_control` | a perturbed prefix lands below the threshold, an unchanged one does not |
+| `cache_guard_tool_loop_stays_above_threshold` | the tool-loop shape, real tool execution included → exactly 1 epoch and the last-3 average holds |
+| `cache_guard_mixed_message_sizes_hold_the_threshold` | mixed message sizes move the fresh-tail share without a §1.1 change → exactly 1 epoch and the last-3 average holds |
+| `cache_guard_release_suite` | the full scenario matrix; gated by `DSB_RELEASE_CACHE_GUARD=1`, skips when unset |
+
+Runner: `crates/dsb-agent/tests/cache_guard.rs`; wrapper
+`scripts/cache-guard.sh`.
+
+### 4.5 §1.10 wire placement
+
+| Test | Expect |
+|------|--------|
+| `in_history_update_appends_and_head_rewrite_breaks_the_byte_prefix` | A later stable-body change leaves the leading system bytes intact and appends the new body. A byte-prefix mock, derived from the serialized messages, counts the old body inside the shared prefix. Replacing the leading system with that same new body does not. A second apply of the same body adds nothing. |
+
+### 4.6 Pending (§1.5.2 counter)
 
 | Test | Expect |
 |------|--------|
 | `cache_totals_accumulate_and_track_unreported` | §1.5.2 semantics, incl. the unreported-turn rule — *next unit* |
-| `cache_guard_negative_control` | §1.9 — a perturbed prefix lands below the threshold, an unchanged one does not — *next unit* |
 
 ## 5. Implementation notes
 

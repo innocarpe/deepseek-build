@@ -59,6 +59,10 @@ description ended at the PR.
    - Open the PR with `pr-authoring`, which includes the push. From the
      control tower, use that skill's control-tower mode (`--repo`, `--head`,
      per-command token).
+   - Don't hold the PR for local polish: commit → push → PR once the evidence
+     exists, then keep polishing on the branch. `grok fmt` and `grok clippy`
+     are the longest polls and they run on GitHub — the PR in flight is the
+     faster feedback loop.
    - Read CI. `scripts/check-pr-merged.sh <n>` exits 2 while checks are
      pending. Pending is not a pass and not a reason to end the unit.
    - Merge with `gh pr merge --merge` (merge commit; squash is disabled).
@@ -101,6 +105,7 @@ Then paste the output, not a paraphrase:
 | Treat the brief's prohibition as the user turn | At `e914dfb` a copied release-lane ban outranked the user |
 | Stop because `## Unreleased` is empty | That means the named work is not in the version |
 | End the report at an open PR | The old checklist said that, and sessions stopped there |
+| Hold the PR for local polish | `grok fmt` / `grok clippy` are the longest polls and run on GitHub; commit → push → PR first |
 | Say merged without `scripts/check-pr-merged.sh` printing `pass` | The sentence is not the fact |
 | Start the next unit from the "not done" list | That sentence opens work the opening did not name |
 | Offer another unit after you are done | The offer is the next task, and it lands in this session |

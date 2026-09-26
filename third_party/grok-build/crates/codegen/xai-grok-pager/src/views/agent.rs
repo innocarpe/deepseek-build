@@ -89,11 +89,10 @@ pub const SHORT_TERMINAL_ROWS: u16 = 16;
 pub const SCROLLBACK_MIN_ROWS: u16 = 5;
 /// Rows the frame keeps under the bottom status row.
 ///
-/// Zero: the status row is the frame's last row, so the frame's top and bottom
-/// margins match (both are the cell's own leading — the status bar opens the
-/// frame and the status row closes it). A blank floor row was 2.15 columns of
-/// white at the phone's font, where the frame's side margins are one column.
-pub const BOTTOM_MARGIN_ROWS: u16 = 0;
+/// One: the smallest step the grid has at the frame's edge — the bottom text
+/// would otherwise sit on the screen edge, and so would zero. A row is ~2.15
+/// columns at the phone's font, which is why nothing larger.
+pub const BOTTOM_MARGIN_ROWS: u16 = 1;
 /// Auto-compact threshold: at or below this height the compact flag handed to rendering is forced on.
 /// Deliberately above [`SHORT_TERMINAL_ROWS`], which still gates the harder cuts (tip-row rendering, dropping the CTA and follow-up rows).
 pub const AUTO_COMPACT_MAX_ROWS: u16 = 20;
@@ -176,8 +175,8 @@ pub struct AgentViewLayout {
     /// Bottom status row (DeepSeek balance + cache hit rate). Always
     /// present as a row; renders blank when no DeepSeek status is known.
     pub deepseek_status: Rect,
-    /// Rows below the bottom status row ([`BOTTOM_MARGIN_ROWS`], zero by
-    /// default): zero-area when the status row closes the frame.
+    /// The blank row below the bottom status row ([`BOTTOM_MARGIN_ROWS`]): the
+    /// frame's floor. Renders empty; the renderer paints its background.
     pub bottom_margin: Rect,
     /// Bottom status_line row; zero-area when disabled.
     pub status_line: Rect,
@@ -313,9 +312,9 @@ impl AgentViewLayout {
         // DeepSeek bottom status row: always present so the row count is
         // stable; renders blank when no status data has landed.
         constraints.push(Constraint::Length(1));
-        // Rows under the last text row ([`BOTTOM_MARGIN_ROWS`], zero by
-        // default): the frame's floor is the status row itself, so the frame's
-        // top and bottom margins match.
+        // One blank row under the last text row: the frame's floor keeps the
+        // smallest step the grid has, so the bottom text never sits on the
+        // screen edge.
         constraints.push(Constraint::Length(BOTTOM_MARGIN_ROWS));
         let chunks = Layout::vertical(constraints).split(inner_area);
         let mut chunks = chunks.iter().copied();
@@ -2123,9 +2122,8 @@ mod tests {
 
     /// The frame spends no rows on margins at any width: the status bar lands
     /// on row 0 (no outer vpad, no status gap), the outer pads are the
-    /// selection-border floor, and the bottom status row closes the frame
-    /// ([`BOTTOM_MARGIN_ROWS`] is zero, so the frame's top and bottom margins
-    /// are the same cell leading).
+    /// selection-border floor, and the only air below the content is the one
+    /// blank floor row under the bottom status row ([`BOTTOM_MARGIN_ROWS`]).
     #[test]
     fn layout_spends_no_rows_on_margins_at_any_width() {
         for (cols, rows) in [(55u16, 41u16), (120, 40), (180, 50)] {

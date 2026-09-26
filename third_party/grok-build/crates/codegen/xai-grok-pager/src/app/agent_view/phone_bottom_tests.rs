@@ -521,43 +521,37 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
         "the time stops one column inside the band's right edge: ink {last_ink}, band {band_right}\n{frame}"
     );
 
-    // (d) The status row closes the frame: no blank floor row, so the frame's
-    // bottom margin matches its top (both are the cell's own leading).
+    // (d) One blank floor row under the status band: the smallest step the grid
+    // has at the frame's edge, so the bottom text never sits on it.
     let status_y = divider + 1;
     assert_eq!(
-        status_y,
-        PHONE_ROWS - 1,
-        "the status row is the frame's last row:\n{frame}"
-    );
-    assert_eq!(
-        crate::views::agent::BOTTOM_MARGIN_ROWS,
-        0,
-        "the frame keeps no blank floor row"
+        status_y + 1 + crate::views::agent::BOTTOM_MARGIN_ROWS,
+        PHONE_ROWS,
+        "the status band keeps one blank floor row under it:\n{frame}"
     );
     assert!(
-        row_text(&buf, status_y).contains("cache 88%"),
-        "the last row is the status band, not blank space:\n{frame}"
+        row_text(&buf, status_y + 1).trim().is_empty(),
+        "the floor row is blank:\n{frame}"
     );
 }
 
-/// The status row closes the frame at every phone height the app runs at: no
-/// blank floor row, so the frame's bottom margin is the cell's own leading and
-/// matches the status bar that opens the frame.
+/// The floor row is one blank row — never two, never none — at every phone
+/// height the app runs at.
 #[test]
-fn phone_status_row_closes_the_frame_at_every_phone_height() {
+fn phone_status_band_keeps_one_floor_row_at_every_phone_height() {
     for rows in [PHONE_ROWS, 36, 33, 30, 26, 24, 20] {
         let mut agent = phone_agent();
         let buf = draw(&mut agent, PHONE_COLS, rows);
         let frame = frame_text(&buf);
         let status_y = border_row(&buf) + 1;
         assert_eq!(
-            status_y + crate::views::agent::BOTTOM_MARGIN_ROWS,
-            rows - 1,
-            "{PHONE_COLS}x{rows}: the status row is the frame's last row\n{frame}"
+            status_y + 1 + crate::views::agent::BOTTOM_MARGIN_ROWS,
+            rows,
+            "{PHONE_COLS}x{rows}: the status band keeps one blank floor row\n{frame}"
         );
         assert!(
-            row_text(&buf, status_y).contains("cache 88%"),
-            "{PHONE_COLS}x{rows}: the last row is the status band\n{frame}"
+            row_text(&buf, status_y + 1).trim().is_empty(),
+            "{PHONE_COLS}x{rows}: the floor row is blank\n{frame}"
         );
     }
 }

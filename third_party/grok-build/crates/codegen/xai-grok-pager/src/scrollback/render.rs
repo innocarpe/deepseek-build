@@ -22,7 +22,8 @@ use super::types::{
     derive_selection_text, line_plain_text_into, selectable_cols, selectable_cols_usize,
 };
 use super::wrappers::{
-    EntryRenderer, entry_chrome, group_header_chrome_prefix_width, timestamp_reserved_for,
+    EntryRenderer, band_spans_the_pane, entry_chrome, group_header_chrome_prefix_width,
+    timestamp_reserved_for,
 };
 use crate::appearance::AppearanceConfig;
 use crate::render::Renderable;

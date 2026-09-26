@@ -324,44 +324,18 @@ impl<'a> EntryRenderer<'a> {
     /// Legacy fixed chrome-width estimate for callers with no appearance to borrow (off-screen mermaid sizing); the live value is `chrome_width()`.
     pub const CHROME_WIDTH: u16 = 1 + 2 + 1; // accent + left_pad + right_pad (legacy)
 
-    /// Paint one of the echo's pad rows on a phone-width pane: the band's color
-    /// takes [`NARROW_PAD_EIGHTHS`] of the row next to the text and the pane's
-    /// own background takes the rest.
-    ///
-    /// A terminal row is a little over two columns tall (55x41 measured: 16.5px
-    /// cells, 35.5px rows), so a whole pad row is 2.15 columns of white where
-    /// the sides keep one column. Two eighths of a row plus the text row's own
-    /// leading is that one column; the two pad rows split the cell's background
-    /// the same way from each side, so the band's edges stay symmetric.
-    ///
-    /// Only for a narrow pane with a concrete band on both ends: a `Reset` color
-    /// has no fixed ink for a fractional block glyph (it renders in the
-    /// terminal's text color — see the dashboard halo), and a desktop pane keeps
-    /// its full-height pad rows.
+    /// Paint one of the echo's pad rows (see [`paint_pad_row`]).
     fn paint_narrow_pad_row(&self, buf: &mut Buffer, area: Rect, row: u16, band: Color, top: bool) {
-        let base = self.fallback_bg();
-        if !self.appearance().scrollback.layout.narrow
-            || self.flat_background
-            || matches!(band, Color::Reset)
-            || matches!(base, Color::Reset)
-        {
-            return;
-        }
-        // The top pad row carries the band on its lower eighths (`▂` in the
-        // band's color); the bottom one leaves the band as the background and
-        // paints the rest in the pane's color (`▆`), the same two eighths seen
-        // from the other side.
-        let (symbol, style) = if top {
-            (NARROW_PAD_LOWER, Style::default().fg(band).bg(base))
-        } else {
-            (NARROW_PAD_UPPER, Style::default().fg(base).bg(band))
-        };
-        for x in area.x..area.right() {
-            if let Some(cell) = buf.cell_mut((x, row)) {
-                cell.set_symbol(symbol);
-                cell.set_style(style);
-            }
-        }
+        paint_pad_row(
+            buf,
+            area,
+            row,
+            band,
+            self.fallback_bg(),
+            top,
+            self.appearance().scrollback.layout.narrow,
+            self.flat_background,
+        );
     }
 
     /// Whether this entry should display a timestamp on the first content line.
@@ -629,9 +603,17 @@ pub(crate) fn entry_chrome(entry: &ScrollbackEntry, appearance: &AppearanceConfi
         );
     let rail = entry.display_mode != DisplayMode::Collapsed
         && (recently_finished || entry.block.accent(&ctx).is_some());
+    // A band block on a phone-width pane runs to the pane's edges (see
+    // `band_spans_the_pane`): the outer margin column it takes there is band,
+    // so the accent column grows by it and the text stays where it was.
+    let band_edge = if band && appearance.scrollback.layout.narrow {
+        crate::appearance::LayoutConfig::MIN_HPAD
+    } else {
+        0
+    };
     EntryChrome {
         accent: if band {
-            rail_w
+            rail_w + band_edge
         } else if rail {
             rail_w + 1
         } else {
@@ -641,18 +623,76 @@ pub(crate) fn entry_chrome(entry: &ScrollbackEntry, appearance: &AppearanceConfi
     }
 }
 
+/// Whether this entry's band spans the pane's full width: on a phone-width pane
+/// the prompt echo drops its outer left/right margins and runs to the screen's
+/// edges, the way Claude Code's and Codex CLI's prompt areas do. Its own inner
+/// gutters stay, so the text does not move.
+///
+/// The row layout expands the entry by [`LayoutConfig::MIN_HPAD`] on each side
+/// for this (`render`), and [`entry_chrome`] keeps the same columns as band, so
+/// the wrap width, the mouse mapping and the paint agree.
+pub(crate) fn band_spans_the_pane(entry: &ScrollbackEntry, appearance: &AppearanceConfig) -> bool {
+    let chrome = entry_chrome(entry, appearance);
+    appearance.scrollback.layout.narrow && chrome.right_pad > 0
+}
+
+/// Paint one of an entry's pad rows: a phone-width pane keeps a fraction of the
+/// band's color next to the text, every other pane keeps the full-height pad the
+/// background fill already painted.
+///
+/// A terminal row is a little over two columns tall (55x41 measured: 16.5px
+/// cells, 35.5px rows), so a whole pad row is 2.15 columns of white where the
+/// sides keep one column. Two eighths of a row plus the text row's own leading
+/// is that one column; the two pad rows split the cell's background the same
+/// way from each side, so the band's edges stay symmetric.
+///
+/// A `Reset` band or background has no fixed ink for a fractional block glyph
+/// (it renders in the terminal's text color — see the dashboard halo), so those
+/// keep the plain row. Both the scrollback renderer and the sticky header call
+/// this: a pinned prompt has to show the band the one in the flow shows.
+pub(crate) fn paint_pad_row(
+    buf: &mut Buffer,
+    area: Rect,
+    row: u16,
+    band: Color,
+    base: Color,
+    top: bool,
+    narrow: bool,
+    flat_background: bool,
+) {
+    if !narrow || flat_background || matches!(band, Color::Reset) || matches!(base, Color::Reset) {
+        return;
+    }
+    // The top pad row carries the band on its lower eighths (`▂` in the band's
+    // color); the bottom one leaves the band as the background and paints the
+    // rest in the pane's color (`▆`), the same two eighths from the other side.
+    let (symbol, style) = if top {
+        (NARROW_PAD_LOWER, Style::default().fg(band).bg(base))
+    } else {
+        (NARROW_PAD_UPPER, Style::default().fg(base).bg(band))
+    };
+    for x in area.x..area.right() {
+        if let Some(cell) = buf.cell_mut((x, row)) {
+            cell.set_symbol(symbol);
+            cell.set_style(style);
+        }
+    }
+}
+
 /// Width reserved on the right of a block's content for the timestamp overlay.
 ///
-/// The reservation is the string's own width, with no leading pad: the short
-/// format tops out at `"12:30 PM"` (8). The overlay is right-aligned inside that
-/// gutter, one block's right pad short of the entry's edge, so the time never
-/// closes on the band's last column.
+/// The reservation is the string's own width (the short format tops out at
+/// `"12:30 PM"`, 8) plus two columns of air, so wrapped text stops with a
+/// visible margin before the clock instead of abutting it. The overlay is
+/// right-aligned inside that gutter, one column short of the entry's edge, so
+/// the time never closes on the band's last column.
 ///
 /// Free function so every caller that only has the appearance and the block computes the same reservation as
 /// [`EntryRenderer::timestamp_reserved`].
 pub(crate) fn timestamp_reserved_for(appearance: &AppearanceConfig, block: &RenderBlock) -> u16 {
     if appearance.show_timestamps && timestamp_gutter_applies(block) {
-        8 // max short format: "12:30 PM"
+        // "12:30 PM" plus two columns so text keeps a margin before the clock
+        10
     } else {
         0
     }
@@ -1787,16 +1827,17 @@ mod tests {
         assert_eq!(bottom_pad.symbol(), NARROW_PAD_UPPER, "{frame}");
         assert_eq!(bottom_pad.fg, base, "{frame}");
         assert_eq!(bottom_pad.bg, band, "{frame}");
-        // The text rows stay full band.
-        assert_eq!(buf.cell((1, 1)).unwrap().bg, band, "{frame}");
+        // The text rows stay full band, and the text keeps one column of air
+        // inside it (the band spans the pane, so that air is column 1).
+        assert_eq!(buf.cell((2, 1)).unwrap().bg, band, "{frame}");
         assert_eq!(
-            buf.cell((1, 1)).unwrap().symbol(),
+            buf.cell((2, 1)).unwrap().symbol(),
             "x",
-            "the text opens the first text row (one pad row above):\n{frame}"
+            "the text opens the first text row, one pad row above and one column in:\n{frame}"
         );
         let wrap = r.block_content_width(width);
         assert!(
-            (1..1 + wrap).all(|x| buf.cell((x, 1)).unwrap().symbol() == "x"),
+            (2..2 + wrap).all(|x| buf.cell((x, 1)).unwrap().symbol() == "x"),
             "the first text row is {wrap} contiguous text cells (no gap cell):\n{frame}"
         );
 

@@ -656,11 +656,10 @@ impl ScrollbackState {
         }
         // The same entry-area → content-width chain the renderer and the pane use, so a prompt's fold cannot be
         // decided at another width than the one it is measured and painted at.
-        block_content_width_for(
-            &self.appearance,
-            &RenderBlock::UserPrompt(UserPromptBlock::new("")),
-            self.entry_area_width(pane_width),
-        )
+        // The same entry a push would build for a fresh prompt, so the echo's
+        // own chrome (its band's gutters) answers for the width here too.
+        let prompt = ScrollbackEntry::new(RenderBlock::UserPrompt(UserPromptBlock::new("")));
+        block_content_width_for(&prompt, &self.appearance, self.entry_area_width(pane_width))
     }
 
     /// A fresh prompt adopts the fold its width implies, so the submitted echo is a two-row band in a phone-width pane

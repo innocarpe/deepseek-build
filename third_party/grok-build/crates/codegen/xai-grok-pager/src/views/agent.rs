@@ -87,11 +87,11 @@ pub const SHORT_TERMINAL_ROWS: u16 = 16;
 /// The scrollback's floor, pushed as the layout's only `Min`.
 /// The solver ranks it above every `Length`, so an over-committed layout shrinks another row.
 pub const SCROLLBACK_MIN_ROWS: u16 = 5;
-/// One blank row under the bottom status row.
+/// Rows the frame keeps under the bottom status row.
 ///
-/// The frame used to end on that row (the `6.1.2` flush decision); the bottom
-/// text then sat flush on the screen edge. One row of air is the smallest
-/// inset that reads as padding.
+/// One: the smallest step the grid has at the frame's edge — the bottom text
+/// would otherwise sit on the screen edge, and so would zero. A row is ~2.15
+/// columns at the phone's font, which is why nothing larger.
 pub const BOTTOM_MARGIN_ROWS: u16 = 1;
 /// Auto-compact threshold: at or below this height the compact flag handed to rendering is forced on.
 /// Deliberately above [`SHORT_TERMINAL_ROWS`], which still gates the harder cuts (tip-row rendering, dropping the CTA and follow-up rows).
@@ -312,9 +312,9 @@ impl AgentViewLayout {
         // DeepSeek bottom status row: always present so the row count is
         // stable; renders blank when no status data has landed.
         constraints.push(Constraint::Length(1));
-        // One blank row under the last text row: the frame's floor keeps a
-        // single row of air so the bottom text never sits flush on the screen
-        // edge.
+        // One blank row under the last text row: the frame's floor keeps the
+        // smallest step the grid has, so the bottom text never sits on the
+        // screen edge.
         constraints.push(Constraint::Length(BOTTOM_MARGIN_ROWS));
         let chunks = Layout::vertical(constraints).split(inner_area);
         let mut chunks = chunks.iter().copied();
@@ -2123,7 +2123,7 @@ mod tests {
     /// The frame spends no rows on margins at any width: the status bar lands
     /// on row 0 (no outer vpad, no status gap), the outer pads are the
     /// selection-border floor, and the only air below the content is the one
-    /// blank floor row under the bottom status row.
+    /// blank floor row under the bottom status row ([`BOTTOM_MARGIN_ROWS`]).
     #[test]
     fn layout_spends_no_rows_on_margins_at_any_width() {
         for (cols, rows) in [(55u16, 41u16), (120, 40), (180, 50)] {
@@ -2158,19 +2158,19 @@ mod tests {
             assert_eq!(
                 layout.deepseek_status.bottom() + BOTTOM_MARGIN_ROWS,
                 area.bottom(),
-                "{cols}x{rows}: the status row keeps {BOTTOM_MARGIN_ROWS} blank floor row(s) under it, got {:?}",
+                "{cols}x{rows}: the status row keeps {BOTTOM_MARGIN_ROWS} row(s) under it, got {:?}",
                 layout.deepseek_status,
             );
             assert_eq!(
                 layout.bottom_margin.height, BOTTOM_MARGIN_ROWS,
-                "{cols}x{rows}: the floor row is the frame's last row, got {:?}",
+                "{cols}x{rows}: the rows under the status row are zero-area by default, got {:?}",
                 layout.bottom_margin,
             );
             assert_eq!(
                 layout.scrollback.height,
                 rows - 5 - BOTTOM_MARGIN_ROWS,
                 "{cols}x{rows}: every row but the status bar, prompt, shortcuts, \
-                 DeepSeek status and floor rows is scrollback, got {:?}",
+                 DeepSeek status and bottom-margin rows is scrollback, got {:?}",
                 layout.scrollback,
             );
         }

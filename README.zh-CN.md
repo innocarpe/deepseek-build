@@ -97,6 +97,9 @@ deepseek-build
 # 续接最近的全屏会话
 deepseek-build --resume
 
+# 继续最近的全屏会话（Claude Code 风格的 -c）
+deepseek-build -c
+
 # 执行一轮非交互式对话
 deepseek-build run "Explain the architecture of this repository."
 

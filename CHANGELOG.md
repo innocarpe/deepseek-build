@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `dsb -c` / `dsb --continue` continues the most recent full-screen session for the current workspace, forwarding the vendored pager's `--continue` (the flag Claude Code users reach for). It conflicts with `--resume` and with line-mode `--session`, and `run` / `chat` / `repl` reject it like the other TUI-only flags. The four READMEs and user-guide 03 document it.
+
 ## 6.1.3 — 2026-09-26
 
 - The text band's gutters are symmetric and every text block sits on the same band. Block text starts one column after the accent rail (the rail's right side gets its gutter back) and stops two columns before the pane edge — the right pad mirrors the rail's column plus the left pad — so both gutters measure three columns on a 55-column pane. The composer insets its text by one cell on all four sides (border row/column plus one inset cell above, one below before the divider), the turn status row drops the blank rows that surrounded it and takes the scrollback's left/right insets, and the queue pane's left inset follows the same formula. The default `[scrollback.layout]` pads move `block_pad_left 0 → 1` and `block_pad_right 0 → 2`, and `TurnStatusConfig::gap` defaults to false. Desktop panes move identically: the pads and insets are width-independent.

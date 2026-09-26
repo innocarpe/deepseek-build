@@ -101,6 +101,9 @@ deepseek-build
 # Resume the most recent TUI session
 deepseek-build --resume
 
+# Continue the most recent TUI session (Claude Code-style -c)
+deepseek-build -c
+
 # Run one non-interactive turn
 deepseek-build run "Explain the architecture of this repository."
 

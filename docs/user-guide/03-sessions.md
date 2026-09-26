@@ -58,20 +58,22 @@ Resume this session with:
   dsb --resume 019fda93-767a-7181-a90c-e0327af18dd2
 ```
 
-The wrapper forwards `--resume` to the TUI:
+The wrapper forwards `--resume` / `--continue` to the TUI:
 
 | Command | Effect |
 |---------|--------|
 | `dsb --resume <session-id>` | Resume a specific TUI session |
 | `dsb -r <session-id>` | Short flag (same as above) |
 | `dsb --resume` | Resume the most recent TUI session |
+| `dsb -c` / `dsb --continue` | Continue the most recent TUI session for this workspace (same effect as `dsb --resume` with no id; the vendored `--continue`) |
 | `dsb agent --resume <session-id>` | Forward extra TUI args plus resume |
 | `dsb --minimal --resume <id>` | Resume in minimal mode |
 
-`--resume` conflicts with line-mode `--session`: TUI sessions resume the
-full-screen UI, while `--session` persists/resumes JSONL line-mode runs. The
-TUI-only flags (`--resume` / `--minimal` / `--fullscreen`) are rejected on
-`run` / `chat` / `repl` with a pointer to `--session`.
+`--resume` and `--continue` conflict with each other and with line-mode
+`--session`: TUI sessions resume the full-screen UI, while `--session`
+persists/resumes JSONL line-mode runs. The TUI-only flags (`--resume` /
+`--continue` / `--minimal` / `--fullscreen`) are rejected on `run` / `chat` /
+`repl` with a pointer to `--session`.
 
 ## Limits
 

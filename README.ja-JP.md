@@ -100,6 +100,9 @@ deepseek-build
 # 直近のフルスクリーンセッションを再開
 deepseek-build --resume
 
+# 直近のフルスクリーンセッションを継続（Claude Code 風の -c）
+deepseek-build -c
+
 # 非対話ターンを 1 回実行
 deepseek-build run "Explain the architecture of this repository."
 

@@ -197,9 +197,9 @@ fn assert_one_band(buf: &Buffer, balance: &str, cache: &str, model: &str, mode: 
         );
     }
     assert_eq!(
-        band_y + 1,
+        band_y + 1 + crate::views::agent::BOTTOM_MARGIN_ROWS,
         buf.area.height,
-        "the band is the last row of the flush frame, got {band_y} in {}",
+        "the band keeps the frame's floor row(s) under it, got {band_y} in {}",
         buf.area.height
     );
     assert!(

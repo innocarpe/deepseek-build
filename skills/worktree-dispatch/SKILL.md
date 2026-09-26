@@ -107,6 +107,18 @@ Variables used below:
 - **`cargo` on PATH.** The dsb tool shell can lack it (measured 2026-09-26,
   this workspace): `export PATH="$HOME/.cargo/bin:$PATH"` first.
   `scripts/build-grok-pager.sh` exports that itself.
+- **Queue tools for the shared target.** `./scripts/vendor-build.sh status`
+  reads that queue — holders, waiters, elapsed, command, worktree, plus host
+  free / swap / load5m and the memory-gate verdict (exit 1 while busy).
+  `./scripts/vendor-build.sh clone <slug>` copies the target copy-on-write to
+  `~/.cache/dsb-vendor-targets/<slug>` and prints the one line to eval
+  (registry deps stay fresh, workspace crates rebuild; `prune` frees idle
+  clones). `./scripts/vendor-build.sh run -- <cmd>` passes a free queue
+  through as-is and otherwise starts only when the memory gate passes — in a
+  clone with `CARGO_BUILD_JOBS=2`; denied, status is printed and nothing
+  starts. Never call cargo from inside a cargo build or test on a shared
+  target — that is a real lock cycle, and nothing under
+  `third_party/grok-build` does it today.
 
 ## 1. Open the worktree with the agent already in it
 

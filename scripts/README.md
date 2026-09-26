@@ -4,6 +4,8 @@
 |--------|------|
 | `install.sh` | Install **`deepseek-build`** + **`dsb`** onto PATH (`~/.deepseek-build/bin` or Cargo bin) |
 | `build-grok-pager.sh` | Build/check vendored Grok composition root (`deepseek-build-agent`) |
+| `vendor-build.sh` | Read the shared vendored-Grok build-target queue — `status` reports lock holders/waiters, elapsed, command and worktree (exit 1 while busy) — and skip the wait: `clone` makes an APFS copy-on-write personal target under `~/.cache/dsb-vendor-targets/<slug>`, `prune` frees idle ones (base target untouched) |
+| `test-vendor-build.sh` | Hermetic test for `vendor-build.sh` (fixture target tree + python3 flock holders and fake rustc children; no cargo, no network, no `~/.cache` writes) |
 | `check-semver.sh` | Fail-close: workspace version must be full SemVer `MAJOR.MINOR.PATCH` |
 | `bump-version.sh` | Bump the version across `Cargo.toml`, `package.json`, `Cargo.lock`, `CHANGELOG.md`, README literals and the versions log; **moves the `Unreleased` items into the new section** (`--dry-run` previews the move) |
 | `reorder-changelog.sh` | Reorder CHANGELOG to the invariant (Unreleased top, newest-first); `--check` for CI. Reorders only — it does not move items between sections |

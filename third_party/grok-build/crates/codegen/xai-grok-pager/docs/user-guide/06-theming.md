@@ -186,11 +186,11 @@ Control viewport padding and block spacing:
 
 ```toml
 [scrollback.layout]
-outer_vpad = 1          # Vertical padding (top/bottom) for the viewport
-outer_hpad_left = 2     # Left margin (minimum: 1)
-outer_hpad_right = 2    # Right margin (minimum: 1)
-block_pad_left = 2      # Padding between accent line and content
-block_pad_right = 2     # Padding after content at right edge
+outer_vpad = 0          # Vertical padding (top/bottom) for the viewport (0 = flush)
+outer_hpad_left = 1     # Left margin (minimum: 1)
+outer_hpad_right = 1    # Right margin (minimum: 1)
+block_pad_left = 0      # Padding between accent line and content
+block_pad_right = 0     # Padding after content at right edge
 ```
 
 ### Scrollbar

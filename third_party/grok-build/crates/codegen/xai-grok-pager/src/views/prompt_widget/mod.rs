@@ -779,7 +779,7 @@ impl PromptWidget {
         self.compact = compact;
     }
 
-    /// Current compact flag (the derived render value fanned out by `AppView::apply_effective_compact`).
+    /// Current compact flag (the derived render value fanned out by `AppView::apply_effective_density`).
     pub fn compact(&self) -> bool {
         self.compact
     }

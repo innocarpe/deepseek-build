@@ -1062,7 +1062,10 @@ pub(crate) async fn run(
     };
     app.pending_startup = Some(pending_startup);
     app.tracing_rx = Some(tracing_handle.rx);
-    app.last_known_terminal_rows = crossterm::terminal::size().map(|(_, r)| r).unwrap_or(0);
+    if let Ok((cols, rows)) = crossterm::terminal::size() {
+        app.last_known_terminal_rows = rows;
+        app.last_known_terminal_cols = cols;
+    }
     app.leader_mode = connection.leader_status_rx.is_some();
     app.screen_mode = term_state.screen_mode;
     app.registry = crate::actions::ActionRegistry::defaults_for(term_state.screen_mode);
@@ -1528,6 +1531,8 @@ pub(crate) async fn run(
         crate::appearance::cache::load(),
         app.last_known_terminal_rows,
     );
+    initial_config.scrollback.layout.narrow =
+        crate::views::agent::effective_narrow(app.last_known_terminal_cols);
     initial_config.show_timestamps = crate::appearance::cache::load_timestamps();
     initial_config.show_timeline = crate::appearance::cache::load_show_timeline();
     let tick_interval = initial_config.animation.tick_interval();
@@ -1613,7 +1618,7 @@ pub(crate) async fn run(
             .and_then(|s| s.keep_text_selection_default.as_deref()),
         &app.current_ui,
     );
-    app.apply_effective_compact();
+    app.apply_effective_density();
     app.scroll_config = crate::input::mouse::ScrollConfig::from_settings();
     crate::terminal::xtversion::probe_at_startup();
     let (input_tx, mut input_rx) = tokio::sync::mpsc::unbounded_channel::<TimedInputEvent>();
@@ -2585,7 +2590,7 @@ pub(crate) async fn run(
                 tick_interval = config.animation.tick_interval();
                 crate::appearance::set_tab_width(config.scrollback.display.tab_width);
                 app.set_appearance(config);
-                app.apply_effective_compact();
+                app.apply_effective_density();
 
                 // Reload the scroll settings from the pager caches (resynced when a setting changes via the settings registry)
                 app.scroll_config = crate::input::mouse::ScrollConfig::from_settings();

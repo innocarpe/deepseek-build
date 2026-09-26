@@ -136,6 +136,68 @@ mod tests {
         assert_eq!(layout.content.height, 10);
     }
 
+    /// The default frame spends no columns on block pads: content starts at the
+    /// accent column's right edge and wraps four columns wider than the padded
+    /// frame did. The accent column itself stays.
+    #[test]
+    fn default_layout_reclaims_both_block_pads() {
+        let area = Rect::new(0, 0, 53, 10);
+        let layout = HorizontalLayout::new(area, &LayoutConfig::default());
+
+        assert_eq!(layout.accent.width, HorizontalLayout::ACCENT);
+        assert_eq!(
+            layout.left_padding.width, 0,
+            "no gutter between the accent column and the text"
+        );
+        assert_eq!(layout.right_padding.width, 0);
+        assert_eq!(
+            layout.content.x,
+            layout.accent.right(),
+            "the text starts at the accent's right edge, got {:?} vs accent {:?}",
+            layout.content,
+            layout.accent,
+        );
+        assert_eq!(
+            layout.content.width,
+            area.width - HorizontalLayout::ACCENT,
+            "everything but the accent column is text"
+        );
+        assert_eq!(
+            HorizontalLayout::chrome_width(&LayoutConfig::default()),
+            HorizontalLayout::ACCENT,
+            "the block's only chrome is the accent column"
+        );
+    }
+
+    /// The one reserved outer column is the selection border's: the box's left
+    /// border draws into the left margin column and its right border into the
+    /// right one, so the whole box stays inside the pane at the resolved default.
+    #[test]
+    fn selection_border_fits_the_reserved_outer_column() {
+        let config = LayoutConfig::default();
+        let pane = Rect::new(0, 0, 55, 10);
+        let inner = Rect::new(
+            pane.x + config.eff_hpad_left(false),
+            pane.y,
+            pane.width - config.eff_hpad_left(false) - config.eff_hpad_right(false),
+            pane.height,
+        );
+        let layout = HorizontalLayout::new(inner, &config);
+        let selection = layout.selection_area();
+
+        assert_eq!(
+            selection.x, pane.x,
+            "the left border draws into the reserved column"
+        );
+        assert_eq!(
+            selection.right(),
+            pane.right(),
+            "and the right border into the opposite one, got {:?} in pane {:?}",
+            selection,
+            pane,
+        );
+    }
+
     #[test]
     fn test_entry_content_area() {
         let config = LayoutConfig::default();

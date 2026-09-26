@@ -21,9 +21,13 @@ const COLLAPSED_MAX_LINES: usize = 3;
 /// ellipsis still names the turn. Anything wider keeps [`COLLAPSED_MAX_LINES`],
 /// so the desktop layout is untouched.
 ///
+/// [`NARROW_TERMINAL_COLS`](crate::appearance::NARROW_TERMINAL_COLS) is the same
+/// number: the whole frame's phone-width density keys off it, and this alias
+/// keeps the echo fold and the composer prefix on that one threshold.
+///
 /// `pub(crate)` so the input box can apply the same narrow-pane rule to its decorative `❯` without a second
 /// threshold. The echo and the composer agree about what "phone width" means.
-pub(crate) const COLLAPSED_NARROW_TERMINAL_COLS: u16 = 60;
+pub(crate) const COLLAPSED_NARROW_TERMINAL_COLS: u16 = crate::appearance::NARROW_TERMINAL_COLS;
 
 /// Max visible lines when a user prompt is collapsed on a narrow terminal.
 const COLLAPSED_NARROW_MAX_LINES: usize = 1;
@@ -535,6 +539,9 @@ impl BlockContent for UserPromptBlock {
     /// On a phone-width pane the prompt echo is a one-row band, and the two blank pad rows around it cost as much
     /// vertical space as the band itself. Drop the pad there. Wider panes keep the configured pad, so the desktop
     /// rhythm is untouched. The threshold is the same [`COLLAPSED_NARROW_TERMINAL_COLS`] the narrow fold already uses.
+    ///
+    /// This rule survives the trait default's narrow-pane drop (`layout.narrow`) because it is the stricter one on a
+    /// mid-width pane: there the pane is wide but the echo's own content column is not.
     fn has_vpad_for_width(&self, appearance: &AppearanceConfig, content_width: u16) -> bool {
         content_width > COLLAPSED_NARROW_TERMINAL_COLS && self.has_vpad_for(appearance)
     }

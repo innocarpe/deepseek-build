@@ -705,11 +705,11 @@ Compact mode isn't persisted here — control it at runtime with `[ui] compact_m
 
 ```toml
 [scrollback.layout]
-outer_vpad = 1                        # vertical padding
-outer_hpad_left = 2                   # left horizontal padding
-outer_hpad_right = 2                  # right horizontal padding
-block_pad_left = 2                    # padding inside block, left of content
-block_pad_right = 2                   # padding inside block, right of content
+outer_vpad = 0                        # vertical padding (0 = flush)
+outer_hpad_left = 1                   # left horizontal padding (minimum 1)
+outer_hpad_right = 1                  # right horizontal padding (minimum 1)
+block_pad_left = 0                    # padding inside block, left of content
+block_pad_right = 0                   # padding inside block, right of content
 
 [scrollback.scrollbar]
 enabled = true                        # show scrollbar

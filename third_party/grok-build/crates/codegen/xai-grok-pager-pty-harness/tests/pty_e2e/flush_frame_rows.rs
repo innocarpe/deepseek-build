@@ -2,12 +2,17 @@
 #[allow(unused_imports)]
 use super::common::*;
 
-// Auto-compact: the top padding row disappears on tiny terminals. Growing the terminal back
-// restores the padding; the user's persisted compact setting never changes. A YAML scenario cannot
-// assert on-screen positions, so this test reads the first non-blank screen row directly.
+// Flush frame: the outer margin carries no vertical padding at any terminal size,
+// so the status bar starts on row 0 whether the terminal is tall or short.
+//
+// These cases used to pin the opposite — a blank top padding row at tall sizes
+// that auto-compact removed. That row is gone at every size now, so the frame is
+// flush everywhere; auto-compact's remaining layout effect is the prompt gap, and
+// the derivation itself is pinned by the dispatch unit tests
+// (`resize_below_threshold_derives_compact_without_touching_user_setting`).
 
 /// A height short enough to engage auto-compact.
-/// It is above `SHORT_TERMINAL_ROWS` (16) but at most `AUTO_COMPACT_MAX_ROWS` (20), so it pins the auto-compact derivation, not the layout trims.
+/// It is above `SHORT_TERMINAL_ROWS` (16) but at most `AUTO_COMPACT_MAX_ROWS` (20).
 const SHORT_ROWS: u16 = 18;
 
 /// Index of the first screen row with any non-whitespace content, panicking with the screen when the whole screen is blank.
@@ -19,14 +24,14 @@ fn first_content_row(harness: &PtyHarness, when: &str) -> u16 {
         .unwrap_or_else(|| panic!("{when}: screen is entirely blank\nscreen:\n{screen}")) as u16
 }
 
-/// Auto-compact drops the top padding row on tiny terminals. Tall: row 0 is the blank top padding
-/// row (first content below it). At `SHORT_ROWS`: auto-compact removes the padding and the status
-/// bar lands on row 0. Back tall: the padding (and the blank row 0) comes back.
+/// The flush frame holds at a tall size, after shrinking into the auto-compact
+/// zone, and after growing back: the status bar owns row 0 and no blank margin
+/// row appears, so the scrollback keeps the row a padded frame would spend on it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore]
-async fn auto_compact_top_row() {
+async fn flush_frame_holds_status_bar_on_row_zero() {
     let content = ContentController::start().await.expect("start content");
-    content.set_response(format!("{MOCK_RESPONSE_SENTINEL} auto-compact probe."));
+    content.set_response(format!("{MOCK_RESPONSE_SENTINEL} flush probe."));
 
     let binary = pager_binary().expect("resolve pager binary");
     let mut harness =
@@ -47,14 +52,15 @@ async fn auto_compact_top_row() {
     harness.update(Duration::from_millis(500));
 
     let tall_row = first_content_row(&harness, "tall spawn");
-    assert!(
-        tall_row > 0,
-        "tall terminal must keep the blank top padding row (content starts below \
-         row 0), got first content on row {tall_row}\nscreen:\n{}",
+    assert_eq!(
+        tall_row,
+        0,
+        "a tall terminal starts at the status bar row, got first content on \
+         row {tall_row}\nscreen:\n{}",
         harness.screen_contents()
     );
 
-    // Shrink to an auto-compact height: the padding row must vanish.
+    // Shrink into the auto-compact zone: the frame stays flush.
     harness
         .resize(SHORT_ROWS, DEFAULT_COLS)
         .expect("resize short");
@@ -68,21 +74,22 @@ async fn auto_compact_top_row() {
     assert_eq!(
         short_row,
         0,
-        "auto-compact must drop the top padding row at {SHORT_ROWS} rows \
-         (status bar on row 0)\nscreen:\n{}",
+        "the flush frame stays flush at {SHORT_ROWS} rows (status bar on row 0)\
+         \nscreen:\n{}",
         harness.screen_contents()
     );
 
-    // Grow back: the derived value reverts to the user's setting.
+    // Grow back: still flush.
     harness
         .resize(DEFAULT_ROWS, DEFAULT_COLS)
         .expect("resize tall");
     harness.update(Duration::from_millis(900));
     let restored_row = first_content_row(&harness, "after grow");
-    assert!(
-        restored_row > 0,
-        "growing back must restore the blank top padding row, got first content \
-         on row {restored_row}\nscreen:\n{}",
+    assert_eq!(
+        restored_row,
+        0,
+        "growing back keeps the status bar on row 0, got first content on \
+         row {restored_row}\nscreen:\n{}",
         harness.screen_contents()
     );
     assert!(
@@ -94,12 +101,12 @@ async fn auto_compact_top_row() {
     harness.quit().expect("clean quit");
 }
 
-/// **Auto-compact engages at startup, with no resize event.**
-/// Spawning already tiny (no resize event ever fires) must still land the status bar on row 0.
-/// Only the startup read of `crossterm::terminal::size()` into the initial appearance can have derived the compact flag.
+/// **A tiny spawn is flush from the first frame.**
+/// No resize event ever fires here, so the startup size read is the only thing
+/// that can have laid the frame out; the status bar must still land on row 0.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore]
-async fn auto_compact_at_startup() {
+async fn flush_frame_at_startup() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{MOCK_RESPONSE_SENTINEL} startup probe."));
 
@@ -125,8 +132,8 @@ async fn auto_compact_at_startup() {
     assert_eq!(
         row,
         0,
-        "a {SHORT_ROWS}-row spawn must start auto-compacted (status bar on \
-         row 0, no top padding row) without any resize\nscreen:\n{}",
+        "a {SHORT_ROWS}-row spawn starts at the status bar row (no top padding \
+         row) without any resize\nscreen:\n{}",
         harness.screen_contents()
     );
     assert!(

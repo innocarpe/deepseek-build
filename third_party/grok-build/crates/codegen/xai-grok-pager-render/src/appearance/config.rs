@@ -76,7 +76,7 @@ pub struct PromptViewConfig {
     pub show_prefix: bool,
     /// Compact mode: remove top padding and reduce info block padding. Toggled at runtime via `/compact-mode`.
     /// This is the DERIVED render value, which the app may force on for short terminals (the persisted user setting is `UiConfig::compact_mode`).
-    /// In the pager, write it only via `AppView::apply_effective_compact`.
+    /// In the pager, write it only via `AppView::apply_effective_density`.
     pub compact: bool,
 }
 
@@ -164,6 +164,14 @@ impl Default for ScrollbackDisplayConfig {
     }
 }
 
+/// Pane width (columns) at or below which the pager applies its phone-only
+/// render gates: the prompt echo folds to one row, its decorative `❯` is
+/// dropped, and the default block vpad goes away.
+///
+/// The measured iPhone Orca pane is 55 columns and the narrowest desktop pane
+/// on the same machine is 80, so 60 separates them with margin.
+pub const NARROW_TERMINAL_COLS: u16 = 60;
+
 #[derive(Debug, Clone, Copy)]
 pub struct LayoutConfig {
     /// Vertical padding (top/bottom) for outer viewport.
@@ -176,16 +184,26 @@ pub struct LayoutConfig {
     pub block_pad_left: u16,
     /// Padding after content, at right edge (inside block bg).
     pub block_pad_right: u16,
+    /// DERIVED render value: the pane is at or below [`NARROW_TERMINAL_COLS`].
+    /// Written only by the pager's effective-density derivation (`AppView::apply_effective_density`).
+    /// It gates phone-only *behavior* (the default block vpad drop), never the pad
+    /// values themselves: those are tight at every width.
+    pub narrow: bool,
 }
 
 impl Default for LayoutConfig {
     fn default() -> Self {
         Self {
-            outer_vpad: 1,
-            outer_hpad_left: 2,
-            outer_hpad_right: 2,
-            block_pad_left: 2,
-            block_pad_right: 2, // Match left padding for symmetry
+            // Flush frame: the pads a terminal can afford to spend are the ones
+            // the selection border draws into and one column of gutter after the
+            // accent rail. Claude Code and Codex CLI sit this tight, and every
+            // row/column saved here is content.
+            outer_vpad: 0,
+            outer_hpad_left: LayoutConfig::MIN_HPAD,
+            outer_hpad_right: LayoutConfig::MIN_HPAD,
+            block_pad_left: 0,
+            block_pad_right: 0,
+            narrow: false,
         }
     }
 }
@@ -217,6 +235,20 @@ impl LayoutConfig {
         }
     }
 
+    /// Effective left padding inside a bordered box (the composer).
+    ///
+    /// Never below 1: the box's own border glyphs own the outermost column, so
+    /// zero inset would paint text over the border. One column matches the box's
+    /// one-row top and bottom border rows, keeping the four sides equal.
+    pub fn eff_box_pad_left(&self) -> u16 {
+        self.block_pad_left.max(Self::MIN_HPAD)
+    }
+
+    /// Effective right padding inside a bordered box (the composer); see [`Self::eff_box_pad_left`].
+    pub fn eff_box_pad_right(&self) -> u16 {
+        self.block_pad_right.max(Self::MIN_HPAD)
+    }
+
     pub fn validated(self) -> Self {
         Self {
             outer_vpad: self.outer_vpad,
@@ -224,6 +256,7 @@ impl LayoutConfig {
             outer_hpad_right: self.outer_hpad_right.max(Self::MIN_HPAD),
             block_pad_left: self.block_pad_left,
             block_pad_right: self.block_pad_right,
+            narrow: self.narrow,
         }
     }
 }
@@ -792,26 +825,26 @@ impl Default for RawScrollbackDisplayConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Documented, DocumentedFields)]
 #[serde(default)]
 pub struct RawLayoutConfig {
-    /// Vertical padding (top/bottom) for outer viewport.
+    /// Vertical padding (top/bottom) for outer viewport. Default 0 (flush).
     pub outer_vpad: u16,
-    /// Left horizontal padding for outer viewport (min 1).
+    /// Left horizontal padding for outer viewport (min 1: the selection border draws into it).
     pub outer_hpad_left: u16,
     /// Right horizontal padding for outer viewport (min 1).
     pub outer_hpad_right: u16,
-    /// Padding after accent line, before content.
+    /// Padding after accent line, before content. Default 0 (flush).
     pub block_pad_left: u16,
-    /// Padding after content, at right edge.
+    /// Padding after content, at right edge. Default 0 (flush).
     pub block_pad_right: u16,
 }
 
 impl Default for RawLayoutConfig {
     fn default() -> Self {
         Self {
-            outer_vpad: 1,
-            outer_hpad_left: 2,
-            outer_hpad_right: 2,
-            block_pad_left: 2,
-            block_pad_right: 2,
+            outer_vpad: 0,
+            outer_hpad_left: 1,
+            outer_hpad_right: 1,
+            block_pad_left: 0,
+            block_pad_right: 0,
         }
     }
 }
@@ -1331,6 +1364,9 @@ impl From<RawLayoutConfig> for LayoutConfig {
             outer_hpad_right: raw.outer_hpad_right,
             block_pad_left: raw.block_pad_left,
             block_pad_right: raw.block_pad_right,
+            // The pane width is a runtime fact, not a config value; the pager's
+            // density derivation writes it once the terminal size is known.
+            narrow: false,
         }
         .validated()
     }
@@ -1886,6 +1922,76 @@ mod tests {
         assert_eq!(lookup_named_color("BLUE"), Ok(Color::Rgb(77, 121, 255)));
         assert_eq!(lookup_named_color("blue"), Ok(Color::Rgb(77, 121, 255)));
         assert!(lookup_named_color("NOTACOLOR").is_err());
+    }
+
+    /// The default frame is flush on every width: no blank outer margin rows,
+    /// one-column outer margin (the selection border's column), no block pads.
+    #[test]
+    fn default_layout_is_flush() {
+        let cfg = LayoutConfig::default();
+        assert_eq!(cfg.outer_vpad, 0, "no blank margin rows above or below");
+        assert_eq!(
+            cfg.outer_hpad_left,
+            LayoutConfig::MIN_HPAD,
+            "the outer margin is the selection border's column"
+        );
+        assert_eq!(cfg.outer_hpad_right, LayoutConfig::MIN_HPAD);
+        assert_eq!(
+            cfg.block_pad_left, 0,
+            "an echo band's text starts at the accent column"
+        );
+        assert_eq!(cfg.block_pad_right, 0);
+
+        assert_eq!(cfg.eff_outer_vpad(false), 0);
+        assert_eq!(cfg.eff_hpad_left(false), LayoutConfig::MIN_HPAD);
+        assert_eq!(cfg.eff_hpad_right(false), LayoutConfig::MIN_HPAD);
+        // Compact keeps the same frame: there is nothing left to trim.
+        assert_eq!(cfg.eff_outer_vpad(true), 0);
+        assert_eq!(cfg.eff_hpad_left(true), LayoutConfig::MIN_HPAD);
+    }
+
+    /// A parsed config inherits the flush frame, and the narrow flag starts off
+    /// (the pane width is a runtime fact, not a config value).
+    #[test]
+    fn parsed_config_is_flush_and_not_narrow() {
+        let raw = RawAppearanceConfig::default();
+        let runtime: AppearanceConfig = raw.into();
+        let layout = runtime.scrollback.layout;
+        assert!(!layout.narrow, "a parsed config never starts narrow");
+        assert_eq!(layout.outer_vpad, 0, "the default document is flush too");
+        assert_eq!(layout.outer_hpad_left, LayoutConfig::MIN_HPAD);
+        assert_eq!(layout.block_pad_left, 0);
+
+        let phone = LayoutConfig {
+            narrow: true,
+            ..LayoutConfig::default()
+        };
+        assert!(
+            phone.validated().narrow,
+            "validation keeps the derived flag"
+        );
+    }
+
+    /// The bordered composer keeps a one-column inset at every width — its border
+    /// glyphs own the outermost column — and a user's wider pad still passes
+    /// through.
+    #[test]
+    fn box_pads_have_a_one_column_floor() {
+        let flush = LayoutConfig::default();
+        assert_eq!(
+            flush.eff_box_pad_left(),
+            LayoutConfig::MIN_HPAD,
+            "text must not paint over the composer's border"
+        );
+        assert_eq!(flush.eff_box_pad_right(), LayoutConfig::MIN_HPAD);
+
+        let roomy = LayoutConfig {
+            block_pad_left: 3,
+            block_pad_right: 2,
+            ..LayoutConfig::default()
+        };
+        assert_eq!(roomy.eff_box_pad_left(), 3);
+        assert_eq!(roomy.eff_box_pad_right(), 2);
     }
 
     #[test]

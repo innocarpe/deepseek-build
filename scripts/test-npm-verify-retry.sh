@@ -256,3 +256,8 @@ printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 # Same job: the primary-checkout guard is hermetic and release.sh is already in this filter.
 echo "=== primary checkout guard ==="
 "$(cd "$(dirname "$0")" && pwd)/test-refuse-primary-checkout.sh"
+
+# Same job: the one-tab launch pin is hermetic, and no path filter covers
+# skills/orca-tab, so it rides in this job with the guard above.
+echo "=== orca-tab one-tab pin ==="
+"$(cd "$(dirname "$0")" && pwd)/test-orca-tab-one-tab.sh"

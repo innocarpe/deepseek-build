@@ -52,11 +52,6 @@ const THEME_CHOICES: &[EnumChoice] = &[
         description: "DeepSeek accents on a hue-neutral gray ramp.",
     },
     EnumChoice {
-        canonical: "groknight",
-        display: "Grok Night",
-        description: "Neutral dark with magenta accent.",
-    },
-    EnumChoice {
         canonical: "grokday",
         display: "Grok Day",
         description: "Light theme for bright environments.",
@@ -453,11 +448,6 @@ const CONCRETE_THEME_CHOICES: &[EnumChoice] = &[
         canonical: "deepseeknight-neutral",
         display: "DeepSeek Night Neutral",
         description: "DeepSeek accents on a hue-neutral gray ramp.",
-    },
-    EnumChoice {
-        canonical: "groknight",
-        display: "Grok Night",
-        description: "Neutral dark with magenta accent.",
     },
     EnumChoice {
         canonical: "grokday",

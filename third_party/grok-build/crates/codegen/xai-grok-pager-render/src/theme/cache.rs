@@ -176,7 +176,7 @@ pub fn invalidate_auto_theme_config() {
 
 // -- Theme resolution --------------------------------------------------------
 
-/// Concrete kind, never `Auto`. Env (`GROK_THEME` / `LC_GROK_THEME`), then `[ui].theme`, then `GrokNight`.
+/// Concrete kind, never `Auto`. Env (`GROK_THEME` / `LC_GROK_THEME`), then `[ui].theme`, then `DeepSeekNight`.
 #[must_use]
 pub fn resolve_initial_theme() -> ThemeKind {
     resolve_initial_theme_from(env_theme_name().as_deref(), load_from_disk(), true)
@@ -244,7 +244,7 @@ fn resolve_from_appearance(appearance: Option<system_appearance::SystemAppearanc
         .unwrap_or(ThemeKind::DeepSeekNight)
 }
 
-/// Desktop APIs and env hints only (no OSC 11), so it is safe while `EventStream` is active. Detection failure is `GrokNight`.
+/// Desktop APIs and env hints only (no OSC 11), so it is safe while `EventStream` is active. Detection failure is `DeepSeekNight`.
 #[must_use]
 pub fn resolve_auto() -> ThemeKind {
     resolve_from_appearance(system_appearance::detect())
@@ -599,11 +599,11 @@ mod tests {
     // -- resolve_auto --------------------------------------------------------
 
     #[test]
-    fn resolve_auto_dark_system_returns_groknight() {
+    fn resolve_auto_dark_system_returns_product_night() {
         with_test_env(|| {
             system_appearance::set_mock(Some(system_appearance::SystemAppearance::Dark));
             let result = resolve_auto();
-            assert_eq!(result, ThemeKind::GrokNight);
+            assert_eq!(result, ThemeKind::DeepSeekNight);
         });
     }
 
@@ -617,11 +617,11 @@ mod tests {
     }
 
     #[test]
-    fn resolve_auto_detection_failure_returns_groknight() {
+    fn resolve_auto_detection_failure_returns_product_night() {
         with_test_env(|| {
             system_appearance::set_mock(None);
             let result = resolve_auto();
-            assert_eq!(result, ThemeKind::GrokNight);
+            assert_eq!(result, ThemeKind::DeepSeekNight);
         });
     }
 
@@ -648,10 +648,10 @@ mod tests {
     // -- resolve_from_config (resolve_initial_theme inner logic) ---------------
 
     #[test]
-    fn resolve_from_config_no_config_returns_groknight() {
+    fn resolve_from_config_no_config_returns_product_night() {
         with_test_env(|| {
             let result = resolve_from_config(None, true);
-            assert_eq!(result, ThemeKind::GrokNight);
+            assert_eq!(result, ThemeKind::DeepSeekNight);
             assert!(!is_auto_mode());
         });
     }
@@ -673,7 +673,7 @@ mod tests {
         with_test_env(|| {
             system_appearance::set_mock(Some(system_appearance::SystemAppearance::Dark));
             let result = resolve_from_config(Some(ThemeKind::Auto), true);
-            assert_eq!(result, ThemeKind::GrokNight);
+            assert_eq!(result, ThemeKind::DeepSeekNight);
             assert!(is_auto_mode(), "auto config must enable auto mode");
         });
     }
@@ -693,7 +693,7 @@ mod tests {
         with_test_env(|| {
             system_appearance::set_mock(None);
             let result = resolve_from_config(Some(ThemeKind::Auto), true);
-            assert_eq!(result, ThemeKind::GrokNight);
+            assert_eq!(result, ThemeKind::DeepSeekNight);
             assert!(is_auto_mode(), "auto mode is set before detection");
         });
     }

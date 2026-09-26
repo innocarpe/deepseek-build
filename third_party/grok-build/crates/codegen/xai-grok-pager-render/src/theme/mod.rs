@@ -68,16 +68,25 @@ impl ThemeKind {
         ThemeKind::DeepSeekNightNeutral,
     ];
 
-    /// [`ALL`] minus gated `terminal`. Ignores color capability ([`available()`] filters that). Derived from [`ALL`] so a new theme cannot be omitted.
+    /// [`ALL`] minus legacy [`ThemeKind::GrokNight`] and, when the rollout gate
+    /// is off, `terminal`. GrokNight still parses (`groknight`) but is not a
+    /// picker entry. Ignores color capability ([`available()`] filters that).
     pub fn selectable() -> &'static [ThemeKind] {
         if cache::terminal_theme_enabled() {
-            Self::ALL
+            static OFFERED: LazyLock<Vec<ThemeKind>> = LazyLock::new(|| {
+                ThemeKind::ALL
+                    .iter()
+                    .copied()
+                    .filter(|kind| kind.is_picker_entry())
+                    .collect()
+            });
+            &OFFERED
         } else {
             static GATED: LazyLock<Vec<ThemeKind>> = LazyLock::new(|| {
                 ThemeKind::ALL
                     .iter()
                     .copied()
-                    .filter(|kind| !kind.is_terminal_native())
+                    .filter(|kind| kind.is_picker_entry() && !kind.is_terminal_native())
                     .collect()
             });
             &GATED
@@ -96,7 +105,7 @@ impl ThemeKind {
                 ThemeKind::ALL
                     .iter()
                     .copied()
-                    .filter(|kind| !kind.requires_truecolor())
+                    .filter(|kind| kind.is_picker_entry() && !kind.requires_truecolor())
                     .collect()
             });
             &NO_TRUECOLOR
@@ -105,11 +114,20 @@ impl ThemeKind {
                 ThemeKind::ALL
                     .iter()
                     .copied()
-                    .filter(|kind| !kind.requires_truecolor() && !kind.is_terminal_native())
+                    .filter(|kind| {
+                        kind.is_picker_entry()
+                            && !kind.requires_truecolor()
+                            && !kind.is_terminal_native()
+                    })
                     .collect()
             });
             &NO_TRUECOLOR_GATED
         }
+    }
+
+    /// Legacy GrokNight stays addressable by name and is omitted from pickers.
+    fn is_picker_entry(self) -> bool {
+        self != Self::GrokNight
     }
 
     pub fn display_name(self) -> &'static str {
@@ -155,7 +173,8 @@ impl ThemeKind {
     /// Alternate lowercase spellings accepted by [`from_name`](Self::from_name), excluding [`display_name`](Self::display_name).
     pub fn aliases(self) -> &'static [&'static str] {
         match self {
-            Self::GrokNight => &["grok-night", "dark"],
+            // "dark" is the product night skin. GrokNight remains reachable as groknight.
+            Self::GrokNight => &["grok-night"],
             Self::TokyoNight => &["tokyo-night", "tokyo"],
             Self::GrokDay => &["grok-day", "light", "day"],
             Self::RosePineMoon => &["rosepine", "rose-pine", "rose-pine-moon"],
@@ -1185,7 +1204,10 @@ mod tests {
             ThemeKind::from_name("groknight"),
             Some(ThemeKind::GrokNight)
         );
-        assert_eq!(ThemeKind::from_name("dark"), Some(ThemeKind::GrokNight));
+        assert_eq!(
+            ThemeKind::from_name("dark"),
+            Some(ThemeKind::DeepSeekNight)
+        );
         assert_eq!(ThemeKind::from_name("grokday"), Some(ThemeKind::GrokDay));
         assert_eq!(ThemeKind::from_name("light"), Some(ThemeKind::GrokDay));
         assert_eq!(
@@ -1215,7 +1237,7 @@ mod tests {
             ("system", ThemeKind::Auto),
             ("groknight", ThemeKind::GrokNight),
             ("grok-night", ThemeKind::GrokNight),
-            ("dark", ThemeKind::GrokNight),
+            ("dark", ThemeKind::DeepSeekNight),
             ("tokyonight", ThemeKind::TokyoNight),
             ("tokyo-night", ThemeKind::TokyoNight),
             ("tokyo", ThemeKind::TokyoNight),

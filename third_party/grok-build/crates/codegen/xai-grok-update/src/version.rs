@@ -14,7 +14,7 @@ mod product_channel;
 
 const TTL_SECONDS_BEFORE_AUTO_UPDATE: Duration = Duration::from_secs(60 * 30);
 // DeepSeek Build product packages (not upstream Grok / x.ai channels).
-const NPM_PACKAGE: &str = "@innocarpe/deepseek-build";
+pub(crate) const NPM_PACKAGE: &str = "@innocarpe/deepseek-build";
 pub const GH_RELEASE_REPO: &str = "innocarpe/deepseek-build";
 
 /// Primary CLI base URL: Cloudflare-fronted x.ai endpoint with edge caching for binaries and origin-respecting no-cache for channel pointers.

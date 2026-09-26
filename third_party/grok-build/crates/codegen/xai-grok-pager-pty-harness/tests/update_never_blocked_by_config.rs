@@ -12,7 +12,9 @@
 //! must fail before the hand-off.
 
 use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(target_os = "windows")]
+use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
 
@@ -97,11 +99,43 @@ fn run_update(base: &str, config_toml: &str, extra_args: &[&str]) -> Output {
         pager_binary().expect("resolve pager binary")
     };
     let mut command = grok_command(&exe, home.path(), base);
+    // The product installs with npm. A successful no-op npm keeps this test
+    // on config handling instead of the public registry.
+    prepend_noop_npm(&mut command, home.path());
     command.arg("update").args(extra_args);
     output(command)
 }
 
+/// `npm` that exits 0, ahead of the real one on `PATH`.
+fn prepend_noop_npm(command: &mut Command, home: &Path) {
+    let bin = home.join("fake-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let npm = bin.join(if cfg!(windows) { "npm.cmd" } else { "npm" });
+    let script = if cfg!(windows) {
+        "@echo off\r\nexit /b 0\r\n"
+    } else {
+        "#!/bin/sh\nexit 0\n"
+    };
+    std::fs::write(&npm, script).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&npm).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&npm, perms).unwrap();
+    }
+    let mut paths = vec![bin];
+    if let Some(path) = std::env::var_os("PATH") {
+        paths.extend(std::env::split_paths(&path));
+    }
+    command.env(
+        "PATH",
+        std::env::join_paths(paths).expect("PATH"),
+    );
+}
+
 /// Copies (never links) the binary into a user-scope WinGet package dir, so the running exe's path is the package path.
+#[cfg(target_os = "windows")]
 fn copy_into_winget_package(root: &Path) -> PathBuf {
     let package = root.join(
         "Local/Microsoft/WinGet/Packages/xAI.GrokBuild_Microsoft.Winget.Source_8wekyb3d8bbwe",
@@ -114,6 +148,7 @@ fn copy_into_winget_package(root: &Path) -> PathBuf {
 }
 
 /// Update artifacts present under `home`, among those the updater writes.
+#[cfg(target_os = "windows")]
 fn update_artifacts(home: &Path) -> Vec<&'static str> {
     ["bin", "downloads", "version.json"]
         .into_iter()
@@ -154,6 +189,8 @@ fn corrupt_config_never_changes_update_outcome() {
     );
 }
 
+/// WinGet handoff is the Windows installer. Other hosts install with npm.
+#[cfg(target_os = "windows")]
 #[test]
 fn winget_install_update_hands_off_without_update_writes() {
     let body = Arc::new(Mutex::new("999.0.0".to_owned()));

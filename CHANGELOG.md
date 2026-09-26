@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 6.0.2 — 2026-09-26
+
+- Path A names the component that moved on a cache epoch change, the session line keeps DeepSeek cache misses, and the vendored cache guard is scored on Path A request bytes. The 6.1.0 depth train was not taken.
+
 ## 6.0.1 — 2026-09-26
 
 - A submitted prompt on a phone-width pane is a one-row band. The fold is measured at the width the text actually wraps at, so a long one-line prompt no longer stays expanded and skips the one-row budget. At or below 60 columns the echo also drops its two blank pad rows and the decorative `❯` on both the echo and the input box; `$ `, `↻  `, `? ` and `! ` stay, because those say what kind of turn or mode this is. Widths above 60 keep today's three-line budget, the padding and the arrow, and a prompt folded by a resize unfolds again when the pane widens.

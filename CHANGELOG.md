@@ -3,6 +3,7 @@
 ## Unreleased
 
 - A session on OpenRouter sticks to one upstream provider. The request body now carries the session id as OpenRouter's `session_id` sticky-routing key, so a session (subagents included) keeps the provider that holds its prefix cache instead of re-billing the whole prompt at the input rate whenever the router moves. Requests to every other endpoint are byte-identical.
+- `CI grok test` no longer flakes on `commit_the_source_reaches_but_does_not_name_lets_the_snapshot_go`: git's automatic maintenance is spawned detached by default and deletes `.git/objects/maintenance.lock` as its run ends, and the vendored safety helper's copy now skips a listed file the source has already dropped instead of panicking on `NotFound`.
 
 ## 6.1.2 — 2026-09-26
 

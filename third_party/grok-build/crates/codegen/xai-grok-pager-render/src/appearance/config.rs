@@ -53,18 +53,12 @@ impl Default for AppearanceConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct TurnStatusConfig {
     /// When true, add a 1-line gap between the turn status line and the prompt widget.
     /// Default false: the status row sits flush on the prompt box, and the box's own
     /// top inset already separates its text from its border.
     pub gap: bool,
-}
-
-impl Default for TurnStatusConfig {
-    fn default() -> Self {
-        Self { gap: false }
-    }
 }
 
 /// Prompt input view configuration (the editor widget, not the scrollback block).

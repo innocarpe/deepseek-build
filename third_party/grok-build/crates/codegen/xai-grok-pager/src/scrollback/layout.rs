@@ -136,36 +136,49 @@ mod tests {
         assert_eq!(layout.content.height, 10);
     }
 
-    /// The default frame spends no columns on block pads: content starts at the
-    /// accent column's right edge and wraps four columns wider than the padded
-    /// frame did. The accent column itself stays.
+    /// The default frame gives the text band symmetric gutters: one column
+    /// between the accent rail and the text, and two at the right edge — the
+    /// mirror of the rail's column plus the column the scrollbar shares with
+    /// the outer margin.
     #[test]
-    fn default_layout_reclaims_both_block_pads() {
+    fn default_layout_gives_the_text_band_symmetric_gutters() {
         let area = Rect::new(0, 0, 53, 10);
-        let layout = HorizontalLayout::new(area, &LayoutConfig::default());
+        let config = LayoutConfig::default();
+        let layout = HorizontalLayout::new(area, &config);
 
         assert_eq!(layout.accent.width, HorizontalLayout::ACCENT);
         assert_eq!(
-            layout.left_padding.width, 0,
-            "no gutter between the accent column and the text"
+            layout.left_padding.width, 1,
+            "one gutter column between the accent rail and the text"
         );
-        assert_eq!(layout.right_padding.width, 0);
+        assert_eq!(
+            layout.right_padding.width, 2,
+            "two at the right: the rail column's mirror plus the scrollbar's column"
+        );
         assert_eq!(
             layout.content.x,
-            layout.accent.right(),
-            "the text starts at the accent's right edge, got {:?} vs accent {:?}",
+            layout.accent.right() + config.block_pad_left,
+            "the text starts past the rail and its gutter, got {:?} vs accent {:?}",
             layout.content,
             layout.accent,
         );
         assert_eq!(
             layout.content.width,
-            area.width - HorizontalLayout::ACCENT,
-            "everything but the accent column is text"
+            area.width - HorizontalLayout::chrome_width(&config),
+            "everything but the chrome is text"
         );
         assert_eq!(
-            HorizontalLayout::chrome_width(&LayoutConfig::default()),
-            HorizontalLayout::ACCENT,
-            "the block's only chrome is the accent column"
+            HorizontalLayout::chrome_width(&config),
+            HorizontalLayout::ACCENT + 1 + 2,
+            "the accent column plus the two gutter pads"
+        );
+        // Left gutter (outer margin + rail + left pad) equals right gutter (right
+        // pad + the scrollbar/outer column) exactly when the right pad mirrors
+        // the rail column on top of the left one.
+        assert_eq!(
+            config.block_pad_right,
+            config.block_pad_left + HorizontalLayout::ACCENT,
+            "the right pad mirrors the rail column the left side spends"
         );
     }
 

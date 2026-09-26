@@ -256,7 +256,8 @@ impl AgentViewLayout {
             constraints.push(Constraint::Length(queue_height));
         }
         if turn_status_height > 0 {
-            constraints.push(Constraint::Length(1));
+            // Flush against whatever sits above it: the status row is chrome that
+            // reports the turn, and the frame does not spend a spacer row on it.
             constraints.push(Constraint::Length(turn_status_height));
         }
         if banner_height > 0 {
@@ -332,7 +333,7 @@ impl AgentViewLayout {
             Rect::default()
         };
         let turn_status = if turn_status_height > 0 {
-            chunks.next();
+            // No gap chunk above it (see the constraint push): consume one.
             chunks.next().unwrap_or_default()
         } else {
             Rect::default()
@@ -2173,7 +2174,7 @@ mod tests {
         let plain = base_params(area);
         assert_eq!(
             AgentViewLayout::rows_available_for_prompt(plain),
-            25 - 12,
+            25 - 8,
             "a frame with no optional row gives everything else to the prompt"
         );
         let with_rows = AgentViewLayoutParams {
@@ -2183,8 +2184,9 @@ mod tests {
         };
         assert_eq!(
             AgentViewLayout::rows_available_for_prompt(with_rows),
-            25 - 12 - 4,
-            "each row above the prompt takes its own height plus the gap above it"
+            25 - 8 - 3,
+            "the banner takes its own height plus the gap above it; the turn \
+             status row sits flush, so it takes only its own row"
         );
     }
     #[test]

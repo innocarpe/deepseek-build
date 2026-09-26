@@ -56,12 +56,14 @@ impl Default for AppearanceConfig {
 #[derive(Debug, Clone, Copy)]
 pub struct TurnStatusConfig {
     /// When true, add a 1-line gap between the turn status line and the prompt widget.
+    /// Default false: the status row sits flush on the prompt box, and the box's own
+    /// top inset already separates its text from its border.
     pub gap: bool,
 }
 
 impl Default for TurnStatusConfig {
     fn default() -> Self {
-        Self { gap: true }
+        Self { gap: false }
     }
 }
 
@@ -195,14 +197,18 @@ impl Default for LayoutConfig {
     fn default() -> Self {
         Self {
             // Flush frame: the pads a terminal can afford to spend are the ones
-            // the selection border draws into and one column of gutter after the
-            // accent rail. Claude Code and Codex CLI sit this tight, and every
+            // the selection border draws into and the gutters that make the text
+            // band symmetric. Claude Code and Codex CLI sit this tight, and every
             // row/column saved here is content.
             outer_vpad: 0,
             outer_hpad_left: LayoutConfig::MIN_HPAD,
             outer_hpad_right: LayoutConfig::MIN_HPAD,
-            block_pad_left: 0,
-            block_pad_right: 0,
+            // Symmetric text band: a block's text starts one column after the
+            // accent rail (the rail's own column reads as the second outer
+            // margin column) and stops the same distance from the pane edge,
+            // which the right pad shares with the scrollbar column.
+            block_pad_left: 1,
+            block_pad_right: 2,
             narrow: false,
         }
     }
@@ -211,6 +217,14 @@ impl Default for LayoutConfig {
 impl LayoutConfig {
     /// Minimum value for horizontal padding (must have room for selection border).
     pub const MIN_HPAD: u16 = 1;
+
+    /// Text inset between the bordered composer's border glyph and its first text
+    /// cell, per side. One column on every side keeps the four sides equal.
+    pub const BOX_TEXT_INSET: u16 = 1;
+
+    /// Distance from the bordered composer's outer edge to its content area, per
+    /// side: the border glyph's column plus [`Self::BOX_TEXT_INSET`].
+    pub const BOX_PAD: u16 = Self::MIN_HPAD + Self::BOX_TEXT_INSET;
 
     /// Effective outer vertical padding (0 in compact mode).
     pub fn eff_outer_vpad(&self, compact: bool) -> u16 {
@@ -237,16 +251,19 @@ impl LayoutConfig {
 
     /// Effective left padding inside a bordered box (the composer).
     ///
-    /// Never below 1: the box's own border glyphs own the outermost column, so
-    /// zero inset would paint text over the border. One column matches the box's
-    /// one-row top and bottom border rows, keeping the four sides equal.
+    /// The border glyph owns the outermost column and [`Self::BOX_TEXT_INSET`]
+    /// keeps text off it, so the pad is the border column plus the inset. Fixed
+    /// and symmetric: the composer's text inset is the same on all four sides
+    /// whatever the scrollback block pads are set to — those pads belong to
+    /// scrollback blocks, whose left gutter only exists because the accent rail
+    /// sits between the text and the pane's left edge.
     pub fn eff_box_pad_left(&self) -> u16 {
-        self.block_pad_left.max(Self::MIN_HPAD)
+        Self::BOX_PAD
     }
 
     /// Effective right padding inside a bordered box (the composer); see [`Self::eff_box_pad_left`].
     pub fn eff_box_pad_right(&self) -> u16 {
-        self.block_pad_right.max(Self::MIN_HPAD)
+        Self::BOX_PAD
     }
 
     pub fn validated(self) -> Self {
@@ -831,9 +848,10 @@ pub struct RawLayoutConfig {
     pub outer_hpad_left: u16,
     /// Right horizontal padding for outer viewport (min 1).
     pub outer_hpad_right: u16,
-    /// Padding after accent line, before content. Default 0 (flush).
+    /// Padding after accent line, before content. Default 1: the rail's own gap.
     pub block_pad_left: u16,
-    /// Padding after content, at right edge. Default 0 (flush).
+    /// Padding after content, at right edge. Default 2, matching the left gutter
+    /// once the accent rail and the scrollbar's column are counted.
     pub block_pad_right: u16,
 }
 
@@ -843,8 +861,8 @@ impl Default for RawLayoutConfig {
             outer_vpad: 0,
             outer_hpad_left: 1,
             outer_hpad_right: 1,
-            block_pad_left: 0,
-            block_pad_right: 0,
+            block_pad_left: 1,
+            block_pad_right: 2,
         }
     }
 }
@@ -1925,7 +1943,8 @@ mod tests {
     }
 
     /// The default frame is flush on every width: no blank outer margin rows,
-    /// one-column outer margin (the selection border's column), no block pads.
+    /// one-column outer margin (the selection border's column), and block pads
+    /// that put the text band the same distance from both pane edges.
     #[test]
     fn default_layout_is_flush() {
         let cfg = LayoutConfig::default();
@@ -1937,10 +1956,21 @@ mod tests {
         );
         assert_eq!(cfg.outer_hpad_right, LayoutConfig::MIN_HPAD);
         assert_eq!(
-            cfg.block_pad_left, 0,
-            "an echo band's text starts at the accent column"
+            cfg.block_pad_left, 1,
+            "the text starts one column after the accent rail"
         );
-        assert_eq!(cfg.block_pad_right, 0);
+        assert_eq!(
+            cfg.block_pad_right, 2,
+            "and the same distance from the pane edge once the scrollbar column is counted"
+        );
+        // Left gutter: outer margin + accent rail + left pad. Right gutter: right
+        // pad + the column the scrollbar shares with the outer margin. Equal by
+        // construction; pin the relation so a later pad edit cannot break it.
+        assert_eq!(
+            cfg.block_pad_right,
+            cfg.block_pad_left + LayoutConfig::MIN_HPAD,
+            "left gutter (outer + rail + pad) must equal right gutter (pad + scrollbar column)"
+        );
 
         assert_eq!(cfg.eff_outer_vpad(false), 0);
         assert_eq!(cfg.eff_hpad_left(false), LayoutConfig::MIN_HPAD);
@@ -1960,7 +1990,8 @@ mod tests {
         assert!(!layout.narrow, "a parsed config never starts narrow");
         assert_eq!(layout.outer_vpad, 0, "the default document is flush too");
         assert_eq!(layout.outer_hpad_left, LayoutConfig::MIN_HPAD);
-        assert_eq!(layout.block_pad_left, 0);
+        assert_eq!(layout.block_pad_left, 1);
+        assert_eq!(layout.block_pad_right, 2);
 
         let phone = LayoutConfig {
             narrow: true,
@@ -1972,26 +2003,27 @@ mod tests {
         );
     }
 
-    /// The bordered composer keeps a one-column inset at every width — its border
-    /// glyphs own the outermost column — and a user's wider pad still passes
-    /// through.
+    /// The bordered composer keeps a fixed, symmetric pad: the border glyph's
+    /// column plus a one-cell text inset, on every side and at every width. The
+    /// scrollback block pads do not move it.
     #[test]
-    fn box_pads_have_a_one_column_floor() {
+    fn composer_pads_are_symmetric_and_fixed() {
         let flush = LayoutConfig::default();
+        assert_eq!(flush.eff_box_pad_left(), LayoutConfig::BOX_PAD);
+        assert_eq!(flush.eff_box_pad_right(), LayoutConfig::BOX_PAD);
         assert_eq!(
-            flush.eff_box_pad_left(),
-            LayoutConfig::MIN_HPAD,
-            "text must not paint over the composer's border"
+            LayoutConfig::BOX_PAD,
+            LayoutConfig::MIN_HPAD + LayoutConfig::BOX_TEXT_INSET,
+            "the border column plus the text inset"
         );
-        assert_eq!(flush.eff_box_pad_right(), LayoutConfig::MIN_HPAD);
 
         let roomy = LayoutConfig {
             block_pad_left: 3,
             block_pad_right: 2,
             ..LayoutConfig::default()
         };
-        assert_eq!(roomy.eff_box_pad_left(), 3);
-        assert_eq!(roomy.eff_box_pad_right(), 2);
+        assert_eq!(roomy.eff_box_pad_left(), LayoutConfig::BOX_PAD);
+        assert_eq!(roomy.eff_box_pad_right(), LayoutConfig::BOX_PAD);
     }
 
     #[test]

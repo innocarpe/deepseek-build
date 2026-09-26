@@ -699,7 +699,15 @@ impl AgentView {
         let prompt_style = PromptStyle {
             focused: prompt_focused,
             show_prefix: appearance.prompt.show_prefix,
-            vpad_top: 1,
+            // The border row plus one row of text inset, so all four sides of the
+            // box inset their text by the same amount (see `LayoutConfig::BOX_PAD`).
+            // At or below `SHORT_TERMINAL_ROWS` the row is not there to spend: the
+            // composer keeps the border row only (the bottom inset follows it).
+            vpad_top: if area.height <= agent::SHORT_TERMINAL_ROWS {
+                1
+            } else {
+                crate::appearance::LayoutConfig::BOX_PAD
+            },
             compact: appearance.prompt.compact,
             chrome: true,
             chrome_pad_left: layout_cfg.eff_box_pad_left(),
@@ -1981,15 +1989,24 @@ impl AgentView {
             self.hovered_link_idx = None;
         }
         if turn_status_height > 0 {
-            let pad_left = if dock_on {
-                crate::views::welcome::PROMPT_GUTTER
+            // The status row is a text row like any block's: accent column plus the
+            // block pad on the left, the block pad on the right, so its inset matches
+            // the scrollback's text band at every width.
+            let (pad_left, pad_right) = if dock_on {
+                (crate::views::welcome::PROMPT_GUTTER, 0)
             } else {
-                HorizontalLayout::ACCENT + layout_cfg.block_pad_left.saturating_sub(1)
+                (
+                    HorizontalLayout::ACCENT + layout_cfg.block_pad_left,
+                    layout_cfg.block_pad_right,
+                )
             };
             let turn_area = Rect {
                 x: layout.turn_status.x + pad_left,
                 y: layout.turn_status.y,
-                width: layout.turn_status.width.saturating_sub(pad_left),
+                width: layout
+                    .turn_status
+                    .width
+                    .saturating_sub(pad_left + pad_right),
                 height: layout.turn_status.height,
             };
             let tick = self.scrollback.animation_tick();

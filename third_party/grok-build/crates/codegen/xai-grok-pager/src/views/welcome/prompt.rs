@@ -17,12 +17,14 @@ fn prompt_area_inset(compact: bool) -> u16 {
     }
 }
 
-const CHROME_PAD: u16 = 2;
+const CHROME_PAD: u16 = crate::appearance::LayoutConfig::BOX_PAD;
 
 fn prompt_style(focus: WelcomePromptFocus, compact: bool) -> PromptStyle {
     PromptStyle {
         focused: focus == WelcomePromptFocus::Focused,
         show_prefix: true,
+        // One vpad row is the top border, so this box keeps the welcome screen's
+        // frame unchanged: the bottom inset follows `vpad_top` (see `info_block`).
         vpad_top: 1,
         compact,
         chrome: true,

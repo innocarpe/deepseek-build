@@ -1052,6 +1052,11 @@ mod tests {
         assert_eq!(buf.cell((0, 1)).unwrap().symbol(), " ", "no rail");
         assert_eq!(
             buf.cell((1, 1)).unwrap().symbol(),
+            " ",
+            "the rail's gutter stays a gutter"
+        );
+        assert_eq!(
+            buf.cell((2, 1)).unwrap().symbol(),
             "T",
             "content must not reflow"
         );
@@ -1064,7 +1069,7 @@ mod tests {
         let renderer = EntryRenderer::new(&entry, &theme);
 
         // Area: 20 chars wide, 3 rows
-        // Layout: accent(1) + left_pad(0) + content(19) + right_pad(0) = 20
+        // Layout: accent(1) + left_pad(1) + content(16) + right_pad(2) = 20
         let area = Rect::new(0, 0, 20, 3);
         let mut buf = Buffer::empty(area);
         renderer.render(area, &mut buf);
@@ -1074,12 +1079,12 @@ mod tests {
         assert_eq!(buf.cell((0, 1)).unwrap().symbol(), "┃");
         assert_eq!(buf.cell((0, 2)).unwrap().symbol(), "┃");
 
-        // Content starts at the accent column's right edge (no left pad)
+        // Content starts past the accent column and its gutter
         // Row 0 = vpad (empty), row 1 = content "Test", row 2 = vpad
-        assert_eq!(buf.cell((1, 1)).unwrap().symbol(), "T");
-        assert_eq!(buf.cell((2, 1)).unwrap().symbol(), "e");
-        assert_eq!(buf.cell((3, 1)).unwrap().symbol(), "s");
-        assert_eq!(buf.cell((4, 1)).unwrap().symbol(), "t");
+        assert_eq!(buf.cell((2, 1)).unwrap().symbol(), "T");
+        assert_eq!(buf.cell((3, 1)).unwrap().symbol(), "e");
+        assert_eq!(buf.cell((4, 1)).unwrap().symbol(), "s");
+        assert_eq!(buf.cell((5, 1)).unwrap().symbol(), "t");
     }
 
     #[test]
@@ -1101,9 +1106,9 @@ mod tests {
             let mut buf = Buffer::empty(area);
             let renderer = EntryRenderer::new(&entry, &theme).with_tick(tick);
             renderer.render(area, &mut buf);
-            // Default layout: accent(1) + left_pad(0), so content starts at 1
+            // Default layout: accent(1) + left_pad(1), so content starts at 2
             // Tool call header has no vpad, so bullet sits on row 0.
-            let cell = buf.cell((1, 0)).unwrap();
+            let cell = buf.cell((2, 0)).unwrap();
             assert_eq!(
                 cell.symbol(),
                 "◆",
@@ -1136,7 +1141,7 @@ mod tests {
         let renderer = EntryRenderer::new(&entry, &theme).with_tick(7);
         renderer.render(area, &mut buf);
 
-        assert_eq!(buf.cell((1, 0)).unwrap().symbol(), "◆");
+        assert_eq!(buf.cell((2, 0)).unwrap().symbol(), "◆");
     }
 
     /// Collect the symbols from a row range in the buffer into a String.

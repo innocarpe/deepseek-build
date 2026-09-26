@@ -498,7 +498,7 @@
             chrome: false,
             ..Default::default()
         };
-        assert_eq!(pw.desired_height(80, &style, true, 20), 3); // top_divider(1)+text(1)+bot_divider(1)
+        assert_eq!(pw.desired_height(80, &style, true, 20), 4); // vpad(2)+text(1)+info(1)
     }
 
     #[test]
@@ -508,7 +508,7 @@
             chrome: false,
             ..Default::default()
         };
-        assert_eq!(pw.desired_height(80, &style, false, 20), 2); // vpad(1)+text(1)
+        assert_eq!(pw.desired_height(80, &style, false, 20), 3); // vpad(2)+text(1)
     }
 
     #[test]
@@ -519,7 +519,7 @@
             chrome: false,
             ..Default::default()
         };
-        assert_eq!(pw.desired_height(80, &style, true, 20), 5); // top_divider(1)+text(3)+bot_divider(1)
+        assert_eq!(pw.desired_height(80, &style, true, 20), 6); // vpad(2)+text(3)+info(1)
     }
 
     /// While history BROWSE mode is active the composer height is frozen at one text row: stepping onto a multi-line entry must not resize the box.
@@ -540,12 +540,12 @@
         pw.set_text("line1\nline2\nline3"); // populated multi-line entry
         assert_eq!(
             pw.desired_height(80, &style, true, 20),
-            3, // frozen: top_divider(1)+text(1)+bot_divider(1)
+            4, // frozen: vpad(2)+text(1)+info(1)
         );
 
         // Detach (deactivate), and the box resizes to fit the text
         pw.history_search.deactivate();
-        assert_eq!(pw.desired_height(80, &style, true, 20), 5);
+        assert_eq!(pw.desired_height(80, &style, true, 20), 6);
     }
 
     #[test]
@@ -4133,7 +4133,7 @@
     #[test]
     fn plan_flag_keeps_accent_color_on_terminal_theme() {
         let _guard = crate::theme::cache::pin_theme();
-        let area = Rect::new(0, 0, 60, 4);
+        let area = Rect::new(0, 0, 60, BORDERED_TEST_HEIGHT);
 
         let render = || {
             let theme = Theme::current();
@@ -4196,7 +4196,7 @@
         let _guard = crate::theme::cache::pin_theme();
         crate::theme::cache::set(crate::theme::ThemeKind::Terminal);
         let theme = Theme::current();
-        let area = Rect::new(0, 0, 60, 4);
+        let area = Rect::new(0, 0, 60, BORDERED_TEST_HEIGHT);
 
         let flags = [PromptFlag {
             text: "plan",
@@ -4244,7 +4244,7 @@
     #[test]
     fn info_line_chrome_is_muted_on_terminal_theme() {
         let _guard = crate::theme::cache::pin_theme();
-        let area = Rect::new(0, 0, 60, 4);
+        let area = Rect::new(0, 0, 60, BORDERED_TEST_HEIGHT);
 
         let render = |needle: &str| {
             let flags = [PromptFlag {
@@ -5023,10 +5023,14 @@
         }
     }
 
-    /// Draw a bordered prompt into a fresh `width`×4 buffer and return it.
+    /// Rows a bordered test prompt needs: border row + text inset + one text row
+    /// + text inset + divider (+ label row on a narrow pane).
+    const BORDERED_TEST_HEIGHT: u16 = 6;
+
+    /// Draw a bordered prompt into a fresh `width`×[`BORDERED_TEST_HEIGHT`] buffer and return it.
     fn draw_bordered(width: u16, style: &PromptStyle) -> Buffer {
         let mut pw = PromptWidget::new();
-        let area = Rect::new(0, 0, width, 4);
+        let area = Rect::new(0, 0, width, BORDERED_TEST_HEIGHT);
         let mut buf = Buffer::empty(area);
         pw.draw(&mut buf, area, None, style, None, None);
         buf
@@ -5042,15 +5046,16 @@
         );
 
         // A 55-column pane. The box border already frames the input.
+        // The text row sits one inset row below the top border (row 2).
         let buf = draw_bordered(55, &style);
-        let text_row = buf_text_at(&buf, 0, 55, 1);
+        let text_row = buf_text_at(&buf, 0, 55, 2);
         assert!(
             !text_row.contains(crate::glyphs::prompt_arrow()),
             "a phone-width composer must not paint the arrow: {text_row:?}"
         );
 
         let wide = draw_bordered(179, &style);
-        let wide_row = buf_text_at(&wide, 0, 179, 1);
+        let wide_row = buf_text_at(&wide, 0, 179, 2);
         assert!(
             wide_row.contains(crate::glyphs::prompt_arrow()),
             "desktop keeps the arrow: {wide_row:?}"
@@ -5065,7 +5070,7 @@
             ..Default::default()
         };
         let buf = draw_bordered(55, &style);
-        let text_row = buf_text_at(&buf, 0, 55, 1);
+        let text_row = buf_text_at(&buf, 0, 55, 2);
         assert!(
             text_row.contains("! "),
             "bash mode's `! ` must survive the narrow band: {text_row:?}"
@@ -5140,7 +5145,8 @@
 
     #[test]
     fn title_ends_on_same_column_as_info_line() {
-        // The agent view's 2-cell right pad: both captions end at x 37, one `─` before their corner.
+        // Both captions keep their trailing pad cell at x 38, one `─`-width short
+        // of the corner (the box's four-sided text inset shows up as that pad).
         let style = PromptStyle {
             title: Some("my session".to_string()),
             chrome_pad_right: 2,
@@ -5151,14 +5157,16 @@
             ..Default::default()
         };
         let mut pw = PromptWidget::new();
-        let area = Rect::new(0, 0, 40, 4);
+        let area = Rect::new(0, 0, 40, BORDERED_TEST_HEIGHT);
         let mut buf = Buffer::empty(area);
         pw.draw(&mut buf, area, None, &style, Some(&info), None);
 
-        assert_eq!(buf_text_at(&buf, 26, 38, 0), " my session ");
-        assert_eq!(buf_text_at(&buf, 30, 38, 3), "  grok-3");
-        assert_eq!(buf_text_at(&buf, 38, 40, 0), "\u{2500}\u{256e}");
-        assert_eq!(buf_text_at(&buf, 38, 40, 3), "\u{2500}\u{256f}");
+        // 40 columns is a narrow pane: the label takes the row below the divider
+        // (row 5), and the divider owns row 4.
+        assert_eq!(buf_text_at(&buf, 27, 39, 0), " my session ");
+        assert_eq!(buf_text_at(&buf, 31, 39, 5), " grok-3 ");
+        assert_eq!(buf_text_at(&buf, 38, 40, 0), " \u{256e}");
+        assert_eq!(buf_text_at(&buf, 38, 40, 4), "\u{2500}\u{256f}");
     }
 
     fn any_cell_with_bg(buf: &Buffer, bg: ratatui::style::Color) -> bool {
@@ -5228,10 +5236,11 @@
         frame: String,
     }
 
-    /// Draw a bordered prompt at `width` in a 4-row area and split the info out.
+    /// Draw a bordered prompt at `width` in a [`BORDERED_TEST_HEIGHT`]-row area
+    /// and split the info out.
     fn draw_info_rows(width: u16, label: &str, flags: &[PromptFlag<'_>]) -> InfoRows {
         let mut pw = PromptWidget::new();
-        let area = Rect::new(0, 0, width, 4);
+        let area = Rect::new(0, 0, width, BORDERED_TEST_HEIGHT);
         let mut buf = Buffer::empty(area);
         let info = PromptInfo {
             model_name: label,
@@ -5412,19 +5421,20 @@
         }
     }
 
-    /// The phone box is the same height as the desktop box. The model shares
-    /// the status row under it, so `info_block` does not add a row.
+    /// The phone box is the same height as the desktop box — plus the box's
+    /// bottom text inset row. The model shares the status row under it, so
+    /// `info_block` adds no label row.
     #[test]
     fn phone_width_does_not_budget_a_second_info_row() {
         let pw = PromptWidget::new();
         let style = PromptStyle::default();
-        assert_eq!(style.info_block(true, true), 1, "divider only, phone too");
-        assert_eq!(style.info_block(true, false), 1, "divider only");
+        assert_eq!(style.info_block(true, true), 2, "text inset + divider");
+        assert_eq!(style.info_block(true, false), 2, "text inset + divider");
         assert_eq!(style.info_block(false, true), 0, "no info, no rows");
 
-        // vpad_top 1 + one text row + the info block.
-        assert_eq!(pw.desired_height(MEASURED_PHONE_COLS, &style, true, 99), 3);
-        assert_eq!(pw.desired_height(30, &style, true, 99), 3);
-        assert_eq!(pw.desired_height(61, &style, true, 99), 3);
-        assert_eq!(pw.desired_height(120, &style, true, 99), 3);
+        // vpad_top 2 (border row + text inset) + one text row + the info block.
+        assert_eq!(pw.desired_height(MEASURED_PHONE_COLS, &style, true, 99), 5);
+        assert_eq!(pw.desired_height(30, &style, true, 99), 5);
+        assert_eq!(pw.desired_height(61, &style, true, 99), 5);
+        assert_eq!(pw.desired_height(120, &style, true, 99), 5);
     }

@@ -3751,20 +3751,20 @@ fn dim_from_entry_stays_visible_on_terminal_theme() {
     assert!(!cell.modifier.contains(Modifier::DIM));
 }
 
-/// Where the prompt echo's text starts inside the scrollback viewport, at any
-/// pane width: one column in, at the accent column's right edge. The old padded
-/// frame put it three columns in (accent + both 2-column block pads); a reader
-/// who wants the gutter back can still configure one.
+/// Where the prompt echo's text starts inside the scrollback viewport: one
+/// column after the accent column at the resolved default (the rail's own
+/// gutter). `pad=0` still puts it flush at the accent column's right edge for a
+/// reader who wants the tightest band.
 #[test]
-fn echo_band_text_starts_at_the_accent_column() {
+fn echo_band_text_starts_one_column_after_the_accent_column() {
     use crate::scrollback::ScrollbackState;
 
-    fn echo_row(pad: u16) -> String {
+    fn echo_row(left: u16, right: u16) -> String {
         let mut state = ScrollbackState::new();
         state.push_block(RenderBlock::user_prompt("hello"));
         let mut appearance = AppearanceConfig::default();
-        appearance.scrollback.layout.block_pad_left = pad;
-        appearance.scrollback.layout.block_pad_right = pad;
+        appearance.scrollback.layout.block_pad_left = left;
+        appearance.scrollback.layout.block_pad_right = right;
         state.set_appearance(appearance);
         let viewport = Rect::new(0, 0, 53, 6);
         state.prepare_layout(viewport.width, viewport.height);
@@ -3774,7 +3774,7 @@ fn echo_band_text_starts_at_the_accent_column() {
             .find(|row| row.contains("hello"))
             .unwrap_or_else(|| {
                 panic!(
-                    "no echo row rendered (pad={pad}):\n{}",
+                    "no echo row rendered (left={left}, right={right}):\n{}",
                     (0..viewport.height)
                         .map(|y| buffer_row_text(&buf, y))
                         .collect::<Vec<_>>()
@@ -3783,17 +3783,17 @@ fn echo_band_text_starts_at_the_accent_column() {
             })
     }
 
-    let flush = echo_row(0);
+    let default_pads = echo_row(1, 2);
+    assert_eq!(
+        default_pads.find("hello"),
+        Some(2),
+        "the default echo starts one column after the accent column, got {default_pads:?}"
+    );
+
+    let flush = echo_row(0, 0);
     assert_eq!(
         flush.find("hello"),
         Some(1),
-        "the default echo starts right after the accent column, got {flush:?}"
-    );
-
-    let padded = echo_row(2);
-    assert_eq!(
-        padded.find("hello"),
-        Some(3),
-        "a configured 2-column pad keeps the old inset, got {padded:?}"
+        "pad=0 starts right at the accent column's right edge, got {flush:?}"
     );
 }

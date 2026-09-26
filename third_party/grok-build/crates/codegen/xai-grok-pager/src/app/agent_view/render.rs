@@ -5042,13 +5042,15 @@ mod status_line_draw_tests {
     const FIVE_ROW_SCRIPT: &str = "row-1\nrow-2\nrow-3\nrow-4\nrow-5";
     #[test]
     fn short_terminal_leaves_the_row_four_of_its_five_rows() {
-        // Height 19: at 17 the status row only keeps two script lines. Two more
-        // rows bring row-4 in without giving the fifth line a row of its own.
-        let buf = draw_script(FIVE_ROW_SCRIPT, 19);
+        // Height 17 for the flush frame: the outer margin no longer spends rows
+        // on padding, so four script rows fit here without the fifth taking a row
+        // from the prompt. Measured at 16 the prompt gives up its own padding
+        // instead, which is a priority question of its own, not this golden's.
+        let buf = draw_script(FIVE_ROW_SCRIPT, 17);
         let screen = dump(&buf);
         assert!(
             find(&buf, "row-4").is_some(),
-            "four rows are left over at height 19\n{screen}"
+            "four rows are left over at height 17\n{screen}"
         );
         assert!(
             find(&buf, "row-5").is_none(),

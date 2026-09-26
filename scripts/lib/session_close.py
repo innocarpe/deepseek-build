@@ -51,6 +51,10 @@ BODY_NEEDLES = {
         "MERGED",
         "mergedAt",
         "mergeCommit",
+        "Session disposition",
+        "Close now",
+        "More in this session",
+        "To hand off",
     ),
     "skills/release/SKILL.md": (
         "An empty `## Unreleased` is not evidence that a version ask is finished.",
@@ -80,6 +84,7 @@ AGENTS_SECTION_NEEDLES = (
     "release lane",
     "scripts/check-pr-merged.sh",
     "scripts/check-session-close.sh brief",
+    "Session disposition",
 )
 AGENTS_CLAIM_NEEDLE = "do not end the unit"
 

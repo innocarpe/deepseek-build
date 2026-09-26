@@ -148,6 +148,20 @@ iOS showed the same empty cards. The commands live in
   (`orca terminal close --terminal <shell> --tab`) after the agent screen
   shows it is working. One worktree, one tab.
 
+**Handoff when the session that creates the worktree already runs
+elsewhere.** The create is bare, the driving tab stays on the original
+checkout, and the new card holds one shell `❯`. Measured 2026-09-26:
+`vendor-suite-contract` was created that way and 28 files were modified from
+the creating tab by path — the empty-card defect this section exists for.
+Handoff is part of the create:
+
+1. Open the owning session in the new worktree at once — `orca-tab` §1 when a
+   tab is already there, §3 when the launcher shell is the only tab.
+2. Hand over the in-flight state in the brief: files already changed, commits
+   already made, anything unpushed, and the plan being followed.
+3. Stop driving that path. The creating session reads the worktree at most;
+   the tab inside it owns the unit from here.
+
 `<slug>` has no type prefix (`provider-retry-backoff`). Orca turns `/` into
 `-`. `--no-parent` unless the unit stacks. Omit `--base-branch` so the base
 is `origin/main`. `--setup skip` unless the unit needs the repo bootstrap.
@@ -159,6 +173,10 @@ The bare create opens one launcher shell (`run` also opens `Setup`).
 That shell becomes the session when `dsb` or `grok` runs in it. A second
 tab is the bug. Read a tab before `terminal close`. Closing is not
 undoable.
+
+`./scripts/check-worktree-ownership.sh` reads every worktree of this repo and
+exits 1 when one holds dirty work with no agent tab — the handoff defect
+above, read from `orca terminal list` title/preview.
 
 ## 2. Name the branch
 

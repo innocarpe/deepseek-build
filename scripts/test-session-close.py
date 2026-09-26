@@ -124,6 +124,27 @@ def main() -> None:
             fail(f"restoring the open-PR checklist did not fail: {errors}")
         ok("open-PR checklist line fails")
 
+        # The Session disposition block (2026-09-26) is pinned needle by
+        # needle: a copy without any one phrase must fail.
+        for rel, needle in [
+            ("skills/session-unit/SKILL.md", "Session disposition"),
+            ("skills/session-unit/SKILL.md", "Close now"),
+            ("skills/session-unit/SKILL.md", "More in this session"),
+            ("skills/session-unit/SKILL.md", "To hand off"),
+            ("AGENTS.md", "Session disposition"),
+        ]:
+            copy_tree(dest)
+            path = dest / rel
+            text = path.read_text(encoding="utf-8")
+            stripped = text.replace(needle, "")
+            if stripped == text:
+                fail(f"{rel} does not carry {needle!r}")
+            path.write_text(stripped, encoding="utf-8")
+            errors = session_close.check_root(dest)
+            if not any(needle in error for error in errors):
+                fail(f"{rel} without {needle!r} did not fail: {errors}")
+            ok(f"{rel} without {needle!r} fails")
+
     briefs = {
         "version ask plus release-lane ban": (
             "user-turn: 새 버전을 올려라\n"

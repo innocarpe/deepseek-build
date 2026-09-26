@@ -97,6 +97,21 @@ Then paste the output, not a paraphrase:
   it prints `pass`, the merge is not a fact
 - the checks this change needed, and what they printed
 
+Close with the **Session disposition** block — three labelled lines, not an
+offer. The measured waste at this seat is a session that finished and did not
+say so (`맡은 것 끝났습니다 · 커밋 3건 · 넘길 것 1건(아래) · 닫으셔도 됩니다`):
+
+- **Close now** — the unit is done, with the commit count and anything handed
+  over; or the clause that is not done.
+- **More in this session** — work this turn already named and still owed
+  here; `none` when the unit is done.
+- **To hand off** — named follow-ups that need a new session (a new PR, a new
+  investigation, a design decision); list them, or write
+  `opened: <handle> — told to <one line>` when this session opened the tab.
+
+`이어서 …도 해두겠습니다` and `혹시 …를 더 볼까요?` are the two shapes this
+block replaces. A hand-off is a statement in the block, never a question.
+
 ## Anti-patterns
 
 | Don't | Why |
@@ -109,6 +124,7 @@ Then paste the output, not a paraphrase:
 | Say merged without `scripts/check-pr-merged.sh` printing `pass` | The sentence is not the fact |
 | Start the next unit from the "not done" list | That sentence opens work the opening did not name |
 | Offer another unit after you are done | The offer is the next task, and it lands in this session |
+| Finish without the Session disposition block | The human has to ask "그래서 끝난 거야?", and the silence or the offer becomes the next task |
 | `git commit` with no path | A shared index takes another session's files with it |
 
 ## Done means
@@ -119,4 +135,5 @@ Then paste the output, not a paraphrase:
 - [ ] `scripts/check-pr-merged.sh` printed `pass` (`MERGED`, `mergedAt`, `mergeCommit`, two parents, CI `/ required` passed), or that turn said to stop before the merge and the first line names that clause
 - [ ] The first line says whether the done-condition holds, and names the clause if it does not
 - [ ] What was not done is a separate list and was not opened as the next unit
+- [ ] The report carries the Session disposition block (close now / more in this session / to hand off)
 - [ ] Next units the opening already named have their own tab

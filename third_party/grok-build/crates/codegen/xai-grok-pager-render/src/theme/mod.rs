@@ -1204,10 +1204,7 @@ mod tests {
             ThemeKind::from_name("groknight"),
             Some(ThemeKind::GrokNight)
         );
-        assert_eq!(
-            ThemeKind::from_name("dark"),
-            Some(ThemeKind::DeepSeekNight)
-        );
+        assert_eq!(ThemeKind::from_name("dark"), Some(ThemeKind::DeepSeekNight));
         assert_eq!(ThemeKind::from_name("grokday"), Some(ThemeKind::GrokDay));
         assert_eq!(ThemeKind::from_name("light"), Some(ThemeKind::GrokDay));
         assert_eq!(

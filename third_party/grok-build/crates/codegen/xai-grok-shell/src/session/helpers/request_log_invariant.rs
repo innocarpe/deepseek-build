@@ -66,9 +66,9 @@ pub fn check_request_projects_log(
                 }
             }
             _ => {
-                if !non_system_projects(log_item, request_item).map_err(|detail| {
-                    diverge(format!("{detail} at non-system item {index}"))
-                })? {
+                if !non_system_projects(log_item, request_item)
+                    .map_err(|detail| diverge(format!("{detail} at non-system item {index}")))?
+                {
                     return Err(diverge(format!(
                         "request/log desync at non-system item {index}"
                     )));
@@ -89,8 +89,8 @@ fn non_system_projects(
     log_item: &ConversationItem,
     request_item: &ConversationItem,
 ) -> Result<bool, String> {
-    let log_json = serde_json::to_value(log_item)
-        .map_err(|_| "log item cannot be restored".to_string())?;
+    let log_json =
+        serde_json::to_value(log_item).map_err(|_| "log item cannot be restored".to_string())?;
     let request_json = serde_json::to_value(request_item)
         .map_err(|_| "request item cannot be restored".to_string())?;
     if log_json == request_json {

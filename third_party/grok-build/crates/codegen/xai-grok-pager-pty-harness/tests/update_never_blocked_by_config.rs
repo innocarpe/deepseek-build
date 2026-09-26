@@ -128,10 +128,7 @@ fn prepend_noop_npm(command: &mut Command, home: &Path) {
     if let Some(path) = std::env::var_os("PATH") {
         paths.extend(std::env::split_paths(&path));
     }
-    command.env(
-        "PATH",
-        std::env::join_paths(paths).expect("PATH"),
-    );
+    command.env("PATH", std::env::join_paths(paths).expect("PATH"));
 }
 
 /// Copies (never links) the binary into a user-scope WinGet package dir, so the running exe's path is the package path.

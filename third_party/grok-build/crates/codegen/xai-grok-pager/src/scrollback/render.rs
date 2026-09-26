@@ -21,7 +21,10 @@ use super::text_selection::{
 use super::types::{
     derive_selection_text, line_plain_text_into, selectable_cols, selectable_cols_usize,
 };
-use super::wrappers::{EntryRenderer, group_header_chrome_prefix_width, timestamp_reserved_for};
+use super::wrappers::{
+    EntryRenderer, band_spans_the_pane, entry_chrome, group_header_chrome_prefix_width,
+    timestamp_reserved_for,
+};
 use crate::appearance::AppearanceConfig;
 use crate::render::Renderable;
 use crate::render::osc8::{LinkOverlay, OverlayLink};
@@ -320,8 +323,15 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
             continue;
         }
 
-        // Create the area for this entry's content
-        let entry_row_layout = layout.for_row(render_y, render_height);
+        // Create the area for this entry's content: the pane's columns with this
+        // entry's own chrome (its band's gutters, a rail, or plain text), so the
+        // row rect the mouse and the highlight map through matches the paint.
+        let entry_chrome_layout = HorizontalLayout::new_with_chrome(
+            viewport,
+            &appearance.scrollback.layout,
+            entry_chrome(entry, appearance),
+        );
+        let entry_row_layout = entry_chrome_layout.for_row(render_y, render_height);
         let entry_content_area = entry_row_layout.entry_content_area();
 
         // Render the entry; skip_rows handles partial visibility directly

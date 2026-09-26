@@ -22,6 +22,7 @@ use crate::scrollback::text_selection::{
 };
 use crate::scrollback::types::{BlockContext, DisplayMode, derive_selection_text, selectable_cols};
 use crate::scrollback::wrappers::block_content_width_for;
+use crate::scrollback::wrappers::{entry_chrome, paint_pad_row};
 use crate::theme::Theme;
 
 /// Displays conversation entries with optional pinned header for the current turn's prompt. For efficiency, scratch
@@ -594,13 +595,19 @@ impl ScrollbackPane {
 
         let entry = state.entry(entry_idx)?;
 
-        let layout = HorizontalLayout::new(area, &appearance.scrollback.layout);
+        // The entry's own chrome: a pinned prompt must wrap its text and paint
+        // its band exactly as the entry does in the flow.
+        let layout = HorizontalLayout::new_with_chrome(
+            area,
+            &appearance.scrollback.layout,
+            entry_chrome(entry, appearance),
+        );
 
         // Compute content lines from render_height. Measured at the block's own content width (the same chain the
         // height passes use), not at the pane width: a prompt drops its pad on a narrow pane, and a wider pane width
         // here would reserve two rows that were never drawn.
         let cwd = state.cwd();
-        let block_content_width = block_content_width_for(appearance, &entry.block, area.width);
+        let block_content_width = block_content_width_for(entry, appearance, area.width);
         let has_vpad = entry
             .block
             .has_vpad_for_width(appearance, block_content_width);
@@ -738,7 +745,11 @@ impl ScrollbackPane {
     ) -> Vec<ResolvedSelectableLine> {
         use crate::scrollback::types::BlockBackground;
 
-        let layout = HorizontalLayout::new(area, &ctx.appearance.scrollback.layout);
+        let layout = HorizontalLayout::new_with_chrome(
+            area,
+            &ctx.appearance.scrollback.layout,
+            entry_chrome(entry, &ctx.appearance),
+        );
 
         // Use the actual content area (not entry_content_area which includes accent)
         let content_area = layout.content;
@@ -769,9 +780,9 @@ impl ScrollbackPane {
 
         // Fill the entire entry area with block background (if any)
         // This includes vpad rows, content rows, and padding columns
+        let fill_height = total_height.min(area.height);
         if let Some(bg) = bg_color {
             let bg_style = ratatui::style::Style::default().bg(bg);
-            let fill_height = total_height.min(area.height);
 
             for y in content_area.y..content_area.y + fill_height {
                 // Fill left padding
@@ -798,6 +809,27 @@ impl ScrollbackPane {
         // Render vpad top if needed (skip 1 row)
         let mut y = content_area.y;
         if use_vpad {
+            // A phone-width pane keeps a fraction of the band's color on the pad
+            // rows instead of the whole row (see `paint_pad_row`); the pinned
+            // header must match the band the entry shows in the flow.
+            let narrow = ctx.appearance.scrollback.layout.narrow;
+            let flat = false;
+            if let Some(band) = bg_color {
+                paint_pad_row(
+                    buf,
+                    area,
+                    content_area.y,
+                    band,
+                    theme.bg_base,
+                    true,
+                    narrow,
+                    flat,
+                );
+                let bottom = content_area.y + fill_height.saturating_sub(1);
+                if bottom > content_area.y {
+                    paint_pad_row(buf, area, bottom, band, theme.bg_base, false, narrow, flat);
+                }
+            }
             y += 1;
         }
 
@@ -1184,7 +1216,7 @@ fn paint_expandable_indicator(
     }
     // Width-aware so the chevron appears on a block that is folded at this width, including a prompt folded by the
     // narrow-pane default. Uses the same entry-area → content-width chain as the fold decision.
-    let content_width = block_content_width_for(appearance, &entry.block, content_area.width);
+    let content_width = block_content_width_for(entry, appearance, content_area.width);
     if !entry.block.is_foldable_at(content_width) {
         return;
     }
@@ -1249,6 +1281,56 @@ mod tests {
 
     // Pinned-header selectability is covered end to end by the sticky_header_drag_copy_pty e2e
     // Only the pushed/clip rebase branch needs a unit test (the PTY case never drags during a push)
+
+    /// A pinned prompt's band is the band the entry shows in the flow: a
+    /// phone-width pane keeps the fraction glyphs on its pad rows. Full-height
+    /// pads in the sticky path made the band grow the moment the header pinned,
+    /// so scrolling across that boundary flipped its height.
+    #[test]
+    fn pinned_phone_prompt_band_keeps_the_fraction_pads() {
+        // The fraction needs concrete colors: a `Reset` band keeps the plain row.
+        let _guard = crate::theme::cache::pin_theme();
+        let area = Rect::new(0, 0, 55, 20);
+        let mut state = ScrollbackState::new();
+        let mut appearance = AppearanceConfig::default();
+        appearance.scrollback.layout.narrow = true;
+        state.set_appearance(appearance);
+        state.push_block(RenderBlock::user_prompt("PINNEDPROMPT"));
+        for i in 0..40 {
+            state.push_block(RenderBlock::agent_message(format!("answer {i}")));
+        }
+        state.prepare_layout(area.width, area.height);
+        let max_scroll = state.scroll_info().2;
+        state.set_scroll_offset(max_scroll / 2);
+
+        let mut buf = Buffer::empty(area);
+        let mut scratch = ScratchBuffer::default();
+        let pane = ScrollbackPane::new().active(true);
+        pane.render_with_scratch(area, &mut buf, &mut state, &mut scratch);
+
+        let theme = Theme::current();
+        let band_rows: Vec<u16> = (0..area.height)
+            .filter(|&y| {
+                buf.cell((1, y))
+                    .is_some_and(|c| c.bg == theme.bg_light || c.fg == theme.bg_light)
+            })
+            .collect();
+        assert!(
+            !band_rows.is_empty(),
+            "the fixture must pin the prompt's band: {band_rows:?}"
+        );
+        let top = buf.cell((1, band_rows[0])).unwrap();
+        let bottom = buf.cell((1, *band_rows.last().unwrap())).unwrap();
+        assert_eq!(
+            top.symbol(),
+            "\u{2582}",
+            "the pinned band's top pad keeps the fraction glyph, not a full row"
+        );
+        assert_eq!(top.fg, theme.bg_light);
+        assert_eq!(top.bg, theme.bg_base);
+        assert_eq!(bottom.symbol(), "\u{2586}", "and the bottom pad does too");
+        assert_eq!(bottom.bg, theme.bg_light);
+    }
 
     /// A pushed header paints through a scratch buffer, so its lines must be rebased onto the rows that reached the screen; clipped rows are dropped.
     #[test]
@@ -1339,10 +1421,11 @@ mod tests {
         );
     }
 
-    /// A phone-width pane paints the collapsed echo as two selectable rows inside one pad row each side. The
-    /// layout height and the painted selection model have to agree, or a tap on the second line misses the prompt.
+    /// A phone-width pane paints the collapsed echo as two selectable text rows inside one pad row each side
+    /// (each pad is painted as a fraction of a row, the side gutters' own one column). The layout height and the
+    /// painted selection model have to agree, or a tap on the second line misses the prompt.
     #[test]
-    fn phone_width_collapsed_echo_paints_a_padded_two_row_band() {
+    fn phone_width_collapsed_echo_paints_the_padded_band() {
         let area = Rect::new(0, 0, 55, 41);
         let mut state = ScrollbackState::new();
         state.prepare_layout(area.width, area.height);

@@ -2279,7 +2279,7 @@ mod tests {
         // A single-line prompt renders as one row plus one gap, exactly the 2-row overlap, which would hide the bug
         // One very tall response follows so there is plenty of room to page through the middle without clamping at the bottom
         h.push_prompt("Q1 line A\nQ1 line B\nQ1 line C");
-        let giant: String = (1..=300)
+        let giant: String = (1..=420)
             .map(|i| format!("answer line {i}"))
             .collect::<Vec<_>>()
             .join("\n");
@@ -2337,7 +2337,7 @@ mod tests {
         // Same setup as the sticky-header test: a multi-line prompt that would pin a header taller than 2 rows when enabled
         // A long response follows with room to page through the middle without clamping at the bottom
         h.push_prompt("Q1 line A\nQ1 line B\nQ1 line C");
-        let giant: String = (1..=300)
+        let giant: String = (1..=420)
             .map(|i| format!("answer line {i}"))
             .collect::<Vec<_>>()
             .join("\n");

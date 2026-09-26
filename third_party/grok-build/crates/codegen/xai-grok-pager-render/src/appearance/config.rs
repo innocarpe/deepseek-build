@@ -213,7 +213,9 @@ impl LayoutConfig {
     pub const MIN_HPAD: u16 = 1;
 
     /// Text inset between the bordered composer's border glyph and its first text
-    /// cell, per side. One column on every side keeps the four sides equal.
+    /// cell, per side. One column on each side keeps the columns equal; the box
+    /// spends no rows on the same air (a row is ~2.15 columns of pitch, so it
+    /// would out-weigh this inset — see `PromptStyle::vpad_top`).
     pub const BOX_TEXT_INSET: u16 = 1;
 
     /// Distance from the bordered composer's outer edge to its content area, per
@@ -247,10 +249,10 @@ impl LayoutConfig {
     ///
     /// The border glyph owns the outermost column and [`Self::BOX_TEXT_INSET`]
     /// keeps text off it, so the pad is the border column plus the inset. Fixed
-    /// and symmetric: the composer's text inset is the same on all four sides
-    /// whatever the scrollback block pads are set to — those pads belong to
-    /// scrollback blocks, whose left gutter only exists because the accent rail
-    /// sits between the text and the pane's left edge.
+    /// and symmetric: the composer's text inset is the same on both sides and at
+    /// both widths whatever the scrollback block pads are set to — those pads
+    /// belong to scrollback blocks, whose left gutter only exists because the
+    /// accent rail sits between the text and the pane's left edge.
     pub fn eff_box_pad_left(&self) -> u16 {
         Self::BOX_PAD
     }
@@ -2001,7 +2003,7 @@ mod tests {
     }
 
     /// The bordered composer keeps a fixed, symmetric pad: the border glyph's
-    /// column plus a one-cell text inset, on every side and at every width. The
+    /// column plus a one-cell text inset, on both sides and at every width. The
     /// scrollback block pads do not move it.
     #[test]
     fn composer_pads_are_symmetric_and_fixed() {

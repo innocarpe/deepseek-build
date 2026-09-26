@@ -4,7 +4,7 @@ use crate::render::osc8::{LinkPresentation, resolve_link_target, resolve_link_ta
 use crate::scrollback::RenderBlock;
 use crate::scrollback::block::BlockContent;
 use crate::scrollback::types::DisplayMode;
-use crate::scrollback::wrappers::EntryRenderer;
+use crate::scrollback::wrappers::{EntryRenderer, entry_chrome};
 use pretty_assertions::assert_eq;
 use ratatui::style::Color;
 
@@ -94,6 +94,40 @@ fn render_with_scratch(
     selected_idx: Option<usize>,
 ) -> ScrollRenderResult {
     render_with_scratch_and_buffer(entries, viewport, scroll_offset, selected_idx).0
+}
+
+/// The column an entry's own text starts on: the accent column and left pad it
+/// actually spends (`entry_chrome`), not the pane's default columns.
+fn entry_content_x(entry: &ScrollbackEntry, viewport: Rect) -> u16 {
+    entry_content_rect(entry, viewport).x
+}
+
+/// The content column for a header the harness rendered straight from a state
+/// (the group-header test): the chrome of the tool rows the group hides.
+fn group_header_content_x(
+    state: &crate::scrollback::state::ScrollbackState,
+    viewport: Rect,
+) -> u16 {
+    let appearance = state.appearance().clone();
+    let entry = ScrollbackEntry::new(RenderBlock::execute(String::new()));
+    HorizontalLayout::new_with_chrome(
+        viewport,
+        &appearance.scrollback.layout,
+        entry_chrome(&entry, &appearance),
+    )
+    .content
+    .x
+}
+
+/// The entry's own content rect: the columns its text wraps into.
+fn entry_content_rect(entry: &ScrollbackEntry, viewport: Rect) -> Rect {
+    let appearance = AppearanceConfig::default();
+    HorizontalLayout::new_with_chrome(
+        viewport,
+        &appearance.scrollback.layout,
+        entry_chrome(entry, &appearance),
+    )
+    .content
 }
 
 fn render_with_scratch_and_buffer(
@@ -1062,9 +1096,7 @@ fn labeled_truncation_header_synthetic_line_copies_label_text() {
         drawn, "Ran 3 commands",
         "synthetic hitbox must start exactly where the drawn label starts"
     );
-    let expected_x = HorizontalLayout::ACCENT
-        + state.appearance().scrollback.layout.block_pad_left
-        + group_header_chrome_prefix_width();
+    let expected_x = group_header_content_x(&state, viewport) + group_header_chrome_prefix_width();
     assert_eq!(
         screen_x, expected_x,
         "hitbox sits past accent chrome + diamond prefix"
@@ -1277,7 +1309,7 @@ fn test_selected_entry_output_divergence_uses_selected_branch() {
 /// `effective_output` at the wrong width.
 #[test]
 fn message_block_content_width_subtracts_timestamp_reservation() {
-    // Picked so the message wraps to a different line count at `content_width - 8` than at `content_width`
+    // Picked so the message wraps to a different line count at `content_width - 10` than at `content_width`
     // With a 30-wide viewport and the accent column as the only chrome, pane_content_width is 29 and per-block
     // content_width is 21; the message below needs 5 rows at 21 and 3 at 29.
     let entries = vec![make_markdown_entry(
@@ -1286,18 +1318,20 @@ fn message_block_content_width_subtracts_timestamp_reservation() {
     let viewport = Rect::new(0, 0, 30, 20);
     let result = render_with_scratch(&entries, viewport, 0, None);
 
-    let pane_content_width = result.selection_model.content_area.width;
+    let entry_content_width = entry_content_rect(&entries[0], viewport).width;
     let block = &at(&result.selection_model.visible_blocks, 0);
     assert_eq!(
         block.content_width,
-        pane_content_width.saturating_sub(8),
-        "AgentMessage should reserve 8 cols for the timestamp"
+        entry_content_width.saturating_sub(10),
+        "AgentMessage should reserve 10 cols for the timestamp (8 + 2 of air)"
     );
 
     // The lines registered in the resolved model came from the cached output computed at `block.content_width`
     // Re-deriving them at the same width must produce the same line count so block_line_idx values remain valid
     // Deriving at the wider `pane_content_width` produces a different wrapping (the bug `finish_text_drag` previously triggered)
     let appearance = AppearanceConfig::default();
+    // The pane's default columns (no per-entry chrome) are the "wrong width" here.
+    let pane_content_width = result.selection_model.content_area.width;
     let model_lines = at(&result.selection_model.ranges, 0).lines.len();
     let entry_lines_narrow = at(&entries, 0)
         .effective_output(block.content_width, &appearance, false, None)
@@ -2271,9 +2305,7 @@ fn verb_group_header_selection_geometry_tracks_chrome() {
     );
     // Both states wear the diamond chrome: the hitbox starts past it at the same x either way
     // The label begins at the content column (accent plus left pad, NOT `chrome_width`, which also counts the right pad) plus the diamond prefix
-    let expected_x = HorizontalLayout::ACCENT
-        + appearance.scrollback.layout.block_pad_left
-        + group_header_chrome_prefix_width();
+    let expected_x = entry_content_x(&entries[0], viewport) + group_header_chrome_prefix_width();
     assert_eq!(
         collapsed.screen_x, expected_x,
         "collapsed hitbox sits past accent chrome + diamond prefix"
@@ -2681,15 +2713,14 @@ fn tool_header_link_target_overlay_covers_path_after_bullet() {
         "expected one file:// overlay for the tool path, got {:?}",
         result.link_overlay.links()
     );
-    let hlayout = HorizontalLayout::new(viewport, &appearance.scrollback.layout);
     assert_eq!(
         at(&file_links, 0).col_start,
-        hlayout.content.x.saturating_add(cols.start),
+        entry_content_x(&entry, viewport).saturating_add(cols.start),
         "overlay must start on path, not bullet/verb"
     );
     assert_eq!(
         at(&file_links, 0).col_end,
-        hlayout.content.x.saturating_add(cols.end),
+        entry_content_x(&entry, viewport).saturating_add(cols.end),
         "overlay must end at path end"
     );
 }
@@ -2753,10 +2784,10 @@ fn official_vscode_remote_tool_headers_delegate_only_self_resolving_paint() {
                 "main.rs",
                 LinkPresentation::Opaque,
             ),
-            // Narrower than the collapsed row's accent + "◆ Read main.rs" (15), so the header truncates.
+            // Narrower than the collapsed row's "◆ Read main.rs" (14), so the header truncates.
             (
                 DisplayMode::Collapsed,
-                14,
+                13,
                 "\u{2026}",
                 LinkPresentation::Opaque,
             ),
@@ -2907,8 +2938,7 @@ fn long_read_header_link_is_clipped_to_offset_content_area() {
                 .is_some_and(|url| url.contains("main.rs"))
         })
         .expect("read header file link");
-    let content =
-        HorizontalLayout::new(viewport, &AppearanceConfig::default().scrollback.layout).content;
+    let content = entry_content_rect(&entry, viewport);
     assert!(link.col_start >= content.left());
     assert_eq!(link.col_end, content.right());
 }
@@ -2931,8 +2961,7 @@ fn explicit_tool_link_clips_before_u16_conversion() {
                 .is_some_and(|url| url.ends_with(".rs"))
         })
         .expect("long Read header file link");
-    let content =
-        HorizontalLayout::new(viewport, &AppearanceConfig::default().scrollback.layout).content;
+    let content = entry_content_rect(&entry, viewport);
     assert!(link.col_start >= content.left());
     assert_eq!(link.col_end, content.right());
 }
@@ -3072,8 +3101,8 @@ fn overlay_pretty_link_url_wraps_across_rows() {
     let group = url_overlay_group(&result, url);
     assert_eq!(
         group.len(),
-        5,
-        "expected the URL to wrap onto exactly 5 rows; got {} fragments: {:?}",
+        4,
+        "expected the URL to wrap onto exactly 4 rows; got {} fragments: {:?}",
         group.len(),
         group
             .iter()
@@ -3172,7 +3201,7 @@ fn overlay_pretty_link_url_in_blockquote_wraps_correctly() {
 
     let viewport = Rect::new(0, 0, 50, 10);
     let result = render_with_scratch(&entries, viewport, 0, None);
-    let content_x = result.selection_model.content_area.x;
+    let content_x = entry_content_x(&entries[0], viewport);
 
     let group = url_overlay_group(&result, url);
     assert!(
@@ -3234,7 +3263,7 @@ fn overlay_pretty_link_url_in_list_wraps_correctly() {
 
     let viewport = Rect::new(0, 0, 50, 10);
     let result = render_with_scratch(&entries, viewport, 0, None);
-    let content_x = result.selection_model.content_area.x;
+    let content_x = entry_content_x(&entries[0], viewport);
 
     let group = url_overlay_group(&result, url);
     assert!(
@@ -3352,7 +3381,7 @@ fn overlay_list_arxiv_pretty_link_wraps_correctly() {
 
     let viewport = Rect::new(0, 0, 35, 10);
     let result = render_with_scratch(&entries, viewport, 0, None);
-    let content_x = result.selection_model.content_area.x;
+    let content_x = entry_content_x(&entries[0], viewport);
 
     let group = url_overlay_group(&result, url);
     assert!(
@@ -3597,15 +3626,15 @@ fn diagram_emits_affordance_placement_not_inline_image() {
     assert_eq!(aff.source, "A-->B\n");
 
     // Exact placement geometry: one row tall, anchored at the content-area x, a non-empty width that stays within the content column band
-    let hlayout = HorizontalLayout::new(viewport, &appearance.scrollback.layout);
+    let content = entry_content_rect(&entry, viewport);
     assert_eq!(aff.screen_rect.height, 1, "the affordance row is one row");
     assert_eq!(
-        aff.screen_rect.x, hlayout.content.x,
+        aff.screen_rect.x, content.x,
         "anchored at the content-area x",
     );
     assert!(aff.screen_rect.width > 0, "non-degenerate width");
     assert!(
-        aff.screen_rect.x + aff.screen_rect.width <= hlayout.content.x + hlayout.content.width,
+        aff.screen_rect.x + aff.screen_rect.width <= content.x + content.width,
         "row stays within the content column band",
     );
     assert!(

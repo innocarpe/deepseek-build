@@ -9,11 +9,17 @@ use crate::scrollback::blocks::ToolCallBlock;
 use agent_client_protocol as acp;
 use xai_grok_telemetry::session_ctx::log_event;
 
-/// Copy the selected block's content to the system clipboard.
+/// Copy the held text selection, or the selected block's content when there is none.
 ///
 /// Respects the block's raw/pretty mode for markdown content.
 pub(super) fn dispatch_copy_block_content(app: &mut AppView) {
     with_active_agent(app, |agent| {
+        if agent.persistent_text_selection.is_some() {
+            if let Some(text) = agent.held_selection_copy_text().map(str::to_owned) {
+                agent.copy_to_clipboard(&text);
+            }
+            return;
+        }
         let Some(idx) = agent.scrollback.selected() else {
             return;
         };

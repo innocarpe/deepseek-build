@@ -704,6 +704,7 @@ impl AgentView {
                             return InputOutcome::Changed;
                         }
                         self.persistent_text_selection = None;
+                        self.persistent_selection_copy = None;
                         self.table_selection_geometry = None;
                         self.selection_created_at = None;
                         if is_link_modifier_held(mouse.modifiers)
@@ -744,6 +745,7 @@ impl AgentView {
                             && mouse.row < prompt.y;
                         if above_prompt_strip {
                             self.persistent_text_selection = None;
+                            self.persistent_selection_copy = None;
                             self.table_selection_geometry = None;
                             self.selection_created_at = None;
                             self.deferred_text_press = Some((mouse.column, mouse.row));
@@ -822,6 +824,7 @@ impl AgentView {
                                     let handled = match text_click_count {
                                         1 => {
                                             self.persistent_text_selection = None;
+                                            self.persistent_selection_copy = None;
                                             self.table_selection_geometry = None;
                                             self.selection_created_at = None;
                                             if hit.entry_idx != BTW_OVERLAY_ENTRY_IDX {

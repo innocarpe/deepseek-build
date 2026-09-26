@@ -83,6 +83,7 @@ impl AgentView {
             && key.modifiers.is_empty()
             && self.persistent_text_selection.take().is_some()
         {
+            self.persistent_selection_copy = None;
             self.table_selection_geometry = None;
             self.selection_created_at = None;
             return InputOutcome::Changed;

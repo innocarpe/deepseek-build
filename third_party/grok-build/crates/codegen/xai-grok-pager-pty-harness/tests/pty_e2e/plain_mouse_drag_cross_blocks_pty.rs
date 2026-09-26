@@ -60,5 +60,23 @@ async fn plain_mouse_drag_cross_blocks_copies_exact_selected_text() {
         "clipboard must contain exactly the cross-block selection; screen:\n{}",
         harness.screen_contents()
     );
+    let initial_count = payloads.len();
+
+    // The explicit scrollback copy action must preserve the held selection,
+    // rather than replacing the clipboard with the selected prompt block.
+    harness.inject_keys(b"y").expect("copy held selection");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let explicit_payloads = loop {
+        harness.update(Duration::from_millis(200));
+        let payloads = decode_osc52_payloads(harness.raw_output());
+        if payloads.len() > initial_count || Instant::now() >= deadline {
+            break payloads;
+        }
+    };
+    assert_eq!(
+        explicit_payloads.get(initial_count).map(String::as_str),
+        Some("DRAG_PROMPT\n\nPLAIN_DRAG"),
+        "y must copy the held selection again, not the whole selected block"
+    );
     harness.quit().expect("clean quit");
 }

@@ -113,6 +113,7 @@ pub(super) fn with_scrollback(app: &mut AppView, f: impl FnOnce(&mut ScrollbackS
 pub(super) fn navigate_clearing_selection(app: &mut AppView, f: impl FnOnce(&mut ScrollbackState)) {
     with_active_agent(app, |agent| {
         agent.persistent_text_selection = None;
+        agent.persistent_selection_copy = None;
         agent.table_selection_geometry = None;
         agent.selection_created_at = None;
         agent.highlighted_link_idx = None;

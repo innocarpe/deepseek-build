@@ -993,6 +993,9 @@ pub struct AgentView {
     /// completion, double-click, or triple-click. Cleared on next click
     /// elsewhere, Escape, or navigation.
     pub persistent_text_selection: Option<PersistentTextSelection>,
+    /// Exact clipboard payload associated with the held selection. The
+    /// selection key prevents an old payload from following a new highlight.
+    pub(crate) persistent_selection_copy: Option<(PersistentTextSelection, String)>,
     /// Table geometry for the held highlight. Not shared with an in-progress drag.
     pub table_selection_geometry: Option<TableSelectionGeometry>,
     /// Table geometry for the active drag. A `/btw` drag must not steal the held slot.

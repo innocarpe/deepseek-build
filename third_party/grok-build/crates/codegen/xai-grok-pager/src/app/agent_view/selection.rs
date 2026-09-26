@@ -52,6 +52,7 @@ impl AgentView {
             && created.elapsed().as_millis() as u64 >= DEFAULT_SELECTION_HIGHLIGHT_DURATION_MS
         {
             self.persistent_text_selection = None;
+            self.persistent_selection_copy = None;
             self.table_selection_geometry = None;
             self.selection_created_at = None;
             return true;
@@ -89,6 +90,7 @@ impl AgentView {
             .is_some_and(|sel| sel.entry_idx == BTW_OVERLAY_ENTRY_IDX)
         {
             self.persistent_text_selection = None;
+            self.persistent_selection_copy = None;
             self.selection_created_at = None;
         }
         if self
@@ -1016,6 +1018,22 @@ impl AgentView {
         self.export_copy_detector.note_slash_used();
     }
 
+    /// Reuse the exact payload produced when a held selection was created.
+    /// Reconstructing it later from viewport rows can lose clipped text or
+    /// change wrapping after a resize.
+    pub(in crate::app) fn held_selection_copy_text(&self) -> Option<&str> {
+        let selection = self.persistent_text_selection.as_ref()?;
+        let (saved_selection, text) = self.persistent_selection_copy.as_ref()?;
+        (selection == saved_selection && !text.is_empty()).then_some(text.as_str())
+    }
+
+    fn remember_selection_copy(&mut self, text: &str) {
+        self.persistent_selection_copy = self
+            .persistent_text_selection
+            .filter(|_| !text.is_empty())
+            .map(|selection| (selection, text.to_owned()));
+    }
+
     pub(in crate::app) fn finish_text_drag(&mut self) -> bool {
         let drag = self.drag_selection;
         let copied = drag.and_then(|d| self.reconstruct_drag_copy(&d));
@@ -1031,6 +1049,7 @@ impl AgentView {
             if let Some(d) = drag {
                 self.persist_drag_selection(&d, kind);
             }
+            self.remember_selection_copy(&text);
             let delivery = self.copy_to_clipboard(&text);
             let entry_key = drag.map(|d| d.anchor.entry_idx).unwrap_or(0);
             self.note_scrollback_drag_copy(entry_key, u16::from(delivery.toast_ticks()));
@@ -1446,6 +1465,7 @@ impl AgentView {
             kind: SelectionKind::Linear,
         });
         self.selection_created_at = Some(Instant::now());
+        self.remember_selection_copy(&selection.text);
         self.copy_to_clipboard_debounced(&selection.text);
 
         if hit.entry_idx != BTW_OVERLAY_ENTRY_IDX {
@@ -1505,6 +1525,7 @@ impl AgentView {
             kind: SelectionKind::Linear,
         });
         self.selection_created_at = Some(Instant::now());
+        self.remember_selection_copy(&clipboard_text);
 
         if !clipboard_text.is_empty() {
             self.copy_to_clipboard_debounced(&clipboard_text);
@@ -1620,6 +1641,7 @@ impl AgentView {
             kind: SelectionKind::Linear,
         });
         self.selection_created_at = Some(Instant::now());
+        self.remember_selection_copy(clipboard_text.as_deref().unwrap_or_default());
 
         if let Some(text) = clipboard_text.filter(|text| !text.is_empty()) {
             self.copy_to_clipboard_debounced(&text);
@@ -1673,6 +1695,7 @@ impl AgentView {
             geometry,
         });
         self.selection_created_at = Some(Instant::now());
+        self.remember_selection_copy(&clipboard_text);
 
         if !clipboard_text.is_empty() {
             self.copy_to_clipboard_debounced(&clipboard_text);
@@ -1726,6 +1749,7 @@ impl AgentView {
             geometry,
         });
         self.selection_created_at = Some(Instant::now());
+        self.remember_selection_copy(&clipboard_text);
 
         if !clipboard_text.is_empty() {
             self.copy_to_clipboard_debounced(&clipboard_text);
@@ -1823,6 +1847,49 @@ mod tests {
             agent.resolve_drag_kind(&drag.anchor, &outside, drag.kind),
             SelectionKind::Linear
         );
+    }
+
+    #[test]
+    fn explicit_copy_uses_only_the_current_held_selection_payload() {
+        let mut agent = make_agent();
+        let selection = PersistentTextSelection {
+            entry_idx: 0,
+            range_id: 0,
+            anchor: SelectionEndpoint {
+                block_line_idx: 0,
+                col_within_range: 1,
+            },
+            head: SelectionEndpoint {
+                block_line_idx: 1,
+                col_within_range: 2,
+            },
+            head_range: Some((1, 0)),
+            origin: SelectionOrigin::Drag,
+            kind: SelectionKind::Linear,
+        };
+        agent.persistent_text_selection = Some(selection);
+        agent.remember_selection_copy("exact\n\nselection");
+        assert_eq!(agent.held_selection_copy_text(), Some("exact\n\nselection"));
+        agent.persistent_text_selection = Some(PersistentTextSelection {
+            head: SelectionEndpoint {
+                block_line_idx: 1,
+                col_within_range: 3,
+            },
+            ..selection
+        });
+        assert_eq!(agent.held_selection_copy_text(), None);
+        agent.persistent_text_selection = None;
+        assert_eq!(agent.held_selection_copy_text(), None);
+    }
+
+    #[test]
+    fn scrollback_copy_button_dispatches_the_same_copy_action_as_y() {
+        let mut agent = make_agent();
+        agent.hit_sb_copy.set(Some(Rect::new(2, 3, 1, 1)));
+        assert!(matches!(
+            agent.handle_mouse(&mouse_down(2, 3)),
+            InputOutcome::Action(crate::app::actions::Action::CopyBlockContent)
+        ));
     }
 
     /// Build an agent whose scrollback selection model holds a single range with the given `(block_line_idx, text, joiner_to_previous)` lines.
@@ -3367,7 +3434,7 @@ mod tests {
     }
 
     /// Conversion is one-way: once the gesture is a text drag, motion back over chrome/gap rows keeps extending it and never re-arms block drag.
-    /// (The pre-existing head rule applies: nearest line within the anchor's range.)
+    /// The head follows the nearest selectable line across message blocks.
     #[test]
     fn converted_drag_stays_text_over_chrome_and_gap() {
         let mut agent = agent_with_chrome_and_gap();
@@ -3379,14 +3446,18 @@ mod tests {
 
         let _ = agent.handle_input(&Event::Mouse(mouse_drag(6, 4)), &reg);
         let drag = agent.drag_selection.expect("still a text drag");
-        assert_eq!(drag.head.block_line_idx, 0, "head snapped within range");
+        assert_eq!((drag.head.entry_idx, drag.head.block_line_idx), (0, 0));
         assert_eq!(drag.head.col_within_range, 6);
         assert!(agent.block_drag_selection.is_none(), "no block re-arm");
         assert!(agent.pending_block_drag.is_none());
 
         let _ = agent.handle_input(&Event::Mouse(mouse_drag(6, 9)), &reg);
         let drag = agent.drag_selection.expect("still a text drag");
-        assert_eq!(drag.head.block_line_idx, 1, "head follows nearest line");
+        assert_eq!(
+            (drag.head.entry_idx, drag.head.block_line_idx),
+            (1, 0),
+            "head follows the nearest line in the next message"
+        );
         assert_eq!(drag.anchor.entry_idx, 0, "anchor pinned to entry 0");
     }
 

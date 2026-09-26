@@ -230,6 +230,13 @@ fn classify_fallback(
     if rewrite_reason == Some(xai_fast_worktree::SKIP_SOURCE_IS_GROVE_MOUNT) {
         return Some(CloneFallbackReason::SourceIsGrove);
     }
+    // Mirror of the report's `grove-unavailable`: this build's collector declines
+    // grove without recording a skip, and the request landed on the copy
+    // fallback, so the event has to carry a reason too. Any other resolved
+    // strategy served the request.
+    if resolved == Some("copy") {
+        return Some(CloneFallbackReason::Other);
+    }
     None
 }
 
@@ -386,9 +393,11 @@ fn fallback_reason(
         // A pre-dispatch rewrite kept every arm from running, so it is the only
         // account of why grove did not serve this worktree.
         .or_else(|| rewrite_reason.map(str::to_owned))
-        // This build's collector declines grove without recording a skip.
-        // The report still has to say why the request became a copy.
-        .or(Some("grove-unavailable".to_owned()))
+        // This build's collector declines grove without recording a skip, so a
+        // request that lands on the copy fallback still has to say why. Any other
+        // resolved strategy (overlay, btrfs, git) served the request, and a
+        // reason there would describe a fallback that did not happen.
+        .or_else(|| (resolved == "copy").then(|| "grove-unavailable".to_owned()))
 }
 
 pub(super) fn creating_progress(grove_enabled: bool) -> &'static str {

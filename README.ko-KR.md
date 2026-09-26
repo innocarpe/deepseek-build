@@ -99,6 +99,9 @@ deepseek-build
 # 가장 최근 풀스크린 세션 재개
 deepseek-build --resume
 
+# 가장 최근 풀스크린 세션 이어가기 (클로드 코드식 -c)
+deepseek-build -c
+
 # 비대화형 턴 1회 실행
 deepseek-build run "Explain the architecture of this repository."
 

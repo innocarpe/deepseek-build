@@ -69,35 +69,7 @@ jobs:
           cache-on-failure: true
           cache-provider: github
           save-if: true
-      # Two known sets, both pre-existing. --no-fail-fast so a later package
-      # is not hidden behind the first red crate.
-      #
-      # nfs_off.rs returns no grove identities. These four tests assert the
-      # real collector (2026-09-25 main run: xai-fast-worktree 455 passed,
-      # 4 failed) and cannot pass until grove is built.
-      #
-      # xai-grok-pager lib then failed 12 of 10166 (run 36209764936). The
-      # doctor goldens still pin 8 themes while the catalog has 9, the dark
-      # alias ranks deepseeknight ahead of groknight, and several layout
-      # goldens are off by a row or a title glyph. Those are product
-      # golden drift, not a CI-environment miss. Skipping them lets the
-      # rest of the workspace report. Updating the goldens is a pager change.
+      # Grove identity and redirect-protocol tests are behind the
+      # `grove-identities` feature, which this build leaves off (`nfs_off`).
       - name: Test vendored workspace
-        run: |
-          cargo test --workspace --no-fail-fast -- \
-            --skip rebuild_nfs_under_managed_roots_is_not_labeled_linked \
-            --skip rebuild_registers_nfs_from_backing_marker \
-            --skip rebuild_scans_xdg_grove_without_grove_data_dir \
-            --skip run_pass_prunes_orphan_grove_pins_after_grace \
-            --skip short_terminal_leaves_the_row_four_of_its_five_rows \
-            --skip limited_color_output_is_stable \
-            --skip human_mixed_fixture_is_exact \
-            --skip json_contract_is_structural_stable_ordered_and_ansi_free \
-            --skip json_empty_fixture_pins_null_policy \
-            --skip shutdown_enqueues_resets_on_the_writer_queue \
-            --skip suggest_args_alias_ranks_canonical_row \
-            --skip prompt_budget_counts_the_rows_above_the_prompt \
-            --skip prompt_budget_excludes_the_prompts_own_requested_height \
-            --skip narrow_dialog_keeps_middle_unicode_cursor_visible \
-            --skip title_ends_on_same_column_as_info_line \
-            --skip hero_box_moves_up_only_once_the_flex_gap_is_gone
+        run: cargo test --workspace

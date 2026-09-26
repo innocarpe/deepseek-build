@@ -36,10 +36,12 @@ GitHub UI shows checks as `CI / <job>` (e.g. `CI / fmt`, `CI / test`, `CI / requ
 | `grok clippy` | grok paths | `cargo clippy --workspace -- -D warnings` there (libs and bins, not tests) |
 | **`required`** | **always** | aggregate; branch protection requires this |
 
-`CI grok test` is not a job of this workflow. It runs on `main` when grok
-paths change, in its own concurrency group, so a docs push cannot cancel it.
-Do not require that check: docs PRs never start the workflow, and GitHub
-fails a required check that did not run.
+`CI grok test` is not a job of this workflow. It runs `cargo test --workspace`
+in `third_party/grok-build` on `main` when grok paths change, in its own
+concurrency group, so a docs push cannot cancel it. Grove identity tests stay
+behind the off-by-default `grove-identities` feature. Do not require that
+check: docs PRs never start the workflow, and GitHub fails a required check
+that did not run.
 
 ```text
 PR / push

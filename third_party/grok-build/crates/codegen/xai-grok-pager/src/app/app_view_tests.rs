@@ -5372,7 +5372,7 @@ fn scrollback_click_still_selects_entry_on_mouse_up() {
     assert_eq!(selected_after, Some(0));
 }
 
-/// Long enough to fold at both the one-line phone budget and the three-line desktop budget.
+/// Long enough to fold at both the two-line phone budget and the three-line desktop budget.
 /// One sentence is about three rows at the width-blind estimate, so it would stay `Expanded` until a
 /// width is known. Repeating it exceeds both budgets once the pane has a width.
 fn foldable_prompt_echo() -> String {
@@ -5492,10 +5492,10 @@ fn phone_prompt_echo_tap_expands_in_place_and_pins_the_first_line() {
     );
     assert_eq!(prompt_mode(agent, prompt_idx), DisplayMode::Collapsed);
     let collapsed = echo_lines(agent, prompt_idx);
-    assert_eq!(collapsed.len(), 1, "phone echo is one line: {collapsed:?}");
+    assert_eq!(collapsed.len(), 2, "phone echo is two lines: {collapsed:?}");
     assert!(
-        collapsed[0].ends_with(" \u{2026}"),
-        "the one line keeps the ellipsis: {collapsed:?}"
+        collapsed[1].ends_with(" \u{2026}"),
+        "the second line keeps the ellipsis: {collapsed:?}"
     );
     let area_y = agent.pane_areas.scrollback.y;
     let top_before = prompt_screen_top(agent, prompt_idx);
@@ -5511,8 +5511,8 @@ fn phone_prompt_echo_tap_expands_in_place_and_pins_the_first_line() {
     let agent = app.agents.get(&id).unwrap();
     assert_eq!(prompt_mode(agent, prompt_idx), DisplayMode::Expanded);
     assert!(
-        echo_lines(agent, prompt_idx).len() > 1,
-        "opening the echo shows more than the one-line band"
+        echo_lines(agent, prompt_idx).len() > 2,
+        "opening the echo shows more than the two-line band"
     );
     assert!(
         !agent.scrollback.is_follow_mode(),
@@ -5553,8 +5553,8 @@ fn phone_prompt_echo_tap_expands_in_place_and_pins_the_first_line() {
     assert_eq!(prompt_mode(agent, prompt_idx), DisplayMode::Collapsed);
     assert_eq!(
         echo_lines(agent, prompt_idx).len(),
-        1,
-        "the first-line tap folds back to one line"
+        2,
+        "the first-line tap folds back to two lines"
     );
 }
 
@@ -5586,7 +5586,7 @@ fn phone_prompt_echo_drag_does_not_toggle_fold() {
     draw_agent_at(app.agents.get_mut(&id).unwrap(), 55, 40);
     let agent = app.agents.get(&id).unwrap();
     assert_eq!(prompt_mode(agent, prompt_idx), DisplayMode::Collapsed);
-    assert_eq!(echo_lines(agent, prompt_idx).len(), 1);
+    assert_eq!(echo_lines(agent, prompt_idx).len(), 2);
 
     // A release on a different cell, with no drag event, is still not a tap.
     let (col, row) = selectable_cell(agent, prompt_idx, 0);
@@ -5673,7 +5673,7 @@ fn phone_prompt_echo_tap_expands_under_word_select() {
     draw_agent_at(app.agents.get_mut(&id).unwrap(), 55, 40);
     let agent = app.agents.get(&id).unwrap();
     assert_eq!(prompt_mode(agent, prompt_idx), DisplayMode::Expanded);
-    assert!(echo_lines(agent, prompt_idx).len() > 1);
+    assert!(echo_lines(agent, prompt_idx).len() > 2);
     assert!(!agent.scrollback.is_follow_mode());
     assert_eq!(
         prompt_screen_top(agent, prompt_idx),

@@ -16,10 +16,11 @@ const COLLAPSED_MAX_LINES: usize = 3;
 
 /// Width (in columns) at or below which a collapsed prompt drops to
 /// [`COLLAPSED_NARROW_MAX_LINES`]. The measured iPhone Orca pane is 55 columns
-/// (the narrowest desktop pane on the same machine is 80), and there the
-/// three-line echo eats a third of the viewport while a single line plus the
-/// ellipsis still names the turn. Anything wider keeps [`COLLAPSED_MAX_LINES`],
-/// so the desktop layout is untouched.
+/// (the narrowest desktop pane on the same machine is 80). One row names the
+/// turn and cuts the rest of the prompt; two rows keep enough of it to read,
+/// and the echo band has no vertical padding, so the extra row is one line of
+/// text. Anything wider keeps [`COLLAPSED_MAX_LINES`], so the desktop layout
+/// is untouched.
 ///
 /// [`NARROW_TERMINAL_COLS`](crate::appearance::NARROW_TERMINAL_COLS) is the same
 /// number: the whole frame's phone-width density keys off it, and this alias
@@ -30,7 +31,10 @@ const COLLAPSED_MAX_LINES: usize = 3;
 pub(crate) const COLLAPSED_NARROW_TERMINAL_COLS: u16 = crate::appearance::NARROW_TERMINAL_COLS;
 
 /// Max visible lines when a user prompt is collapsed on a narrow terminal.
-const COLLAPSED_NARROW_MAX_LINES: usize = 1;
+///
+/// Two, not one: a single row on a 55-column pane hides most of a submitted
+/// prompt, and the band is already tight, so a second row is the context.
+const COLLAPSED_NARROW_MAX_LINES: usize = 2;
 
 /// The collapse budget for a prompt rendered at `width` into `mode`.
 ///
@@ -536,7 +540,7 @@ impl BlockContent for UserPromptBlock {
         appearance.scrollback.blocks.prompt.vpad && !appearance.prompt.compact
     }
 
-    /// On a phone-width pane the prompt echo is a one-row band, and the two blank pad rows around it cost as much
+    /// On a phone-width pane the prompt echo is a two-row band, and the two blank pad rows around it cost as much
     /// vertical space as the band itself. Drop the pad there. Wider panes keep the configured pad, so the desktop
     /// rhythm is untouched. The threshold is the same [`COLLAPSED_NARROW_TERMINAL_COLS`] the narrow fold already uses.
     ///
@@ -604,6 +608,14 @@ impl BlockContent for UserPromptBlock {
             }
         }
         false
+    }
+
+    /// The off-screen height estimate asks this instead of assuming one row.
+    /// A collapsed phone echo paints [`COLLAPSED_NARROW_MAX_LINES`]; a wider pane paints [`COLLAPSED_MAX_LINES`].
+    fn collapsed_row_budget(&self, content_width: u16) -> u16 {
+        let rows = collapsed_max_lines(content_width, DisplayMode::Collapsed)
+            .unwrap_or(COLLAPSED_MAX_LINES);
+        u16::try_from(rows).unwrap_or(u16::MAX)
     }
 
     fn default_display_mode(&self) -> DisplayMode {
@@ -1386,21 +1398,25 @@ mod tests {
 
     /// The measured iPhone pane is 55 columns (`stty -f /dev/<tty> size` on the
     /// Orca-managed dsb panes; see the layout session's measurement record).
-    /// There, a collapsed prompt must fold to a single line plus the ellipsis,
-    /// which is what keeps the echo from eating the viewport.
+    /// There, a collapsed prompt shows two lines and the ellipsis on the second,
+    /// which keeps the turn readable without eating the viewport.
     #[test]
-    fn collapsed_prompt_folds_to_one_line_at_phone_width() {
+    fn collapsed_prompt_folds_to_two_lines_at_phone_width() {
         for width in [40u16, 50, 53, 55, 60] {
             let block = UserPromptBlock::new(LONG_PROMPT);
             let lines = rendered_lines(&block, &collapsed_ctx(width));
             assert_eq!(
                 lines.len(),
-                1,
-                "at {width} cols a collapsed prompt must be one line, got {lines:?}"
+                COLLAPSED_NARROW_MAX_LINES,
+                "at {width} cols a collapsed prompt must be two lines, got {lines:?}"
             );
             assert!(
-                lines[0].ends_with(" \u{2026}"),
-                "the single line must carry the ellipsis at {width} cols: {lines:?}"
+                !lines[0].ends_with(" \u{2026}"),
+                "the ellipsis belongs on the last visible line at {width} cols: {lines:?}"
+            );
+            assert!(
+                lines[1].ends_with(" \u{2026}"),
+                "the second line must carry the ellipsis at {width} cols: {lines:?}"
             );
         }
     }
@@ -1415,6 +1431,23 @@ mod tests {
             lines.len(),
             COLLAPSED_MAX_LINES,
             "one column past the threshold must keep the roomy budget: {lines:?}"
+        );
+    }
+
+    /// A 120-column pane is a desktop width. A prompt longer than three rows there
+    /// still stops at three, with the ellipsis on the last of them.
+    #[test]
+    fn collapsed_prompt_keeps_three_lines_at_desktop_width() {
+        let block = UserPromptBlock::new(LONG_PROMPT.repeat(8));
+        let lines = rendered_lines(&block, &collapsed_ctx(120));
+        assert_eq!(
+            lines.len(),
+            COLLAPSED_MAX_LINES,
+            "a 120-column pane keeps the three-line budget: {lines:?}"
+        );
+        assert!(
+            lines[2].ends_with(" \u{2026}"),
+            "the third line must carry the ellipsis: {lines:?}"
         );
     }
 
@@ -1457,8 +1490,8 @@ mod tests {
     /// these tests stay valid if the pad widths move by a column.
     ///
     /// This is the reported case: a ~100-column one-liner that the width-blind `is_foldable()` scores as two visual
-    /// rows (under the three-row roomy budget), so the block called itself unfolded and the narrow one-row budget
-    /// never applied.
+    /// rows (under the three-row roomy budget), so the block called itself unfolded and the narrow budget never
+    /// applied. At phone width the same line needs a third row, which is past the two-row budget.
     const PHONE_CONTENT_WIDTH: u16 = 34;
 
     fn hundred_column_prompt() -> UserPromptBlock {
@@ -1470,7 +1503,7 @@ mod tests {
         let block = hundred_column_prompt();
         assert!(
             block.is_foldable_at(PHONE_CONTENT_WIDTH),
-            "a ~100-column prompt needs more than one row at phone width"
+            "a ~100-column prompt needs more than two rows at phone width"
         );
         assert!(
             !block.is_foldable(),
@@ -1511,7 +1544,7 @@ mod tests {
         );
         assert!(
             block.is_foldable_at(PHONE_CONTENT_WIDTH),
-            "the same 200 columns exceed the one-row phone budget"
+            "the same 200 columns exceed the two-row phone budget"
         );
     }
 
@@ -1523,15 +1556,38 @@ mod tests {
     }
 
     #[test]
-    fn two_wrapped_rows_fold_at_phone_width() {
-        let block = UserPromptBlock::new(format!("{}\n{}", "y".repeat(40), "z".repeat(40)));
+    fn exactly_two_rows_fit_the_narrow_budget_and_a_third_folds() {
+        let band = usize::from(PHONE_CONTENT_WIDTH);
+        let two = UserPromptBlock::new(format!("{}\n{}", "y".repeat(band), "z".repeat(band)));
         assert!(
-            block.is_foldable_at(PHONE_CONTENT_WIDTH),
-            "two wrapped rows exceed the one-row narrow budget"
+            !two.is_foldable_at(PHONE_CONTENT_WIDTH),
+            "two rows that each fit the band stay within the narrow budget"
         );
         assert!(
-            !block.is_foldable_at(80),
+            !two.is_foldable_at(80),
             "the same two rows fit the three-row desktop budget"
+        );
+
+        let three = UserPromptBlock::new(format!(
+            "{}\n{}\n{}",
+            "y".repeat(band),
+            "z".repeat(band),
+            "w".repeat(band),
+        ));
+        assert!(
+            three.is_foldable_at(PHONE_CONTENT_WIDTH),
+            "a third row exceeds the two-row narrow budget"
+        );
+        assert!(
+            !three.is_foldable_at(80),
+            "three short rows still fit the three-row desktop budget"
+        );
+
+        let lines = rendered_lines(&three, &collapsed_ctx(PHONE_CONTENT_WIDTH));
+        assert_eq!(lines.len(), COLLAPSED_NARROW_MAX_LINES, "{lines:?}");
+        assert!(
+            lines[1].ends_with(" \u{2026}"),
+            "the folded third row leaves an ellipsis on the second line: {lines:?}"
         );
     }
 
@@ -1562,20 +1618,28 @@ mod tests {
         );
     }
 
-    /// The dropped arrow's two columns go back to the text. On a narrow pane the single row is the whole budget, so
-    /// text exactly as wide as the band fits — subtracting the dropped arrow would fold it two columns early.
+    /// The dropped arrow's two columns go back to the text. The narrow budget is two rows of that band, so text
+    /// exactly two bands wide fits, and one more column needs a third row and folds. Subtracting the dropped arrow
+    /// would fold two columns early.
     #[test]
     fn phone_width_fold_budget_counts_the_reclaimed_arrow_columns() {
-        let fits = UserPromptBlock::new("x".repeat(PHONE_CONTENT_WIDTH as usize));
+        let band = usize::from(PHONE_CONTENT_WIDTH);
+        let one_row = UserPromptBlock::new("x".repeat(band));
         assert!(
-            !fits.is_foldable_at(PHONE_CONTENT_WIDTH),
-            "text exactly as wide as the band fits its one row"
+            !one_row.is_foldable_at(PHONE_CONTENT_WIDTH),
+            "text exactly as wide as the band fits its first row"
         );
 
-        let over = UserPromptBlock::new("x".repeat(PHONE_CONTENT_WIDTH as usize + 1));
+        let two_rows = UserPromptBlock::new("x".repeat(band * 2));
+        assert!(
+            !two_rows.is_foldable_at(PHONE_CONTENT_WIDTH),
+            "two rows exactly as wide as the band fit the narrow budget"
+        );
+
+        let over = UserPromptBlock::new("x".repeat(band * 2 + 1));
         assert!(
             over.is_foldable_at(PHONE_CONTENT_WIDTH),
-            "one column past the band needs a second row and must fold"
+            "one column past two rows needs a third row and must fold"
         );
     }
 

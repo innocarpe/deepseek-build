@@ -268,7 +268,7 @@ impl ScrollbackState {
         }
     }
 
-    /// The prompt's wrap width is in the one-line phone band.
+    /// The prompt's wrap width is in the phone-width band.
     /// `0` means the pane has not been laid out yet, which is not a phone width.
     pub(crate) fn prompt_echo_is_phone_width(&self) -> bool {
         let width = self.prompt_content_width(self.last_width);
@@ -288,7 +288,7 @@ impl ScrollbackState {
 
     /// What a same-cell tap on a phone-width user prompt does.
     ///
-    /// Collapsed (the whole one-line echo): expand. Expanded: collapse only when `click_row` is the
+    /// Collapsed (the whole two-line echo): expand. Expanded: collapse only when `click_row` is the
     /// echo's first row. A body row, a desktop width, or a prompt that fits without folding returns
     /// `None` so the click stays a selection.
     fn narrow_prompt_echo_tap(

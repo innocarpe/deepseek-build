@@ -165,7 +165,7 @@ impl Default for ScrollbackDisplayConfig {
 }
 
 /// Pane width (columns) at or below which the pager applies its phone-only
-/// render gates: the prompt echo folds to one row, its decorative `❯` is
+/// render gates: the prompt echo folds to at most two rows, its decorative `❯` is
 /// dropped, and the default block vpad goes away.
 ///
 /// The measured iPhone Orca pane is 55 columns and the narrowest desktop pane

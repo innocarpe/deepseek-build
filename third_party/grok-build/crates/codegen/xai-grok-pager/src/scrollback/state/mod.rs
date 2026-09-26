@@ -663,7 +663,7 @@ impl ScrollbackState {
         )
     }
 
-    /// A fresh prompt adopts the fold its width implies, so the submitted echo is a one-row band in a phone-width pane
+    /// A fresh prompt adopts the fold its width implies, so the submitted echo is a two-row band in a phone-width pane
     /// instead of a full body.
     ///
     /// The block's own `default_display_mode()` answers from the width-blind estimate, and `ScrollbackEntry::new` has
@@ -3651,10 +3651,12 @@ mod tests {
     }
 
     #[test]
-    fn phone_width_prompt_echo_is_one_row_without_padding() {
+    fn phone_width_prompt_echo_is_two_rows_without_padding() {
         let mut state = ScrollbackState::new();
         state.prepare_layout(PHONE_PANE, 20);
-        let id = state.push_block(user_block(&hundred_column_prompt()));
+        // Longer than the ~100-column fold fixture: three wrapped rows would be the
+        // unfolded height, so a cached height of two is the budget, not a short wrap.
+        let id = state.push_block(user_block(&"x".repeat(200)));
         assert_eq!(
             state.get_by_id(id).unwrap().display_mode,
             DisplayMode::Collapsed,
@@ -3663,8 +3665,55 @@ mod tests {
 
         let height = state.get_cached_entry_height(0).expect("layout cache");
         assert_eq!(
-            height, 1,
-            "the collapsed prompt echo is one row with no vertical padding"
+            height, 2,
+            "the collapsed prompt echo is two rows with no vertical padding"
+        );
+    }
+
+    /// The first layout pass estimates off-screen entries. A collapsed phone echo that has not been measured yet
+    /// still has to reserve two rows, or the scroll height is short until the prompt scrolls into view.
+    #[test]
+    fn offscreen_phone_prompt_estimates_two_rows() {
+        let mut state = ScrollbackState::new();
+        state.prepare_layout(PHONE_PANE, 8);
+        state.begin_batch();
+        state.push_block(user_block(&"x".repeat(200)));
+        for i in 0..40 {
+            state.push_block(stub_block(&format!("pad {i}\nmore")));
+        }
+        state.end_batch();
+        state.prepare_layout(PHONE_PANE, 8);
+
+        let cache = state.layout_cache.as_ref().expect("layout cache");
+        assert!(
+            state.scroll_offset() > 2,
+            "follow mode must have left the prompt above the viewport"
+        );
+        assert!(
+            !cache.measured.first().copied().unwrap_or(true),
+            "the off-screen prompt must still be on its estimate"
+        );
+        assert_eq!(
+            cache.entries.first().map(|e| e.height),
+            Some(2),
+            "the estimate counts the two-row collapsed band"
+        );
+    }
+
+    #[test]
+    fn desktop_width_collapsed_echo_keeps_three_content_rows() {
+        let mut state = ScrollbackState::new();
+        state.prepare_layout(120, 40);
+        let id = state.push_block(user_block(&"x".repeat(400)));
+        assert_eq!(
+            state.get_by_id(id).unwrap().display_mode,
+            DisplayMode::Collapsed,
+            "400 columns exceed the three-row desktop budget"
+        );
+        assert_eq!(
+            state.get_cached_entry_height(0),
+            Some(5),
+            "three content rows plus the two desktop pad rows"
         );
     }
 

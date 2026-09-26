@@ -277,7 +277,7 @@ only tests `dsb-context` is Path B evidence under OWNER_BAR §2.1.
 | Unit | Deliverable | Dep |
 |---|---|---|
 | **U4.1** | **Done.** §7 is the *not taken* ledger: each dsh idea this train declined, with the evidence path and the reason. The discipline [UPSTREAM_SYNC_LEDGER.md](./UPSTREAM_SYNC_LEDGER.md) set for vendor syncs, applied to harness ideas | — |
-| **U4.2** | `6.1.0` cut: honesty table filled from merged results, owner-readable summary, release | claimed units |
+| **U4.2** | Honesty table and owner summary are in [CHANGELIST_6_1_0.md](./CHANGELIST_6_1_0.md) and PRD-v6 §7. The tag `v6.1.0` is not cut | claimed units |
 
 ---
 

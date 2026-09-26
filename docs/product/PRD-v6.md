@@ -204,13 +204,31 @@ replay, and image handling. This close did not measure those, and it does
 not record them as a reason to switch. The condition in "Why `6.1.0`" that
 would open a `7.0.0` major did not fire.
 
-No product code changed with this close. Path A's `Usage` still has no
-`prompt_cache_miss_tokens` field, so it still drops the miss the official
-server sends (depth board U2.3).
+No product code changed with this close. U2.3 later kept
+`prompt_cache_miss_tokens` on the Chat Completions `Usage` and logs the
+session total. That field was absent when this paragraph was first written.
 
 **Nothing in §7.1 depends on a transport change.** Spec 10 §1.10 already
 specifies the appended stable body. This section does not add a
 `systemPromptUpdate` / `toolUpdate` wire form.
+
+### Shipped — honesty table
+
+Filled from `main` at `e914dfb` (2026-09-26). The owner-readable file is
+[CHANGELIST_6_1_0.md](./CHANGELIST_6_1_0.md). A row that is not **shipped**
+is not a claim of this cut.
+
+| Claim | Status | Evidence |
+|---|---|---|
+| Cached prefix survives a stable-body change | **shipped** | `place_stable_body` appends; `spec10_path_a_assembly.rs:525` |
+| A miss names which assembled document moved | **shipped** | `observe_path_a_prefix_change`, `spec10_path_a_assembly.rs:423`; log line `prefix_change=` |
+| Session cache total is visible to the owner | **partial** | `turn_end.rs:410` logs `cache_session` from the in-memory ledger. The chip is still per turn. The counter is not persisted |
+| Request matches the log, or the turn fails | **shipped** | `check_request_projects_log` before sampling, `turn.rs:3079`. Tests in `request_log_invariant.rs` fail the forged case |
+| Deny cannot be reopened by a later allow | **shipped** | `DenyOnly` + `combine_decisions` (board §1) |
+| Wire question closed without a new major | **shipped** | §7.2 re-affirms ADR 0005. Twelve HTTP 200 calls, 2026-09-26 |
+| Rows not taken are written down | **shipped** | Board §7, PR #240 |
+| Spill demonstrated on a session that blew the context | **not claimed** | Present in the `1.0.41` tree (board §1). Not re-demonstrated |
+| Tag `v6.1.0` on npm | **not shipped** | `v6.0.2` tags `e914dfb`. `v6.1.0` does not exist |
 
 ### 7.3 Exit criteria
 

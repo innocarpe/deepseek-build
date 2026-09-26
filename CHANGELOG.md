@@ -4,6 +4,10 @@
 
 - On a phone-width pane (60 columns or fewer) the model and mode label (`DeepSeek V4.1 Flash (max) · always-approve`) leaves the input box's bottom border and takes its own row below the box, and the keyboard-hint row (`Enter:send · Opt+Enter:newline · Shift+Tab:mode`, and every state-specific variant of it) is gone: the label row is the row the hints used to occupy, so the bottom stack is exactly as tall as before. The DeepSeek balance and cache-hit row is unchanged, and panes above 60 columns render exactly as they did.
 
+- The shared vendored Grok target is a queue, and it is now visible and gated: `scripts/vendor-build.sh status` reads the cargo file lock (`target/debug/.cargo-lock`) and reports holders, waiters, elapsed, command and worktree per process (exit 1 while busy) plus host free/swap/load5m with the memory-gate verdict; `clone` copies the target copy-on-write into `~/.cache/dsb-vendor-targets/<slug>` so a session builds without waiting (registry deps stay fresh; a copy that collides with a live writer is retried with backoff and then finished by a per-file clonefile walk that skips files the other build removed); `run -- <cmd>` passes a free queue through as-is and on a busy queue starts a second build only when the memory gate passes, in a clone with `CARGO_BUILD_JOBS=2` (refused otherwise: status printed, exit 1); `prune` frees idle clones. `AGENTS.md` and `skills/worktree-dispatch` say the queue and the deadlock rule — cargo called from inside a cargo build or test on a shared target is a real lock cycle, and nothing under `third_party/grok-build` does it today.
+
+
+
 ## 6.1.0 — 2026-09-26
 
 - DeepSeek-native depth: a cache miss names which assembled document moved, the session logs a cache total, a request that diverges from the log fails the turn, and a stable-body change appends instead of rewriting the cached prefix. CHANGELIST_6_1_0.md.

@@ -215,6 +215,19 @@ without Orca the same rule is `git worktree add -b <type>/<slug> <path> origin/m
   `test-grok-vendor-offline.sh`, the `test-path-a-*` scripts, …; check with
   `rg -l grok-build scripts/`) — goes serially across all worktrees. Units that
   only build and test `crates/` can run in parallel.
+  When sessions share the target
+  (`CARGO_TARGET_DIR=<primary checkout>/third_party/grok-build/target`),
+  `./scripts/vendor-build.sh status` reads that queue (holder, waiters,
+  elapsed, worktree; exit 1 while busy) and reports the host facts with the
+  memory-gate verdict. `./scripts/vendor-build.sh clone <slug>` copies the
+  target copy-on-write into `~/.cache/dsb-vendor-targets/<slug>` so the wait
+  can be skipped (registry dependencies stay fresh, workspace crates rebuild;
+  `prune` frees idle clones). `./scripts/vendor-build.sh run -- <cmd>`
+  passes a free queue through as-is; on a busy queue it starts a second build
+  only when the memory gate passes, in a clone with `CARGO_BUILD_JOBS=2` —
+  two concurrent builds only through the gate, one otherwise. Calling cargo
+  from inside a cargo build or test on that shared target **is** a real
+  deadlock; nothing under `third_party/grok-build` does this today.
 - **Leave other sessions' worktrees alone** — their files, branches and
   terminals. Ask the owning session or report instead. **Do not judge a worktree
   abandoned from `orca terminal list`:** on 2026-09-25 it returned 0 terminals

@@ -43,6 +43,7 @@ jobs:
       release_verify: ${{ steps.filter.outputs.release_verify }}
       changelog: ${{ steps.filter.outputs.changelog }}
       session_close: ${{ steps.filter.outputs.session_close }}
+      vendor_build: ${{ steps.filter.outputs.vendor_build }}
       npm: ${{ steps.filter.outputs.npm }}
       grok: ${{ steps.filter.outputs.grok }}
     steps:
@@ -108,6 +109,15 @@ jobs:
             npm:
               - 'npm/**'
               - 'package.json'
+              - '.github/workflows/ci.yml'
+            # The shared-target queue: status reads cargo lock holders and
+            # waiters, clone copies the warm target copy-on-write instead of
+            # waiting on them. Hermetic (a fixture tree + python3 flock
+            # holders); no cargo and no network. Not a rule lint.
+            vendor_build:
+              - 'scripts/vendor-build.sh'
+              - 'scripts/lib/vendor_build.py'
+              - 'scripts/test-vendor-build.sh'
               - '.github/workflows/ci.yml'
             grok:
               - 'third_party/grok-build/**'
@@ -248,6 +258,26 @@ jobs:
       - uses: actions/checkout@v4
       - run: python3 ./scripts/test-session-close.py
 
+  # The shared vendored-target queue. Hermetic: a fixture target tree plus
+  # python3 flock holders (one with a fake rustc child), so it pins the
+  # holder/waiter contract, the clone fail-close, the copy retry and prune
+  # without cargo, network, or ~/.cache writes.
+  vendor_build:
+    name: vendor build queue
+    needs: changes
+    if: needs.changes.outputs.vendor_build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install lsof
+        run: |
+          if ! command -v lsof >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq lsof
+          fi
+      - run: ./scripts/test-vendor-build.sh
+
   # The npm wrapper is the install path users actually run. The tests are
   # hermetic (stub binaries, temp dirs) and finish in seconds.
   npm:
@@ -324,7 +354,7 @@ jobs:
   # ---------------------------------------------------------------------------
   required:
     name: required
-    needs: [changes, fmt, clippy, test, semver, release_verify, changelog, session_close, npm, grok_fmt, grok_clippy]
+    needs: [changes, fmt, clippy, test, semver, release_verify, changelog, session_close, vendor_build, npm, grok_fmt, grok_clippy]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -340,6 +370,7 @@ jobs:
           echo "release_verify=${{ needs.release_verify.result }}"
           echo "changelog=${{ needs.changelog.result }}"
           echo "session_close=${{ needs.session_close.result }}"
+          echo "vendor_build=${{ needs.vendor_build.result }}"
           echo "npm=${{ needs.npm.result }}"
           echo "grok_fmt=${{ needs.grok_fmt.result }}"
           echo "grok_clippy=${{ needs.grok_clippy.result }}"
@@ -360,6 +391,7 @@ jobs:
             "release_verify:${{ needs.release_verify.result }}" \
             "changelog:${{ needs.changelog.result }}" \
             "session_close:${{ needs.session_close.result }}" \
+            "vendor_build:${{ needs.vendor_build.result }}" \
             "npm:${{ needs.npm.result }}" \
             "grok_fmt:${{ needs.grok_fmt.result }}" \
             "grok_clippy:${{ needs.grok_clippy.result }}"

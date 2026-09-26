@@ -246,6 +246,7 @@ impl AgentView {
             block_drag_selection: None,
             deferred_text_press: None,
             persistent_text_selection: None,
+            persistent_selection_copy: None,
             table_selection_geometry: None,
             drag_table_geometry: None,
             btw_selection_wrap_width: None,

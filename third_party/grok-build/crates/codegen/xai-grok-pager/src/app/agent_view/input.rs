@@ -1716,6 +1716,7 @@ mod btw_focus_tests {
                 block_line_idx: 1,
                 col_within_range: 4,
             },
+            head_range: None,
             origin: SelectionOrigin::Drag,
             kind: SelectionKind::Linear,
         });

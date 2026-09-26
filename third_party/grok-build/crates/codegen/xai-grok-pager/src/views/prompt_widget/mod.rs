@@ -3433,9 +3433,7 @@ impl PromptWidget {
             // A phone-width pane paints no label on this divider at all: the agent
             // view puts the model on the DeepSeek status row under the box, so no
             // label row is reserved here.
-            if !narrow
-                && let Some(info) = info.filter(|i| !i.is_blank())
-            {
+            if !narrow && let Some(info) = info.filter(|i| !i.is_blank()) {
                 // Reserve one cell per corner so the label starts on a blank pad
                 // rather than on the divider rule. `content_area` begins
                 // `chrome_pad_left` cells in, which left `─` painted directly

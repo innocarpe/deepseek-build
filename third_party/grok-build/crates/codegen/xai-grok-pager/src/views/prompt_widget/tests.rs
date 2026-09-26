@@ -4133,7 +4133,7 @@
     #[test]
     fn plan_flag_keeps_accent_color_on_terminal_theme() {
         let _guard = crate::theme::cache::pin_theme();
-        let area = Rect::new(0, 0, 60, BORDERED_TEST_HEIGHT);
+        let area = Rect::new(0, 0, 80, BORDERED_TEST_HEIGHT);
 
         let render = || {
             let theme = Theme::current();
@@ -4196,7 +4196,7 @@
         let _guard = crate::theme::cache::pin_theme();
         crate::theme::cache::set(crate::theme::ThemeKind::Terminal);
         let theme = Theme::current();
-        let area = Rect::new(0, 0, 60, BORDERED_TEST_HEIGHT);
+        let area = Rect::new(0, 0, 80, BORDERED_TEST_HEIGHT);
 
         let flags = [PromptFlag {
             text: "plan",
@@ -4244,7 +4244,7 @@
     #[test]
     fn info_line_chrome_is_muted_on_terminal_theme() {
         let _guard = crate::theme::cache::pin_theme();
-        let area = Rect::new(0, 0, 60, BORDERED_TEST_HEIGHT);
+        let area = Rect::new(0, 0, 80, BORDERED_TEST_HEIGHT);
 
         let render = |needle: &str| {
             let flags = [PromptFlag {
@@ -5145,8 +5145,10 @@
 
     #[test]
     fn title_ends_on_same_column_as_info_line() {
-        // Both captions keep their trailing pad cell at x 38, one `─`-width short
-        // of the corner (the box's four-sided text inset shows up as that pad).
+        // Both captions keep their trailing pad cell on the same column, one
+        // `─`-width short of the corner (the box's four-sided text inset shows
+        // up as that pad). The pane is wider than the phone threshold, so the
+        // label rides the divider row as it does on any desktop pane.
         let style = PromptStyle {
             title: Some("my session".to_string()),
             chrome_pad_right: 2,
@@ -5157,16 +5159,14 @@
             ..Default::default()
         };
         let mut pw = PromptWidget::new();
-        let area = Rect::new(0, 0, 40, BORDERED_TEST_HEIGHT);
+        let area = Rect::new(0, 0, 80, BORDERED_TEST_HEIGHT);
         let mut buf = Buffer::empty(area);
         pw.draw(&mut buf, area, None, &style, Some(&info), None);
 
-        // 40 columns is a narrow pane: the label takes the row below the divider
-        // (row 5), and the divider owns row 4.
-        assert_eq!(buf_text_at(&buf, 27, 39, 0), " my session ");
-        assert_eq!(buf_text_at(&buf, 31, 39, 5), " grok-3 ");
-        assert_eq!(buf_text_at(&buf, 38, 40, 0), " \u{256e}");
-        assert_eq!(buf_text_at(&buf, 38, 40, 4), "\u{2500}\u{256f}");
+        assert_eq!(buf_text_at(&buf, 67, 79, 0), " my session ");
+        assert_eq!(buf_text_at(&buf, 71, 79, 5), " grok-3 ");
+        assert_eq!(buf_text_at(&buf, 78, 80, 0), " \u{256e}");
+        assert_eq!(buf_text_at(&buf, 78, 80, 5), " \u{256f}");
     }
 
     fn any_cell_with_bg(buf: &Buffer, bg: ratatui::style::Color) -> bool {

@@ -136,20 +136,20 @@ mod tests {
         assert_eq!(layout.content.height, 10);
     }
 
-    /// The default frame gives the text band symmetric gutters: one column
-    /// between the accent rail and the text, and two at the right edge — the
-    /// mirror of the rail's column plus the column the scrollbar shares with
-    /// the outer margin.
+    /// The default frame makes the accent rail's own column the whole left
+    /// gutter: the text starts one column inside the band and two from the pane
+    /// edge. The right edge keeps two columns — the rail column's mirror plus
+    /// the column the scrollbar shares with the outer margin.
     #[test]
-    fn default_layout_gives_the_text_band_symmetric_gutters() {
+    fn default_layout_spends_one_column_on_the_left_gutter() {
         let area = Rect::new(0, 0, 53, 10);
         let config = LayoutConfig::default();
         let layout = HorizontalLayout::new(area, &config);
 
         assert_eq!(layout.accent.width, HorizontalLayout::ACCENT);
         assert_eq!(
-            layout.left_padding.width, 1,
-            "one gutter column between the accent rail and the text"
+            layout.left_padding.width, 0,
+            "the accent rail's column is the whole left gutter"
         );
         assert_eq!(
             layout.right_padding.width, 2,
@@ -158,7 +158,7 @@ mod tests {
         assert_eq!(
             layout.content.x,
             layout.accent.right() + config.block_pad_left,
-            "the text starts past the rail and its gutter, got {:?} vs accent {:?}",
+            "the text starts at the rail's right edge plus the (zero) left pad, got {:?} vs accent {:?}",
             layout.content,
             layout.accent,
         );
@@ -169,16 +169,16 @@ mod tests {
         );
         assert_eq!(
             HorizontalLayout::chrome_width(&config),
-            HorizontalLayout::ACCENT + 1 + 2,
+            HorizontalLayout::ACCENT + 0 + 2,
             "the accent column plus the two gutter pads"
         );
-        // Left gutter (outer margin + rail + left pad) equals right gutter (right
-        // pad + the scrollbar/outer column) exactly when the right pad mirrors
-        // the rail column on top of the left one.
+        // Left gutter: outer margin + rail column. Right gutter: right pad +
+        // the scrollbar/outer column. The right side stays one column wider by
+        // design, and a later pad edit should keep that relation.
         assert_eq!(
             config.block_pad_right,
-            config.block_pad_left + HorizontalLayout::ACCENT,
-            "the right pad mirrors the rail column the left side spends"
+            config.block_pad_left + HorizontalLayout::ACCENT + 1,
+            "the right side keeps the rail's mirror plus the scrollbar column"
         );
     }
 

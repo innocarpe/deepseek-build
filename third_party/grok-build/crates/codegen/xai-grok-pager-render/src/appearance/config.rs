@@ -197,11 +197,11 @@ impl Default for LayoutConfig {
             outer_vpad: 0,
             outer_hpad_left: LayoutConfig::MIN_HPAD,
             outer_hpad_right: LayoutConfig::MIN_HPAD,
-            // Symmetric text band: a block's text starts one column after the
-            // accent rail (the rail's own column reads as the second outer
-            // margin column) and stops the same distance from the pane edge,
-            // which the right pad shares with the scrollbar column.
-            block_pad_left: 1,
+            // Tight text band: the accent rail's own column is the whole left
+            // gutter, so the text sits one column inside the band and two from
+            // the terminal edge. The right pad keeps the rail column's mirror
+            // plus the scrollbar's column.
+            block_pad_left: 0,
             block_pad_right: 2,
             narrow: false,
         }
@@ -842,7 +842,8 @@ pub struct RawLayoutConfig {
     pub outer_hpad_left: u16,
     /// Right horizontal padding for outer viewport (min 1).
     pub outer_hpad_right: u16,
-    /// Padding after accent line, before content. Default 1: the rail's own gap.
+    /// Padding after accent line, before content. Default 0: the accent rail's
+    /// own column is the whole left gutter.
     pub block_pad_left: u16,
     /// Padding after content, at right edge. Default 2, matching the left gutter
     /// once the accent rail and the scrollbar's column are counted.
@@ -855,7 +856,7 @@ impl Default for RawLayoutConfig {
             outer_vpad: 0,
             outer_hpad_left: 1,
             outer_hpad_right: 1,
-            block_pad_left: 1,
+            block_pad_left: 0,
             block_pad_right: 2,
         }
     }
@@ -1937,8 +1938,9 @@ mod tests {
     }
 
     /// The default frame is flush on every width: no blank outer margin rows,
-    /// one-column outer margin (the selection border's column), and block pads
-    /// that put the text band the same distance from both pane edges.
+    /// one-column outer margin (the selection border's column), and the accent
+    /// rail's own column as the whole left gutter — the text sits one column
+    /// inside the band, two from the pane edge.
     #[test]
     fn default_layout_is_flush() {
         let cfg = LayoutConfig::default();
@@ -1950,20 +1952,21 @@ mod tests {
         );
         assert_eq!(cfg.outer_hpad_right, LayoutConfig::MIN_HPAD);
         assert_eq!(
-            cfg.block_pad_left, 1,
-            "the text starts one column after the accent rail"
+            cfg.block_pad_left, 0,
+            "the accent rail's column is the whole left gutter"
         );
         assert_eq!(
             cfg.block_pad_right, 2,
-            "and the same distance from the pane edge once the scrollbar column is counted"
+            "and the right pad keeps the rail column's mirror plus the scrollbar's"
         );
-        // Left gutter: outer margin + accent rail + left pad. Right gutter: right
-        // pad + the column the scrollbar shares with the outer margin. Equal by
-        // construction; pin the relation so a later pad edit cannot break it.
+        // The left gutter is the outer margin plus the rail; the right one is
+        // the pad plus the column the scrollbar shares with the outer margin.
+        // The right side stays one column wider by design (the scrollbar's
+        // column), and a later pad edit should keep that relation.
         assert_eq!(
             cfg.block_pad_right,
-            cfg.block_pad_left + LayoutConfig::MIN_HPAD,
-            "left gutter (outer + rail + pad) must equal right gutter (pad + scrollbar column)"
+            cfg.block_pad_left + LayoutConfig::MIN_HPAD + 1,
+            "left gutter (outer + rail) must stay one column short of right (pad + scrollbar column)"
         );
 
         assert_eq!(cfg.eff_outer_vpad(false), 0);
@@ -1984,7 +1987,7 @@ mod tests {
         assert!(!layout.narrow, "a parsed config never starts narrow");
         assert_eq!(layout.outer_vpad, 0, "the default document is flush too");
         assert_eq!(layout.outer_hpad_left, LayoutConfig::MIN_HPAD);
-        assert_eq!(layout.block_pad_left, 1);
+        assert_eq!(layout.block_pad_left, 0);
         assert_eq!(layout.block_pad_right, 2);
 
         let phone = LayoutConfig {

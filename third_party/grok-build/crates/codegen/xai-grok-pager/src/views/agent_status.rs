@@ -372,14 +372,11 @@ pub fn format_deepseek_balance(
 /// `cache 45%` with `cached_read_tokens` clamped to `input_tokens`.
 /// Returns `None` when there is no input to measure against (zero-input
 /// turns or a fresh session), so the caller hides the chip.
+///
+/// The phone bottom band renders this same string: the label is a status
+/// readout, and the abbreviated `c45%` read as noise.
 pub fn format_cache_hit_pct(cached_read_tokens: u64, input_tokens: u64) -> Option<String> {
     cache_hit_whole_percent(cached_read_tokens, input_tokens).map(|pct| format!("cache {pct}%"))
-}
-
-/// Phone-row cache marker. Same percent as [`format_cache_hit_pct`], without
-/// the word: a 53-column row spends the saved columns on the model.
-pub fn format_cache_hit_marker(cached_read_tokens: u64, input_tokens: u64) -> Option<String> {
-    cache_hit_whole_percent(cached_read_tokens, input_tokens).map(|pct| format!("c{pct}%"))
 }
 
 fn cache_hit_whole_percent(cached_read_tokens: u64, input_tokens: u64) -> Option<String> {
@@ -992,13 +989,5 @@ mod tests {
         assert_eq!(format_cache_hit_pct(120, 100), Some("cache 100%".into()));
         // Rounds to whole percent.
         assert_eq!(format_cache_hit_pct(1, 3), Some("cache 33%".into()));
-    }
-
-    #[test]
-    fn cache_hit_marker_matches_the_percent_without_the_word() {
-        assert_eq!(format_cache_hit_marker(0, 0), None);
-        assert_eq!(format_cache_hit_marker(3604, 4096), Some("c88%".into()));
-        assert_eq!(format_cache_hit_marker(100, 100), Some("c100%".into()));
-        assert_eq!(format_cache_hit_marker(1, 3), Some("c33%".into()));
     }
 }

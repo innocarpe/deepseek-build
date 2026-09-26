@@ -1277,9 +1277,9 @@ fn test_selected_entry_output_divergence_uses_selected_branch() {
 /// `effective_output` at the wrong width.
 #[test]
 fn message_block_content_width_subtracts_timestamp_reservation() {
-    // Picked so the message wraps to a different line count at `content_width - 10` than at `content_width`
+    // Picked so the message wraps to a different line count at `content_width - 8` than at `content_width`
     // With a 30-wide viewport and the accent column as the only chrome, pane_content_width is 29 and per-block
-    // content_width is 19; the message below needs 5 rows at 19 and 3 at 29.
+    // content_width is 21; the message below needs 5 rows at 21 and 3 at 29.
     let entries = vec![make_markdown_entry(
         "hello world foo bar baz qux quux corge grault garply waldo fred plugh xyzzy thud",
     )];
@@ -1290,8 +1290,8 @@ fn message_block_content_width_subtracts_timestamp_reservation() {
     let block = &at(&result.selection_model.visible_blocks, 0);
     assert_eq!(
         block.content_width,
-        pane_content_width.saturating_sub(10),
-        "AgentMessage should reserve 10 cols for the timestamp"
+        pane_content_width.saturating_sub(8),
+        "AgentMessage should reserve 8 cols for the timestamp"
     );
 
     // The lines registered in the resolved model came from the cached output computed at `block.content_width`

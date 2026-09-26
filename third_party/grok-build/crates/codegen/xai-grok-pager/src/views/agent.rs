@@ -87,6 +87,12 @@ pub const SHORT_TERMINAL_ROWS: u16 = 16;
 /// The scrollback's floor, pushed as the layout's only `Min`.
 /// The solver ranks it above every `Length`, so an over-committed layout shrinks another row.
 pub const SCROLLBACK_MIN_ROWS: u16 = 5;
+/// One blank row under the bottom status row.
+///
+/// The frame used to end on that row (the `6.1.2` flush decision); the bottom
+/// text then sat flush on the screen edge. One row of air is the smallest
+/// inset that reads as padding.
+pub const BOTTOM_MARGIN_ROWS: u16 = 1;
 /// Auto-compact threshold: at or below this height the compact flag handed to rendering is forced on.
 /// Deliberately above [`SHORT_TERMINAL_ROWS`], which still gates the harder cuts (tip-row rendering, dropping the CTA and follow-up rows).
 pub const AUTO_COMPACT_MAX_ROWS: u16 = 20;
@@ -169,6 +175,9 @@ pub struct AgentViewLayout {
     /// Bottom status row (DeepSeek balance + cache hit rate). Always
     /// present as a row; renders blank when no DeepSeek status is known.
     pub deepseek_status: Rect,
+    /// The blank row below the bottom status row ([`BOTTOM_MARGIN_ROWS`]): the
+    /// frame's floor. Renders empty; the renderer paints its background.
+    pub bottom_margin: Rect,
     /// Bottom status_line row; zero-area when disabled.
     pub status_line: Rect,
     /// Scrollback area narrowed for scrollbar (content rendering uses this).
@@ -303,6 +312,10 @@ impl AgentViewLayout {
         // DeepSeek bottom status row: always present so the row count is
         // stable; renders blank when no status data has landed.
         constraints.push(Constraint::Length(1));
+        // One blank row under the last text row: the frame's floor keeps a
+        // single row of air so the bottom text never sits flush on the screen
+        // edge.
+        constraints.push(Constraint::Length(BOTTOM_MARGIN_ROWS));
         let chunks = Layout::vertical(constraints).split(inner_area);
         let mut chunks = chunks.iter().copied();
         let status_bar = chunks.next().unwrap_or_default();
@@ -383,6 +396,8 @@ impl AgentViewLayout {
         // DeepSeek bottom status row: always present as a row; renders blank
         // when no DeepSeek status is known.
         let deepseek_status = chunks.next().unwrap_or_default();
+        // The blank floor row under the status row.
+        let bottom_margin = chunks.next().unwrap_or_default();
         let scrollbar_x = area.right().saturating_sub(scrollbar_cfg.gap_right + 1);
         let timeline_width = if scrollbar_cfg.enabled {
             timeline_width
@@ -420,6 +435,7 @@ impl AgentViewLayout {
             prompt,
             shortcuts,
             deepseek_status,
+            bottom_margin,
             status_line,
             scrollback_content,
             scrollbar_x,
@@ -2104,9 +2120,10 @@ mod tests {
         assert!(!effective_narrow(120));
     }
 
-    /// The frame is flush at every width: the status bar lands on row 0 (no
-    /// outer vpad, no status gap), the outer pads are the selection-border floor,
-    /// and the bottom row is the last row of the screen.
+    /// The frame spends no rows on margins at any width: the status bar lands
+    /// on row 0 (no outer vpad, no status gap), the outer pads are the
+    /// selection-border floor, and the only air below the content is the one
+    /// blank floor row under the bottom status row.
     #[test]
     fn layout_spends_no_rows_on_margins_at_any_width() {
         for (cols, rows) in [(55u16, 41u16), (120, 40), (180, 50)] {
@@ -2139,16 +2156,21 @@ mod tests {
                 "{cols}x{rows}: and so is the right one"
             );
             assert_eq!(
-                layout.deepseek_status.bottom(),
+                layout.deepseek_status.bottom() + BOTTOM_MARGIN_ROWS,
                 area.bottom(),
-                "{cols}x{rows}: no bottom margin row, got {:?}",
+                "{cols}x{rows}: the status row keeps {BOTTOM_MARGIN_ROWS} blank floor row(s) under it, got {:?}",
                 layout.deepseek_status,
             );
             assert_eq!(
+                layout.bottom_margin.height, BOTTOM_MARGIN_ROWS,
+                "{cols}x{rows}: the floor row is the frame's last row, got {:?}",
+                layout.bottom_margin,
+            );
+            assert_eq!(
                 layout.scrollback.height,
-                rows - 5,
-                "{cols}x{rows}: every row but the status bar, prompt, shortcuts \
-                 and DeepSeek status rows is scrollback, got {:?}",
+                rows - 5 - BOTTOM_MARGIN_ROWS,
+                "{cols}x{rows}: every row but the status bar, prompt, shortcuts, \
+                 DeepSeek status and floor rows is scrollback, got {:?}",
                 layout.scrollback,
             );
         }
@@ -2174,8 +2196,8 @@ mod tests {
         let plain = base_params(area);
         assert_eq!(
             AgentViewLayout::rows_available_for_prompt(plain),
-            25 - 8,
-            "a frame with no optional row gives everything else to the prompt"
+            25 - 8 - BOTTOM_MARGIN_ROWS,
+            "a frame with no optional row gives everything else to the prompt, minus the floor row"
         );
         let with_rows = AgentViewLayoutParams {
             banner_height: 1,
@@ -2184,7 +2206,7 @@ mod tests {
         };
         assert_eq!(
             AgentViewLayout::rows_available_for_prompt(with_rows),
-            25 - 8 - 3,
+            25 - 8 - 3 - BOTTOM_MARGIN_ROWS,
             "the banner takes its own height plus the gap above it; the turn \
              status row sits flush, so it takes only its own row"
         );

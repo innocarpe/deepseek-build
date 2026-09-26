@@ -3,9 +3,11 @@
 //! Cost and cache stay on the left, in full. Model and permission stay on the
 //! right. The model is the only field that shrinks, and only after a leading
 //! `DeepSeek ` prefix and a trailing reasoning-effort parenthesis are gone.
-//! A 55-column pane has 53 columns inside the flush frame; the measured
-//! strings `$1234.56` + `c100%` and `V4.1 Flash (max) · always-approve` fit
-//! there with a two-column gap.
+//! A 55-column pane has 53 columns inside the flush frame. `$10.77` +
+//! `cache 94%` costs 16 columns and `V4.1 Flash (max) · always-approve` 33, so
+//! the measured pair fits with a four-column gap. The widest money string,
+//! `$1234.56` + `cache 100%`, costs 19; the model then drops its effort suffix
+//! and `V4.1 Flash · always-approve` (27) leaves a seven-column gap.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -50,8 +52,8 @@ impl PhoneBottomBand {
     }
 }
 
-/// `balance` is the desktop balance chip (`$10.77`). `cache_marker` is the
-/// compact form (`c94%`), not `cache 94%`. `flags` are the info-line flag
+/// `balance` is the balance chip (`$10.77`). `cache_marker` is the same
+/// `cache 94%` label the desktop info line shows. `flags` are the info-line flag
 /// texts already filtered (Ask contributes none).
 pub(crate) fn compose_phone_bottom_band(
     width: usize,
@@ -325,12 +327,12 @@ mod tests {
         let band = band(
             PHONE_INNER,
             Some("$10.77"),
-            Some("c94%"),
+            Some("cache 94%"),
             "DeepSeek V4.1 Flash (max)",
             &["always-approve"],
         );
         assert_eq!(band.balance.as_deref(), Some("$10.77"));
-        assert_eq!(band.cache.as_deref(), Some("c94%"));
+        assert_eq!(band.cache.as_deref(), Some("cache 94%"));
         assert_eq!(band.right, "V4.1 Flash (max) · always-approve");
         assert_separated(PHONE_INNER, &band);
     }
@@ -340,28 +342,30 @@ mod tests {
         let band = band(
             PHONE_INNER,
             Some("$1234.56"),
-            Some("c100%"),
+            Some("cache 100%"),
             "DeepSeek V4.1 Flash (max)",
             &["always-approve"],
         );
         assert_eq!(band.balance.as_deref(), Some("$1234.56"));
-        assert_eq!(band.cache.as_deref(), Some("c100%"));
-        assert_eq!(band.right, "V4.1 Flash (max) · always-approve");
+        assert_eq!(band.cache.as_deref(), Some("cache 100%"));
+        // The full label costs five columns more than the old `c100%`, so the
+        // widest money string drops the effort suffix to keep the mode whole.
+        assert_eq!(band.right, "V4.1 Flash · always-approve");
         assert!(!band.right.contains('…'));
         assert_separated(PHONE_INNER, &band);
     }
 
     #[test]
-    fn a_long_model_drops_effort_before_it_clips_the_mode() {
+    fn a_long_model_ellipsizes_rather_than_clipping_the_mode() {
         let band = band(
             PHONE_INNER,
             Some("$1234.56"),
-            Some("c100%"),
+            Some("cache 100%"),
             "DeepSeek V4.1 Flash Thinking (max)",
             &["always-approve"],
         );
-        assert_eq!(band.right, "V4.1 Flash Thinking · always-approve");
-        assert!(!band.right.contains('…'));
+        assert_eq!(band.right, "V4.1 Flash Thi… · always-approve");
+        assert!(band.right.ends_with(" · always-approve"));
         assert!(!band.right.contains("(max)"));
         assert_separated(PHONE_INNER, &band);
     }
@@ -372,12 +376,12 @@ mod tests {
         let band = band(
             PHONE_INNER,
             Some("$1234.56"),
-            Some("c100%"),
+            Some("cache 100%"),
             &model,
             &["always-approve"],
         );
         assert_eq!(band.balance.as_deref(), Some("$1234.56"));
-        assert_eq!(band.cache.as_deref(), Some("c100%"));
+        assert_eq!(band.cache.as_deref(), Some("cache 100%"));
         assert!(band.right.ends_with(" · always-approve"), "{band:?}");
         assert!(band.right.contains('…'), "{band:?}");
         assert!(!band.right.contains("always-appro…"), "{band:?}");
@@ -389,7 +393,7 @@ mod tests {
         let auto = band(
             PHONE_INNER,
             Some("$10.77"),
-            Some("c94%"),
+            Some("cache 94%"),
             "DeepSeek V4.1 Flash (max)",
             &["auto"],
         );
@@ -397,7 +401,7 @@ mod tests {
         let ask = band(
             PHONE_INNER,
             Some("$10.77"),
-            Some("c94%"),
+            Some("cache 94%"),
             "DeepSeek V4.1 Flash (max)",
             &[],
         );
@@ -405,11 +409,11 @@ mod tests {
         let plan = band(
             PHONE_INNER,
             Some("$1234.56"),
-            Some("c100%"),
+            Some("cache 100%"),
             "DeepSeek V4.1 Flash (max)",
             &["plan", "always-approve"],
         );
-        assert_eq!(plan.right, "V4.1 Flash · plan · always-approve");
+        assert_eq!(plan.right, "V4.1 Fl… · plan · always-approve");
         assert_separated(PHONE_INNER, &plan);
     }
 
@@ -418,7 +422,7 @@ mod tests {
         let open = compose_phone_bottom_band(
             PHONE_INNER,
             Some("$10.77"),
-            Some("c94%"),
+            Some("cache 94%"),
             "DeepSeek V4.1 Flash (max)",
             &[],
             None,
@@ -428,13 +432,15 @@ mod tests {
         let tight = compose_phone_bottom_band(
             PHONE_INNER,
             Some("$1234.56"),
-            Some("c100%"),
+            Some("cache 100%"),
             "DeepSeek V4.1 Flash (max)",
             &["always-approve"],
             None,
             true,
         );
-        assert_eq!(tight.right, "V4.1 Flash (max) · always-approve");
+        // The five columns the full label added come out of the effort here;
+        // the `ml` suffix still fits beside the mode.
+        assert_eq!(tight.right, "V4.1 Flash · always-approve · ml");
     }
 
     #[test]
@@ -442,7 +448,7 @@ mod tests {
         let model = format!("DeepSeek {} (max)", "M".repeat(40));
         for width in [0usize, 1, 8, 14, 20, 28, 40, 53, 58, 80] {
             for flags in [&[][..], &["auto"][..], &["always-approve"][..]] {
-                let band = band(width, Some("$1234.56"), Some("c100%"), &model, flags);
+                let band = band(width, Some("$1234.56"), Some("cache 100%"), &model, flags);
                 assert_separated(width, &band);
             }
         }
@@ -453,7 +459,7 @@ mod tests {
         let band = band(
             78,
             Some("$10.77"),
-            Some("c94%"),
+            Some("cache 94%"),
             "DeepSeek V4.1 Flash (max)",
             &["always-approve"],
         );

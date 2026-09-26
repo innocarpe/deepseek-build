@@ -1507,6 +1507,9 @@ impl AgentView {
         // and leaves the row blank until that status lands. A phone pane skips
         // this pass and paints cost and model together later, once the label exists.
         buf.set_style(layout.deepseek_status, Style::default().bg(theme.bg_base));
+        // The frame's floor row: owned by the render so a stale glyph from an
+        // earlier frame cannot survive in it.
+        buf.set_style(layout.bottom_margin, Style::default().bg(theme.bg_base));
         if !narrow
             && self.deepseek_status_session_id.as_ref() == self.session.session_id.as_ref()
             && let Some(ds) = self.deepseek_status.as_ref().filter(|s| s.is_deepseek)
@@ -4429,7 +4432,7 @@ fn fit_toast_text(msg: &str, avail_width: u16) -> Option<String> {
     Some(format!(" {}… ", truncated.trim_end()))
 }
 
-/// Balance and compact cache marker for the phone row. Empty until this
+/// Balance and cache label for the phone row. Empty until this
 /// session's DeepSeek status has landed — the model side of the row still paints.
 fn phone_cost_chips(agent: &AgentView) -> (Option<String>, Option<String>) {
     if agent.deepseek_status_session_id.as_ref() != agent.session.session_id.as_ref() {
@@ -4442,7 +4445,7 @@ fn phone_cost_chips(agent: &AgentView) -> (Option<String>, Option<String>) {
         .balance
         .as_ref()
         .map(crate::views::agent_status::format_deepseek_balance);
-    let cache = crate::views::agent_status::format_cache_hit_marker(
+    let cache = crate::views::agent_status::format_cache_hit_pct(
         ds.usage.totals.cached_read_tokens,
         ds.usage.totals.input_tokens,
     );

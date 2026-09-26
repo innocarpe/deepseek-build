@@ -353,7 +353,14 @@ impl ScrollbackState {
         let Some((rect, top_clipped, _)) = self.entry_screen_area(idx, scrollback_area) else {
             return false;
         };
-        !top_clipped && rect.height > 0 && click_row == rect.y
+        // The echo's pad row sits above its first content row, and the tap
+        // gesture targets the content line, not the pad.
+        let width = self.prompt_content_width(self.last_width);
+        let pad_top = u16::from(
+            self.entry(idx)
+                .is_some_and(|entry| entry.block.has_vpad_for_width(&self.appearance, width)),
+        );
+        !top_clipped && rect.height > 0 && click_row == rect.y.saturating_add(pad_top)
     }
 
     /// Shared implementation for fold operations with scroll anchoring.

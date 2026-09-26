@@ -3651,11 +3651,11 @@ mod tests {
     }
 
     #[test]
-    fn phone_width_prompt_echo_is_two_rows_without_padding() {
+    fn phone_width_prompt_echo_is_two_rows_plus_the_pads() {
         let mut state = ScrollbackState::new();
         state.prepare_layout(PHONE_PANE, 20);
         // Longer than the ~100-column fold fixture: three wrapped rows would be the
-        // unfolded height, so a cached height of two is the budget, not a short wrap.
+        // unfolded height, so a cached height of two content rows is the budget, not a short wrap.
         let id = state.push_block(user_block(&"x".repeat(200)));
         assert_eq!(
             state.get_by_id(id).unwrap().display_mode,
@@ -3665,15 +3665,15 @@ mod tests {
 
         let height = state.get_cached_entry_height(0).expect("layout cache");
         assert_eq!(
-            height, 2,
-            "the collapsed prompt echo is two rows with no vertical padding"
+            height, 4,
+            "the collapsed prompt echo is two content rows with one pad row each side"
         );
     }
 
     /// The first layout pass estimates off-screen entries. A collapsed phone echo that has not been measured yet
-    /// still has to reserve two rows, or the scroll height is short until the prompt scrolls into view.
+    /// still has to reserve its padded two-row band, or the scroll height is short until the prompt scrolls into view.
     #[test]
-    fn offscreen_phone_prompt_estimates_two_rows() {
+    fn offscreen_phone_prompt_estimates_the_padded_band() {
         let mut state = ScrollbackState::new();
         state.prepare_layout(PHONE_PANE, 8);
         state.begin_batch();
@@ -3695,8 +3695,8 @@ mod tests {
         );
         assert_eq!(
             cache.entries.first().map(|e| e.height),
-            Some(2),
-            "the estimate counts the two-row collapsed band"
+            Some(4),
+            "the estimate counts the two content rows and their pad rows"
         );
     }
 

@@ -70,6 +70,10 @@ jobs:
             third_party/grok-build
           shared-key: release-prebuilt-darwin-arm64
           cache-all-crates: true
+          # The 41-minute cost is the vendored workspace crates, not crates.io.
+          # The default leaves those rlibs out of the saved cache, so the next
+          # tag still compiles them. Keep them.
+          cache-workspace-crates: true
           cache-provider: github
           lookup-only: true
           save-if: true

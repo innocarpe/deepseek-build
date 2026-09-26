@@ -1309,10 +1309,10 @@ mod tests {
         );
     }
 
-    /// A phone-width pane paints the collapsed echo as two selectable rows. The layout height and the painted
-    /// selection model have to agree, or a tap on the second line misses the prompt.
+    /// A phone-width pane paints the collapsed echo as two selectable rows inside one pad row each side. The
+    /// layout height and the painted selection model have to agree, or a tap on the second line misses the prompt.
     #[test]
-    fn phone_width_collapsed_echo_paints_two_rows() {
+    fn phone_width_collapsed_echo_paints_a_padded_two_row_band() {
         let area = Rect::new(0, 0, 55, 41);
         let mut state = ScrollbackState::new();
         state.prepare_layout(area.width, area.height);
@@ -1327,12 +1327,12 @@ mod tests {
         assert_eq!(
             lines.len(),
             2,
-            "the pane publishes two rows for the collapsed phone echo: {lines:?}"
+            "the pane publishes two content rows for the collapsed phone echo: {lines:?}"
         );
         assert_eq!(
             state.get_cached_entry_height(0),
-            Some(2),
-            "the painted band is the same two rows the layout reserved"
+            Some(4),
+            "the painted band is the two content rows plus one pad row each side"
         );
     }
 

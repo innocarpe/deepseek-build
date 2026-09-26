@@ -21,12 +21,12 @@ nothing, so the queue behind it looks like a hung command in a TUI.
   prune   delete personal clones idle for >= N days (default 3). The base
           target is never touched. Exit 0 done, 1 a delete failed, 2 usage.
   run     run a command now. Queue free → it runs as-is (exec). Queue busy →
-          it runs only when the second-build gate passes, in a personal CoW
+          it runs only when the memory gate passes, in a personal CoW
           clone with CARGO_BUILD_JOBS=2; otherwise nothing starts, status is
           printed, and the exit code is 1. The command keeps its own exit
           code when it runs.
 
-The second-build gate
+The memory gate
 ---------------------
 A second vendored build beside a busy one adds jobs, not replaces them, so
 `run` may only start one when the host has room. The gate is free >= 25%
@@ -128,7 +128,7 @@ def resolve_root(args):
 
 
 # ---------------------------------------------------------------------------
-# Host facts and the second-build gate
+# Host facts and the memory gate
 # ---------------------------------------------------------------------------
 
 
@@ -1015,7 +1015,7 @@ def build_parser():
         description=(
             "Run a command now. Queue free: it runs as-is. Queue busy: it runs in a "
             "personal copy-on-write clone with CARGO_BUILD_JOBS=2, but only when the "
-            "second-build memory gate passes; otherwise nothing starts, status is "
+            "memory gate passes; otherwise nothing starts, status is "
             "printed, and the exit code is 1."
         ),
     )

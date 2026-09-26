@@ -13,7 +13,7 @@
 # the queue looks like a hung command in a TUI.
 #
 #   status  read it: holders, waiters, elapsed, command, worktree per lock,
-#           plus host free/swap/load5m and the compile-gate verdict.
+#           plus host free/swap/load5m and the memory-gate verdict.
 #           Exit 0 free, 1 busy (branch on it), 2 usage/internal error.
 #   clone   skip it: copy the target copy-on-write into
 #           ~/.cache/dsb-vendor-targets/<slug>. stdout is exactly one line —
@@ -22,7 +22,7 @@
 #           Exit 0 created, 1 refused/failed, 2 usage.
 #   run     run a command now. Queue free → runs as-is. Queue busy → runs in
 #           a personal clone with CARGO_BUILD_JOBS=2 only when the
-#           compile gate passes; otherwise nothing starts, status is printed,
+#           memory gate passes; otherwise nothing starts, status is printed,
 #           and the exit code is 1. Exit codes: the command's own, 1 refused,
 #           2 usage. Two concurrent builds only through the gate; one otherwise.
 #   prune   delete personal clones idle for >= N days (default 3). Never

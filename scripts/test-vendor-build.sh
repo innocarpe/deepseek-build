@@ -376,7 +376,7 @@ if [[ "$(uname -s)" == "Darwin" ]] && command -v chflags >/dev/null 2>&1; then
   rm -rf "$LOCKED"
 fi
 
-# --- 11. run: the second-build gate ----------------------------------------
+# --- 11. run: the memory gate ----------------------------------------
 # `run` passes a free queue straight through; on a busy queue it must only
 # start a second build when the host facts clear the gate, and must refuse
 # (nothing started, status printed, exit 1) otherwise. Host facts are fed

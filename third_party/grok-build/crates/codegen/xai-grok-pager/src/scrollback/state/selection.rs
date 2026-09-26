@@ -2,6 +2,15 @@
 
 use super::*;
 
+/// A same-cell tap on a phone-width user-prompt echo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NarrowPromptEchoTap {
+    /// The collapsed one-line echo opens in place.
+    Expand,
+    /// The expanded echo's first row folds it again.
+    Collapse,
+}
+
 /// Scroll/follow state captured before a fold-shaped layout change (entry fold or group expansion).
 /// [`ScrollbackState::rebuild_with_fold_anchor`] restores it so the change doesn't move the viewport.
 struct FoldAnchor {
@@ -257,6 +266,94 @@ impl ScrollbackState {
         {
             self.fold_selected_impl(move |entry| entry.toggle_fold_at(content_width));
         }
+    }
+
+    /// The prompt's wrap width is in the one-line phone band.
+    /// `0` means the pane has not been laid out yet, which is not a phone width.
+    pub(crate) fn prompt_echo_is_phone_width(&self) -> bool {
+        let width = self.prompt_content_width(self.last_width);
+        width > 0 && width <= crate::scrollback::blocks::COLLAPSED_NARROW_TERMINAL_COLS
+    }
+
+    /// Whether a same-cell tap at `click_row` would expand or fold this phone-width prompt echo.
+    pub(crate) fn narrow_prompt_echo_tap_changes_fold(
+        &self,
+        idx: usize,
+        click_row: u16,
+        scrollback_area: ratatui::layout::Rect,
+    ) -> bool {
+        self.narrow_prompt_echo_tap(idx, click_row, scrollback_area)
+            .is_some()
+    }
+
+    /// What a same-cell tap on a phone-width user prompt does.
+    ///
+    /// Collapsed (the whole one-line echo): expand. Expanded: collapse only when `click_row` is the
+    /// echo's first row. A body row, a desktop width, or a prompt that fits without folding returns
+    /// `None` so the click stays a selection.
+    fn narrow_prompt_echo_tap(
+        &self,
+        idx: usize,
+        click_row: u16,
+        scrollback_area: ratatui::layout::Rect,
+    ) -> Option<NarrowPromptEchoTap> {
+        if !self.prompt_echo_is_phone_width() {
+            return None;
+        }
+        let entry = self.entry(idx)?;
+        if !entry.block.is_user_prompt() {
+            return None;
+        }
+        let width = self.prompt_content_width(self.last_width);
+        if !entry.is_foldable_at(width) {
+            return None;
+        }
+        match entry.display_mode() {
+            DisplayMode::Collapsed | DisplayMode::Truncated => Some(NarrowPromptEchoTap::Expand),
+            DisplayMode::Expanded
+                if self.prompt_echo_first_row(idx, click_row, scrollback_area) =>
+            {
+                Some(NarrowPromptEchoTap::Collapse)
+            }
+            DisplayMode::Expanded => None,
+        }
+    }
+
+    /// Apply [`Self::narrow_prompt_echo_tap`] and, on expand, pin the entry to the content top with
+    /// follow mode off. Returns whether the tap changed the fold.
+    pub(crate) fn apply_narrow_prompt_echo_tap(
+        &mut self,
+        idx: usize,
+        click_row: u16,
+        scrollback_area: ratatui::layout::Rect,
+    ) -> bool {
+        let Some(action) = self.narrow_prompt_echo_tap(idx, click_row, scrollback_area) else {
+            return false;
+        };
+        self.set_selected(Some(idx));
+        match action {
+            NarrowPromptEchoTap::Expand => {
+                self.expand_selected();
+                // Fold restores follow mode. Pinning afterwards is what keeps the opened echo on screen.
+                self.scroll_to_entry_top(idx);
+            }
+            NarrowPromptEchoTap::Collapse => {
+                self.collapse_selected();
+            }
+        }
+        true
+    }
+
+    fn prompt_echo_first_row(
+        &self,
+        idx: usize,
+        click_row: u16,
+        scrollback_area: ratatui::layout::Rect,
+    ) -> bool {
+        let Some((rect, top_clipped, _)) = self.entry_screen_area(idx, scrollback_area) else {
+            return false;
+        };
+        !top_clipped && rect.height > 0 && click_row == rect.y
     }
 
     /// Shared implementation for fold operations with scroll anchoring.

@@ -2040,7 +2040,7 @@ mod link_click_tests {
             }
         }
         agent.scrollback.prepare_layout(80, 40);
-        let _ = agent.handle_scrollback_click(std::time::Instant::now(), 0, false);
+        let _ = agent.handle_scrollback_click(std::time::Instant::now(), 0, false, None);
         assert!(agent.scrollback.is_selected_group_header());
         assert!(
             agent.toast.is_none(),

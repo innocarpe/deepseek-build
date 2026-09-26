@@ -83,6 +83,30 @@ Variables used below:
   flight: `pgrep -fl 'grok-build/target'` (the rustc and build-script
   processes carry that output path; the parent `cargo` does not). It is a
   hint, not a lock — when in doubt, ask the other sessions.
+- **Don't warm a per-worktree vendor target — share the tower's.** Measured
+  2026-09-26: with the export below, the pager bin debug build in a fresh
+  worktree took **2 min 56 s**, against 30–60+ min cold.
+
+  ```sh
+  TOWER="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+  export CARGO_TARGET_DIR="$TOWER/third_party/grok-build/target"
+  ```
+
+  Cargo's file lock **serializes** concurrent builds: one heavy `cargo` per
+  session, and a job queued behind another session's compile waits for it —
+  stacking more queued jobs does not make them run in parallel.
+- **Compile gate before the full test build.** `cargo check -p <pkg>
+  --all-targets` skips codegen and link. Measured 2026-09-26: one
+  `cargo test -p xai-grok-pager --lib` round spent **~17 min** to reach an
+  `E0425` in test code.
+- **Verification scope.** `cargo fmt --all -- --check` locally (cheap); clippy
+  for the crates you touched (`cargo clippy -p <pkg> -- -D warnings`). The
+  workspace-wide clippy (`cargo clippy --workspace -- -D warnings`) runs on
+  PR CI — read it there and fix red. Full test suite once at the end; use a
+  test filter while iterating.
+- **`cargo` on PATH.** The dsb tool shell can lack it (measured 2026-09-26,
+  this workspace): `export PATH="$HOME/.cargo/bin:$PATH"` first.
+  `scripts/build-grok-pager.sh` exports that itself.
 
 ## 1. Open the worktree with the agent already in it
 

@@ -177,6 +177,8 @@ mod dock_input_tests;
 #[cfg(test)]
 mod header_tests;
 #[cfg(test)]
+mod jump_to_bottom_tests;
+#[cfg(test)]
 mod phone_bottom_tests;
 mod rewind;
 mod role;

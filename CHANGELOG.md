@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Scrolled up in a conversation, the scrollback's last row carries a centered `Jump to bottom (click) ↓` chip; clicking or tapping anywhere on it returns to the bottom and re-engages follow mode. The chip widens down to `Jump to bottom ↓` and then `▼` when the pane cannot hold the full phrase with a column of air either side, and it is absent at the bottom, under the `none` indicator setting, and while the block viewer or the scrollback search is open. It sits inside the scrollback rather than the gap row the old `▼` used, so it covers neither the prompt nor the phone bottom band; the `▲` response-top arrow is unchanged.
+
 ## 6.1.4 — 2026-09-26
 
 - The prompt echo takes one minimal pad on all four sides. The accent rail's column is the whole left gutter again (`block_pad_left` defaults back to 0, so every block's text starts one column inside the band and two from the pane edge; the right gutter stays at two columns), the echo's own right pad is one column where other blocks keep two, and the echo keeps one pad row above and below at phone widths instead of dropping them. Turn timestamps reserve the string's own width (8 columns, no two-column lead-in) and close flush on the entry's right edge, so the time sits at the band's end and the body wraps two columns wider. The phone bottom band's cache label reads `cache 88%` instead of `c88%`; the fuller label makes the widest money strings (`$1234.56` + `cache 100%`) drop the reasoning-effort suffix while the permission mode stays whole. One blank floor row sits under the bottom status row instead of the frame ending flush on it.

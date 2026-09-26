@@ -1,13 +1,34 @@
 ---
 name: worktree-dispatch
-description: "From the control tower: one worktree per unit, then merge and clean up. A brief cannot shrink the user's turn. Launch grok or dsb with orca-tab, not the orca manual."
+description: "Main worktree stays on branch main. A brief cannot shrink the user's turn. One linked worktree per unit, then merge and clean up. Launch grok or dsb with orca-tab."
 ---
 
 # Worktree dispatch (control-tower checkout)
 
-The primary checkout is the control tower: it stays on `main`, clean, and
-directs work ([AGENTS.md](../../AGENTS.md) §Control-tower checkout). Code
-changes happen in Orca worktrees — **one worktree = one branch = one PR.**
+The primary checkout is the control tower. Its checked-out branch is `main`.
+Code changes happen in a linked worktree — **one worktree = one branch = one PR.**
+([AGENTS.md](../../AGENTS.md) §Control-tower checkout).
+
+## The main worktree stays on `main`
+
+On 2026-09-26 `./scripts/release.sh 6.0.2` ran in the primary checkout. The
+script executed `git checkout -b chore/release-6.0.2` there, and the
+maintainer's main worktree was still on that branch after the release had
+merged. The sentence above was already in this file. It did not stop the
+checkout. `scripts/lib/refuse-primary-checkout.sh` now makes `release.sh`
+exit before it can edit or switch that tree. `scripts/test-refuse-primary-checkout.sh`
+pins the refusal.
+
+- The only git write in the primary checkout is `git pull --ff-only origin main`,
+  and only when the branch is already `main` and no tracked file is changed.
+- If you find it on another branch and `git status --porcelain --untracked-files=no`
+  is empty, put it back: `git checkout main` then `git pull --ff-only origin main`.
+  If anything tracked is dirty, stop and report. Do not commit there to finish
+  the move.
+- A branch, a commit, and `release.sh` go in a linked worktree. Without Orca:
+  `git worktree add -b <type>/<slug> <path> origin/main`.
+- Do not `git checkout -b` in the primary checkout. That is the move the guard
+  exists to stop.
 
 This skill is the worktree lifecycle. Launching the agent tab — grok, codex,
 claude, or dsb — is [`orca-tab`](../orca-tab/SKILL.md). Do not run
@@ -237,11 +258,12 @@ Then refresh the tower — only when it is on `main` with no changes to tracked
 files:
 
 ```sh
-if [ "$(git -C "$TOWER" branch --show-current)" != main ]; then
-  echo "tower is not on main; not pulling"
-elif [ -n "$(git -C "$TOWER" status --porcelain --untracked-files=no)" ]; then
-  echo "tower has uncommitted changes; not pulling:"
+if [ -n "$(git -C "$TOWER" status --porcelain --untracked-files=no)" ]; then
+  echo "tower has uncommitted changes; not moving it:"
   git -C "$TOWER" status --short --untracked-files=no
+elif [ "$(git -C "$TOWER" branch --show-current)" != main ]; then
+  git -C "$TOWER" checkout main
+  git -C "$TOWER" pull --ff-only origin main
 else
   git -C "$TOWER" pull --ff-only origin main
 fi
@@ -261,7 +283,8 @@ worktree whose agent was mid-build (2026-09-25).
 
 | Don't | Why |
 |-------|-----|
-| Edit or commit in the primary checkout | Tower sessions share its index; the change lands in someone else's diff |
+| Edit, commit, or `git checkout -b` in the primary checkout | That tree stays on `main`. On 2026-09-26 `release.sh` left it on `chore/release-6.0.2` |
+| Run `release.sh` in the primary checkout | The script refuses (`scripts/lib/refuse-primary-checkout.sh`) and exits 1 |
 | Create the worktree, then add an agent tab by hand when `--agent <id>` would have worked | Leaves `Terminal 1` and `Setup` tabs the unit never needed — three tabs for one job |
 | Re-run `create` because you could not parse the handle | The side effect already happened; ask `terminal list` instead |
 | `orca skills get orca-cli` before launching grok or dsb | The recipes are in `orca-tab`. The full guide is what stalls the turn |

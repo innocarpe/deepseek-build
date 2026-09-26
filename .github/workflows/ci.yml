@@ -64,6 +64,8 @@ jobs:
               - 'scripts/test-npm-verify-retry.sh'
               - 'scripts/lib/mock_npm_registry.py'
               - 'scripts/release.sh'
+              - 'scripts/lib/refuse-primary-checkout.sh'
+              - 'scripts/test-refuse-primary-checkout.sh'
               - 'scripts/npm-emergency-publish.sh'
               - '.github/workflows/publish-npm.yml'
               - '.github/workflows/ci.yml'
@@ -220,6 +222,7 @@ jobs:
             sudo apt-get install -y -qq ripgrep
           fi
       - run: ./scripts/test-npm-verify-retry.sh
+      - run: ./scripts/test-refuse-primary-checkout.sh
 
   # The CHANGELOG release move. Hermetic (fixture CHANGELOGs in a temp dir, no
   # network, no repo writes), so it is cheap: it pins that a bump takes the

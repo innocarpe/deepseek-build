@@ -165,9 +165,12 @@ Many agent sessions work on this repo at once. They are opened in the
 **primary checkout** (the clone the maintainer works from), which acts as a
 control tower: it directs, and **worktrees change code.**
 
-This applies when sessions run in parallel through Orca worktrees. With a
-single clone and no Orca, work as usual: branch, commit, PR
-([`docs/contributing/`](docs/contributing/)).
+The primary checkout's branch is `main`, including when it is the only clone.
+`git worktree add` is how a branch is created. Do not `git checkout` any other
+branch there. `scripts/release.sh` exits before it can
+(`scripts/lib/refuse-primary-checkout.sh`). Orca is the usual way to create the
+linked worktree ([`skills/worktree-dispatch`](skills/worktree-dispatch/SKILL.md));
+without Orca the same rule is `git worktree add -b <type>/<slug> <path> origin/main`.
 
 | Place | Role | Writes |
 |-------|------|--------|

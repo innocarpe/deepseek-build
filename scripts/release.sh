@@ -21,6 +21,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# Help may be read anywhere. Every other invocation edits or checks out
+# a branch, which the primary checkout is not allowed to do.
+if [[ "${1:-}" != "-h" && "${1:-}" != "--help" ]]; then
+  "$ROOT/scripts/lib/refuse-primary-checkout.sh" "$ROOT"
+fi
+
 VERSION=""
 DESC=""
 SKIP_BUMP=0; SKIP_PR=0; SKIP_TAG=0; NO_PUBLISH=0; WAIT_ALL=0; LOCAL_PUBLISH=0

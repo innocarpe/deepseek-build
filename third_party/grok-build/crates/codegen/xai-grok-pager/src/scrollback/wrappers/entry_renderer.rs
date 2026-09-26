@@ -317,8 +317,17 @@ impl<'a> EntryRenderer<'a> {
     }
 
     /// The right pad this entry's block takes (see [`EntryChrome`]).
+    ///
+    /// With [`Self::hide_accent`] the entry spends no chrome at all — that lane
+    /// (the minimal pager's committed rows, the flat full view) reclaims the
+    /// accent column and keeps only the configured pads, so the band gutters do
+    /// not apply there.
     fn block_pad_right(&self) -> u16 {
-        entry_chrome(self.entry, self.appearance()).right_pad
+        if self.hide_accent {
+            self.appearance().scrollback.layout.block_pad_right
+        } else {
+            entry_chrome(self.entry, self.appearance()).right_pad
+        }
     }
 
     /// Legacy fixed chrome-width estimate for callers with no appearance to borrow (off-screen mermaid sizing); the live value is `chrome_width()`.

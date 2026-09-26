@@ -147,6 +147,15 @@ pub struct ScrollRenderResult {
     pub inline_media: Vec<InlineMediaPlacement>,
     /// Diagram affordance rows to paint and register click hit-rects for.
     pub diagram_affordances: Vec<DiagramAffordancePlacement>,
+    /// Painted clocks. `entry_idx` is the renderer's logical index (relative to the visible range).
+    pub timestamp_hits: Vec<TimestampHit>,
+}
+
+/// One painted clock, in screen cells. A tap here toggles the long form and is not a body tap.
+#[derive(Debug, Clone, Copy)]
+pub struct TimestampHit {
+    pub entry_idx: usize,
+    pub rect: Rect,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -381,6 +390,12 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
             .with_group_header_label(header_label.as_ref())
             .with_cwd(cwd);
         renderer.render(entry_content_area, buf);
+        if let Some(rect) = renderer.take_clock_rect() {
+            result.timestamp_hits.push(TimestampHit {
+                entry_idx: logical_idx,
+                rect,
+            });
+        }
 
         if dim_from_entry.is_some_and(|d| logical_idx >= d) {
             // On the terminal-native theme `dim()` carries no fg (gray_dim is

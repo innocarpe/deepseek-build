@@ -155,6 +155,7 @@ impl ScrollbackPane {
         state: &ScrollbackState,
         scratch: &mut ScratchBuffer,
     ) -> RenderOutputWithSelectionBoundaries {
+        state.clear_timestamp_hits();
         if area.width == 0 || area.height == 0 {
             return RenderOutputWithSelectionBoundaries::default();
         }
@@ -590,7 +591,11 @@ impl ScrollbackPane {
             .block
             .has_vpad_for_width(appearance, block_content_width);
         let vpad_rows = if has_vpad { 2 } else { 0 };
-        let content_lines = render_height.saturating_sub(vpad_rows);
+        entry.ensure_cached(block_content_width, appearance, is_selected, cwd);
+        let meta = sticky_clock_meta(entry, appearance, block_content_width);
+        let content_lines = render_height
+            .saturating_sub(vpad_rows)
+            .saturating_sub(u16::from(meta));
 
         // User prompts use their actual display mode so collapsed prompts stay truncated (3 lines and an ellipsis) in sticky headers
         // Other blocks use Expanded with a max_lines budget
@@ -600,21 +605,8 @@ impl ScrollbackPane {
             DisplayMode::Expanded
         };
 
-        // When timestamps are shown on message blocks, reserve right margin in the block's content width
-        // Wrapped text then doesn't collide with the overlaid timestamp (matches EntryRenderer for normal content)
-        let ts_reserved = if appearance.show_timestamps
-            && matches!(
-                &entry.block,
-                RenderBlock::UserPrompt(_) | RenderBlock::AgentMessage(_) | RenderBlock::Btw(_)
-            ) {
-            10
-        } else {
-            0
-        };
-        let content_width_for_block = layout.content_width().saturating_sub(ts_reserved);
-
         let ctx = entry.context_with_mode_and_budget(
-            content_width_for_block,
+            block_content_width,
             mode,
             content_lines,
             appearance,
@@ -643,16 +635,30 @@ impl ScrollbackPane {
             let scratch_buf = scratch.prepared(area.width, render_height);
             let scratch_area = Rect::new(0, 0, area.width, render_height);
 
-            // Render full header to scratch
-            let mut lines = Self::render_entry_with_ctx_static(
+            // Render full header to scratch. Mouse coords are screen coords, so a pushed
+            // fragment keeps the short clock (the scratch origin is 0,0).
+            let (mut lines, clock) = Self::render_entry_with_ctx_static(
                 entry,
                 &ctx,
                 theme,
                 scratch_area,
                 scratch_buf,
-                mouse_pos,
+                None,
                 selection_entry_idx,
             );
+            if let Some(rect) = clock
+                && rect.y >= clip_top
+            {
+                state.push_timestamp_hit(
+                    entry_idx,
+                    Rect::new(
+                        rect.x.saturating_add(area.x),
+                        area.y + (rect.y - clip_top),
+                        rect.width,
+                        rect.height,
+                    ),
+                );
+            }
 
             // Copy visible rows (after clip_top) to output buffer
             for dy in 0..visible_height {
@@ -679,7 +685,7 @@ impl ScrollbackPane {
             lines
         } else {
             // No clipping needed; render directly with max_lines
-            Self::render_entry_with_ctx_static(
+            let (lines, clock) = Self::render_entry_with_ctx_static(
                 entry,
                 &ctx,
                 theme,
@@ -687,7 +693,11 @@ impl ScrollbackPane {
                 buf,
                 mouse_pos,
                 selection_entry_idx,
-            )
+            );
+            if let Some(rect) = clock {
+                state.push_timestamp_hit(entry_idx, rect);
+            }
+            lines
         };
 
         // Text reaching the last header row means more may be hidden below.
@@ -701,7 +711,7 @@ impl ScrollbackPane {
                 content_area: layout.content,
                 selection_area: layout.selection_area(),
                 // Copy re-renders the block at this width.
-                content_width: content_width_for_block,
+                content_width: block_content_width,
                 top_clipped: clip_top > 0,
                 bottom_clipped,
                 // Text selection only: a block drag anchored here would sweep in the off-screen entries the pinned prompt scrolled past.
@@ -720,7 +730,7 @@ impl ScrollbackPane {
         buf: &mut Buffer,
         mouse_pos: Option<(u16, u16)>,
         selection_entry_idx: usize,
-    ) -> Vec<ResolvedSelectableLine> {
+    ) -> (Vec<ResolvedSelectableLine>, Option<Rect>) {
         use crate::scrollback::types::BlockBackground;
 
         let layout = HorizontalLayout::new(area, &ctx.appearance.scrollback.layout);
@@ -780,11 +790,33 @@ impl ScrollbackPane {
             }
         }
 
-        // Render vpad top if needed (skip 1 row)
+        let entry_right = area.x.saturating_add(area.width);
+        let row_span = content_area.width.saturating_add(right_pad.width);
+        let plan = sticky_clock_plan(
+            entry,
+            ctx,
+            &output,
+            row_span,
+            mouse_pos,
+            entry_right,
+            content_area.y,
+            use_vpad,
+        );
+        let mut clock_rect = None;
+        // [meta?] [vpad?] [content...]
         let mut y = content_area.y;
+        if plan.meta {
+            if let Some(text) = plan.text.as_deref()
+                && y < content_area.y + content_area.height
+            {
+                clock_rect = Some(paint_sticky_clock(buf, theme, entry_right, y, text));
+            }
+            y = y.saturating_add(1);
+        }
         if use_vpad {
             y += 1;
         }
+        let first_content_y = y;
 
         // `block_line_idx` counts every line, painted or not.
         let mut selection_lines = Vec::new();
@@ -816,36 +848,17 @@ impl ScrollbackPane {
             y += 1;
         }
 
-        // Overlay timestamp on the first content line for message blocks in sticky headers (pinned/pushed user prompts, agent messages, etc.)
-        // Mirrors the overlay in EntryRenderer but adapted for the header render path and the clip (scratch buffer) case
-        // Hover expansion works for pinned (absolute coords); pushed headers always get the short format
-        if ctx.appearance.show_timestamps
-            && !output.lines.is_empty()
-            && matches!(
-                &entry.block,
-                RenderBlock::UserPrompt(_) | RenderBlock::AgentMessage(_) | RenderBlock::Btw(_)
-            )
-            && let Some(ts) = entry.created_at
+        if !plan.meta
+            && first_content_y < content_area.y + content_area.height
+            && let Some(text) = plan.text.as_deref()
         {
-            let first_content_y = content_area.y + if use_vpad { 1 } else { 0 };
-            let ts_hovered = mouse_pos.is_some_and(|(mx, my)| {
-                my == first_content_y
-                    && mx >= content_area.x + content_area.width.saturating_sub(10)
-                    && mx < content_area.x + content_area.width
-            });
-            let ts_str = if ts_hovered {
-                ts.format("  %H:%M:%S | %b %d").to_string()
-            } else {
-                ts.format("  %-I:%M %p").to_string()
-            };
-            let ts_width = ts_str.len() as u16;
-            if content_area.width > ts_width + 1
-                && first_content_y < content_area.y + content_area.height
-            {
-                let ts_x = content_area.x + content_area.width - ts_width;
-                let ts_style = Style::default().fg(theme.gray);
-                buf.set_string_safe(ts_x, first_content_y, &ts_str, ts_style);
-            }
+            clock_rect = Some(paint_sticky_clock(
+                buf,
+                theme,
+                entry_right,
+                first_content_y,
+                text,
+            ));
         }
 
         // vpad bottom is just empty space; no need to track y further
@@ -853,14 +866,19 @@ impl ScrollbackPane {
         // The accent column is kept for alignment but never painted. Clear it so content from a previous frame cannot bleed through.
         let accent_area = layout.accent;
         let clear_style = ratatui::style::Style::default().bg(bg_color.unwrap_or(theme.bg_base));
-        for y in accent_area.y..accent_area.y + total_height.min(area.height) {
+        for y in accent_area.y
+            ..accent_area.y
+                + total_height
+                    .saturating_add(u16::from(plan.meta))
+                    .min(area.height)
+        {
             if let Some(cell) = buf.cell_mut((accent_area.x, y)) {
                 cell.set_char(' ');
                 cell.set_style(clear_style);
             }
         }
 
-        selection_lines
+        (selection_lines, clock_rect)
     }
 
     // Shared Rendering Helpers
@@ -942,6 +960,9 @@ impl ScrollbackPane {
         );
         let result = rendered.result;
         let selection_boundaries = rendered.selection_boundaries;
+        for hit in &result.timestamp_hits {
+            state.push_timestamp_hit(visible_range.start + hit.entry_idx, hit.rect);
+        }
 
         // NOTE: total_height is computed by prepare_layout() before render, so we don't update it here
         // The result.total_height is only used locally if needed for debugging
@@ -1195,6 +1216,108 @@ fn paint_expandable_indicator(
         };
         cell.set_char(ch);
     }
+}
+
+fn sticky_row_span(
+    entry: &ScrollbackEntry,
+    appearance: &crate::appearance::AppearanceConfig,
+    content_width: u16,
+) -> u16 {
+    let pad = if entry.block.is_user_prompt() {
+        1
+    } else {
+        appearance.scrollback.layout.block_pad_right
+    };
+    content_width.saturating_add(pad)
+}
+
+fn sticky_clock_meta(
+    entry: &ScrollbackEntry,
+    appearance: &crate::appearance::AppearanceConfig,
+    content_width: u16,
+) -> bool {
+    use crate::scrollback::timestamp_layout::{ClockPlan, ClockQuery, line_cols};
+    let output = entry.cached_output_ref();
+    let first = output
+        .lines
+        .first()
+        .map(|line| line_cols(&line.content))
+        .unwrap_or(0);
+    let has_content = !output.lines.is_empty();
+    drop(output);
+    ClockPlan::decide(&ClockQuery {
+        entry,
+        appearance,
+        first_line_cols: first,
+        row_span: sticky_row_span(entry, appearance, content_width),
+        prev_clock: entry.clock_prev.get(),
+        hovered: false,
+        allow_long: true,
+        has_content,
+    })
+    .meta
+}
+
+fn sticky_clock_plan(
+    entry: &ScrollbackEntry,
+    ctx: &crate::scrollback::types::BlockContext,
+    output: &crate::scrollback::types::BlockOutput,
+    row_span: u16,
+    mouse_pos: Option<(u16, u16)>,
+    entry_right: u16,
+    content_top: u16,
+    vpad: bool,
+) -> crate::scrollback::timestamp_layout::ClockPlan {
+    use crate::scrollback::timestamp_layout::{
+        ClockPlan, ClockQuery, clock_cols, clock_origin, line_cols, point_in_clock,
+    };
+    let first = output
+        .lines
+        .first()
+        .map(|line| line_cols(&line.content))
+        .unwrap_or(0);
+    let query = |hovered| ClockQuery {
+        entry,
+        appearance: &ctx.appearance,
+        first_line_cols: first,
+        row_span,
+        prev_clock: entry.clock_prev.get(),
+        hovered,
+        allow_long: true,
+        has_content: !output.lines.is_empty(),
+    };
+    let stable = ClockPlan::decide(&query(false));
+    let clock_row = if stable.meta {
+        content_top
+    } else {
+        content_top.saturating_add(u16::from(vpad))
+    };
+    let hovered = stable.text.as_deref().is_some_and(|text| {
+        let x = clock_origin(entry_right, text);
+        mouse_pos.is_some_and(|(mx, my)| point_in_clock(mx, my, x, clock_row, clock_cols(text)))
+    });
+    if !hovered {
+        return stable;
+    }
+    let expanded = ClockPlan::decide(&query(true));
+    if expanded.meta == stable.meta {
+        expanded
+    } else {
+        stable
+    }
+}
+
+fn paint_sticky_clock(
+    buf: &mut ratatui::buffer::Buffer,
+    theme: &crate::theme::Theme,
+    entry_right: u16,
+    y: u16,
+    text: &str,
+) -> Rect {
+    use crate::scrollback::timestamp_layout::{clock_cols, clock_origin};
+    let x = clock_origin(entry_right, text);
+    buf.set_string_safe(x, y, text, Style::default().fg(theme.gray));
+    Rect::new(x, y, clock_cols(text), 1)
 }
 
 #[cfg(test)]

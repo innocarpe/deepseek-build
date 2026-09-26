@@ -4,6 +4,11 @@ use crate::scrollback::types::{AccentStyle, BlockContext, BlockOutput};
 use super::markdown_content::MarkdownContent;
 use super::mermaid_content::{self, MermaidContent};
 use crate::appearance::AppearanceConfig;
+use crate::scrollback::timestamp_layout::wide_first_line_reserve;
+
+fn wide_clock_reserve(ctx: &BlockContext) -> usize {
+    wide_first_line_reserve(&ctx.appearance) as usize
+}
 
 /// Block displaying an agent message with streaming markdown support. When text arrives in chunks, call
 /// `push_chunk()` to append without re-rendering everything.
@@ -125,7 +130,9 @@ impl AgentMessageBlock {
         &self,
         ctx: &BlockContext,
     ) -> (BlockOutput, Vec<mermaid_content::DiagramAffordance>) {
-        let mut out = self.content.output(ctx.width as usize);
+        let mut out = self
+            .content
+            .output_with_reserve(ctx.width as usize, wide_clock_reserve(ctx));
         // Diagram pre-wrap ranges in document order
         // The fence count and order are width-invariant, so range index `idx` pairs with the diagram's source (`self.mermaid.source(idx)`)
         let ranges = self.content.mermaid_block_ranges();
@@ -147,7 +154,9 @@ impl BlockContent for AgentMessageBlock {
     fn output(&self, ctx: &BlockContext) -> BlockOutput {
         // Common path: no diagrams (or raw mode) renders plain markdown, with no affordance machinery and no extra output rebuild
         if ctx.raw || self.mermaid.is_empty() {
-            return self.content.output(ctx.width as usize);
+            return self
+                .content
+                .output_with_reserve(ctx.width as usize, wide_clock_reserve(ctx));
         }
         self.rendered_output(ctx).0
     }

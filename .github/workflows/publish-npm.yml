@@ -33,11 +33,9 @@ on:
         required: true
         type: string
 
-# Only the OIDC token permission npm's trusted publishing exchanges; no token
-# secret is read anywhere in this workflow.
+# OIDC stays on the publish job. The wait job only reads the repo and Actions.
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: publish-npm-${{ github.ref }}
@@ -47,14 +45,115 @@ env:
   SUPPORTED_PLATFORM: darwin-arm64
 
 jobs:
+  wait:
+    name: wait for asset
+    # Linux so the 40–70 minute build does not hold a macOS runner. The
+    # packaged agent is executed on macOS in the publish job, after the asset
+    # exists. 6.0.1 spent 44 of its 46 minutes in this wait.
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Resolve release version
+        id: release
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${INPUT_VERSION:-}" ]]; then
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::'${VERSION}' is not full SemVer MAJOR.MINOR.PATCH" >&2
+            exit 1
+          fi
+          TAG="v${VERSION}"
+
+          git fetch --force --tags origin
+          if ! git rev-parse --verify --quiet "refs/tags/${TAG}" >/dev/null; then
+            echo "::error::tag ${TAG} does not exist — refusing to publish untagged code" >&2
+            exit 1
+          fi
+          TAG_SHA="$(git rev-parse "${TAG}^{commit}")"
+          HEAD_SHA="$(git rev-parse HEAD)"
+          if [[ "$TAG_SHA" != "$HEAD_SHA" ]]; then
+            echo "::error::HEAD ${HEAD_SHA} is not tag ${TAG} (${TAG_SHA}) — refusing to publish" >&2
+            exit 1
+          fi
+
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [[ "$PKG_VERSION" != "$VERSION" ]]; then
+            echo "::error::package.json version ${PKG_VERSION} does not match release ${VERSION}" >&2
+            exit 1
+          fi
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "publishing ${VERSION} from tag ${TAG} at ${HEAD_SHA}"
+
+      - name: Wait for the release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          ASSET="deepseek-build-${VERSION}-${SUPPORTED_PLATFORM}.tar.gz"
+          # Cold builds measured 46 minutes (6.0.1). 90 minutes leaves room
+          # for a 60+ minute compile without consuming the job timeout.
+          DEADLINE=$(( $(date +%s) + 5400 ))
+          while :; do
+            gh release view "v${VERSION}" --repo "$GITHUB_REPOSITORY" \
+              --json assets --jq '.assets[].name' \
+              > "$RUNNER_TEMP/assets.txt" 2>/dev/null || true
+            if grep -qx "$ASSET" "$RUNNER_TEMP/assets.txt"; then
+              echo "asset present: $ASSET"
+              break
+            fi
+            gh run list --repo "$GITHUB_REPOSITORY" --workflow release-prebuilt.yml --limit 30 \
+              --json databaseId,headBranch,event,status,conclusion,createdAt \
+              > "$RUNNER_TEMP/builds.json"
+            BUILD="$(jq -c --arg tag "v${VERSION}" '
+              [ .[] | select(.headBranch == $tag and (.event == "push" or .event == "workflow_dispatch")) ]
+              | sort_by(.createdAt) | last // empty
+            ' "$RUNNER_TEMP/builds.json")"
+            if [[ -n "$BUILD" ]]; then
+              STATUS="$(jq -r '.status' <<<"$BUILD")"
+              CONCLUSION="$(jq -r '.conclusion' <<<"$BUILD")"
+              echo "release-prebuilt for v${VERSION}: status=${STATUS} conclusion=${CONCLUSION}"
+              if [[ "$STATUS" == "completed" && "$CONCLUSION" != "success" ]]; then
+                echo "::error::release-prebuilt completed as ${CONCLUSION} and ${ASSET} is absent" >&2
+                exit 1
+              fi
+            fi
+            if [[ $(date +%s) -ge $DEADLINE ]]; then
+              echo "::error::${ASSET} was not attached within 5400s — refusing to publish (ADR 0009)" >&2
+              echo "Attach it (release skill 'Manual asset fallback') and re-run this job." >&2
+              exit 1
+            fi
+            echo "waiting for ${ASSET} (release-prebuilt.yml)…"
+            sleep 60
+          done
+
   publish:
     name: publish
+    needs: wait
     # macOS because the only released platform is darwin-arm64: it lets the job
     # execute the packaged agent to prove the asset is the release build, which
     # a Linux runner cannot do. GitHub-hosted runners are the supported
     # environment for npm trusted publishing.
     runs-on: macos-14
-    timeout-minutes: 60
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -116,35 +215,19 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "publishing ${VERSION} from tag ${TAG} at ${HEAD_SHA}"
 
-      # The release skill's hard rule 5: never publish an npm version whose
-      # binary asset is missing or stale.
-      - name: Wait for the release asset
+      # The wait job already blocked until this asset existed. Download it
+      # here and refuse to publish if it disappeared.
+      - name: Download the release asset
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
           ASSET="deepseek-build-${VERSION}-${SUPPORTED_PLATFORM}.tar.gz"
-          DEADLINE=$(( $(date +%s) + 3600 ))
-          while :; do
-            gh release view "v${VERSION}" --repo "$GITHUB_REPOSITORY" \
-              --json assets --jq '.assets[].name' \
-              > "$RUNNER_TEMP/assets.txt" 2>/dev/null || true
-            if grep -qx "$ASSET" "$RUNNER_TEMP/assets.txt"; then
-              echo "asset present: $ASSET"
-              break
-            fi
-            if [[ $(date +%s) -ge $DEADLINE ]]; then
-              echo "::error::${ASSET} was not attached within 3600s — refusing to publish (ADR 0009)" >&2
-              echo "Attach it (release skill 'Manual asset fallback') and re-run this job." >&2
-              exit 1
-            fi
-            echo "waiting for ${ASSET} (release-prebuilt.yml)…"
-            sleep 60
-          done
           mkdir -p dist
           gh release download "v${VERSION}" --repo "$GITHUB_REPOSITORY" \
             --pattern "$ASSET" --dir dist
+          test -f "dist/$ASSET"
           ls -l "dist/$ASSET"
 
       - name: Verify the asset is the release build
@@ -243,7 +326,7 @@ jobs:
             [[ "$OUT" == *"$VERSION"* ]] || { echo "::error::$bin did not report ${VERSION}" >&2; exit 1; }
           done
 
-      - name: sccache / npm diagnostics
+      - name: npm diagnostics
         if: always()
         run: |
           echo "npm: $(npm --version)"

@@ -1,0 +1,82 @@
+# Vendored Grok workspace tests, after merge only.
+#
+# This is its own workflow so CI's cancel-in-progress cannot kill it. A later
+# push starts that workflow only when these paths change, so a docs merge does
+# not cancel a test already running. A newer grok push still cancels the older
+# run: the signal we want is the latest main, not every intermediate commit.
+#
+# Do not add this check to branch protection. The workflow does not run on
+# docs-only PRs, and GitHub treats a required check that never ran as a failure.
+name: CI grok test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "third_party/grok-build/**"
+      - "patches/grok-build/**"
+      - "scripts/apply-grok-build-patches.sh"
+      - "scripts/build-grok-pager.sh"
+      - "scripts/test-grok-vendor-offline.sh"
+      - "docs/architecture/GROK_VENDOR.md"
+      - ".github/workflows/ci-grok-test.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-grok-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  grok_test:
+    name: grok test
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      # SessionActor turn futures can exceed Rust's 2 MiB default test-thread stack.
+      # RUST_* is part of the rust-cache key, so this job does not share clippy's cache.
+      RUST_MIN_STACK: "16777216"
+    defaults:
+      run:
+        working-directory: third_party/grok-build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.94.0"
+      - name: Install protoc (pinned 29.3 — the repo's dotslash-pinned version)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq unzip
+          curl -fsSL -o /tmp/protoc.zip \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-linux-x86_64.zip"
+          sudo unzip -o /tmp/protoc.zip -d /usr/local bin/protoc 'include/*'
+          sudo chmod 755 /usr/local/bin/protoc
+          test -f /usr/local/include/google/protobuf/descriptor.proto
+          echo "PROTOC=/usr/local/bin/protoc" >> "$GITHUB_ENV"
+          /usr/local/bin/protoc --version
+      - name: Install ripgrep (grep tool tests shell out to `rg`)
+        run: |
+          sudo apt-get install -y -qq ripgrep
+          echo "rg: $(command -v rg) $(rg --version | head -n 1)"
+      - name: Cache Grok test artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: grok-build-test-v2
+          workspaces: third_party/grok-build -> target
+          cache-workspace-crates: true
+          cache-on-failure: true
+          cache-provider: github
+          save-if: true
+      # This build compiles nfs_off.rs: grove identity collection returns
+      # nothing. These four tests assert the real collector and failed on the
+      # 2026-09-25 main run (xai-fast-worktree: 455 passed, 4 failed) before
+      # cargo stopped the workspace. They cannot pass until grove is built.
+      - name: Test vendored workspace
+        run: |
+          cargo test --workspace -- \
+            --skip rebuild_nfs_under_managed_roots_is_not_labeled_linked \
+            --skip rebuild_registers_nfs_from_backing_marker \
+            --skip rebuild_scans_xdg_grove_without_grove_data_dir \
+            --skip run_pass_prunes_orphan_grove_pins_after_grace

@@ -1,0 +1,90 @@
+# Re-save a release build's Rust artifacts on the default branch.
+#
+# release-prebuilt.yml runs on a tag. Actions cache saved there is invisible
+# to the next tag; a tag run can restore caches from the default branch.
+# This workflow runs in the default-branch context (workflow_run), unpacks
+# the archive the tag build uploaded, and lets rust-cache save it here.
+#
+# An exact key match is left alone (Actions caches are immutable). A miss
+# or a lockfile-prefix match saves what the tag just built. Package versions
+# are not part of the Swatinem key, so a pure version bump restores this
+# entry and recompiles only the crates whose build script saw the new version.
+name: seed-release-cache
+
+on:
+  workflow_run:
+    workflows: ["release-prebuilt"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: seed-release-cache
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    name: seed default-branch cache
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      # Must match release-prebuilt.yml. RUST* and CARGO* are part of the
+      # rust-cache key; a mismatch saves an entry the next tag will not restore.
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 1
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.0
+
+      - name: Download the release Rust archive
+        id: archive
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: release-rust-cache-darwin-arm64
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/release-rust-cache
+
+      # lookup-only so a prefix hit does not extract an older cache. On a
+      # prefix hit the action clears target/ in this step, which is still
+      # empty; the unpack below runs after that and before the post save.
+      # No archive: skip the action entirely. Its post step would otherwise
+      # save an empty target and freeze that key.
+      - name: Open the release cache key
+        id: cache
+        if: steps.archive.outcome == 'success'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            third_party/grok-build
+          shared-key: release-prebuilt-darwin-arm64
+          cache-all-crates: true
+          # The 41-minute cost is the vendored workspace crates, not crates.io.
+          # The default leaves those rlibs out of the saved cache, so the next
+          # tag still compiles them. Keep them.
+          cache-workspace-crates: true
+          cache-provider: github
+          lookup-only: true
+          save-if: true
+
+      - name: Unpack into the cache paths
+        if: steps.archive.outcome == 'success'
+        run: |
+          set -euo pipefail
+          archive="$(find "$RUNNER_TEMP/release-rust-cache" -name 'release-rust-cache.tar.gz' -print -quit)"
+          if [[ -z "$archive" ]]; then
+            echo "::error::artifact had no release-rust-cache.tar.gz" >&2
+            exit 1
+          fi
+          ./scripts/release-rust-cache.sh unpack "$archive"

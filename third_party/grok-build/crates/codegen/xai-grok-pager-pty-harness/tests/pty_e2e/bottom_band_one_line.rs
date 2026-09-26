@@ -7,12 +7,13 @@ const PHONE_ROWS: u16 = 41;
 const PHONE_COLS: u16 = 55;
 
 fn divider_row(screen: &str) -> (usize, String) {
-    screen
-        .lines()
+    let lines: Vec<&str> = screen.lines().collect();
+    lines
+        .iter()
         .enumerate()
         .rev()
         .find(|(_, line)| line.contains('\u{2570}') && line.contains('\u{256f}'))
-        .map(|(i, line)| (i, line.to_string()))
+        .map(|(i, line)| (i, (*line).to_string()))
         .unwrap_or_else(|| panic!("no prompt divider in the frame\nscreen:\n{screen}"))
 }
 

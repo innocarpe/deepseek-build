@@ -134,6 +134,7 @@ survived.
 | `crates/codegen/xai-grok-sampling-types/src/types.rs`, `conversation.rs`, `crates/codegen/xai-chat-state/src/usage.rs`, `crates/codegen/xai-grok-shell/src/session/acp_session_impl/turn_end.rs` | Chat Completions `Usage` keeps `prompt_cache_miss_tokens`. The session ledger sums hit and miss only when those fields were sent, and `emit_turn_completed` logs `cache_session=` once per turn | Spec 10 §1.5.2 on Path A. The official host sends the miss; dropping the field made the client report a hit with no miss. The overlay counter in `dsb-agent` is unchanged |
 | `crates/codegen/xai-grok-shell/src/session/helpers/spec10_path_a_cache_guard.rs` | Spec 10 §1.9 Path A bench. Scored bytes are `assemble_spec10_path_a_turn` + `place_stable_body`, then `ChatCompletionRequest::from` (`conversation_to_chat_messages`). The mock accounts the `messages` array | The overlay bench scores `dsb-context`. Path A does not link that crate, so a guard that lives only there stays green when this assembly breaks |
 | `crates/codegen/xai-grok-shell/src/util/config/announcements.rs` + `agent/init.rs`, `agent/mvp_agent/agent_ops.rs` | `strip_remote_announcements` removes the `announcements` field at every `remote_settings` write (startup getter, boot wait, shared store, poll-only apply); `resolve_announcements` never merges the `remote` layer | dsb carries no xAI/Grok announcements: the fetch stays (the same blob carries harness settings), but announcements neither enter stored settings nor reach the pager's display set, so the welcome hero, session banner, header/dashboard CTA and `/announcements` gate stay empty for remote items. `GROK_ANNOUNCEMENTS_OVERRIDE` and config TOML layers are kept |
+| `crates/codegen/xai-fast-worktree/src/git/safety_tests.rs` | `copy_tree` copies a listed file through `copy_listed_file`, which skips one the source dropped before the copy reached it; a tree that is not there still fails | git spawns automatic maintenance detached by default (`maintenance.autoDetach`), so `commit`/`push`/`fetch` leave a process that deletes `.git/objects/maintenance.lock` as its run ends. `read_dir` listed the lock, the process removed it, `fs::copy` returned `NotFound`, and `CI grok test` failed at `safety_tests.rs:122` (run 36225954017) |
 
 Tests: `resume_hint_line_brands_invocation_name` and
 `failed_relaunch_hint_brands_invocation_name` pin the `dsb` output; upstream
@@ -173,6 +174,9 @@ The phone bottom stack is pinned at the widget by
 `app::agent_view::phone_bottom_tests`, which renders the whole view at 55×41
 and 120×40 and asserts the label row, the absent hint row and the DeepSeek
 status row.
+The snapshot helper's skip for a listed file the source dropped is pinned by
+`a_file_the_source_dropped_after_the_listing_is_skipped`, with
+`a_copy_of_a_tree_that_is_not_there_still_fails` keeping a missing tree fatal.
 
 ### Patch series
 

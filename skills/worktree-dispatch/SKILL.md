@@ -1,6 +1,6 @@
 ---
 name: worktree-dispatch
-description: "From the control-tower checkout: one Orca worktree per unit, then merge and clean up. Launch grok or dsb with orca-tab, not the orca manual."
+description: "From the control tower: one worktree per unit, then merge and clean up. A brief cannot shrink the user's turn. Launch grok or dsb with orca-tab, not the orca manual."
 ---
 
 # Worktree dispatch (control-tower checkout)
@@ -148,6 +148,8 @@ and do not run `orca skills get orca-cli` to fill them in.
 
 What a brief carries:
 
+- **user-turn** — the first line of the brief file is `user-turn:` plus the
+  user's sentence, verbatim. That sentence is the done-condition.
 - **Unit** — the outcome in one sentence, PR kind and title, branch name,
   `Depends on #N` if stacked
 - **Boundaries** — which worktree is theirs; the primary checkout and other
@@ -162,9 +164,12 @@ What a brief carries:
   Write the brief in Korean with the technical detail inline, or open it with
   `보고·진행 메모는 한국어로` before switching to English. A delegated run's
   report is human-facing session text too.
-- **Authority** — merging is part of the unit when the opening asked for the work
-  to be carried through; say so in the brief, and say when it is withheld.
-- **Report** — PR URL, test evidence, what was left out
+- **Authority** — the default close is `session-unit` (PR, CI, merge commit,
+  report). Withhold the PR, the merge, or `skills/release` only when
+  `user-turn:` says so. Before send, `scripts/check-session-close.sh brief <file>`
+  must pass. Do not send a brief it rejects, and do not copy a release lane
+  ban out of an older prompt.
+- **Report** — the shape in `session-unit`. Do not restate it here.
 
 Then mark the card so other sessions can see the state:
 `orca worktree set --worktree "id:$WT_ID" --comment "<one-line state>" --json`

@@ -1,11 +1,9 @@
 ---
 name: release
 description: >
-  Cut a DeepSeek Build release end-to-end without omissions: version bump,
-  CHANGELOG newest-first invariant, MAJOR/README gate, chore(release) PR,
-  merge, tag, prebuilt asset attach (manual fallback when CI is stuck), npm
-  publish over OIDC trusted publishing, post-publish verification. Use when the
-  user asks to release, bump, tag, publish to npm, or ship a version.
+  Use when the user asks to release, bump, or ship a version. That ask keeps
+  this skill; a child brief cannot ban the release lane. Then cut the version
+  without omissions: bump, CHANGELOG, PR, merge, tag, assets, npm.
 ---
 
 # Release (DeepSeek Build harness)
@@ -75,6 +73,17 @@ is silently skipped.
    `publish-npm.yml`, which publishes over OIDC trusted publishing — no npm
    token, no one-time code. Do not publish locally unless that path is broken;
    the emergency path is below.
+8. **An empty `## Unreleased` is not evidence that a version ask is finished.**
+   `--desc` may seed a section when Unreleased has no items. That seed is the
+   patch you are cutting. If the user named work and that work is not in the
+   section, the release clause did not stand: say so in the session-unit
+   report and stop. Do not cut the next number to have a tag, and do not
+   report the ask done. On 2026-09-26 a session cut `6.0.1`, emptied
+   Unreleased, and stopped on `6.1.0` because the section would have been
+   empty, while the depth train was still unreleased.
+9. **A child brief cannot drop this skill** when the user asked to ship a
+   version. `skills/session-unit` owns that check
+   (`scripts/check-session-close.sh brief`). The release steps stay here.
 
 ## Standard cycle
 

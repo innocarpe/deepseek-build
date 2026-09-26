@@ -137,6 +137,10 @@ contract + the `pr-authoring` skill**, not by process-police GitHub Actions.
 
 ### Before claiming done
 
+The checks below are the PR. They do not end the unit. The unit ends at the
+report in [`skills/session-unit`](skills/session-unit/SKILL.md): CI, a merge
+commit, and whether the done-condition holds.
+
 1. Branch: `<type>/<short-kebab>` (not `main`)
 2. **Atomic** Conventional Commits on the branch (one concern each)
 3. Conventional title + matching **kind** label on `gh pr create --label …`
@@ -220,27 +224,38 @@ single clone and no Orca, work as usual: branch, commit, PR
 
 ## One session, one unit
 
-The opening message, or the brief a dispatch handed over, is this session's
-**one unit**. The order is [`skills/session-unit`](skills/session-unit/SKILL.md).
-Worktree lifecycle stays in [`worktree-dispatch`](skills/worktree-dispatch/SKILL.md);
-opening the Orca tab stays in [`skills/orca-tab`](skills/orca-tab/SKILL.md);
-the PR stays in [`pr-authoring`](skills/pr-authoring/SKILL.md).
+The opening message is this session's **one unit**. A handoff brief is that
+opening only together with its `user-turn:` line — the user's sentence,
+verbatim. The order, the report, and what counts as merged live in
+[`skills/session-unit`](skills/session-unit/SKILL.md). Worktree lifecycle stays
+in [`worktree-dispatch`](skills/worktree-dispatch/SKILL.md); the Orca tab stays
+in [`skills/orca-tab`](skills/orca-tab/SKILL.md); the PR body stays in
+[`pr-authoring`](skills/pr-authoring/SKILL.md); a version the user asked for
+stays in [`skills/release`](skills/release/SKILL.md).
 
 - **Write the done-condition in one sentence before editing.** Take it from
-  the opening. Do not later swap it for a smaller goal that is only what this
-  session can finish easily, and do not add work the opening did not name.
-- **Carry the unit through without waiting for another prompt** when the
-  opening asked for the work: implement, run the checks that change needs,
-  one-concern commits, then the PR. Stop short of push or PR only when the
-  opening said to stop there.
-- **Merge is part of the unit, not a separate permission.** When the checks are
-  green and the body meets the bar, merge your own PR with the method this file
-  states under **Merge on GitHub**, then clean up the worktree
-  (`skills/worktree-dispatch` §4). Do not stop and ask whether to merge, and do
-  not leave a green PR open for a later prompt — **development speed is the
-  point**. Stop short of merging only when the opening said so (a review-only
-  unit, a stacked child whose parent is unmerged, or a PR the user asked to
-  look at first). Waiting on the user is the exception, not the default.
+  the user turn. Do not later swap it for a smaller goal that is only what
+  this session can finish easily, and do not add work the opening did not name.
+- **A child brief does not shrink that turn.** A prohibition in the brief
+  loses when the user turn still asks for the thing it forbids. That includes
+  a release lane ban copied out of an older prompt
+  (`docs/product/ULTRAGOAL_PROMPT_COLD_START_DEEPSEEK_DEPTH_6X.md`, the
+  `6.0.0` cut). On 2026-09-26 the copy won, and a later session treated an
+  empty `## Unreleased` as the end of a version ask. The check is
+  `scripts/check-session-close.sh brief`.
+- **Carry the unit through without waiting for another prompt** when the user
+  asked for the work. The default end is one line: implement, run the checks
+  the change needs, one-concern commits, open the PR, read CI, merge with a
+  merge commit, and report. Stop earlier only when that turn said so — a
+  review-only unit, a stacked child whose parent is unmerged, or a PR the
+  user asked to look at first.
+- **A merge is a fact only after `scripts/check-pr-merged.sh` prints `pass`.**
+  That output is `MERGED`, a non-empty `mergedAt`, a `mergeCommit`, and two
+  parents. Saying merged before that is not a fact.
+- **The report's first line is whether the done-condition holds, and if not,
+  which clause does not.** Then the PR URL, the CI conclusion, the merge
+  fields, and the checks with what they printed. What you did not do is a
+  separate list. That list does not open the next unit.
 - **A defect in a file this unit is already changing**, which no other
   session is editing, is part of finishing — its own commit, same unit.
   Anything the opening did not name (a new behavior, a fresh investigation,
@@ -249,9 +264,9 @@ the PR stays in [`pr-authoring`](skills/pr-authoring/SKILL.md).
   ([`skills/orca-tab`](skills/orca-tab/SKILL.md)), with that unit's
   done-condition as the first line of the brief. Report the tab. Do not
   ask whether to open it.
-- **When the unit is done, say so first.** Name whether the done-condition
-  holds, the evidence (including the merge commit), and any unit you handed
-  off. Do not offer another unit in this session.
+- **When the clause holds, say the unit is done first.** Name the evidence
+  (the merge script's output) and any unit you handed off. Do not offer
+  another unit in this session.
 
 ## Product CI (future)
 

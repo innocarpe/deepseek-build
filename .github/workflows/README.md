@@ -28,6 +28,7 @@ GitHub UI shows checks as `CI / <job>` (e.g. `CI / fmt`, `CI / test`, `CI / requ
 | `test` | rust paths | `cargo test --workspace` |
 | `semver` | version files | Cargo/npm SemVer match (no compile) |
 | `release_verify` | release/publish paths | publish → verify retry guard, hermetic (no network) |
+| `session close` | harness-close paths | finish line stays in the loaded description window; brief fixtures (hermetic) |
 | `grok fmt` | grok paths | `cargo fmt --all -- --check` in `third_party/grok-build` (no rust-cache) |
 | `grok clippy` | grok paths | `cargo clippy --workspace -- -D warnings` there (libs and bins, not tests) |
 | `grok test` | grok paths, push to `main` only | `cargo test --workspace` there |
@@ -41,6 +42,7 @@ PR / push
          ├─ test ────────┤
          ├─ semver ──────┤  (if version files)
          ├─ release_verify ┤  (if release/publish paths)
+         ├─ session close ┤  (if harness-close paths)
          ├─ grok fmt ────┤  (parallel if grok paths)
          ├─ grok clippy ─┤
          ├─ grok test ───┤  (push to main only)

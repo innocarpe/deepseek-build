@@ -84,7 +84,9 @@ Reference: [pr-body-standard.md](./pr-body-standard.md), Orca template at `OpenS
 
 **Merging is part of the unit, not a separate permission** (AGENTS.md
 §One session, one unit). When these are yes, merge and clean up the worktree —
-do not park a green PR waiting for a later prompt.
+do not park a green PR waiting for a later prompt. The report, and what counts
+as merged, live in [`skills/session-unit`](../../skills/session-unit/SKILL.md).
+This checklist does not end the unit at an open PR.
 
 Only merge if you can answer **yes**:
 

@@ -5524,37 +5524,50 @@ fn phone_prompt_echo_tap_expands_in_place_and_pins_the_first_line() {
         "the opened echo's first line stays at the content top after the next frame"
     );
 
-    // The second half of a double-tap lands on that first line and must not fold it shut.
-    let (col, row) = selectable_cell(agent, prompt_idx, 0);
-    tap_cell(&mut app, col, row);
-    draw_agent_at(app.agents.get_mut(&id).unwrap(), 55, 40);
+    // The second half of a double-tap lands on a body row: the pin moved the first line
+    // to the content top, so the cell the user just pressed is no longer that row.
+    // It still folds the echo shut.
+    {
+        let agent = app.agents.get_mut(&id).unwrap();
+        let (_, clicked_idx, count) = agent.last_click.expect("the opening tap is counted");
+        assert_eq!(count, 1);
+        assert_eq!(clicked_idx, prompt_idx);
+        agent.last_click = Some((std::time::Instant::now(), clicked_idx, count));
+    }
     let agent = app.agents.get(&id).unwrap();
-    assert_eq!(prompt_mode(agent, prompt_idx), DisplayMode::Expanded);
-    assert!(!agent.scrollback.is_follow_mode());
-
-    app.agents.get_mut(&id).unwrap().last_click = None;
-    let agent = app.agents.get(&id).unwrap();
+    let (_, first_row) = selectable_cell(agent, prompt_idx, 0);
     let (body_col, body_row) = selectable_cell(agent, prompt_idx, 2);
-    assert!(body_row > row, "the body tap is below the first line");
+    assert!(body_row > first_row, "the body tap is below the first line");
     tap_cell(&mut app, body_col, body_row);
-    draw_agent_at(app.agents.get_mut(&id).unwrap(), 55, 40);
-    assert_eq!(
-        prompt_mode(app.agents.get(&id).unwrap(), prompt_idx),
-        DisplayMode::Expanded,
-        "tapping the opened body does not fold"
-    );
-
-    app.agents.get_mut(&id).unwrap().last_click = None;
-    let agent = app.agents.get(&id).unwrap();
-    let (col, row) = selectable_cell(agent, prompt_idx, 0);
-    tap_cell(&mut app, col, row);
     draw_agent_at(app.agents.get_mut(&id).unwrap(), 55, 40);
     let agent = app.agents.get(&id).unwrap();
     assert_eq!(prompt_mode(agent, prompt_idx), DisplayMode::Collapsed);
     assert_eq!(
         echo_lines(agent, prompt_idx).len(),
         2,
-        "the first-line tap folds back to two lines"
+        "a body tap inside the double-click window folds back to two lines"
+    );
+    assert!(!agent.scrollback.is_follow_mode());
+
+    // A third tap opens it again.
+    {
+        let agent = app.agents.get_mut(&id).unwrap();
+        let (_, clicked_idx, count) = agent.last_click.expect("the folding tap is counted");
+        assert_eq!(count, 2);
+        agent.last_click = Some((std::time::Instant::now(), clicked_idx, count));
+    }
+    let agent = app.agents.get(&id).unwrap();
+    let (col, row) = selectable_cell(agent, prompt_idx, 0);
+    tap_cell(&mut app, col, row);
+    draw_agent_at(app.agents.get_mut(&id).unwrap(), 55, 40);
+    let agent = app.agents.get(&id).unwrap();
+    assert_eq!(prompt_mode(agent, prompt_idx), DisplayMode::Expanded);
+    assert!(echo_lines(agent, prompt_idx).len() > 2);
+    assert!(!agent.scrollback.is_follow_mode());
+    assert_eq!(
+        prompt_screen_top(agent, prompt_idx),
+        agent.pane_areas.scrollback.y,
+        "opening again pins the first line"
     );
 }
 
@@ -5679,6 +5692,21 @@ fn phone_prompt_echo_tap_expands_under_word_select() {
         prompt_screen_top(agent, prompt_idx),
         agent.pane_areas.scrollback.y
     );
+
+    // The retap folds it shut under word_select too, on a body row and inside the double-click window.
+    {
+        let agent = app.agents.get_mut(&id).unwrap();
+        let (_, clicked_idx, count) = agent.last_click.expect("the opening tap is counted");
+        assert_eq!(count, 1);
+        agent.last_click = Some((std::time::Instant::now(), clicked_idx, count));
+    }
+    let agent = app.agents.get(&id).unwrap();
+    let (body_col, body_row) = selectable_cell(agent, prompt_idx, 2);
+    tap_cell(&mut app, body_col, body_row);
+    draw_agent_at(app.agents.get_mut(&id).unwrap(), 55, 40);
+    let agent = app.agents.get(&id).unwrap();
+    assert_eq!(prompt_mode(agent, prompt_idx), DisplayMode::Collapsed);
+    assert_eq!(echo_lines(agent, prompt_idx).len(), 2);
 }
 #[test]
 fn merge_escapes_both_some_concatenates() {

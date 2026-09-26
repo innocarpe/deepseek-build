@@ -808,50 +808,53 @@ impl AgentView {
                         // A drag-free tap is a release on the same cell. A moved release is a selection, not a fold.
                         let same_cell = mouse.column == click_col && mouse.row == click_row;
                         if is_text_selection_on_double_click() {
-                            let exact_text_hit = self
-                                .last_scrollback_selection_model
-                                .hit_test_text_exact(click_col, click_row);
-                            if let Some(hit) = exact_text_hit {
-                                let text_click_count = self.count_text_click(now, &hit);
-                                let handled = match text_click_count {
-                                    1 => {
-                                        self.persistent_text_selection = None;
-                                        self.table_selection_geometry = None;
-                                        self.selection_created_at = None;
-                                        if hit.entry_idx != BTW_OVERLAY_ENTRY_IDX {
-                                            self.scrollback.set_selected(Some(hit.entry_idx));
+                            // A phone-width prompt echo toggles on every same-cell tap, including the
+                            // tap that folds it shut. word_select must not turn that tap into a word
+                            // or paragraph selection.
+                            let phone_echo_tap = same_cell
+                                && self.phone_prompt_echo_tap_escapes_word_select(click_row);
+                            if !phone_echo_tap {
+                                let exact_text_hit = self
+                                    .last_scrollback_selection_model
+                                    .hit_test_text_exact(click_col, click_row);
+                                if let Some(hit) = exact_text_hit {
+                                    let text_click_count = self.count_text_click(now, &hit);
+                                    let handled = match text_click_count {
+                                        1 => {
+                                            self.persistent_text_selection = None;
+                                            self.table_selection_geometry = None;
+                                            self.selection_created_at = None;
+                                            if hit.entry_idx != BTW_OVERLAY_ENTRY_IDX {
+                                                self.scrollback.set_selected(Some(hit.entry_idx));
+                                            }
+                                            true
                                         }
-                                        true
-                                    }
-                                    2 => {
-                                        self.select_word_at(&hit);
-                                        true
-                                    }
-                                    3 => {
-                                        if !self.select_cell_at(&hit) {
-                                            self.select_paragraph_at(&hit);
+                                        2 => {
+                                            self.select_word_at(&hit);
+                                            true
                                         }
-                                        true
+                                        3 => {
+                                            if !self.select_cell_at(&hit) {
+                                                self.select_paragraph_at(&hit);
+                                            }
+                                            true
+                                        }
+                                        _ => false,
+                                    };
+                                    if handled {
+                                        self.last_text_click = Some(TextClickState {
+                                            time: now,
+                                            entry_idx: hit.entry_idx,
+                                            range_id: hit.range_id,
+                                            block_line_idx: hit.block_line_idx,
+                                            col_within_range: hit.col_within_range,
+                                            click_count: text_click_count,
+                                        });
+                                        self.last_click = None;
+                                        return InputOutcome::Changed;
                                     }
-                                    _ => false,
-                                };
-                                // The phone echo tap is a single click. word_select would return here and the echo would stay one line.
-                                let phone_echo_tap = same_cell
-                                    && text_click_count == 1
-                                    && self.phone_prompt_echo_tap_escapes_word_select(click_row);
-                                if handled && !phone_echo_tap {
-                                    self.last_text_click = Some(TextClickState {
-                                        time: now,
-                                        entry_idx: hit.entry_idx,
-                                        range_id: hit.range_id,
-                                        block_line_idx: hit.block_line_idx,
-                                        col_within_range: hit.col_within_range,
-                                        click_count: text_click_count,
-                                    });
-                                    self.last_click = None;
-                                    return InputOutcome::Changed;
+                                    self.last_text_click = None;
                                 }
-                                self.last_text_click = None;
                             }
                         }
                         self.last_text_click = None;

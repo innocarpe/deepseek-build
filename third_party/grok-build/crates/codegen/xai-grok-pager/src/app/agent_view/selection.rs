@@ -1162,13 +1162,13 @@ impl AgentView {
 
         // Credit-limit URL click is handled upstream (before this method) so only the URL line is clickable, not the whole block
 
-        // A same-cell tap on a phone-width prompt echo expands the one-line band, or folds only its first row once open.
-        // The match below stays the desktop gesture (double-click fold). A second click inside the multi-click window must not undo the tap.
-        let phone_tap = click_count == 1
-            && click_row.is_some_and(|row| {
-                self.scrollback
-                    .apply_narrow_prompt_echo_tap(idx, row, self.pane_areas.scrollback)
-            });
+        // A same-cell tap on a phone-width prompt echo toggles the fold. Collapsed opens in place;
+        // any row of the opened echo folds it shut. A second tap inside the multi-click window is
+        // that fold, not a desktop double-click.
+        let phone_tap = click_row.is_some_and(|row| {
+            self.scrollback
+                .apply_narrow_prompt_echo_tap(idx, row, self.pane_areas.scrollback)
+        });
 
         // Double-click on bg-task / subagent blocks (matched above) opens a viewer instead of folding
         if !phone_tap {
@@ -1207,7 +1207,9 @@ impl AgentView {
                         self.open_workflow_detail_by_run_id(&run_id);
                     }
                 }
-                // Phone width: the single tap owns the echo. The second click of a double-tap must not fold it shut.
+                // The tap above owns a phone-width echo, including a second tap inside the multi-click
+                // window. This arm runs only when that tap did not change the fold (no row, or the
+                // prompt is not foldable), so a desktop double-click does not toggle it again.
                 2 if is_prompt && self.scrollback.prompt_echo_is_phone_width() => {}
                 2 if is_prompt => {
                     if foldable {
@@ -1240,6 +1242,7 @@ impl AgentView {
 
     /// A phone-width prompt echo tap must reach [`Self::handle_scrollback_click`].
     /// `word_select` returns from mouse-up before that call; this is the tap that return must not swallow.
+    /// True for the tap that opens the echo and for the tap that folds it shut, on any row of the echo.
     pub(in crate::app) fn phone_prompt_echo_tap_escapes_word_select(&self, click_row: u16) -> bool {
         let Some(idx) = self
             .scrollback

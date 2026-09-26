@@ -183,7 +183,11 @@ without Orca the same rule is `git worktree add -b <type>/<slug> <path> origin/m
   worktree.
 - **Create, hand off and clean up worktrees with
   [`skills/worktree-dispatch`](skills/worktree-dispatch/SKILL.md)** — branch
-  naming, occupancy, and removal after merge.
+  naming, occupancy, and removal after merge. The writing session is an
+  Orca tab **in that worktree**, running `dsb` or `grok` (`skills/orca-tab`).
+  `orca worktree create` alone leaves a shell prompt. The tower does not
+  implement the unit by path. `codex` and `claude` only when the user named
+  them.
 - **Open an Orca tab, or launch grok / dsb / codex / claude, with
   [`skills/orca-tab`](skills/orca-tab/SKILL.md).** Run those recipes. Do not
   run `orca skills get orca-cli` for that job, even when another skill says

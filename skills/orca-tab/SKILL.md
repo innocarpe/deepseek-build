@@ -32,8 +32,16 @@ launches the tab and hands it a prompt.
 | Browser, automations, artifacts, anything else | Then `orca skills get orca-cli` |
 
 The user named the agent. Launch that one. Do not swap grok for dsb, or
-dsb for grok. When the opening did not name an agent, this repo's work
-session is `dsb` ([AGENTS.md](../../AGENTS.md) §Control-tower checkout).
+dsb for grok. When the opening did not name an agent, launch `dsb`.
+`codex` and `claude` only when the user named them. This repo's sessions
+are `dsb` and `grok`.
+
+A worktree whose only tab is a shell prompt has no session. On 2026-09-26
+`pin-tower-main`, `ci-cache-and-coverage`, and `deepseek-native-depth-6-1-0`
+showed that prompt and nothing else. The grok processes were tabs on the
+primary checkout, driving those directories with `git -C`. The iOS app
+showed the same empty cards. `orca worktree create` without §2 or §3 is
+how that happened.
 
 ## Pass the name, not a binary path
 

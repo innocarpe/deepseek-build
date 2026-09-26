@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A session on OpenRouter sticks to one upstream provider. The request body now carries the session id as OpenRouter's `session_id` sticky-routing key, so a session (subagents included) keeps the provider that holds its prefix cache instead of re-billing the whole prompt at the input rate whenever the router moves. Requests to every other endpoint are byte-identical.
+
 ## 6.1.2 — 2026-09-26
 
 - On a phone-width pane, tap the one-line prompt echo to read the whole prompt in place. The opened echo stays at the top of the scrollback instead of jumping back to the latest line. Tap that first line to fold it again; tapping the rest of the text does not. Wider panes still open a folded prompt on a double-click.

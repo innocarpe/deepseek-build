@@ -92,15 +92,30 @@ fn strip_image_content_blocks(messages: &mut [ChatRequestMessage]) {
     }
 }
 
+/// Host of `base_url`, or the raw string when it does not parse (so an
+/// unparseable URL can still be compared verbatim instead of silently
+/// matching nothing).
+fn endpoint_host(base_url: &str) -> String {
+    reqwest::Url::parse(base_url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_owned))
+        .unwrap_or_else(|| base_url.to_owned())
+}
+
 /// True when `base_url` points at DeepSeek's official API. Matches any
 /// `*.deepseek.com` host (including `/v1` path prefixes) so endpoint
 /// prefixes cannot bypass DeepSeek-specific handling.
 fn is_official_deepseek_endpoint(base_url: &str) -> bool {
-    let host = reqwest::Url::parse(base_url)
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_owned))
-        .unwrap_or_else(|| base_url.to_owned());
+    let host = endpoint_host(base_url);
     host == "api.deepseek.com" || host.ends_with(".deepseek.com")
+}
+
+/// True when `base_url` points at OpenRouter. Matches any `*.openrouter.ai`
+/// host for the same reason as the DeepSeek gate above: the path prefix must
+/// not decide whether OpenRouter-specific handling runs.
+fn is_openrouter_endpoint(base_url: &str) -> bool {
+    let host = endpoint_host(base_url);
+    host == "openrouter.ai" || host.ends_with(".openrouter.ai")
 }
 
 /// True when the given DeepSeek model accepts text content only.
@@ -955,6 +970,33 @@ impl SamplingClient {
         Ok(request)
     }
 
+    /// Pin this request to the session's OpenRouter provider.
+    ///
+    /// OpenRouter chooses an upstream provider per request unless the body
+    /// carries a `session_id`, and each provider keeps its own prefix cache:
+    /// a mid-session switch re-bills the whole prompt at the input rate
+    /// instead of the cached rate. The session id is stable for the life of
+    /// a session (each subagent session has its own), which is exactly the
+    /// key OpenRouter's sticky routing wants.
+    ///
+    /// Other endpoints must see the body byte for byte, so this fires only on
+    /// OpenRouter hosts and only when the caller left `session_id` unset. A
+    /// request with no session id keeps none rather than getting an invented
+    /// key.
+    fn pin_openrouter_session(&self, payload: &mut ChatCompletionRequest) {
+        if payload.session_id.is_some() || !is_openrouter_endpoint(&self.base_url) {
+            return;
+        }
+        let Some(session_id) = payload
+            .x_grok_session_id
+            .as_deref()
+            .filter(|id| !id.is_empty())
+        else {
+            return;
+        };
+        payload.session_id = Some(session_id.to_owned());
+    }
+
     /// `sent_bearer` is the fragment [`Self::post`] captured for the request that produced `response` (401 attribution).
     async fn handle_response(
         &self,
@@ -1010,7 +1052,8 @@ impl SamplingClient {
         &self,
         request: ChatCompletionRequest,
     ) -> Result<ChatCompletionResponse> {
-        let payload = self.apply_defaults(request)?;
+        let mut payload = self.apply_defaults(request)?;
+        self.pin_openrouter_session(&mut payload);
         let x_grok_conv_id = &payload.x_grok_conv_id.clone().unwrap_or_default();
         let x_grok_req_id = &payload.x_grok_req_id.clone().unwrap_or_default();
         let model_id = payload.model.clone().unwrap_or_default();
@@ -1152,7 +1195,8 @@ impl SamplingClient {
         Option<ResponseModelMetadata>,
     )> {
         let mut span_timing = StreamSpanTiming::start(region);
-        let payload = self.apply_defaults(request)?;
+        let mut payload = self.apply_defaults(request)?;
+        self.pin_openrouter_session(&mut payload);
         let x_grok_conv_id = &payload.x_grok_conv_id.clone().unwrap_or_default();
         let x_grok_req_id = &payload.x_grok_req_id.clone().unwrap_or_default();
         let model_id = payload.model.clone().unwrap_or_default();
@@ -2451,6 +2495,7 @@ mod tests {
             frequency_penalty: None,
             presence_penalty: None,
             user: None,
+            session_id: None,
             tools: None,
             tool_choice: None,
             search_parameters: None,
@@ -3674,6 +3719,198 @@ mod tests {
             assert!(
                 !is_official_deepseek_endpoint(url),
                 "expected {url} to stay off the DeepSeek-specific path"
+            );
+        }
+    }
+
+    fn chat_request_for_session(session_id: Option<&str>) -> ChatCompletionRequest {
+        let mut request = ChatCompletionRequest::new(
+            "deepseek/deepseek-v4.1-flash",
+            vec![ChatRequestMessage::user("hello")],
+        );
+        request.x_grok_session_id = session_id.map(str::to_owned);
+        request
+    }
+
+    fn openrouter_client() -> SamplingClient {
+        SamplingClient::new(SamplerConfig {
+            base_url: "https://openrouter.ai/api/v1".to_string(),
+            ..minimal_config()
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn is_openrouter_endpoint_matches_only_openrouter_hosts() {
+        for url in [
+            "https://openrouter.ai",
+            "https://openrouter.ai/api/v1",
+            "https://openrouter.ai/api/v1/chat/completions",
+            "http://openrouter.ai",
+            "https://eu.openrouter.ai/api/v1",
+        ] {
+            assert!(
+                is_openrouter_endpoint(url),
+                "expected {url} to be treated as OpenRouter"
+            );
+        }
+        for url in [
+            "https://api.deepseek.com",
+            "https://api.x.ai",
+            "https://cli-chat-proxy.grok.com/v1",
+            "http://localhost:8787/v1",
+            "https://proxy.example.com",
+            // A lookalike host is not a subdomain: the gate is `*.openrouter.ai`.
+            "https://notopenrouter.ai/api/v1",
+            "",
+        ] {
+            assert!(
+                !is_openrouter_endpoint(url),
+                "expected {url} to stay off the OpenRouter-specific path"
+            );
+        }
+    }
+
+    #[test]
+    fn openrouter_session_pin_adds_the_session_id_and_nothing_else() {
+        let client = openrouter_client();
+        let mut request = chat_request_for_session(Some("session-abc"));
+        let before = serde_json::to_value(&request).unwrap();
+        assert!(before.get("session_id").is_none(), "{before}");
+
+        client.pin_openrouter_session(&mut request);
+        assert_eq!(request.session_id.as_deref(), Some("session-abc"));
+
+        // The body differs by exactly the added field, so the pin cannot move
+        // anything else OpenRouter's cache prefix depends on.
+        let after = serde_json::to_value(&request).unwrap();
+        let mut expected = before.as_object().unwrap().clone();
+        expected.insert("session_id".into(), serde_json::json!("session-abc"));
+        assert_eq!(after, serde_json::Value::Object(expected));
+
+        // The next request in the same session carries the same key, and a
+        // subagent session carries its own.
+        let mut next = chat_request_for_session(Some("session-abc"));
+        client.pin_openrouter_session(&mut next);
+        assert_eq!(next.session_id.as_deref(), Some("session-abc"));
+        let mut subagent = chat_request_for_session(Some("session-sub"));
+        client.pin_openrouter_session(&mut subagent);
+        assert_eq!(subagent.session_id.as_deref(), Some("session-sub"));
+    }
+
+    #[test]
+    fn openrouter_session_pin_stays_off_every_other_endpoint() {
+        for base_url in [
+            "https://api.deepseek.com",
+            "https://api.deepseek.com/v1",
+            "https://api.x.ai",
+            "http://127.0.0.1:8787/v1",
+            "https://proxy.example.com",
+        ] {
+            let client = SamplingClient::new(SamplerConfig {
+                base_url: base_url.to_string(),
+                ..minimal_config()
+            })
+            .unwrap();
+            let mut request = chat_request_for_session(Some("session-abc"));
+            client.pin_openrouter_session(&mut request);
+            assert!(
+                request.session_id.is_none(),
+                "{base_url} must see no session_id"
+            );
+            let body = serde_json::to_value(&request).unwrap();
+            assert!(
+                body.get("session_id").is_none(),
+                "{base_url}: the body must not carry session_id"
+            );
+        }
+    }
+
+    #[test]
+    fn openrouter_session_pin_keeps_a_caller_set_value() {
+        let client = openrouter_client();
+        let mut request = chat_request_for_session(Some("session-abc"));
+        request.session_id = Some("caller-key".to_string());
+        client.pin_openrouter_session(&mut request);
+        assert_eq!(request.session_id.as_deref(), Some("caller-key"));
+    }
+
+    #[test]
+    fn openrouter_session_pin_needs_a_session_id() {
+        let client = openrouter_client();
+        for session_id in [None, Some("")] {
+            let mut request = chat_request_for_session(session_id);
+            client.pin_openrouter_session(&mut request);
+            assert!(
+                request.session_id.is_none(),
+                "{session_id:?}: no session id means no invented key"
+            );
+        }
+    }
+
+    /// One chat request through `streaming`'s entry point against a mock that
+    /// hands back the raw body. `openrouter` swaps only the endpoint
+    /// *identity* after construction, so the bytes still travel to the mock
+    /// while the OpenRouter gate reads its real input.
+    async fn captured_chat_body(openrouter: bool, streaming: bool) -> serde_json::Value {
+        let (content_type, reply) = if streaming {
+            ("text/event-stream", "data: [DONE]\n\n")
+        } else {
+            ("application/json", EMPTY_CHAT_COMPLETION_JSON)
+        };
+        let (tx, rx) = oneshot::channel();
+        let tx = Arc::new(std::sync::Mutex::new(Some(tx)));
+        let handler = post(move |body: Bytes| {
+            let tx = tx.clone();
+            async move {
+                let _ = tx.lock().unwrap().take().unwrap().send(body);
+                axum::response::Response::builder()
+                    .header("content-type", content_type)
+                    .body(axum::body::Body::from(reply))
+                    .unwrap()
+            }
+        });
+        let app = Router::new().route("/v1/chat/completions", handler);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        let mut client = SamplingClient::new(SamplerConfig {
+            base_url: format!("http://{addr}/v1"),
+            ..minimal_config()
+        })
+        .unwrap();
+        if openrouter {
+            // The connection still goes to the mock — its endpoint template was
+            // resolved above — while `base_url` is what the gate reads.
+            client.base_url = "https://openrouter.ai/api/v1".to_string();
+        }
+        let mut request = chat_request_for_session(Some("session-abc"));
+        request.model = Some("deepseek/deepseek-v4.1-flash".to_string());
+        if streaming {
+            let (_stream, _metadata) = client.chat_completion_stream(request).await.unwrap();
+        } else {
+            client.chat_completion(request).await.unwrap();
+        }
+        let body = rx.await.unwrap();
+        server.abort();
+        serde_json::from_slice(&body).unwrap()
+    }
+
+    #[tokio::test]
+    async fn openrouter_session_id_rides_only_the_openrouter_wire() {
+        for streaming in [true, false] {
+            let body = captured_chat_body(true, streaming).await;
+            assert_eq!(
+                body.get("session_id").and_then(|v| v.as_str()),
+                Some("session-abc"),
+                "streaming={streaming}: OpenRouter must receive the session id: {body}"
+            );
+            let control = captured_chat_body(false, streaming).await;
+            assert!(
+                control.get("session_id").is_none(),
+                "streaming={streaming}: a non-OpenRouter endpoint must not: {control}"
             );
         }
     }

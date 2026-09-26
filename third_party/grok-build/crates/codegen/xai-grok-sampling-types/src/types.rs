@@ -65,6 +65,17 @@ pub struct ChatCompletionRequest {
     pub presence_penalty: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
+    /// OpenRouter sticky-routing key.
+    ///
+    /// OpenRouter re-picks an upstream provider per request unless the body
+    /// carries `session_id`, and a provider switch discards the prefix cache
+    /// the session built, so the whole prompt is billed again at the input
+    /// rate. Only the sampler sets this, and only against OpenRouter hosts
+    /// (`SamplingClient` keeps the field off every other wire) — each session,
+    /// subagents included, sends its own value. Skipped when unset, so no
+    /// other endpoint's body changes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<ToolDefinition>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -114,6 +125,7 @@ impl ChatCompletionRequest {
             frequency_penalty: None,
             presence_penalty: None,
             user: None,
+            session_id: None,
             tools: None,
             tool_choice: None,
             search_parameters: None,
@@ -142,6 +154,7 @@ impl ChatCompletionRequest {
             frequency_penalty: None,
             presence_penalty: None,
             user: None,
+            session_id: None,
             tools: None,
             tool_choice: None,
             search_parameters: None,

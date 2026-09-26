@@ -3,15 +3,15 @@
 
 The queue this reads
 --------------------
-Sessions on this machine share one warm cargo target directory for the
+Sessions on this machine share one cargo target directory for the
 vendored tree (`CARGO_TARGET_DIR=<primary checkout>/third_party/grok-build/target`).
-Cargo serializes builds in one target directory with an advisory flock on
+Cargo serializes builds in one target directory with a file lock on
 `<target>/<profile-dir>/.cargo-lock`: dev, test and check share `debug/`,
 release and bench share `release/`. A cargo that waits on that lock prints
 nothing, so the queue behind it looks like a hung command in a TUI.
 
   status  read the queue. Read-only. Exit 0 free, 1 busy, 2 error.
-  clone   copy the warm target copy-on-write (`cp -c -R`, APFS clonefile)
+  clone   copy the target copy-on-write (`cp -c -R`, APFS clonefile)
           into `~/.cache/dsb-vendor-targets/<slug>` and print, on stdout,
           the one line `export CARGO_TARGET_DIR=<clone>`. Registry
           dependencies stay fresh (their sources stay under the same
@@ -20,10 +20,29 @@ nothing, so the queue behind it looks like a hung command in a TUI.
           2 usage.
   prune   delete personal clones idle for >= N days (default 3). The base
           target is never touched. Exit 0 done, 1 a delete failed, 2 usage.
+  run     run a command now. Queue free → it runs as-is (exec). Queue busy →
+          it runs only when the second-build gate passes, in a personal CoW
+          clone with CARGO_BUILD_JOBS=2; otherwise nothing starts, status is
+          printed, and the exit code is 1. The command keeps its own exit
+          code when it runs.
+
+The second-build gate
+---------------------
+A second vendored build beside a busy one adds jobs, not replaces them, so
+`run` may only start one when the host has room. The gate is free >= 25%
+AND load5m <= 18 AND swap <= 4 GiB — one step inside every freeze signal
+in `mac-slowdown` §1 (free < 15%, swap > 5 GB, load > 20), and strictly
+inside the HQ memory guard's recovery thresholds (free <= 30% and swap
+>= 12 GiB, or free <= 10% and swap >= 8 GiB), which fire after damage.
+Measured incidents on this 24 GB / 18-core Mac: 2026-09-25 (ld x17 at
+~1.2 GB each → 20 GB, swap 8.8 → 15.1 GB, load 8 → 45) and 2026-09-26
+12:24 KST (HQ guard severe: swap 17.1 GB, load 46.8). Facts can be
+overridden with DSB_HOST_FREE_PERCENT / DSB_HOST_SWAP_GIB /
+DSB_HOST_LOAD5M (the hermetic tests use this).
 
 Labels are inferred
 -------------------
-flock ownership is not readable from the process table. Cargo starts
+file-lock ownership is not readable from the process table. Cargo starts
 compiling only while it holds the lock, so a lock-file process with live
 descendants is the holder (strongest when a descendant is a compiler) and
 one with none is waiting. Both are marked "(inferred)" in the output.
@@ -49,8 +68,12 @@ from pathlib import Path
 LOCK_NAME = ".cargo-lock"
 DEFAULT_PRUNE_DAYS = 3
 DEFAULT_CLONE_ROOT = "~/.cache/dsb-vendor-targets"
-QUIESCE_TIMEOUT_SECONDS = 2.0
+QUIESCE_TIMEOUT_SECONDS = 5.0
 STARTING_GRACE_SECONDS = 3
+GATE_FREE_PERCENT_MIN = 25.0
+GATE_LOAD5M_MAX = 18.0
+GATE_SWAP_GIB_MAX = 4.0
+SECOND_BUILD_JOBS = 2
 COMPILER_RE = re.compile(
     r"^(rustc|rustc_driver|clippy-driver|rustdoc|cc1|cc1plus|cc|clang|clang\+\+|gcc|g\+\+|ld|ld64|dsymutil|swiftc)(-\d+(\.\d+)*)?$"
 )
@@ -102,6 +125,131 @@ def resolve_root(args):
     if getattr(args, "root", None):
         return Path(os.path.expanduser(args.root)).resolve()
     return default_clone_root().resolve()
+
+
+# ---------------------------------------------------------------------------
+# Host facts and the second-build gate
+# ---------------------------------------------------------------------------
+
+
+def _read_text(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def _run_text(argv, timeout=5):
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def _meminfo_kb(text):
+    if not text:
+        return None
+    try:
+        return int(text.split()[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def host_facts():
+    """Free %, swap used (GiB) and load5m, measured like the HQ memory guard.
+
+    macOS: `/usr/bin/memory_pressure -Q` and `sysctl vm.swapusage`; Linux:
+    /proc/meminfo and /proc/loadavg. DSB_HOST_FREE_PERCENT,
+    DSB_HOST_SWAP_GIB and DSB_HOST_LOAD5M override the measurement — the
+    hermetic tests use them, and a container can feed its host's numbers.
+    """
+    override = {
+        "free_percent": os.environ.get("DSB_HOST_FREE_PERCENT"),
+        "swap_used_gib": os.environ.get("DSB_HOST_SWAP_GIB"),
+        "load5m": os.environ.get("DSB_HOST_LOAD5M"),
+    }
+    if any(raw is not None for raw in override.values()):
+        facts = {"source": "override"}
+        for key, raw in override.items():
+            try:
+                facts[key] = float(raw) if raw is not None else None
+            except ValueError:
+                facts[key] = None
+        return facts
+
+    facts = {"free_percent": None, "swap_used_gib": None, "load5m": None, "source": "measured"}
+    if sys.platform == "darwin":
+        text = _run_text(["/usr/bin/memory_pressure", "-Q"])
+        m = re.search(r"free percentage:\s+(\d+)%", text or "")
+        if m:
+            facts["free_percent"] = float(m.group(1))
+        text = _run_text(["/usr/sbin/sysctl", "-n", "vm.swapusage"])
+        m = re.search(r"used = ([\d.]+)M", text or "")
+        if m:
+            facts["swap_used_gib"] = round(float(m.group(1)) / 1024.0, 2)
+    elif sys.platform.startswith("linux"):
+        text = _read_text("/proc/meminfo") or ""
+        fields = {}
+        for line in text.splitlines():
+            parts = line.split(":")
+            if len(parts) == 2:
+                fields[parts[0].strip()] = parts[1].strip()
+        total = _meminfo_kb(fields.get("MemTotal"))
+        available = _meminfo_kb(fields.get("MemAvailable"))
+        if total and available is not None:
+            facts["free_percent"] = round(available * 100.0 / total, 1)
+        swap_total = _meminfo_kb(fields.get("SwapTotal"))
+        swap_free = _meminfo_kb(fields.get("SwapFree"))
+        if swap_total is not None and swap_free is not None:
+            facts["swap_used_gib"] = round((swap_total - swap_free) / 1048576.0, 2)
+    try:
+        facts["load5m"] = round(os.getloadavg()[1], 2)
+    except (OSError, AttributeError):
+        pass
+    return facts
+
+
+def evaluate_gate(facts):
+    reasons = []
+    free_percent = facts.get("free_percent")
+    load5m = facts.get("load5m")
+    swap_used_gib = facts.get("swap_used_gib")
+    if free_percent is None or load5m is None or swap_used_gib is None:
+        reasons.append("host facts unavailable; refusing to add a second build blind")
+    else:
+        if free_percent < GATE_FREE_PERCENT_MIN:
+            reasons.append(f"free {free_percent:g}% < {GATE_FREE_PERCENT_MIN:g}%")
+        if load5m > GATE_LOAD5M_MAX:
+            reasons.append(f"load5m {load5m:g} > {GATE_LOAD5M_MAX:g}")
+        if swap_used_gib > GATE_SWAP_GIB_MAX:
+            reasons.append(f"swap {swap_used_gib:g} GiB > {GATE_SWAP_GIB_MAX:g} GiB")
+    return {
+        "allowed": not reasons,
+        "reasons": reasons,
+        "thresholds": {
+            "free_percent_min": GATE_FREE_PERCENT_MIN,
+            "load5m_max": GATE_LOAD5M_MAX,
+            "swap_used_gib_max": GATE_SWAP_GIB_MAX,
+            "second_build_jobs": SECOND_BUILD_JOBS,
+        },
+    }
+
+
+def host_line(facts, gate):
+    free_percent = facts.get("free_percent")
+    swap_used_gib = facts.get("swap_used_gib")
+    load5m = facts.get("load5m")
+    free_s = f"{free_percent:g}%" if free_percent is not None else "?"
+    swap_s = f"{swap_used_gib:g} GiB" if swap_used_gib is not None else "?"
+    load_s = f"{load5m:g}" if load5m is not None else "?"
+    source = " (override)" if facts.get("source") == "override" else ""
+    if gate["allowed"]:
+        verdict = "ALLOWED"
+    else:
+        verdict = "DENIED (" + "; ".join(gate["reasons"]) + ")"
+    return f"host: free {free_s} · swap {swap_s} · load5m {load_s}{source} → 2nd build: {verdict}"
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +391,7 @@ def lock_holders_cwd(pids):
 
 
 def probe_lock(path):
-    """Try a shared, non-blocking flock: 'locked' when someone holds it."""
+    """Try a shared, non-blocking file lock: 'locked' when someone holds it."""
     try:
         fh = open(path, "rb")
     except OSError:
@@ -291,16 +439,11 @@ def map_worktree(cwd, roots):
 # ---------------------------------------------------------------------------
 
 
-def cmd_status(args):
-    target = resolve_target(args)
-    primary = Path(os.path.expanduser(args.repo)).resolve() if args.repo else primary_checkout(script_repo_root())
-    wt_roots = worktree_roots(primary)
-
+def collect_locks(target, wt_roots):
     procs = ps_snapshot()
-    locks = discover_locks(target)
     reports = []
     busy = False
-    for profile, path in locks:
+    for profile, path in discover_locks(target):
         seen = [p for p in lock_pids(path) if p != os.getpid()]
         probe = probe_lock(path)
         cwd_map = lock_holders_cwd(seen)
@@ -335,24 +478,37 @@ def cmd_status(args):
             "busy": lock_busy,
             "processes": entries,
         })
+    return reports, busy
+
+
+def cmd_status(args):
+    target = resolve_target(args)
+    primary = Path(os.path.expanduser(args.repo)).resolve() if args.repo else primary_checkout(script_repo_root())
+    wt_roots = worktree_roots(primary)
+
+    reports, busy = collect_locks(target, wt_roots)
+    facts = host_facts()
+    gate = evaluate_gate(facts)
 
     payload = {
         "target": str(target),
         "status": "busy" if busy else "free",
         "exit_code": 1 if busy else 0,
+        "host": facts,
+        "second_build": gate,
         "locks": reports,
-        "note": "holder/waiter labels are inferred from live descendants, not read from flock",
+        "note": "holder/waiter labels are inferred from live descendants, not read from the file lock",
     }
 
     if args.json:
         print(json.dumps(payload, indent=2))
     else:
-        print(render_status(target, reports, busy))
+        print(render_status(target, reports, busy, facts, gate))
     return 1 if busy else 0
 
 
-def render_status(target, reports, busy):
-    lines = [f"target: {target}"]
+def render_status(target, reports, busy, facts, gate):
+    lines = [f"target: {target}", host_line(facts, gate)]
     if not reports:
         if target.is_dir():
             lines.append(f"locks: none — no {LOCK_NAME} under any profile directory (nothing has built here)")
@@ -360,7 +516,7 @@ def render_status(target, reports, busy):
             lines.append(f"locks: none — {target} does not exist (nothing is building there)")
     for r in reports:
         if r["probe"] == "locked" or r["processes"]:
-            state = "BUSY (flock is held)" if r["probe"] == "locked" else "BUSY (process on the lock file)"
+            state = "BUSY (file lock held)" if r["probe"] == "locked" else "BUSY (process on the lock file)"
         else:
             state = "free"
         lines.append(f"lock {r['profile']}/{LOCK_NAME}: {state}")
@@ -446,6 +602,78 @@ def release_handles(held):
         fh.close()
 
 
+def clonefile_tree(src, dest):
+    """Copy a tree with APFS clonefile(2), skipping files that vanish.
+
+    The fallback for `cp -c -R` when a live build keeps removing artifacts
+    under the shared target mid-copy: a file that disappears is skipped (cargo
+    rebuilds it) instead of failing the whole clone. Files already present at
+    the destination (from an earlier partial copy) are left as they are.
+    Returns (copied, skipped_paths). macOS only.
+    """
+    import ctypes
+    import errno as errno_mod
+    import stat as stat_mod
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    clonefile = libc.clonefile
+    clonefile.restype = ctypes.c_int
+    clonefile.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32]
+
+    copied = 0
+    skipped = []
+    for dirpath, dirnames, filenames in os.walk(src):
+        rel = os.path.relpath(dirpath, src)
+        target_dir = dest if rel == "." else os.path.join(dest, rel)
+        os.makedirs(target_dir, exist_ok=True)
+        for name in list(dirnames):
+            source = os.path.join(dirpath, name)
+            if os.path.islink(source):
+                # os.walk does not descend into symlinked directories;
+                # recreate them instead of losing them.
+                link_target = os.readlink(source)
+                target = os.path.join(target_dir, name)
+                if os.path.lexists(target):
+                    os.unlink(target)
+                os.symlink(link_target, target)
+                dirnames.remove(name)
+        for name in filenames:
+            source = os.path.join(dirpath, name)
+            target = os.path.join(target_dir, name)
+            try:
+                st = os.lstat(source)
+            except OSError:
+                skipped.append(source)
+                continue
+            if stat_mod.S_ISLNK(st.st_mode):
+                try:
+                    link_target = os.readlink(source)
+                except OSError:
+                    skipped.append(source)
+                    continue
+                if os.path.lexists(target):
+                    os.unlink(target)
+                os.symlink(link_target, target)
+                copied += 1
+                continue
+            if os.path.exists(target):
+                copied += 1
+                continue
+            rc = clonefile(os.fsencode(source), os.fsencode(target), 0)
+            if rc == 0:
+                copied += 1
+                continue
+            err = ctypes.get_errno()
+            if err == errno_mod.ENOENT:
+                skipped.append(source)
+                continue
+            if err == errno_mod.EEXIST:
+                copied += 1
+                continue
+            raise OSError(err, os.strerror(err), source)
+    return copied, skipped
+
+
 def do_copy(base, dest, full_copy):
     if not full_copy and sys.platform != "darwin":
         fail(
@@ -454,11 +682,13 @@ def do_copy(base, dest, full_copy):
         )
     dest.parent.mkdir(parents=True, exist_ok=True)
     cmd = ["cp", "-R", str(base), str(dest)] if full_copy else ["cp", "-c", "-R", str(base), str(dest)]
-    # A live build removes and rewrites artifacts under the target while we
-    # copy; a copy that hits that window fails with ENOENT and succeeds on the
-    # next pass, so retry before giving up. Measured 2026-09-26: the first
-    # non-quiesced clone of the 196k-file warm target died on a removed rlib.
-    attempts = 3
+    # A live build removes and rewrites artifacts under the shared target
+    # while we copy. Measured 2026-09-26: the first non-quiesced clone of the
+    # 196k-file target died on an rlib the other build had just removed
+    # (phone-bottom-band hit the same failure). First retry the plain copy
+    # with backoff; if it keeps colliding, fall back to a per-file clonefile
+    # walk that skips the vanished files — cargo rebuilds those anyway.
+    attempts = 4
     last = None
     for attempt in range(1, attempts + 1):
         last = subprocess.run(cmd, capture_output=True, text=True)
@@ -473,7 +703,25 @@ def do_copy(base, dest, full_copy):
                 f"vendor-build: copy attempt {attempt} collided with a live writer ({reason}); retrying",
                 file=sys.stderr,
             )
-            time.sleep(1.0)
+            time.sleep(float(attempt))
+    if not full_copy:
+        print(
+            "vendor-build: falling back to a per-file clonefile walk "
+            "(vanished files are skipped; cargo rebuilds them)",
+            file=sys.stderr,
+        )
+        try:
+            copied, skipped = clonefile_tree(base, dest)
+        except OSError as e:
+            shutil.rmtree(dest, ignore_errors=True)
+            fail(f"copy failed in the fallback walk: {e}", code=1)
+        if skipped:
+            print(
+                f"vendor-build: cloned {copied} file(s); {len(skipped)} vanished mid-copy and were skipped "
+                "— a live build removed them and cargo will rebuild them",
+                file=sys.stderr,
+            )
+        return
     shutil.rmtree(dest, ignore_errors=True)
     detail = (last.stderr or "").strip()
     hint = ""
@@ -511,6 +759,87 @@ def cmd_clone(args):
         release_handles(held)
     print(f"export CARGO_TARGET_DIR={dest}")
     return 0
+
+
+# ---------------------------------------------------------------------------
+# run
+# ---------------------------------------------------------------------------
+
+
+def default_slug():
+    base = os.path.basename(os.getcwd())
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            base = os.path.basename(r.stdout.strip())
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", base).strip("-.")
+    return slug or "default"
+
+
+def cmd_run(args):
+    target = resolve_target(args)
+    root = resolve_root(args)
+    cmd = list(args.cmd)
+    while cmd and cmd[0] == "--":
+        cmd.pop(0)
+    if not cmd:
+        fail("run needs a command after `--`, e.g. `vendor-build.sh run -- cargo build`")
+
+    reports, busy = collect_locks(target, [])
+    facts = host_facts()
+    gate = evaluate_gate(facts)
+
+    if not busy:
+        print("vendor-build: queue free — running the command as-is", file=sys.stderr)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os.execvp(cmd[0], cmd)  # never returns
+
+    if not gate["allowed"]:
+        print(render_status(target, reports, busy, facts, gate))
+        print(
+            "vendor-build: 2nd build DENIED by the memory gate — nothing started; "
+            "wait for the host to recover, or run when the queue is free",
+            file=sys.stderr,
+        )
+        return 1
+
+    slug = args.slug or default_slug()
+    if slug in (".", "..") or not SLUG_RE.fullmatch(slug):
+        fail(f"invalid slug {slug!r}: use letters, digits, '.', '_' or '-' (no leading '-')")
+    dest = root / slug
+    if not dest.is_dir():
+        if not target.is_dir():
+            fail(f"base target does not exist: {target}", code=1)
+        held = acquire_for_quiesce([p for _, p in discover_locks(target)], False)
+        started = time.time()
+        try:
+            print(f"vendor-build: creating the personal clone {dest}", file=sys.stderr)
+            do_copy(target, dest, args.full_copy)
+            print(f"vendor-build: cloned in {time.time() - started:.1f}s", file=sys.stderr)
+        finally:
+            release_handles(held)
+
+    env = os.environ.copy()
+    env["CARGO_TARGET_DIR"] = str(dest)
+    try:
+        jobs_n = int(env.get("CARGO_BUILD_JOBS") or SECOND_BUILD_JOBS)
+    except ValueError:
+        jobs_n = SECOND_BUILD_JOBS
+    env["CARGO_BUILD_JOBS"] = str(min(jobs_n, SECOND_BUILD_JOBS))
+    print(
+        f"vendor-build: queue busy; memory gate passed — running in {dest} "
+        f"with CARGO_BUILD_JOBS={env['CARGO_BUILD_JOBS']}",
+        file=sys.stderr,
+    )
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execvpe(cmd[0], cmd, env)  # never returns
 
 
 # ---------------------------------------------------------------------------
@@ -680,6 +1009,25 @@ def build_parser():
     cl.add_argument("--root", default=None, help="clone namespace (default: ~/.cache/dsb-vendor-targets)")
     add_common(cl)
 
+    rn = sub.add_parser(
+        "run",
+        help="run a command now; on a busy queue only when the memory gate passes",
+        description=(
+            "Run a command now. Queue free: it runs as-is. Queue busy: it runs in a "
+            "personal copy-on-write clone with CARGO_BUILD_JOBS=2, but only when the "
+            "second-build memory gate passes; otherwise nothing starts, status is "
+            "printed, and the exit code is 1."
+        ),
+    )
+    rn.add_argument("--slug", default=None, help="clone slug (default: the current worktree's directory name)")
+    rn.add_argument(
+        "--full-copy", action="store_true", dest="full_copy",
+        help="full copy instead of APFS clonefile when the clone must be created",
+    )
+    rn.add_argument("--root", default=None, help="clone namespace (default: ~/.cache/dsb-vendor-targets)")
+    rn.add_argument("cmd", nargs=argparse.REMAINDER, help="the command, after `--`")
+    add_common(rn)
+
     pr = sub.add_parser("prune", help="delete personal clones idle for >= N days")
     pr.add_argument("--days", type=int, default=DEFAULT_PRUNE_DAYS)
     pr.add_argument("--root", default=None, help="clone namespace (default: ~/.cache/dsb-vendor-targets)")
@@ -693,6 +1041,8 @@ def main(argv):
         return cmd_status(args)
     if args.command == "clone":
         return cmd_clone(args)
+    if args.command == "run":
+        return cmd_run(args)
     if args.command == "prune":
         return cmd_prune(args)
     fail(f"unknown command {args.command!r}")

@@ -115,6 +115,18 @@ start_fixture() { # <mode> [seconds] -> FIXTURE_PID
   wait_holding "$TMP/fx-$1.out" || { echo "fixture $1 never reported holding" >&2; exit 1; }
 }
 
+# --- 0. the dispatcher header runs clean -----------------------------------
+# A stray editor anchor in the script header used to make the shell print
+# "command not found" to stderr before the real output; nothing parsed stderr,
+# so it slipped through. Pin a clean stderr on a plain run.
+head_ "0. the dispatcher header emits no shell errors"
+run_capture "$SCRIPT" status --target "$TMP/never-built"
+case "$ERR" in
+  *"command not found"*) bad "the dispatcher emits shell errors: $ERR" ;;
+  *"syntax error"*) bad "the dispatcher has a shell syntax error: $ERR" ;;
+  *) ok "stderr is clean on a plain run" ;;
+esac
+
 # --- 1. free ---------------------------------------------------------------
 head_ "1. no holder: free, exit 0"
 run_capture "$SCRIPT" status --target "$BASE"
@@ -137,7 +149,7 @@ start_fixture compiler
 HOLDER="$FIXTURE_PID"
 run_capture "$SCRIPT" status --target "$BASE"
 [[ "$RC" -eq 1 ]] && ok "exit 1 (busy)" || bad "exit $RC (wanted 1)"
-case "$OUT" in *"BUSY (flock is held)"*) ok "lock reported busy via flock probe" ;;
+case "$OUT" in *"BUSY (file lock held)"*) ok "lock reported busy via the file-lock probe" ;;
   *) bad "busy lock not reported: $OUT" ;; esac
 case "$OUT" in *"pid $HOLDER"*) ok "holder pid $HOLDER reported" ;;
   *) bad "holder pid not reported: $OUT" ;; esac
@@ -265,6 +277,32 @@ case "$ERR" in *"retrying"*) ok "the collision was reported and retried" ;;
   && ok "stdout is still exactly the export line" \
   || bad "unexpected stdout: $OUT"
 
+# --- 8c. the per-file clonefile fallback (macOS) ---------------------------
+# When cp keeps dying on files a live build removes, the clone must finish by
+# walking the tree with clonefile(2), skipping vanished files, instead of
+# failing. The fake cp fails every attempt, so the fallback is the only path.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  head_ "8c. a cp that keeps colliding falls back to the per-file clonefile walk"
+  cat > "$FAKECP/cp" <<'SH'
+#!/usr/bin/env bash
+echo "cp: $1: No such file or directory" >&2
+exit 1
+SH
+  chmod +x "$FAKECP/cp"
+  RC=0
+  OUT="$(PATH="$FAKECP:$PATH" "$SCRIPT" clone fallback --target "$BASE" --root "$CLONES" 2>"$TMP/stderr.txt")" || RC=$?
+  ERR="$(cat "$TMP/stderr.txt")"
+  [[ "$RC" -eq 0 ]] && ok "the fallback walk completed the clone" || bad "exit $RC: $ERR"
+  case "$ERR" in *"per-file clonefile walk"*) ok "the fallback is announced" ;;
+    *) bad "no fallback notice: $ERR" ;; esac
+  [[ -f "$CLONES/fallback/debug/deps/libfixture.rlib" ]] \
+    && ok "the fixture tree was cloned by the walk" \
+    || bad "fallback clone is missing files"
+  [[ "$OUT" == "export CARGO_TARGET_DIR=$CLONES/fallback" ]] \
+    && ok "stdout is still exactly the export line" \
+    || bad "unexpected stdout: $OUT"
+fi
+
 # --- 9. quiesce ------------------------------------------------------------
 head_ "9. clone while the lock is held: warn (default) or wait (--quiesce)"
 start_fixture plain
@@ -337,6 +375,68 @@ if [[ "$(uname -s)" == "Darwin" ]] && command -v chflags >/dev/null 2>&1; then
   chflags nouchg "$LOCKED/inner/held" 2>/dev/null || true
   rm -rf "$LOCKED"
 fi
+
+# --- 11. run: the second-build gate ----------------------------------------
+# `run` passes a free queue straight through; on a busy queue it must only
+# start a second build when the host facts clear the gate, and must refuse
+# (nothing started, status printed, exit 1) otherwise. Host facts are fed
+# with DSB_HOST_* so the boundaries are exact, not timing-dependent.
+head_ "11. run — free queue passes through, busy queue obeys the gate"
+
+run_capture "$SCRIPT" run --target "$BASE" --root "$CLONES" -- sh -c 'echo "T=${CARGO_TARGET_DIR:-unset} J=${CARGO_BUILD_JOBS:-unset}"'
+[[ "$RC" -eq 0 ]] && ok "exit 0 on a free queue" || bad "exit $RC: $ERR"
+case "$OUT" in *"T=unset J=unset"*) ok "the command ran as-is; env untouched" ;;
+  *) bad "unexpected env on a free queue: $OUT" ;; esac
+
+start_fixture plain
+GATE_LOCK="$FIXTURE_PID"
+mkdir -p "$CLONES/gate-ok"
+run_capture env DSB_HOST_FREE_PERCENT=40 DSB_HOST_LOAD5M=5 DSB_HOST_SWAP_GIB=1 \
+  "$SCRIPT" run --target "$BASE" --root "$CLONES" --slug gate-ok -- sh -c 'echo "T=$CARGO_TARGET_DIR J=$CARGO_BUILD_JOBS"'
+[[ "$RC" -eq 0 ]] && ok "exit 0 when the gate passes" || bad "exit $RC: $ERR"
+case "$OUT" in *"T=$CLONES/gate-ok J=2"*) ok "the clone target and CARGO_BUILD_JOBS=2 are injected" ;;
+  *) bad "unexpected env on the gated path: $OUT" ;; esac
+case "$ERR" in *"memory gate passed"*) ok "the passing gate is announced" ;;
+  *) bad "no gate notice: $ERR" ;; esac
+
+# Each threshold, just outside: nothing may start.
+for spec in \
+  "free 24% < 25%|DSB_HOST_FREE_PERCENT=24 DSB_HOST_LOAD5M=5 DSB_HOST_SWAP_GIB=1" \
+  "load5m 18.5 > 18|DSB_HOST_FREE_PERCENT=40 DSB_HOST_LOAD5M=18.5 DSB_HOST_SWAP_GIB=1" \
+  "swap 4.5 GiB > 4 GiB|DSB_HOST_FREE_PERCENT=40 DSB_HOST_LOAD5M=5 DSB_HOST_SWAP_GIB=4.5"; do
+  want="${spec%%|*}"
+  envs="${spec#*|}"
+  run_capture env $envs \
+    "$SCRIPT" run --target "$BASE" --root "$CLONES" --slug gate-ok -- sh -c 'echo SHOULD-NOT-RUN'
+  [[ "$RC" -eq 1 ]] && ok "refused ($want)" || bad "not refused for $want (exit $RC)"
+  case "$OUT" in *"SHOULD-NOT-RUN"*) bad "the command ran despite: $want" ;;
+    *) ok "nothing started ($want)" ;; esac
+  case "$OUT" in *"$want"*) ok "the reason names the boundary ($want)" ;;
+    *) bad "reason missing for $want: $OUT" ;; esac
+done
+
+# Exactly at the thresholds: allowed (>=, <=, <=).
+run_capture env DSB_HOST_FREE_PERCENT=25 DSB_HOST_LOAD5M=18 DSB_HOST_SWAP_GIB=4 \
+  "$SCRIPT" run --target "$BASE" --root "$CLONES" --slug gate-ok -- sh -c 'echo AT-BOUNDARY'
+if [[ "$RC" -eq 0 ]] && [[ "$OUT" == *"AT-BOUNDARY"* ]]; then
+  ok "the boundary values themselves pass"
+else
+  bad "boundary refused or did not execute (exit $RC): $ERR"
+fi
+
+# A missing clone is created for the gated run (macOS: clonefile; elsewhere:
+# the explicit --full-copy flag, never silently).
+GATE_NEW=""
+if [[ "$(uname -s)" != "Darwin" ]]; then GATE_NEW="--full-copy"; fi
+run_capture env DSB_HOST_FREE_PERCENT=40 DSB_HOST_LOAD5M=5 DSB_HOST_SWAP_GIB=1 \
+  "$SCRIPT" run --target "$BASE" --root "$CLONES" --slug gate-new $GATE_NEW -- sh -c 'echo "T=$CARGO_TARGET_DIR"'
+[[ "$RC" -eq 0 ]] && ok "a missing clone is created for the run" || bad "exit $RC: $ERR"
+[[ -d "$CLONES/gate-new" ]] && ok "the clone directory exists afterwards" || bad "clone was not created"
+case "$OUT" in *"T=$CLONES/gate-new"*) ok "the run used the fresh clone" ;;
+  *) bad "unexpected target: $OUT" ;; esac
+
+kill "$FIXTURE_PID" 2>/dev/null || true
+wait "$FIXTURE_PID" 2>/dev/null || true
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]] || exit 1

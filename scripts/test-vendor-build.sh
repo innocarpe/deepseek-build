@@ -304,10 +304,14 @@ SH
 fi
 
 # --- 9. quiesce ------------------------------------------------------------
+# Like section 8, the default clone path is macOS-only; elsewhere the flag
+# must be explicit (the same rule the tool enforces).
 head_ "9. clone while the lock is held: warn (default) or wait (--quiesce)"
+QUIESCE_FULL=""
+if [[ "$(uname -s)" != "Darwin" ]]; then QUIESCE_FULL="--full-copy"; fi
 start_fixture plain
 LOCKED="$FIXTURE_PID"
-run_capture "$SCRIPT" clone busycopy --target "$BASE" --root "$CLONES"
+run_capture "$SCRIPT" clone busycopy $QUIESCE_FULL --target "$BASE" --root "$CLONES"
 [[ "$RC" -eq 0 ]] && ok "non-quiesce clone still completes" || bad "exit $RC: $ERR"
 case "$ERR" in *"could not quiesce"*) ok "warning names the missed snapshot" ;;
   *) bad "no quiesce warning: $ERR" ;; esac
@@ -318,7 +322,7 @@ kill "$FIXTURE_PID" 2>/dev/null || true
 wait "$FIXTURE_PID" 2>/dev/null || true
 
 start_fixture release-after 2
-run_capture "$SCRIPT" clone quiet --quiesce --target "$BASE" --root "$CLONES"
+run_capture "$SCRIPT" clone quiet --quiesce $QUIESCE_FULL --target "$BASE" --root "$CLONES"
 [[ "$RC" -eq 0 ]] && ok "--quiesce waits for the lock and completes" || bad "exit $RC: $ERR"
 case "$ERR" in *"waiting for"*) ok "--quiesce says what it waits on" ;;
   *) bad "no waiting message: $ERR" ;; esac

@@ -9,6 +9,8 @@ mod common;
 
 #[path = "pty_e2e/agent_response.rs"]
 mod agent_response;
+#[path = "pty_e2e/bottom_band_one_line.rs"]
+mod bottom_band_one_line;
 #[path = "pty_e2e/connect_ui_timeout_env_override.rs"]
 mod connect_ui_timeout_env_override;
 #[path = "pty_e2e/dock_crowded_sections.rs"]

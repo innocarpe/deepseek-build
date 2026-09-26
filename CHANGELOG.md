@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- On a phone-width pane the input box keeps a plain bottom rule, and the balance, cache hit, model and permission share the one row under it. Cost and cache sit on the left (`$10.77 c94%`); the model and permission sit on the right (`V4.1 Flash (max) · always-approve`). A leading `DeepSeek ` is dropped on that row, the cache marker is `cN%` rather than `cache N%`, and a trailing reasoning-effort parenthesis is dropped only when keeping it would cut the permission mode off. The keyboard-hint row stays gone. Panes whose prompt area is wider than 60 columns keep the model on the box border and `cache N%` on its own row.
+
 ## 6.1.2 — 2026-09-26
 
 - On a phone-width pane, tap the one-line prompt echo to read the whole prompt in place. The opened echo stays at the top of the scrollback instead of jumping back to the latest line. Tap that first line to fold it again; tapping the rest of the text does not. Wider panes still open a folded prompt on a double-click.

@@ -1,8 +1,9 @@
 //! Phone-width bottom stack (measured iPhone Orca pane: 55 columns).
 //!
-//! The model/mode label leaves the prompt box's bottom divider and takes the row below
-//! the box; the shortcut-hint row is not rendered in any state there, so the row it
-//! used to occupy goes to the label. The DeepSeek balance row stays.
+//! The prompt box keeps a plain bottom rule. Balance, cache, model and permission
+//! share the single row under it: cost and cache on the left, model and permission
+//! on the right. The shortcut-hint row stays absent. Desktop widths keep the label
+//! on the divider and the balance on its own row.
 //!
 //! `views::prompt_widget`'s tests pin the widget in isolation; these frames pin the
 //! whole-view stack (the hint row is a layout row owned by `render`).
@@ -29,11 +30,15 @@ const MODEL_ID: &str = "deepseek-v4.1-flash";
 /// An idle agent whose bottom stack matches the iPhone report: DeepSeek model label
 /// with `(max)` effort, always-approve mode, and a known balance + cache-hit rate.
 fn phone_agent() -> AgentView {
+    agent_with(MODEL_LABEL, "15.87", 3604, 4096)
+}
+
+fn agent_with(model: &str, balance: &str, cached: u64, input: u64) -> AgentView {
     let mut agent = test_fixtures::make_agent();
     let id = acp::ModelId::new(Arc::from(MODEL_ID));
     agent.session.models.available.insert(
         id.clone(),
-        acp::ModelInfo::new(id.clone(), MODEL_LABEL.to_string()),
+        acp::ModelInfo::new(id.clone(), model.to_string()),
     );
     agent.session.models.current = Some(id);
     agent.session.models.reasoning_effort = Some(ReasoningEffort::Max);
@@ -41,8 +46,8 @@ fn phone_agent() -> AgentView {
     agent.deepseek_status = Some(
         serde_json::from_value(serde_json::json!({
             "isDeepseek": true,
-            "balance": {"currency": "USD", "totalBalance": "15.87", "isAvailable": true},
-            "usage": {"inputTokens": 4096, "cachedReadTokens": 3604},
+            "balance": {"currency": "USD", "totalBalance": balance, "isAvailable": true},
+            "usage": {"inputTokens": input, "cachedReadTokens": cached},
         }))
         .expect("deepseek status fixture"),
     );
@@ -142,77 +147,178 @@ fn assert_no_hint_row(agent: &AgentView, registry: &ActionRegistry, buf: &Buffer
     }
 }
 
+/// The one row under the box. Cost cluster, then a gap, then the model cluster
+/// flush to the inner right edge (the outer pad column stays blank).
+fn assert_one_band(buf: &Buffer, balance: &str, cache: &str, model: &str, mode: Option<&str>) {
+    let border_y = border_row(buf);
+    let border = row_text(buf, border_y);
+    assert!(
+        !border.contains(model) && mode.is_none_or(|m| !border.contains(m)),
+        "the divider row carries no label text: {border:?}"
+    );
+    let border_chars: Vec<char> = border.chars().collect();
+    let left = crate::appearance::LayoutConfig::default().eff_hpad_left(false) as usize;
+    assert!(
+        border_chars[left + 1..border_chars.len() - left - 1]
+            .iter()
+            .all(|c| *c == '\u{2500}'),
+        "the phone divider is a plain rule: {border:?}"
+    );
+
+    let band_y = border_y + 1;
+    let band = row_text(buf, band_y);
+    let balance_at = band
+        .find(balance)
+        .unwrap_or_else(|| panic!("balance {balance:?} missing: {band:?}"));
+    let cache_at = band
+        .find(cache)
+        .unwrap_or_else(|| panic!("cache {cache:?} missing: {band:?}"));
+    let model_at = band
+        .find(model)
+        .unwrap_or_else(|| panic!("model {model:?} missing: {band:?}"));
+    assert!(balance_at < cache_at, "cost sits left of cache: {band:?}");
+    assert!(
+        cache_at >= balance_at + balance.len(),
+        "cache does not overlap the balance: {band:?}"
+    );
+    let left_end = cache_at + cache.len();
+    assert!(
+        model_at >= left_end + 2,
+        "two columns stay clear between the clusters: {band:?}"
+    );
+    if let Some(mode) = mode {
+        let mode_at = band
+            .find(mode)
+            .unwrap_or_else(|| panic!("mode {mode:?} missing: {band:?}"));
+        assert!(mode_at >= model_at, "the mode follows the model: {band:?}");
+        assert!(
+            band.trim_end().ends_with(mode),
+            "the mode is the right edge of the row: {band:?}"
+        );
+    }
+    assert_eq!(
+        band_y + 1,
+        buf.area.height,
+        "the band is the last row of the flush frame, got {band_y} in {}",
+        buf.area.height
+    );
+    assert!(
+        !band.contains("DeepSeek "),
+        "the phone row drops the product prefix: {band:?}"
+    );
+}
+
 #[test]
-fn phone_pane_puts_the_label_below_the_box_and_drops_the_hint_row() {
+fn phone_pane_puts_cost_and_model_on_one_row_and_drops_the_hint_row() {
     let mut agent = phone_agent();
     let registry = ActionRegistry::defaults();
     let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
     eprintln!("phone 55x41 — bottom band:\n{}", bottom_rows(&buf, 6));
 
-    let border_y = border_row(&buf);
-    let border = row_text(&buf, border_y);
-    let label_row = row_text(&buf, border_y + 1);
-    // The balance chip row is the last row that carries it: the flush frame puts
-    // it against the pane's last row, with no bottom margin below it.
-    let balance_y = (0..buf.area.height)
-        .rev()
-        .find(|&y| row_text(&buf, y).contains("$15.87"))
-        .expect("the balance chip row");
-    let balance_row = row_text(&buf, balance_y);
-
-    // The divider is a plain rule: no glyph of the label sits between ╰ and ╯.
-    assert!(
-        !border.contains(MODEL_LABEL) && !border.contains("always-approve"),
-        "the divider row carries no label text: {border:?}"
+    assert_one_band(
+        &buf,
+        "$15.87",
+        "c88%",
+        "V4.1 Flash (max)",
+        Some("always-approve"),
     );
-    assert!(
-        border.trim_end().ends_with('\u{256f}'),
-        "the divider row still closes the box: {border:?}"
-    );
-
-    // The label sits on the row directly below the box; that row is the slot the
-    // shortcut hints used to take.
-    assert!(
-        label_row.contains(&format!("{MODEL_LABEL} (max)")),
-        "the model label is on the row below the box: {label_row:?}"
-    );
-    assert!(
-        label_row.contains("always-approve"),
-        "the mode flag moved with it: {label_row:?}"
-    );
-    // The label keeps the divider row's one-cell inset, so it never paints the
-    // columns the box's `╰` / `╯` corners occupy.
-    let label_chars: Vec<char> = label_row.chars().collect();
-    assert!(
-        label_chars[..3].iter().all(|c| *c == ' '),
-        "the label stays clear of the box's left edge: {label_row:?}"
-    );
-    assert!(
-        label_chars[(PHONE_COLS - 3) as usize..]
-            .iter()
-            .all(|c| *c == ' '),
-        "and of its right edge: {label_row:?}"
-    );
-
-    // The DeepSeek status row is exactly where it was before the label moved —
-    // the bottom stack kept its height while the hint row went away.
-    assert!(
-        balance_row.contains("$15.87"),
-        "the balance chip stays on the bottom row: {balance_row:?}"
-    );
-    assert!(
-        balance_row.contains("cache"),
-        "the cache-hit chip stays too: {balance_row:?}"
-    );
-    for y in (balance_y + 1)..buf.area.height {
-        assert!(
-            row_text(&buf, y).trim().is_empty(),
-            "nothing renders below the balance row (row {y}): {:?}",
-            row_text(&buf, y)
-        );
-    }
-
     assert_no_hint_row(&agent, &registry, &buf);
+}
+
+#[test]
+fn phone_pane_fits_a_large_balance_and_a_full_cache() {
+    let mut agent = agent_with(MODEL_LABEL, "1234.56", 100, 100);
+    let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    eprintln!(
+        "phone 55x41 large balance — bottom band:\n{}",
+        bottom_rows(&buf, 4)
+    );
+    assert_one_band(
+        &buf,
+        "$1234.56",
+        "c100%",
+        "V4.1 Flash (max)",
+        Some("always-approve"),
+    );
+}
+
+#[test]
+fn phone_pane_drops_effort_before_clipping_a_long_model() {
+    let mut agent = agent_with("DeepSeek V4.1 Flash Thinking", "1234.56", 100, 100);
+    let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    eprintln!(
+        "phone 55x41 long model — bottom band:\n{}",
+        bottom_rows(&buf, 4)
+    );
+    let band_y = border_row(&buf) + 1;
+    let band = row_text(&buf, band_y);
+    assert_one_band(
+        &buf,
+        "$1234.56",
+        "c100%",
+        "V4.1 Flash Thinking",
+        Some("always-approve"),
+    );
+    assert!(!band.contains("(max)"), "effort yields: {band:?}");
+    assert!(
+        !band.contains('…'),
+        "the long model still fits whole: {band:?}"
+    );
+}
+
+#[test]
+fn phone_pane_ellipsizes_only_a_model_that_cannot_fit() {
+    let model = format!("DeepSeek {} ", "M".repeat(80));
+    let mut agent = agent_with(&model, "1234.56", 100, 100);
+    let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    eprintln!(
+        "phone 55x41 pathological model — bottom band:\n{}",
+        bottom_rows(&buf, 4)
+    );
+    let band = row_text(&buf, border_row(&buf) + 1);
+    assert!(band.contains("$1234.56"), "{band:?}");
+    assert!(band.contains("c100%"), "{band:?}");
+    assert!(band.trim_end().ends_with("always-approve"), "{band:?}");
+    assert!(band.contains('…'), "{band:?}");
+    let money = band.find("$1234.56").unwrap();
+    let mode = band.find("always-approve").unwrap();
+    assert!(money + "$1234.56".len() < mode, "{band:?}");
+}
+
+#[test]
+fn phone_pane_keeps_other_permission_modes_whole() {
+    let mut auto = phone_agent();
+    auto.session.set_yolo_mode_for_test(false);
+    auto.session.set_auto_mode_for_test(true);
+    let buf = draw(&mut auto, PHONE_COLS, PHONE_ROWS);
+    eprintln!("phone 55x41 auto — bottom band:\n{}", bottom_rows(&buf, 4));
+    assert_one_band(&buf, "$15.87", "c88%", "V4.1 Flash (max)", Some("auto"));
+
+    let mut ask = phone_agent();
+    ask.session.set_yolo_mode_for_test(false);
+    let buf = draw(&mut ask, PHONE_COLS, PHONE_ROWS);
+    eprintln!("phone 55x41 ask — bottom band:\n{}", bottom_rows(&buf, 4));
+    let band = row_text(&buf, border_row(&buf) + 1);
+    assert_one_band(&buf, "$15.87", "c88%", "V4.1 Flash (max)", None);
+    assert!(
+        !band.contains("always-approve") && !band.contains("auto"),
+        "{band:?}"
+    );
+    assert!(band.trim_end().ends_with("(max)"), "{band:?}");
+
+    let mut plan = phone_agent();
+    plan.plan_mode_active = true;
+    let buf = draw(&mut plan, PHONE_COLS, PHONE_ROWS);
+    eprintln!("phone 55x41 plan — bottom band:\n{}", bottom_rows(&buf, 4));
+    assert_one_band(
+        &buf,
+        "$15.87",
+        "c88%",
+        "V4.1 Flash (max)",
+        Some("always-approve"),
+    );
+    let band = row_text(&buf, border_row(&buf) + 1);
+    assert!(band.contains("plan"), "plan stays on the row: {band:?}");
 }
 
 #[test]
@@ -226,42 +332,56 @@ fn phone_pane_drops_the_hint_row_mid_turn_too() {
         bottom_rows(&buf, 7)
     );
 
-    let border_y = border_row(&buf);
-    let label_row = row_text(&buf, border_y + 1);
-    assert!(
-        label_row.contains(&format!("{MODEL_LABEL} (max)")),
-        "the model label is on the row below the box mid-turn: {label_row:?}"
+    assert_one_band(
+        &buf,
+        "$15.87",
+        "c88%",
+        "V4.1 Flash (max)",
+        Some("always-approve"),
     );
     assert_no_hint_row(&agent, &registry, &buf);
 }
 
 #[test]
 fn desktop_pane_keeps_the_label_on_the_divider_and_the_hint_row() {
-    let mut agent = phone_agent();
-    let registry = ActionRegistry::defaults();
-    let buf = draw(&mut agent, DESKTOP_COLS, DESKTOP_ROWS);
-    eprintln!("desktop 120x40 — bottom band:\n{}", bottom_rows(&buf, 6));
+    for (cols, rows) in [(80u16, 40u16), (DESKTOP_COLS, DESKTOP_ROWS), (180, 50)] {
+        let mut agent = phone_agent();
+        let buf = draw(&mut agent, cols, rows);
+        eprintln!(
+            "desktop {cols}x{rows} — bottom band:\n{}",
+            bottom_rows(&buf, 6)
+        );
 
-    let border_y = border_row(&buf);
-    let border = row_text(&buf, border_y);
-    assert!(
-        border.contains(&format!("{MODEL_LABEL} (max)")) && border.contains("always-approve"),
-        "the desktop box keeps the label on its divider row: {border:?}"
-    );
+        let border_y = border_row(&buf);
+        let border = row_text(&buf, border_y);
+        assert!(
+            border.contains(&format!("{MODEL_LABEL} (max)")) && border.contains("always-approve"),
+            "the desktop box keeps the label on its divider row: {border:?}"
+        );
 
-    let balance_y = (0..buf.area.height)
-        .rev()
-        .find(|&y| row_text(&buf, y).contains("$15.87"))
-        .expect("the balance chip row");
-    assert!(
-        balance_y > border_y + 1,
-        "the desktop stack keeps a row between the box and the chips (hints): {border_y} -> {balance_y}"
-    );
-    let between: Vec<String> = ((border_y + 1)..balance_y)
-        .map(|y| row_text(&buf, y))
-        .collect();
-    assert!(
-        between.iter().any(|row| !row.trim().is_empty()),
-        "the desktop hint row still paints: {between:?}"
-    );
+        let balance_y = (0..buf.area.height)
+            .rev()
+            .find(|&y| row_text(&buf, y).contains("$15.87"))
+            .expect("the balance chip row");
+        let balance_row = row_text(&buf, balance_y);
+        assert!(
+            balance_row.contains("cache 88%"),
+            "the desktop cache chip keeps the word: {balance_row:?}"
+        );
+        assert!(
+            !balance_row.contains("V4.1"),
+            "the desktop balance row does not take the model: {balance_row:?}"
+        );
+        assert!(
+            balance_y > border_y + 1,
+            "the desktop stack keeps a row between the box and the chips (hints): {border_y} -> {balance_y}"
+        );
+        let between: Vec<String> = ((border_y + 1)..balance_y)
+            .map(|y| row_text(&buf, y))
+            .collect();
+        assert!(
+            between.iter().any(|row| !row.trim().is_empty()),
+            "the desktop hint row still paints: {between:?}"
+        );
+    }
 }

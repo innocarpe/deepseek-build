@@ -32,6 +32,7 @@ pub mod overlay;
 pub mod overlay_list;
 pub mod permission_view;
 pub mod persona_detail;
+pub mod phone_bottom_band;
 pub mod picker;
 pub mod plan_approval_view;
 pub mod privacy_banner;

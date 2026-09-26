@@ -5209,7 +5209,7 @@
         );
     }
 
-    // ── Bottom info line: divider row and (narrow) label row ────────
+    // ── Bottom info line: divider row (phone: plain rule, no label) ──
 
     /// The model label seen on the iPhone: long enough to overflow a
     /// phone-width pane.
@@ -5218,13 +5218,14 @@
     /// The measured iPhone pane is 55 columns.
     const MEASURED_PHONE_COLS: u16 = 55;
 
-    /// The last two rows a drawn bordered prompt puts the info on: the divider
-    /// rule `╰──╯` and the label. A wide pane draws both on one row (so the two
-    /// strings are equal); a narrow pane draws the plain rule first and the
-    /// label on the row below it.
+    /// The info row a drawn bordered prompt puts on its last line: the divider
+    /// rule `╰──╯`, with the label on that same row at desktop widths. A phone
+    /// pane draws the rule plain — the model lives on the status row, which
+    /// this widget does not own.
     struct InfoRows {
         divider: String,
         label: String,
+        frame: String,
     }
 
     /// Draw a bordered prompt at `width` in a 4-row area and split the info out.
@@ -5241,28 +5242,21 @@
         };
         pw.draw(&mut buf, area, None, &PromptStyle::default(), Some(&info), None);
         let bottom = area.bottom() - 1;
-        // The info block's first row: the divider on both widths, and on a narrow
-        // pane the row just above the label (a wide pane puts both on the last row).
-        let divider_y = if super::is_narrow_label_width(width) {
-            bottom - 1
-        } else {
-            bottom
-        };
+        let frame = (0..area.height)
+            .map(|y| buf_text_at(&buf, 0, width, y))
+            .collect::<Vec<_>>()
+            .join("\n");
         InfoRows {
-            divider: buf_text_at(&buf, 0, width, divider_y),
+            divider: buf_text_at(&buf, 0, width, bottom),
             label: buf_text_at(&buf, 0, width, bottom),
+            frame,
         }
     }
 
-    /// On a phone pane the divider row is a plain rule and the label moves to
-    /// the row below the box, so no glyph of the model name can land between
-    /// `╰` and `╯`.
-    ///
-    /// The label row is the slot the shortcut-hint row used to occupy (the
-    /// layout drops that row at this width), so the two-row info block keeps
-    /// the bottom stack's height unchanged.
+    /// On a phone pane the divider row is a plain rule. The widget does not
+    /// paint the model or the mode: those share the status row under the box.
     #[test]
-    fn phone_pane_moves_the_label_off_the_divider_rule() {
+    fn phone_pane_keeps_a_plain_divider_and_no_label_row() {
         let flags = [PromptFlag {
             text: "always-approve",
             color: None,
@@ -5288,26 +5282,10 @@
             "the divider row below the phone box is a plain rule: {:?}",
             rows.divider
         );
-
-        // The label keeps the #199 inset one row down: one blank pad cell, then
-        // the text (left-anchored because this label overflows the 53-cell rect).
-        let label: Vec<char> = rows.label.chars().collect();
-        assert_eq!(
-            label.get(1).copied(),
-            Some(' '),
-            "the label row keeps the blank pad after the inset: {:?}",
-            rows.label
-        );
         assert!(
-            rows.label.contains("DeepSeek V4.1 Flash (OpenRouter) (max)"),
-            "the model name sits on the row below the box: {:?}",
-            rows.label
-        );
-        assert!(
-            rows.label.contains("\u{b7} always-"),
-            "and the mode flag comes with it (clipped at the pane edge, as on the \
-             divider row): {:?}",
-            rows.label
+            !rows.frame.contains("DeepSeek") && !rows.frame.contains("always-approve"),
+            "the widget does not paint the model or the mode:\n{}",
+            rows.frame
         );
     }
 
@@ -5385,11 +5363,10 @@
         }
     }
 
-    /// The phone shape of the same invariant: the divider row is a plain rule of
-    /// exactly the pane width, and the label row below it is exactly the pane
-    /// width as well, so neither row paints into a corner cell of the other.
+    /// The phone divider is a plain rule of exactly the pane width, at every
+    /// phone width, and the model never lands in the widget.
     #[test]
-    fn phone_divider_and_label_rows_keep_the_pane_width() {
+    fn phone_divider_keeps_the_pane_width_without_a_label_row() {
         let flags = [PromptFlag {
             text: "always-approve",
             color: None,
@@ -5421,32 +5398,33 @@
                     "right corner must survive at {width} cols: {:?}",
                     rows.divider
                 );
-                let label_row: Vec<char> = rows.label.chars().collect();
-                assert_eq!(
-                    label_row.len(),
-                    width as usize,
-                    "the label row must be exactly the pane width at {width}: {:?}",
-                    rows.label
+                assert!(
+                    divider[1..divider.len() - 1].iter().all(|c| *c == '\u{2500}'),
+                    "phone divider stays a plain rule at {width}: {:?}",
+                    rows.divider
+                );
+                assert!(
+                    !rows.frame.contains(label),
+                    "the model stays out of the widget at {width}:\n{}",
+                    rows.frame
                 );
             }
         }
     }
 
-    /// The label row is budgeted: a phone-width pane asks for one row more than
-    /// the desktop box needs, which is the row the layout takes away from the
-    /// shortcut hints. `info_block` gates the row on the chrome box, because
-    /// only that box has a divider to move the label off.
+    /// The phone box is the same height as the desktop box. The model shares
+    /// the status row under it, so `info_block` does not add a row.
     #[test]
-    fn phone_width_budgets_the_label_row_on_top_of_the_divider() {
+    fn phone_width_does_not_budget_a_second_info_row() {
         let pw = PromptWidget::new();
         let style = PromptStyle::default();
-        assert_eq!(style.info_block(true, true), 2, "divider + label row");
+        assert_eq!(style.info_block(true, true), 1, "divider only, phone too");
         assert_eq!(style.info_block(true, false), 1, "divider only");
         assert_eq!(style.info_block(false, true), 0, "no info, no rows");
 
         // vpad_top 1 + one text row + the info block.
-        assert_eq!(pw.desired_height(MEASURED_PHONE_COLS, &style, true, 99), 4);
-        assert_eq!(pw.desired_height(30, &style, true, 99), 4);
+        assert_eq!(pw.desired_height(MEASURED_PHONE_COLS, &style, true, 99), 3);
+        assert_eq!(pw.desired_height(30, &style, true, 99), 3);
         assert_eq!(pw.desired_height(61, &style, true, 99), 3);
         assert_eq!(pw.desired_height(120, &style, true, 99), 3);
     }

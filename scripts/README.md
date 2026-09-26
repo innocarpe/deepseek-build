@@ -27,6 +27,7 @@
 | **`test-owner-bar.sh`** | **Owner-bar-5x aggregator** — RED until all P0 PASS (`--selftest` for gate substrate) |
 | `check-path-a-linkage.sh` | Fail-close dead wiring / missing mint / orphan `path_a_*` |
 | `check-forbidden-evidence.sh` | Fail if active 5.x evidence uses sole Path B cargo claims |
+| `check-worktree-ownership.sh` | Read-only live check: every worktree of this repo with dirty work must hold an agent tab (`orca terminal list` title/preview, evidence printed) — exit 1 on the empty-card defect, `--json`; pinned by `test-check-worktree-ownership.sh` |
 | **`test-path-a-public-entry-e2e.sh`** | **Path A R0A** public CLI → agent_launch → scripted DeepSeek + wire |
 | `lib/scripted_deepseek_server.py` | Hermetic Chat Completions fixture (SSE + wire JSONL) |
 | `lib/owner-bar-common.sh` | Shared helpers for owner-bar gates |

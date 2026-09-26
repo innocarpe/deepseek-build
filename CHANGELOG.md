@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 6.1.2 — 2026-09-26
+
 - The frame is flush at every width. The outer margin no longer spends blank
   rows (the status bar is the first row and the bottom status row is the last),
   the horizontal margin is the one column the selection border draws into, and

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 6.1.2 — 2026-09-26
+
 - On a phone-width pane, tap the one-line prompt echo to read the whole prompt in place. The opened echo stays at the top of the scrollback instead of jumping back to the latest line. Tap that first line to fold it again; tapping the rest of the text does not. Wider panes still open a folded prompt on a double-click.
 - The frame is flush at every width. The outer margin no longer spends blank
   rows (the status bar is the first row and the bottom status row is the last),

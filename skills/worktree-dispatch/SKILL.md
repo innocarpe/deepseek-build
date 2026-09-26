@@ -102,23 +102,27 @@ iOS showed the same empty cards. The commands live in
   One `worktree create --agent <that name> --prompt …`. Do not also run a
   bare create.
 - The user named `dsb` or `deepseek-build`, or named no agent: `orca-tab`
-  §3, then §1 with `--command dsb`. `--agent dsb` is rejected. This repo's
+  §3. `create` opens one shell; send `dsb` into that shell. Do not
+  `terminal create` a second tab. `--agent dsb` is rejected. This repo's
   unnamed session is `dsb`. `grok` is the other session used here. Do not
   launch `codex` or `claude` unless the user named them.
-- The worktree already exists and only has a shell: `orca-tab` §1 in that
-  worktree before any edit. Do not create a second tree.
+- The worktree already exists and only has a shell: send `dsb` or `grok`
+  into that shell. Do not add a tab, and do not create a second tree.
+- A prompt-only tab sitting next to the agent: close that tab
+  (`orca terminal close --terminal <shell> --tab`) after the agent screen
+  shows it is working. One worktree, one tab.
 
 `<slug>` has no type prefix (`provider-retry-backoff`). Orca turns `/` into
 `-`. `--no-parent` unless the unit stacks. Omit `--base-branch` so the base
 is `origin/main`. `--setup skip` unless the unit needs the repo bootstrap.
 `run` starts `npm install` and fails loudly when that version's prebuilt
 asset is not published yet (measured: `deepseek-build-6.0.0-darwin-arm64.tar.gz`
-404). Keep `result.worktree.id` and `result.agentTerminalHandle` (dsb: the
-handle from `terminal create`).
+404). Keep `result.worktree.id`. The agent handle is that worktree's one tab.
 
-The bare create still opens a launcher shell (`skip`: one shell; `run`:
-shell plus `Setup`). Read a tab before `terminal close`. Closing is not
-undoable. That shell is not the session.
+The bare create opens one launcher shell (`run` also opens `Setup`).
+That shell becomes the session when `dsb` or `grok` runs in it. A second
+tab is the bug. Read a tab before `terminal close`. Closing is not
+undoable.
 
 ## 2. Name the branch
 
@@ -263,7 +267,7 @@ worktree whose agent was mid-build (2026-09-25).
 | Edit, commit, or `git checkout -b` in the primary checkout | That tree stays on `main`. On 2026-09-26 `release.sh` left it on `chore/release-6.0.2` |
 | Run `release.sh` in the primary checkout | The script refuses (`scripts/lib/refuse-primary-checkout.sh`) and exits 1 |
 | `orca worktree create` with no agent, then edit from the tower | The card stays a shell prompt. On 2026-09-26 three worktrees looked empty in Orca, including on iOS |
-| Create the worktree, then add an agent tab by hand when `--agent <id>` would have worked | For grok, codex, and claude, §2 of `orca-tab` is one create. dsb cannot use `--agent` |
+| A shell tab and a `dsb` tab in the same worktree | Send `dsb` into the shell. Do not open a second tab. Close a leftover prompt once the agent is on screen |
 | Re-run `create` because you could not parse the handle | The side effect already happened; ask `terminal list` instead |
 | `orca skills get orca-cli` before launching grok or dsb | The recipes are in `orca-tab`. The full guide is what stalls the turn |
 | `terminal send … --enter` right after `tui-idle` without reading the screen | A first-run dialog swallows the brief and exits the agent (`orca-tab` §4) |

@@ -315,5 +315,28 @@ case "$OUT" in *"freed ~"*) ok "freed space is reported" ;;
 run_capture "$SCRIPT" prune --days 3 --target "$BASE" --root "$TMP/never-created"
 [[ "$RC" -eq 0 ]] && ok "a missing namespace is a no-op, exit 0" || bad "exit $RC: $ERR"
 
+# --- 10b. a clone that cannot be removed fails loudly ----------------------
+# An immutable file (macOS `chflags uchg`) makes rmtree stop partway. The
+# clone must appear in the report as failed — never silently counted as
+# pruned or dropped from the totals.
+if [[ "$(uname -s)" == "Darwin" ]] && command -v chflags >/dev/null 2>&1; then
+  head_ "10b. an undeletable clone is reported and fails the exit code"
+  LOCKED="$CLONES/locked"
+  mkdir -p "$LOCKED/inner"
+  printf 'x\n' > "$LOCKED/inner/held"
+  touch -t "$OLD_TS" "$LOCKED/inner/held" "$LOCKED/inner" "$LOCKED"
+  chflags uchg "$LOCKED/inner/held"
+  run_capture "$SCRIPT" prune --days 3 --target "$BASE" --root "$CLONES"
+  [[ "$RC" -ne 0 ]] && ok "exit $RC (a delete failed)" || bad "undeletable clone did not fail the run"
+  case "$ERR" in *"could not remove"*) ok "the failure is named on stderr" ;;
+    *) bad "no failure message: $ERR" ;; esac
+  case "$OUT" in *"failed locked"*) ok "the failed clone is listed in the report" ;;
+    *) bad "failed clone missing from the report: $OUT" ;; esac
+  case "$OUT" in *"pruned 0 of"*) ok "it is not counted as pruned" ;;
+    *) bad "the count includes the failed clone: $OUT" ;; esac
+  chflags nouchg "$LOCKED/inner/held" 2>/dev/null || true
+  rm -rf "$LOCKED"
+fi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]] || exit 1

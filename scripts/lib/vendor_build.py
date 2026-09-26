@@ -608,10 +608,21 @@ def cmd_prune(args):
             kept.append((entry, newest))
             continue
         size_kb = dir_size_kb(entry)
-        try:
-            shutil.rmtree(entry)
-        except OSError as e:
-            print(f"vendor-build: could not remove {entry}: {e}", file=sys.stderr)
+        # macOS can report ENOTEMPTY for a directory rmdir immediately after
+        # its children were unlinked; one short retry covers that, while a
+        # genuinely undeletable file still fails twice and is reported.
+        last_error = None
+        for attempt in (1, 2):
+            try:
+                shutil.rmtree(entry)
+                last_error = None
+                break
+            except OSError as e:
+                last_error = e
+                if attempt == 1:
+                    time.sleep(0.5)
+        if last_error is not None:
+            print(f"vendor-build: could not remove {entry}: {last_error}", file=sys.stderr)
             failed.append(entry)
             continue
         pruned.append((entry, newest, size_kb))
@@ -620,6 +631,8 @@ def cmd_prune(args):
         print(f"  pruned {entry.name} — {human_kb(size_kb)}, last touched {human_ago(newest)}")
     for entry, newest in kept:
         print(f"  kept   {entry.name} — last touched {human_ago(newest)}")
+    for entry in failed:
+        print(f"  failed {entry.name} — removal stopped partway; clear the cause and re-run prune")
     for entry in skipped:
         print(f"  skipped base target inside root: {entry}")
     freed = sum(s for _, _, s in pruned if s is not None)

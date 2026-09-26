@@ -1,6 +1,6 @@
 {
   "name": "@innocarpe/deepseek-build",
-  "version": "6.1.2",
+  "version": "6.1.3",
   "description": "DeepSeek Build — npm i -g then type dsb for full-screen DeepSeek TUI",
   "license": "Apache-2.0",
   "repository": {

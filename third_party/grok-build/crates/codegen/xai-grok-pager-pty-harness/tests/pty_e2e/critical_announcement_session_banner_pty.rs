@@ -22,17 +22,12 @@ const PROMO_BUTTON: &str = "[ZZPROMOCTA]";
 const PROMO_URL: &str = "https://x.ai/zz-promo-cta";
 /// Configured `cta.caption` for the pinned multi-surface fixture; the banner paints it after the button, the in-session header never does.
 const PROMO_CAPTION: &str = "or use Ctrl+O";
-/// Second promo message (dismissible), distinct from `PROMO_MSG`.
-const PROMO_B_MSG: &str = "ZZANNPROMOBMSG";
 
-/// Promo announcement payload for `set_settings` pushes.
-fn promo_settings_announcement() -> serde_json::Value {
-    json!({
-        "id": "pty-promo",
-        "message": PROMO_MSG,
-        "severity": "promo",
-        "cta": { "label": PROMO_LABEL, "url": PROMO_URL },
-    })
+/// Dismissible promo seeded via `GROK_ANNOUNCEMENTS_OVERRIDE` (remote promo pushes are display-stripped).
+fn promo_override_json() -> String {
+    format!(
+        r#"[{{"id":"pty-promo","message":"{PROMO_MSG}","severity":"promo","cta":{{"label":"{PROMO_LABEL}","url":"{PROMO_URL}"}}}}]"#
+    )
 }
 
 fn critical_override_json() -> String {
@@ -403,12 +398,13 @@ async fn announcements_slash_listed_only_for_critical() {
     }
 }
 
-/// A critical announcement added server-side AFTER a session is live reaches the open TUI via the shell's periodic settings refresh.
-/// No `/new`, no restart.
+/// A critical announcement added server-side AFTER a session is live must never reach the open TUI: the receive
+/// boundary strips it from the shell's stored settings, so the periodic refresh has nothing to push and the
+/// `/announcements` gate stays closed.
 /// Uses the shared 1s-poll oauth spawn (no announcements override).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml)"]
-async fn critical_announcement_reaches_live_session_via_periodic_refresh() {
+async fn remote_announcement_never_reaches_live_session() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{MOCK_RESPONSE_SENTINEL} periodic refresh."));
     let mut harness = spawn_polling_session(&content, "pty-announce-refresh");
@@ -432,43 +428,41 @@ async fn critical_announcement_reaches_live_session_via_periodic_refresh() {
         }],
     }));
 
-    // Poll (1s), push, redraw: the banner appears without /new or restart
-    harness
-        .wait_for_text(CRIT_TITLE, Duration::from_secs(30))
-        .expect("pushed critical title in live session");
-    harness
-        .wait_for_text(CRIT_MSG, Duration::from_secs(5))
-        .expect("pushed critical message in live session");
-    harness
-        .wait_for_text(HIDE_CTA, Duration::from_secs(5))
-        .expect("hide CTA on pushed session banner");
+    // Several poll cycles (1s each) must paint nothing: no banner, no hide CTA, no slash gate.
+    harness.update(Duration::from_secs(5));
+    let screen = harness.screen_contents();
+    assert!(
+        !screen.contains(CRIT_TITLE) && !screen.contains(HIDE_CTA),
+        "a pushed remote announcement must never paint\nscreen:\n{screen}"
+    );
 
-    // The push must also open the `/announcements` slash gate.
     harness.inject_keys(b"/announ").expect("type slash prefix");
     harness
-        .wait_for_text(SLASH_DESC, Duration::from_secs(10))
-        .unwrap_or_else(|_| {
-            panic!(
-                "expected /announcements in slash menu after the push\nscreen:\n{}",
-                harness.screen_contents()
-            )
-        });
+        .wait_for_text("/announ", Duration::from_secs(5))
+        .expect("slash prefix echoed in prompt");
+    harness.update(Duration::from_millis(200));
+    assert!(
+        !harness.screen_contents().contains(SLASH_DESC),
+        "the push must not open the /announcements gate\nscreen:\n{}",
+        harness.screen_contents()
+    );
 
     harness.inject_keys(keys::ESC).expect("esc dropdown");
     harness.update(Duration::from_millis(200));
     harness.quit().expect("clean quit");
 }
 
-/// Per-ID hide: hiding critical A must not suppress a DIFFERENT critical B pushed later in the same session; the banner comes back for new ids.
-/// Uses the shared 1s-poll oauth spawn (no announcements override).
+/// Remote critical flips (A, then B with a new id) must never paint: no banner, no hide CTA, across poll cycles.
+/// Uses the shared 1s-poll oauth spawn (no announcements override). The per-ID rearm behavior itself is
+/// covered by the pager unit tests through the config layer.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml)"]
-async fn hidden_critical_does_not_suppress_new_critical_id() {
+async fn remote_critical_flips_never_paint() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{MOCK_RESPONSE_SENTINEL} per-id hide."));
     let mut harness = spawn_polling_session(&content, "pty-announce-perid");
 
-    // Critical A arrives via the poll push.
+    // Critical A arrives via the poll flip — and must not paint.
     content.server().set_settings(json!({
         "allow_access": true,
         "announcements": [{
@@ -478,39 +472,14 @@ async fn hidden_critical_does_not_suppress_new_critical_id() {
             "severity": "critical",
         }],
     }));
-    harness
-        .wait_for_text(CRIT_TITLE, Duration::from_secs(30))
-        .expect("critical A banner");
-    harness
-        .wait_for_text(HIDE_CTA, Duration::from_secs(5))
-        .expect("hide CTA on A banner");
-
-    harness
-        .inject_keys(b"/announcements hide\r")
-        .expect("hide command");
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
-        harness.update(Duration::from_millis(100));
-        if !harness.contains_text(HIDE_CTA) && !harness.contains_text(CRIT_MSG) {
-            break;
-        }
-        if Instant::now() > deadline {
-            panic!(
-                "/announcements hide did not clear banner A\nscreen:\n{}",
-                harness.screen_contents()
-            );
-        }
-    }
-
-    // Several poll cycles with the UNCHANGED list must not resurrect hidden A.
-    harness.update(Duration::from_secs(3));
+    harness.update(Duration::from_secs(5));
     let screen = harness.screen_contents();
     assert!(
         !screen.contains(CRIT_TITLE) && !screen.contains(HIDE_CTA),
-        "hidden critical A must stay hidden across identical polls\nscreen:\n{screen}"
+        "remote critical A must not paint\nscreen:\n{screen}"
     );
 
-    // Server-side flip to critical B (new id): the banner must return
+    // Server-side flip to critical B (new id): still nothing.
     content.server().set_settings(json!({
         "allow_access": true,
         "announcements": [{
@@ -520,49 +489,38 @@ async fn hidden_critical_does_not_suppress_new_critical_id() {
             "severity": "critical",
         }],
     }));
-    harness
-        .wait_for_text(CRIT_B_TITLE, Duration::from_secs(30))
-        .expect("critical B banner after hiding A");
-    harness
-        .wait_for_text(CRIT_B_MSG, Duration::from_secs(5))
-        .expect("critical B message");
-    harness
-        .wait_for_text(HIDE_CTA, Duration::from_secs(5))
-        .expect("hide CTA re-armed for B");
+    harness.update(Duration::from_secs(5));
+    let screen = harness.screen_contents();
     assert!(
-        !harness.contains_text(CRIT_TITLE),
-        "A's banner content must not linger after the B push\nscreen:\n{}",
-        harness.screen_contents()
+        !screen.contains(CRIT_B_TITLE) && !screen.contains(HIDE_CTA),
+        "remote critical B must not paint either\nscreen:\n{screen}"
     );
 
     harness.quit().expect("clean quit");
 }
 
-/// A promo pushed mid-session (poll flip) paints the 1-line promo row: the `[label]` button and
-/// both hide affordances on ONE row.
+/// A dismissible promo paints the 1-line promo row: the `[label]` button and both hide affordances on ONE row,
+/// and it opens the `/announcements` slash gate. Seeded via `GROK_ANNOUNCEMENTS_OVERRIDE` (local layer);
+/// remote promo pushes are display-stripped. Critical-over-promo slot precedence is covered by the pager unit tests.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml)"]
-async fn promo_announcement_banner_slash_gate_and_critical_preemption() {
+async fn promo_announcement_banner_and_slash_gate() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{MOCK_RESPONSE_SENTINEL} promo banner."));
-    let mut harness = spawn_polling_session(&content, "pty-announce-promo");
-
-    // Steady-state: several poll cycles with unchanged settings, no banner.
-    harness.update(Duration::from_secs(2));
-    let screen = harness.screen_contents();
-    assert!(
-        !screen.contains(PROMO_MSG) && !screen.contains(HIDE_CTA),
-        "no banner may exist before the promo push\nscreen:\n{screen}"
-    );
-
-    // Server-side flip: the next `GET /v1/settings` returns a promo with CTA.
-    content.server().set_settings(json!({
-        "allow_access": true,
-        "announcements": [promo_settings_announcement()],
-    }));
+    let mut harness = spawn_with_announcements(&content, &promo_override_json());
 
     harness
-        .wait_for_text(PROMO_BUTTON, Duration::from_secs(30))
+        .wait_for_text(WELCOME_SCREEN_SENTINEL, WELCOME_TIMEOUT)
+        .expect("welcome text");
+    harness
+        .inject_keys(format!("{PROMPT}\r").as_bytes())
+        .expect("submit prompt to enter session");
+    harness
+        .wait_for_text(MOCK_RESPONSE_SENTINEL, Duration::from_secs(30))
+        .expect("session response");
+
+    harness
+        .wait_for_text(PROMO_BUTTON, Duration::from_secs(10))
         .expect("promo [label] button in live session");
     harness
         .wait_for_text(HIDE_BUTTON, Duration::from_secs(5))
@@ -600,7 +558,7 @@ async fn promo_announcement_banner_slash_gate_and_critical_preemption() {
         "promo row must not use severity emoji prefixes\nscreen:\n{screen}"
     );
 
-    // The push must open the `/announcements` slash gate for promo too.
+    // The promo must open the `/announcements` slash gate too.
     harness.inject_keys(b"/announ").expect("type slash prefix");
     harness
         .wait_for_text(SLASH_DESC, Duration::from_secs(10))
@@ -615,43 +573,13 @@ async fn promo_announcement_banner_slash_gate_and_critical_preemption() {
     harness
         .wait_for_text_absent(SLASH_DESC, Duration::from_secs(10))
         .expect("slash dropdown dismissed after Esc");
-    harness
-        .inject_keys(b"\x15")
-        .expect("Ctrl+U clear residual slash draft");
-    harness
-        .wait_for_text(PROMO_BUTTON, Duration::from_secs(10))
-        .expect("promo banner still up after slash dismiss");
-
-    // Critical published mid-promo, with the promo STILL in the list: the single slot flips to the critical banner (precedence, not replacement)
-    content.server().set_settings(json!({
-        "allow_access": true,
-        "announcements": [
-            promo_settings_announcement(),
-            {
-                "id": "pty-crit-preempt",
-                "title": CRIT_TITLE,
-                "message": CRIT_MSG,
-                "severity": "critical",
-            },
-        ],
-    }));
-    harness
-        .wait_for_text(&format!("! {CRIT_TITLE}"), Duration::from_secs(30))
-        .expect("critical banner preempts the promo");
-    harness
-        .wait_for_text(CRIT_MSG, Duration::from_secs(5))
-        .expect("critical message after preemption");
-    let screen = harness.screen_contents();
-    assert!(
-        !screen.contains(PROMO_BUTTON) && !screen.contains(PROMO_MSG),
-        "one banner slot: the promo row must yield to the critical\nscreen:\n{screen}"
-    );
 
     harness.quit().expect("clean quit");
 }
 
 /// Clicking the promo `[label]` button dispatches the open action through the safe-open path and
-/// does NOT hide the row.
+/// does NOT hide the row; `/announcements hide` / `show` round-trips it. Seeded via
+/// `GROK_ANNOUNCEMENTS_OVERRIDE` (local layer); remote promo pushes are display-stripped.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml)"]
 async fn promo_cta_click_opens_link_and_hide_roundtrip() {
@@ -665,14 +593,20 @@ async fn promo_cta_click_opens_link_and_hide_roundtrip() {
         ("GROK_TEST_OPEN_URL_FILE", url_file_str.as_str()),
         ("TERM_PROGRAM", "WezTerm"),
     ];
-    let mut harness = spawn_polling_session_with_env(&content, "pty-announce-cta", &extra_env);
+    let mut harness =
+        spawn_with_announcements_and_env(&content, &promo_override_json(), &extra_env);
 
-    content.server().set_settings(json!({
-        "allow_access": true,
-        "announcements": [promo_settings_announcement()],
-    }));
     harness
-        .wait_for_text(PROMO_BUTTON, Duration::from_secs(30))
+        .wait_for_text(WELCOME_SCREEN_SENTINEL, WELCOME_TIMEOUT)
+        .expect("welcome text");
+    harness
+        .inject_keys(format!("{PROMPT}\r").as_bytes())
+        .expect("submit prompt to enter session");
+    harness
+        .wait_for_text(MOCK_RESPONSE_SENTINEL, Duration::from_secs(30))
+        .expect("session response");
+    harness
+        .wait_for_text(PROMO_BUTTON, Duration::from_secs(10))
         .expect("promo [label] button in live session");
 
     // Give the frame a beat to flush, then prove the button cells carry the CTA URL as OSC 8
@@ -771,28 +705,25 @@ async fn promo_cta_click_opens_link_and_hide_roundtrip() {
 }
 
 /// `dismissible: false` pins the promo: no hide affordances paint and `/announcements hide` leaves the banner on screen.
-/// A later dismissible promo brings back [hide] and hides normally, so the old dismissible behavior is pinned in the same scenario.
-/// The message is hero-only.
+/// The message is hero-only. Seeded via `GROK_ANNOUNCEMENTS_OVERRIDE` (local layer); remote promo pushes are display-stripped.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml)"]
-async fn non_dismissible_promo_ignores_hide_then_dismissible_hides() {
+async fn pinned_promo_ignores_hide() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{MOCK_RESPONSE_SENTINEL} pinned promo."));
-    let mut harness = spawn_polling_session(&content, "pty-announce-pinned");
+    let mut harness = spawn_with_announcements(&content, &pinned_promo_override_json());
 
-    // Pinned promo arrives via the poll flip.
-    content.server().set_settings(json!({
-        "allow_access": true,
-        "announcements": [{
-            "id": "pty-promo-pinned",
-            "message": PROMO_MSG,
-            "severity": "promo",
-            "dismissible": false,
-            "cta": { "label": PROMO_LABEL, "url": PROMO_URL },
-        }],
-    }));
     harness
-        .wait_for_text(PROMO_BUTTON, Duration::from_secs(30))
+        .wait_for_text(WELCOME_SCREEN_SENTINEL, WELCOME_TIMEOUT)
+        .expect("welcome text");
+    harness
+        .inject_keys(format!("{PROMPT}\r").as_bytes())
+        .expect("submit prompt to enter session");
+    harness
+        .wait_for_text(MOCK_RESPONSE_SENTINEL, Duration::from_secs(30))
+        .expect("session response");
+    harness
+        .wait_for_text(PROMO_BUTTON, Duration::from_secs(10))
         .expect("pinned promo [label] button");
 
     // Pinned promo: the message is never painted on the banner (hero-only).
@@ -809,53 +740,16 @@ async fn non_dismissible_promo_ignores_hide_then_dismissible_hides() {
         "pinned promo must paint no hide affordances\nscreen:\n{screen}"
     );
 
-    // This fixture configures no `cta.caption`: the banner row stays the bare button (no dim helper text follows it)
-    assert!(
-        screen.lines().any(|l| l.trim() == PROMO_BUTTON),
-        "a caption-less pinned promo paints a bare [label] banner row\nscreen:\n{screen}"
-    );
-
-    // The slash hide no-ops: several poll cycles later the row is still up.
+    // The slash hide no-ops: the row is still up after the command.
     harness
         .inject_keys(b"/announcements hide\r")
         .expect("hide command");
-    harness.update(Duration::from_secs(3));
+    harness.update(Duration::from_secs(2));
     assert!(
         harness.contains_text(PROMO_BUTTON),
         "/announcements hide must not clear a pinned promo\nscreen:\n{}",
         harness.screen_contents()
     );
-
-    // Back-compat: a dismissible promo brings back [hide] and hides normally
-    // Its message is hero-only too, so [hide] appearing signals the flip
-    content.server().set_settings(json!({
-        "allow_access": true,
-        "announcements": [{
-            "id": "pty-promo-hideable",
-            "message": PROMO_B_MSG,
-            "severity": "promo",
-            "cta": { "label": PROMO_LABEL, "url": PROMO_URL },
-        }],
-    }));
-    harness
-        .wait_for_text(HIDE_BUTTON, Duration::from_secs(30))
-        .expect("[hide] re-armed for the dismissible promo");
-    harness
-        .inject_keys(b"/announcements hide\r")
-        .expect("hide dismissible promo");
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
-        harness.update(Duration::from_millis(100));
-        if !harness.contains_text(HIDE_BUTTON) && !harness.contains_text(PROMO_BUTTON) {
-            break;
-        }
-        if Instant::now() > deadline {
-            panic!(
-                "/announcements hide did not clear the dismissible promo\nscreen:\n{}",
-                harness.screen_contents()
-            );
-        }
-    }
 
     harness.quit().expect("clean quit");
 }

@@ -44,6 +44,7 @@ jobs:
       changelog: ${{ steps.filter.outputs.changelog }}
       session_close: ${{ steps.filter.outputs.session_close }}
       vendor_build: ${{ steps.filter.outputs.vendor_build }}
+      worktree_ownership: ${{ steps.filter.outputs.worktree_ownership }}
       npm: ${{ steps.filter.outputs.npm }}
       grok: ${{ steps.filter.outputs.grok }}
     steps:
@@ -105,6 +106,15 @@ jobs:
               - 'scripts/lib/session_close.py'
               - 'scripts/lib/pr_merged.py'
               - 'scripts/test-session-close.py'
+              - '.github/workflows/ci.yml'
+            # The rule that a worktree is created together with its owning
+            # session, and the live check that reads it. Reverting the
+            # sentences or the check's fixture shapes fails here.
+            worktree_ownership:
+              - 'AGENTS.md'
+              - 'skills/worktree-dispatch/**'
+              - 'scripts/check-worktree-ownership.sh'
+              - 'scripts/test-check-worktree-ownership.sh'
               - '.github/workflows/ci.yml'
             npm:
               - 'npm/**'
@@ -278,6 +288,19 @@ jobs:
           fi
       - run: ./scripts/test-vendor-build.sh
 
+  # Hermetic. The rule that create and the owning session are one action, and
+  # the live check that reads it: fixture worktrees over a throwaway git repo
+  # and a stub `orca` — no daemon, no network, no writes outside a temp dir.
+  worktree_ownership:
+    name: worktree ownership
+    needs: changes
+    if: needs.changes.outputs.worktree_ownership == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/test-check-worktree-ownership.sh
+
   # The npm wrapper is the install path users actually run. The tests are
   # hermetic (stub binaries, temp dirs) and finish in seconds.
   npm:
@@ -354,7 +377,7 @@ jobs:
   # ---------------------------------------------------------------------------
   required:
     name: required
-    needs: [changes, fmt, clippy, test, semver, release_verify, changelog, session_close, vendor_build, npm, grok_fmt, grok_clippy]
+    needs: [changes, fmt, clippy, test, semver, release_verify, changelog, session_close, vendor_build, worktree_ownership, npm, grok_fmt, grok_clippy]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -371,6 +394,7 @@ jobs:
           echo "changelog=${{ needs.changelog.result }}"
           echo "session_close=${{ needs.session_close.result }}"
           echo "vendor_build=${{ needs.vendor_build.result }}"
+          echo "worktree_ownership=${{ needs.worktree_ownership.result }}"
           echo "npm=${{ needs.npm.result }}"
           echo "grok_fmt=${{ needs.grok_fmt.result }}"
           echo "grok_clippy=${{ needs.grok_clippy.result }}"
@@ -392,6 +416,7 @@ jobs:
             "changelog:${{ needs.changelog.result }}" \
             "session_close:${{ needs.session_close.result }}" \
             "vendor_build:${{ needs.vendor_build.result }}" \
+            "worktree_ownership:${{ needs.worktree_ownership.result }}" \
             "npm:${{ needs.npm.result }}" \
             "grok_fmt:${{ needs.grok_fmt.result }}" \
             "grok_clippy:${{ needs.grok_clippy.result }}"

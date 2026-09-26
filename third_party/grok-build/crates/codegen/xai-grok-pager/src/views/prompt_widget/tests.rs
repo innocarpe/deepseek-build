@@ -5209,7 +5209,7 @@
         );
     }
 
-    // ── Bottom info line inside the corner cells ────────────────────
+    // ── Bottom info line: divider row and (narrow) label row ────────
 
     /// The model label seen on the iPhone: long enough to overflow a
     /// phone-width pane.
@@ -5218,8 +5218,17 @@
     /// The measured iPhone pane is 55 columns.
     const MEASURED_PHONE_COLS: u16 = 55;
 
-    /// Draw a bordered prompt at `width` and return the bottom (info) row.
-    fn draw_info_row(width: u16, label: &str, flags: &[PromptFlag<'_>]) -> String {
+    /// The last two rows a drawn bordered prompt puts the info on: the divider
+    /// rule `╰──╯` and the label. A wide pane draws both on one row (so the two
+    /// strings are equal); a narrow pane draws the plain rule first and the
+    /// label on the row below it.
+    struct InfoRows {
+        divider: String,
+        label: String,
+    }
+
+    /// Draw a bordered prompt at `width` in a 4-row area and split the info out.
+    fn draw_info_rows(width: u16, label: &str, flags: &[PromptFlag<'_>]) -> InfoRows {
         let mut pw = PromptWidget::new();
         let area = Rect::new(0, 0, width, 4);
         let mut buf = Buffer::empty(area);
@@ -5231,96 +5240,213 @@
             usage_warning_critical: false,
         };
         pw.draw(&mut buf, area, None, &PromptStyle::default(), Some(&info), None);
-        // The info block is the last row of the area.
-        buf_text_at(&buf, 0, width, area.bottom() - 1)
+        let bottom = area.bottom() - 1;
+        // The info block's first row: the divider on both widths, and on a narrow
+        // pane the row just above the label (a wide pane puts both on the last row).
+        let divider_y = if super::is_narrow_label_width(width) {
+            bottom - 1
+        } else {
+            bottom
+        };
+        InfoRows {
+            divider: buf_text_at(&buf, 0, width, divider_y),
+            label: buf_text_at(&buf, 0, width, bottom),
+        }
     }
 
-    /// The info rect stops one cell short of each corner, so a label that
-    /// overflows the pane starts on the blank pad rather than on the divider
-    /// rule.
+    /// On a phone pane the divider row is a plain rule and the label moves to
+    /// the row below the box, so no glyph of the model name can land between
+    /// `╰` and `╯`.
     ///
-    /// Before the inset, the rect began two cells in (the chrome's left pad),
-    /// leaving the divider's `─` painted immediately after `╰`: the row read
-    /// `╰─ DeepSeek …` and the label lost a column to that stray rule.
+    /// The label row is the slot the shortcut-hint row used to occupy (the
+    /// layout drops that row at this width), so the two-row info block keeps
+    /// the bottom stack's height unchanged.
     #[test]
-    fn overflowing_label_starts_on_the_pad_not_the_divider_rule() {
+    fn phone_pane_moves_the_label_off_the_divider_rule() {
         let flags = [PromptFlag {
             text: "always-approve",
             color: None,
             bold: false,
         }];
-        let row = draw_info_row(MEASURED_PHONE_COLS, PHONE_MODEL_LABEL, &flags);
-        let chars: Vec<char> = row.chars().collect();
+        let rows = draw_info_rows(MEASURED_PHONE_COLS, PHONE_MODEL_LABEL, &flags);
+        let divider: Vec<char> = rows.divider.chars().collect();
 
         assert_eq!(
-            chars.first().copied(),
+            divider.first().copied(),
             Some('\u{2570}'),
-            "the row still opens with the left corner: {row:?}"
+            "the divider row still opens with the left corner: {:?}",
+            rows.divider
         );
         assert_eq!(
-            chars.get(1).copied(),
-            Some(' '),
-            "the cell after `╰` must be the blank pad, not the `─` divider rule: {row:?}"
-        );
-        assert_eq!(
-            chars.last().copied(),
+            divider.last().copied(),
             Some('\u{256f}'),
-            "the row still closes with the right corner: {row:?}"
+            "the divider row still closes with the right corner: {:?}",
+            rows.divider
+        );
+        assert!(
+            divider[1..divider.len() - 1].iter().all(|c| *c == '\u{2500}'),
+            "the divider row below the phone box is a plain rule: {:?}",
+            rows.divider
+        );
+
+        // The label keeps the #199 inset one row down: one blank pad cell, then
+        // the text (left-anchored because this label overflows the 53-cell rect).
+        let label: Vec<char> = rows.label.chars().collect();
+        assert_eq!(
+            label.get(1).copied(),
+            Some(' '),
+            "the label row keeps the blank pad after the inset: {:?}",
+            rows.label
+        );
+        assert!(
+            rows.label.contains("DeepSeek V4.1 Flash (OpenRouter) (max)"),
+            "the model name sits on the row below the box: {:?}",
+            rows.label
+        );
+        assert!(
+            rows.label.contains("\u{b7} always-"),
+            "and the mode flag comes with it (clipped at the pane edge, as on the \
+             divider row): {:?}",
+            rows.label
         );
     }
 
-    /// The same label at a width where it fits is right-aligned against the
-    /// divider rule, so the rule legitimately runs up to the label. Pins that
-    /// the pad above is about overflow, not about always blanking cell 1.
+    /// The same label at a width where it fits stays on the divider row and is
+    /// right-aligned against the rule. Pins that the move above is for phone
+    /// panes only, and that the rule legitimately runs up to the label.
     #[test]
-    fn fitting_label_leaves_the_divider_rule_visible() {
-        let row = draw_info_row(120, PHONE_MODEL_LABEL, &[]);
-        let chars: Vec<char> = row.chars().collect();
-        assert_eq!(chars.first().copied(), Some('\u{2570}'), "{row:?}");
+    fn desktop_width_keeps_the_label_on_the_divider_rule() {
+        let rows = draw_info_rows(120, PHONE_MODEL_LABEL, &[]);
+        assert_eq!(
+            rows.divider, rows.label,
+            "at 120 columns the label and the divider share one row"
+        );
+        let chars: Vec<char> = rows.divider.chars().collect();
+        assert_eq!(chars.first().copied(), Some('\u{2570}'), "{:?}", rows.divider);
         assert_eq!(
             chars.get(1).copied(),
             Some('\u{2500}'),
-            "a label with room keeps the divider rule after `╰`: {row:?}"
+            "a label with room keeps the divider rule after `╰`: {:?}",
+            rows.divider
+        );
+        assert!(
+            rows.divider.contains(PHONE_MODEL_LABEL),
+            "the model name stays on the divider row: {:?}",
+            rows.divider
         );
         assert_eq!(
             chars.get(chars.len() - 2).copied(),
             Some(' '),
-            "and still keeps a blank pad before `╯`: {row:?}"
+            "and still keeps a blank pad before `╯`: {:?}",
+            rows.divider
         );
     }
 
-    /// Whatever the label length, the row is exactly the pane width and both
-    /// corner cells survive — the label never paints past `╰` / `╯`.
+    /// Whatever the label length, the wide divider row is exactly the pane width
+    /// and both corner cells survive — the label never paints past `╰` / `╯`.
     #[test]
-    fn info_row_keeps_its_width_and_corners_at_every_size() {
+    fn wide_info_row_keeps_its_width_and_corners_at_every_size() {
         let flags = [PromptFlag {
             text: "always-approve",
             color: None,
             bold: false,
         }];
-        for width in [40u16, 50, 53, 55, 60, 80, 120] {
+        for width in [61u16, 80, 120, 170, 251] {
             for (label, flags) in [
                 (PHONE_MODEL_LABEL, &[][..]),
                 (PHONE_MODEL_LABEL, &flags[..]),
                 ("short", &[][..]),
             ] {
-                let row = draw_info_row(width, label, flags);
-                let chars: Vec<char> = row.chars().collect();
+                let rows = draw_info_rows(width, label, flags);
+                assert_eq!(
+                    rows.divider, rows.label,
+                    "at {width} columns the label and the divider share one row"
+                );
+                let chars: Vec<char> = rows.divider.chars().collect();
                 assert_eq!(
                     chars.len(),
                     width as usize,
-                    "the info row must be exactly the pane width at {width}: {row:?}"
+                    "the info row must be exactly the pane width at {width}: {:?}",
+                    rows.divider
                 );
                 assert_eq!(
                     chars.first().copied(),
                     Some('\u{2570}'),
-                    "left corner must survive at {width} cols: {row:?}"
+                    "left corner must survive at {width} cols: {:?}",
+                    rows.divider
                 );
                 assert_eq!(
                     chars.last().copied(),
                     Some('\u{256f}'),
-                    "right corner must survive at {width} cols: {row:?}"
+                    "right corner must survive at {width} cols: {:?}",
+                    rows.divider
                 );
             }
         }
+    }
+
+    /// The phone shape of the same invariant: the divider row is a plain rule of
+    /// exactly the pane width, and the label row below it is exactly the pane
+    /// width as well, so neither row paints into a corner cell of the other.
+    #[test]
+    fn phone_divider_and_label_rows_keep_the_pane_width() {
+        let flags = [PromptFlag {
+            text: "always-approve",
+            color: None,
+            bold: false,
+        }];
+        for width in [30u16, 40, 50, 53, 55, 60] {
+            for (label, flags) in [
+                (PHONE_MODEL_LABEL, &[][..]),
+                (PHONE_MODEL_LABEL, &flags[..]),
+                ("short", &[][..]),
+            ] {
+                let rows = draw_info_rows(width, label, flags);
+                let divider: Vec<char> = rows.divider.chars().collect();
+                assert_eq!(
+                    divider.len(),
+                    width as usize,
+                    "the divider row must be exactly the pane width at {width}: {:?}",
+                    rows.divider
+                );
+                assert_eq!(
+                    divider.first().copied(),
+                    Some('\u{2570}'),
+                    "left corner must survive at {width} cols: {:?}",
+                    rows.divider
+                );
+                assert_eq!(
+                    divider.last().copied(),
+                    Some('\u{256f}'),
+                    "right corner must survive at {width} cols: {:?}",
+                    rows.divider
+                );
+                let label_row: Vec<char> = rows.label.chars().collect();
+                assert_eq!(
+                    label_row.len(),
+                    width as usize,
+                    "the label row must be exactly the pane width at {width}: {:?}",
+                    rows.label
+                );
+            }
+        }
+    }
+
+    /// The label row is budgeted: a phone-width pane asks for one row more than
+    /// the desktop box needs, which is the row the layout takes away from the
+    /// shortcut hints. `info_block` gates the row on the chrome box, because
+    /// only that box has a divider to move the label off.
+    #[test]
+    fn phone_width_budgets_the_label_row_on_top_of_the_divider() {
+        let pw = PromptWidget::new();
+        let style = PromptStyle::default();
+        assert_eq!(style.info_block(true, true), 2, "divider + label row");
+        assert_eq!(style.info_block(true, false), 1, "divider only");
+        assert_eq!(style.info_block(false, true), 0, "no info, no rows");
+
+        // vpad_top 1 + one text row + the info block.
+        assert_eq!(pw.desired_height(MEASURED_PHONE_COLS, &style, true, 99), 4);
+        assert_eq!(pw.desired_height(30, &style, true, 99), 4);
+        assert_eq!(pw.desired_height(61, &style, true, 99), 3);
+        assert_eq!(pw.desired_height(120, &style, true, 99), 3);
     }

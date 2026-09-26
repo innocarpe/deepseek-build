@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- On a phone-width pane (60 columns or fewer) the model and mode label (`DeepSeek V4.1 Flash (max) · always-approve`) leaves the input box's bottom border and takes its own row below the box, and the keyboard-hint row (`Enter:send · Opt+Enter:newline · Shift+Tab:mode`, and every state-specific variant of it) is gone: the label row is the row the hints used to occupy, so the bottom stack is exactly as tall as before. The DeepSeek balance and cache-hit row is unchanged, and panes above 60 columns render exactly as they did.
+
 ## 6.1.0 — 2026-09-26
 
 - DeepSeek-native depth: a cache miss names which assembled document moved, the session logs a cache total, a request that diverges from the log fails the turn, and a stable-body change appends instead of rewriting the cached prefix. CHANGELIST_6_1_0.md.

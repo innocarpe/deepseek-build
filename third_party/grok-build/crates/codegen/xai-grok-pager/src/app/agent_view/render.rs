@@ -21,7 +21,9 @@ use crate::views::agent::AgentViewLayoutParams;
 use crate::views::btw_overlay::BTW_OVERLAY_ENTRY_IDX;
 use crate::views::modal;
 use crate::views::plan_approval_view::PlanApprovalFocus;
-use crate::views::prompt_widget::{PromptBg, PromptFlag, PromptInfo, PromptStyle, mode_flags};
+use crate::views::prompt_widget::{
+    PromptBg, PromptFlag, PromptInfo, PromptStyle, is_narrow_label_width, mode_flags,
+};
 use crate::views::question_view::QUESTION_VIEW_HPAD;
 use crate::views::shortcuts_bar::{HintItem, PendingHint, ShortcutsBar};
 use crate::views::{agent, turn_status};
@@ -773,6 +775,9 @@ impl AgentView {
         }
         let compact = appearance.prompt.compact;
         let inner_width = AgentViewLayout::inner_width(area, layout_cfg, compact);
+        // Phone-width panes spend one more row on the prompt (the label moves below the box)
+        // and give the shortcut-hint row back, so the bottom stack keeps its height.
+        let narrow = is_narrow_label_width(inner_width);
         let banner_height = if banner_height > 0 {
             if let Some(tip_text) = tip {
                 if self.session_banner_active {
@@ -801,7 +806,7 @@ impl AgentView {
         let base_prompt_height = if !prompt_focused && appearance.prompt.collapse_unfocused {
             self.prompt
                 .desired_height(inner_width, &prompt_style, true, max_prompt_height)
-                .min(prompt_style.vpad_top + 1 + prompt_style.info_block(true))
+                .min(prompt_style.vpad_top + 1 + prompt_style.info_block(true, narrow))
         } else {
             self.prompt
                 .desired_height(inner_width, &prompt_style, true, max_prompt_height)
@@ -957,7 +962,7 @@ impl AgentView {
             base_prompt_height
         };
         let prompt_height =
-            prompt_height.max(prompt_style.vpad_top + 1 + prompt_style.info_block(true));
+            prompt_height.max(prompt_style.vpad_top + 1 + prompt_style.info_block(true, narrow));
         let prompt_height = if self.composer_route() == ComposerRoute::Hidden {
             0
         } else {
@@ -1108,7 +1113,10 @@ impl AgentView {
             dock_height,
             prompt_gap,
             voice_recording_height,
-            shortcuts_height: 1,
+            // A narrow pane has no hint row in any state: the model label takes it
+            // (see the `narrow` comment above), and `ShortcutsBar` no-ops on a
+            // zero-height rect, so every render site stays as-is.
+            shortcuts_height: u16::from(!narrow),
             status_line_height: status_line.height(),
             compact,
         };

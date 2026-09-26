@@ -271,9 +271,19 @@ impl PromptStyle {
         }
     }
 
-    /// Info block height: rows reserved for the bottom divider line.
-    pub fn info_block(&self, has_info: bool) -> u16 {
-        if has_info { 1 } else { 0 } // bottom divider only
+    /// Info block height: rows reserved below the text. One row carries the bottom divider
+    /// (with the label on it); a narrow pane ([`is_narrow_label_width`]) adds a second row
+    /// and keeps the divider plain, so the label moves below the box.
+    pub fn info_block(&self, has_info: bool, narrow: bool) -> u16 {
+        if !has_info {
+            return 0;
+        }
+        // Only the chrome box has a divider (and therefore a label) to move.
+        if narrow && self.chrome && self.show_borders {
+            2
+        } else {
+            1
+        }
     }
 
     /// Mode-tinted accent: the override (e.g. plan mode) when set, else the focus-dependent default.
@@ -285,6 +295,15 @@ impl PromptStyle {
             theme.gray_dim
         })
     }
+}
+
+/// Whether the pane at `area_width` is narrow enough that the model/mode label gives up
+/// the bottom divider and takes its own row below the box.
+///
+/// Same threshold and same quantity (the prompt area width) as the narrow-pane rules in
+/// `scrollback::blocks`; phone panes measure 55 columns, the desktop widths 80 and up.
+pub(crate) fn is_narrow_label_width(area_width: u16) -> bool {
+    area_width <= crate::scrollback::blocks::COLLAPSED_NARROW_TERMINAL_COLS
 }
 
 /// A flag displayed in the prompt info line (e.g., "plan", "always-approve").
@@ -1599,7 +1618,8 @@ impl PromptWidget {
     }
 
     /// How tall this widget wants to be, given the available width of the full prompt area (including
-    /// chrome if enabled). Height = vpad_top + textarea rows + vpad_info(1) + info line. Clamped to
+    /// chrome if enabled). Height = vpad_top + textarea rows + vpad_info + info line(s); a narrow
+    /// pane ([`is_narrow_label_width`]) spends one more row on the label below the box. Clamped to
     /// max_height.
     pub fn desired_height(
         &self,
@@ -1626,7 +1646,7 @@ impl PromptWidget {
             self.textarea.desired_height(text_width).max(1)
         };
         let vpad_top = style.vpad_top;
-        let info_block = style.info_block(has_info);
+        let info_block = style.info_block(has_info, is_narrow_label_width(area_width));
         let total = vpad_top + text_height + info_block;
         let min = vpad_top + 1 + info_block;
         total.clamp(min.min(max_height), max_height)
@@ -3045,7 +3065,8 @@ impl PromptWidget {
 
         // Split content: vpad_top, text, info_block
         let vpad_top = style.vpad_top;
-        let info_block = style.info_block(info.is_some());
+        let narrow = is_narrow_label_width(area.width);
+        let info_block = style.info_block(info.is_some(), narrow);
         let chunks = Layout::vertical([
             Constraint::Length(vpad_top),
             Constraint::Min(1),
@@ -3363,7 +3384,8 @@ impl PromptWidget {
             }
         }
 
-        // Bottom divider: ╰──────────grok-3 · flags──╯
+        // Bottom divider: ╰──────────grok-3 · flags──╯ on wide panes; a narrow pane
+        // ([`is_narrow_label_width`]) keeps the rule plain and puts the label on the row below.
         // Guard on actual allocated height, not requested `info_block`
         // During resize the layout may squeeze the info block to 0 rows, leaving chunks[2].y past the buffer boundary
         if info_block > 0
@@ -3390,7 +3412,12 @@ impl PromptWidget {
                 }
             }
             // A blank info line still writes its padding spaces, which would punch holes in the divider it sits on.
-            if let Some(info) = info.filter(|i| !i.is_blank()) {
+            // On a narrow pane the label leaves that divider alone and sits on the row below the box;
+            // the row is only there when the info block got its second row (a resize squeeze can drop it).
+            let label_y = if narrow { div_y + 1 } else { div_y };
+            if (!narrow || info_chunk.height > 1)
+                && let Some(info) = info.filter(|i| !i.is_blank())
+            {
                 // Reserve one cell per corner so the label starts on a blank pad
                 // rather than on the divider rule. `content_area` begins
                 // `chrome_pad_left` cells in, which left `─` painted directly
@@ -3398,7 +3425,7 @@ impl PromptWidget {
                 // phone-width pane, where the model label fills the row.
                 let info_rect = Rect {
                     x: area.x + 1,
-                    y: div_y,
+                    y: label_y,
                     width: area.width.saturating_sub(2),
                     height: 1,
                 };

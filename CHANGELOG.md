@@ -3,6 +3,7 @@
 ## Unreleased
 
 - On a phone-width pane, a collapsed prompt echo shows up to two rows, with an ellipsis when the prompt is longer. Wider panes keep the three-line budget.
+- A session on OpenRouter sticks to one upstream provider. The request body now carries the session id as OpenRouter's `session_id` sticky-routing key, so a session (subagents included) keeps the provider that holds its prefix cache instead of re-billing the whole prompt at the input rate whenever the router moves. Requests to every other endpoint are byte-identical.
 
 ## 6.1.2 — 2026-09-26
 

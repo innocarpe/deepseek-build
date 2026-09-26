@@ -289,6 +289,9 @@ impl From<ConversationRequest> for ChatCompletionRequest {
             frequency_penalty: None,
             presence_penalty: None,
             user: None,
+            // Endpoint-specific: the sampler pins this on OpenRouter hosts
+            // only, once it knows the wire it is about to hit.
+            session_id: None,
             tools,
             tool_choice,
             search_parameters: None,

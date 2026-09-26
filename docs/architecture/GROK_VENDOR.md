@@ -114,6 +114,7 @@ survived.
 | `crates/codegen/xai-grok-pager/src/settings/defs.rs` | `THEME_CHOICES` / `CONCRETE_THEME_CHOICES` place `deepseeknight-v2` before canonical `deepseeknight` (`DeepSeek Night (classic)`) and include neutral as a selectable DeepSeek skin | Settings pickers surface V2, classic, and neutral; classic is the product/default choice, and only GrokNight remains hidden compatibility |
 | `crates/codegen/xai-grok-pager/src/views/settings_modal/tests.rs` | Exhaustive preview coverage retains V2, classic, and neutral `ThemeKind` arms | Preview remains compatible with legacy/config values while the picker catalogs expose classic after the V2 picker entry |
 | `crates/codegen/xai-grok-sampler/src/client.rs` | `strip_image_content_blocks()` + `is_text_only_deepseek_model()` / `is_text_only_wire()` gate the wire flattening on **endpoint and model**; `conversation` / `conversation_stream` call the pair | DeepSeek's official V4.1 Flash accepts `image_url` (`input_modalities: ["text", "image"]`), so the old endpoint-only gate silently dropped images the model could read; V4 Pro (`["text"]`, Vision "Not supported") keeps the text-only wire |
+| `crates/codegen/xai-grok-sampler/src/client.rs`, `crates/codegen/xai-grok-sampling-types/src/{types.rs,conversation/chat_completions.rs}` | `is_openrouter_endpoint` + `pin_openrouter_session` put the session id in the Chat Completions body as OpenRouter's `session_id` sticky-routing key; `chat_completion` and `chat_completion_stream` call the pin, and `ChatCompletionRequest::session_id` is skipped when unset | OpenRouter re-picks an upstream provider per request unless the body carries `session_id`, and each provider keeps its own prefix cache — a mid-session switch re-bills the whole prompt at the input rate. Every session (subagents included) carries its own id, and every other endpoint's body stays byte-identical |
 | `crates/codegen/xai-grok-shell/src/session/image_describe.rs` | `<image_files>` envelope states the OCR fallback conditionally ("If the image is not visible to you directly (a text-only API model, for example DeepSeek V4 Pro)…") | The envelope text is what a text-only model has instead of the image; the unconditional upstream wording no longer describes the V4.1 Flash wire |
 | `crates/codegen/xai-grok-shell/src/session/acp_session_impl/turn.rs` | The non-cursor branch persists pasted **and** base64-extracted images together before prepending `<image_files>` | A text-only model (V4 Pro) cannot receive `image_url`, so the on-disk paths are its only image channel; vision-capable models keep the inline parts too |
 | `crates/dsb-cli/src/agent_launch.rs` | First-launch picker writes the chosen skin into the seed config; `GROK_THEME`/`LC_GROK_THEME` only set from explicit env (`DEEPSEEK_BUILD_THEME`/`GROK_THEME`) so in-pager `/theme` persists | First-launch classic/V2 onboarding plus persistent theme changes; classic remains the product/default and V2 remains selectable |
@@ -142,6 +143,15 @@ invariants, the classic dark/GrokDay light resolution defaults, and the picker
 contract. Settings preview coverage retains legacy theme kinds while both
 catalogs expose `deepseeknight-v2`, `DeepSeek Night (classic)` and
 `DeepSeek Night Neutral`.
+The OpenRouter pin is pinned from both ends:
+`openrouter_session_pin_adds_the_session_id_and_nothing_else` asserts the
+pinned body differs by exactly that one field (and that a subagent session
+carries its own id), `openrouter_session_pin_stays_off_every_other_endpoint`
+and `openrouter_session_id_rides_only_the_openrouter_wire` keep the field off
+every other wire — the latter through the mock server on both the unary and
+the streaming entry point — and
+`is_openrouter_endpoint_matches_only_openrouter_hosts` keeps the lookalike
+`notopenrouter.ai` out.
  The announcement boundaries are pinned from both sides:
 `install_remote_settings_strips_remote_announcements_before_the_gate` keeps
 the stored field gone and the push gate silent, `resolve_announcements`

@@ -63,6 +63,10 @@ create for dsb.
 
 ## §1 Tab in an existing worktree
 
+If that worktree already has a prompt-only tab, send `dsb` or `grok` into
+that tab. Do not create another. `terminal create` is for a worktree with
+no tab.
+
 ```sh
 orca terminal create --worktree "path:$WT" --title "<short title>" --command dsb --json
 ```
@@ -111,14 +115,36 @@ is still up.
 
 ## §3 New worktree — dsb
 
+`create` opens one launcher shell. That shell is the tab. Do not open a
+second one with `terminal create`. On 2026-09-26 a worktree ended with two
+tabs: the empty shell, and `dsb`.
+
 ```sh
 orca worktree create --repo path:"$TOWER" --name <slug> --no-parent --setup skip --json
 ```
 
-Keep `result.worktree.id` and `result.worktree.path`. Then §1 with
-`--command dsb` and `--worktree "id:$WT_ID"`.
+Keep `result.worktree.id` and `result.worktree.path`. List that worktree's
+terminals. The shell is the tab whose screen is a prompt. Send `dsb` into
+it:
+
+```sh
+orca terminal send --terminal "$SHELL" --text dsb --enter --wait-submit 15 --json
+```
+
+Read the screen. When the DeepSeek input box is up, `$SHELL` is the
+session. Then §4 on that same handle.
 
 Do not pass `--agent dsb`.
+
+If a second tab is already `dsb` and another tab is only a prompt, close
+the prompt after the agent screen shows it is working:
+
+```sh
+orca terminal close --terminal "$SHELL" --tab --json
+```
+
+Do not close the tab whose screen is the agent. The worktree should show
+one tab. The same close applies when §2 leaves a prompt next to `grok`.
 
 ## §4 Send, after the screen shows an input box
 
@@ -173,7 +199,8 @@ stays in `worktree-dispatch` §3b.
 |-------|-----|
 | `orca skills get orca-cli` before §1–§4 | That read is the stall |
 | A binary path instead of `grok` or `dsb` | Skips the shell function |
-| `--agent dsb` | Rejected. dsb is §3, then §1 |
+| `--agent dsb` | Rejected. dsb is §3: run `dsb` in the launcher shell |
+| `terminal create --command dsb` beside the launcher shell | Two tabs. The shell is the tab; send `dsb` into it |
 | Create again when the handle did not parse | The tab already exists |
 | `--enter` while a dialog is up | Confirms the dialog's default |
 | Resend on silence | The first prompt may already be in |

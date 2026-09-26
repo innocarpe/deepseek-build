@@ -284,7 +284,9 @@ stays in [`skills/release`](skills/release/SKILL.md).
 - **The report's first line is whether the done-condition holds, and if not,
   which clause does not.** Then the PR URL, the CI conclusion, the merge
   fields, and the checks with what they printed. What you did not do is a
-  separate list. That list does not open the next unit.
+  separate list. That list does not open the next unit. The report closes
+  with the **Session disposition** block (`skills/session-unit`): close now ·
+  more in this session · to hand off.
 - **A defect in a file this unit is already changing**, which no other
   session is editing, is part of finishing — its own commit, same unit.
   Anything the opening did not name (a new behavior, a fresh investigation,

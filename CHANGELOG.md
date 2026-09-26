@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 6.1.0 — 2026-09-26
+
+- DeepSeek-native depth: a cache miss names which assembled document moved, the session logs a cache total, a request that diverges from the log fails the turn, and a stable-body change appends instead of rewriting the cached prefix. CHANGELIST_6_1_0.md.
+
 ## 6.0.2 — 2026-09-26
 
 - Path A names the component that moved on a cache epoch change, the session line keeps DeepSeek cache misses, and the vendored cache guard is scored on Path A request bytes. The 6.1.0 depth train was not taken.

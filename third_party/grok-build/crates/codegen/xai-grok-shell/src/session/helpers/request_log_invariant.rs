@@ -6,8 +6,9 @@
 //! A log item that cannot be serialized fails closed: continuing would send
 //! a request the session cannot restore.
 
+use xai_chat_state::compaction_utils::AGENT_MESSAGE_MODEL_LABEL;
 use xai_chat_state::{HARD_CLEAR_PLACEHOLDER, SOFT_TRIM_SEPARATOR};
-use xai_grok_sampling_types::conversation::ConversationItem;
+use xai_grok_sampling_types::conversation::{ContentPart, ConversationItem, SyntheticReason};
 
 /// Why the outgoing request must not be sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,8 +16,9 @@ pub struct RequestLogDivergence {
     pub detail: String,
 }
 
-/// `Ok` when `request` is the log plus the legal system-message and tool-trim
-/// projections. System messages are not compared: Spec 10 writes and appends
+/// `Ok` when `request` is the log plus the legal projections: system-message
+/// rewrites, tool-result trims, and the agent-message label prepended on the
+/// request copy. System messages are not compared: Spec 10 writes and appends
 /// them after the log is read.
 pub fn check_request_projects_log(
     log: &[ConversationItem],
@@ -64,11 +66,9 @@ pub fn check_request_projects_log(
                 }
             }
             _ => {
-                let log_json = serde_json::to_value(log_item)
-                    .map_err(|_| diverge(format!("log item {index} cannot be restored")))?;
-                let request_json = serde_json::to_value(request_item)
-                    .map_err(|_| diverge(format!("request item {index} cannot be restored")))?;
-                if log_json != request_json {
+                if !non_system_projects(log_item, request_item).map_err(|detail| {
+                    diverge(format!("{detail} at non-system item {index}"))
+                })? {
                     return Err(diverge(format!(
                         "request/log desync at non-system item {index}"
                     )));
@@ -81,6 +81,45 @@ pub fn check_request_projects_log(
 
 fn is_system(item: &ConversationItem) -> bool {
     matches!(item, ConversationItem::System(_))
+}
+
+/// `Ok(true)` when the request item is the log item, or the log item plus the
+/// agent-message label that `ModelRequestHistory` prepends on the request copy.
+fn non_system_projects(
+    log_item: &ConversationItem,
+    request_item: &ConversationItem,
+) -> Result<bool, String> {
+    let log_json = serde_json::to_value(log_item)
+        .map_err(|_| "log item cannot be restored".to_string())?;
+    let request_json = serde_json::to_value(request_item)
+        .map_err(|_| "request item cannot be restored".to_string())?;
+    if log_json == request_json {
+        return Ok(true);
+    }
+    let Some(stripped) = strip_agent_message_label(request_item) else {
+        return Ok(false);
+    };
+    let stripped_json = serde_json::to_value(&stripped)
+        .map_err(|_| "request item cannot be restored".to_string())?;
+    Ok(log_json == stripped_json)
+}
+
+fn strip_agent_message_label(item: &ConversationItem) -> Option<ConversationItem> {
+    let ConversationItem::User(user) = item else {
+        return None;
+    };
+    if user.synthetic_reason != SyntheticReason::AgentMessage {
+        return None;
+    }
+    let ContentPart::Text { text } = user.content.first()? else {
+        return None;
+    };
+    if text.as_ref() != AGENT_MESSAGE_MODEL_LABEL {
+        return None;
+    }
+    let mut user = user.clone();
+    user.content.remove(0);
+    Some(ConversationItem::User(user))
 }
 
 fn diverge(detail: String) -> RequestLogDivergence {

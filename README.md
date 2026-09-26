@@ -26,6 +26,7 @@
   <a href="#quick-start">Quick start</a> ·
   <a href="#why-deepseek-build">Why DeepSeek Build</a> ·
   <a href="#how-it-works">How it works</a> ·
+  <a href="#deepseek-harness">DeepSeek Harness</a> ·
   <a href="#documentation">Documentation</a> ·
   <a href="#contributing">Contributing</a>
 </p>
@@ -83,7 +84,7 @@ export PATH="$HOME/.deepseek-build/bin:$PATH"
 | --- | --- |
 | **DeepSeek-native** | DeepSeek API defaults, Flash/Pro routing, reasoning effort, and a DeepSeek-branded TUI. |
 | **Safe edits** | Version-bound snippet editing and fail-closed workspace permissions instead of silent whole-file replacement. |
-| **Long-session economics** | A stable prompt prefix, lazy skill loading, and tool-call repair keep resumed work coherent and cache-aware. |
+| **Long-session economics** | Session changes append after the cached history instead of rewriting it. A cache miss names the assembled document that moved, the session logs its cumulative cache total, and a request that diverges from the session log fails the turn. |
 | **Wall-clock throughput** | Parallel tools, background shell jobs, subagents, and opt-in worktrees run beneath the safety and cache layers. |
 | **Durable sessions** | Resume the most recent full-screen session or address a saved session directly. |
 
@@ -111,6 +112,13 @@ deepseek-build --dogfood
 execution under policy. Writes and deletes outside the workspace remain denied.
 
 For the short command, replace `deepseek-build` with `dsb` in any example.
+
+At or below 60 columns, a submitted prompt folds into a single row and drops
+the decorative `❯` and blank pad rows; wider windows keep the three-line
+budget. The full-screen view has a configurable status line at the bottom. On
+the official DeepSeek API, DeepSeek V4.1 Flash (`deepseek-flash`) accepts
+attached images directly, and text-only models keep images off the wire with
+the on-disk fallback.
 
 ## Authentication and configuration
 
@@ -179,9 +187,45 @@ the edit, permission, or cache contracts beneath it.
 | **L2** | [Reasonix](https://github.com/esengine/DeepSeek-Reasonix) | Stable-prefix economics, Flash/Pro behavior, and tool-call repair. |
 | **L3** | [Grok Build](https://github.com/xai-org/grok-build) | The base runtime, TUI, parallel tools, subagents, background work, and worktrees. |
 
+Reading DeepSeek's official harness added no layer to this map: the append
+rule and the request-versus-log check came from that evidence, described in
+the next section.
+
 The normative conflict rules live in the
 [harness philosophy](docs/architecture/HARNESS_PHILOSOPHY.md), with the complete
 system map in [SYSTEM_ARCHITECTURE.md](docs/architecture/SYSTEM_ARCHITECTURE.md).
+
+## DeepSeek Harness
+
+[dsh](https://github.com/deepseek-ai/deepseek-harness) is DeepSeek's official
+open-source harness. It is not this product's architecture, and it is not a
+fourth layer: DeepSeek Build stays a Rust full-screen TUI, with edits owned by
+Deep Code, the cache contract owned by Reasonix, and execution owned by Grok
+Build. dsh is evidence for how one family behaves — a cached prefix survives a
+session change, and a request that does not match the session log is not sent.
+
+| What changes in a session | What the product does |
+| --- | --- |
+| A later change of the stable system body | Earlier system messages stay byte-for-byte; the new body is appended after them. The model treats the most recent system message as the current body. |
+| tools, skills, environment, or project instructions inside that body | The same append. The wire `tools` array is the full list on every request. There is no tool add/remove history message; Chat Completions has no field for one. |
+| A cache miss | The turn names which assembled document moved, as `prefix_change=`. When the epoch moved and every document hash matches, it says `unattributed` instead of inventing a cause. |
+| The session's cache | Once any response carried cache fields, every turn logs one `cache_session=` line. Hits and misses are token sums; a response without cache fields is `unreported` and is not counted as a miss. `deepseek-build run` and the REPL store the totals with the session, so a resume continues them. The full-screen status chip stays the last turn's ratio, the full-screen counter is not written to the session file, and a new process starts it at zero. |
+| A request that diverges from the log | The turn fails before sampling. An item that cannot be serialized fails closed too. |
+| deny | A later allow does not replace a deny. |
+
+Deliberately not taken: a plugin host, agent teams, sandbox escalation,
+request-series bookkeeping (`initial` / `resume` / `change`), and the
+Anthropic Messages transport — this product speaks DeepSeek Chat Completions
+([ADR 0005](docs/adr/0005-deepseek-provider-contract.md)).
+
+Already present, so not ported again: spill of an oversized tool result (head,
+tail, and a path to the rest), compaction aligned to the warm prefix, and a
+snippet staleness guard stricter than dsh's path-scoped token. These are not
+new features taken from dsh.
+
+Read more: [dsh research note](docs/research/dsh-deepseek-harness.md) ·
+[what this work changed](docs/product/CHANGELIST_6_1_0.md) ·
+[design sources](docs/product/SOURCES.md).
 
 ## Documentation
 

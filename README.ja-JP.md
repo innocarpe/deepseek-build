@@ -26,6 +26,7 @@
   <a href="#クイックスタート">クイックスタート</a> ·
   <a href="#なぜ-deepseek-build-か">なぜ DeepSeek Build か</a> ·
   <a href="#仕組み">仕組み</a> ·
+  <a href="#deepseek-harness">DeepSeek Harness</a> ·
   <a href="#ドキュメント">ドキュメント</a> ·
   <a href="#コントリビューション">コントリビューション</a>
 </p>
@@ -83,7 +84,7 @@ export PATH="$HOME/.deepseek-build/bin:$PATH"
 | --- | --- |
 | **DeepSeek ネイティブ** | DeepSeek API デフォルト、Flash/Pro ルーティング、reasoning effort、DeepSeek ブランドの TUI。 |
 | **安全な編集** | バージョン束縛のスニペット編集とフェイルクローズのワークスペース権限。サイレントな全ファイル置換はしません。 |
-| **長セッションの経済性** | 安定したプロンプトプレフィックス、遅延スキル読み込み、ツールコール修復により、再開セッションを一貫性・キャッシュ親和性のある状態に保ちます。 |
+| **長セッションの経済性** | セッションの変化はキャッシュ済み履歴を書き換えず、その後ろに追加されます。キャッシュミスは動いた組み立て済みドキュメントを名指しし、セッションは累計キャッシュ合計を記録し、セッションログと食い違うリクエストはそのターンを失敗させます。 |
 | **スループット** | 並列ツール、バックグラウンドシェルジョブ、サブエージェント、オプトインの worktree を安全層・キャッシュ層の下で実行します。 |
 | **永続セッション** | 直近のフルスクリーンセッションを再開するか、保存済みセッションに直接移動します。 |
 
@@ -110,6 +111,13 @@ deepseek-build --dogfood
 実行を有効にします。ワークスペース外の書き込み・削除は引き続き拒否されます。
 
 短いコマンドを使う場合は、例の `deepseek-build` を `dsb` に置き換えてください。
+
+幅が 60 列以下の場合、送信済みプロンプトは 1 行に折りたたまれ、装飾用の `❯`
+と空白パディング行が省かれます。それより広いウィンドウは現行の 3 行予算を
+維持します。フルスクリーン画面の下部には設定可能なステータス行があります。
+公式 DeepSeek API では、DeepSeek V4.1 Flash（`deepseek-flash`）が添付画像を
+直接受け取り、テキスト専用モデルは画像をワイヤに載せずディスク上のフォール
+バックを使います。
 
 ## 認証と設定
 
@@ -174,8 +182,44 @@ DeepSeek API
 | **L2** | [Reasonix](https://github.com/esengine/DeepSeek-Reasonix) | 安定プレフィックスの経済性、Flash/Pro 動作、ツールコール修復。 |
 | **L3** | [Grok Build](https://github.com/xai-org/grok-build) | ベースランタイム、TUI、並列ツール、サブエージェント、バックグラウンド処理、worktree。 |
 
+DeepSeek 公式ハーネスを読んでも、このマップにレイヤーは増えていません。
+append ルールとリクエスト/ログ検査はその証拠から来たもので、次の節で
+説明します。
+
 規範的な競合ルールは [harness 哲学](docs/architecture/HARNESS_PHILOSOPHY.md) に、
 完全なシステム構成図は [SYSTEM_ARCHITECTURE.md](docs/architecture/SYSTEM_ARCHITECTURE.md) にあります。
+
+## DeepSeek Harness
+
+[dsh](https://github.com/deepseek-ai/deepseek-harness) は DeepSeek の公式
+オープンソースハーネスです。本製品のアーキテクチャではなく、4 つ目の
+レイヤーでもありません。DeepSeek Build は Rust のフルスクリーン TUI のままで、
+編集は Deep Code、キャッシュ契約は Reasonix、実行は Grok Build が所有します。
+dsh はあるファミリーの振る舞いの証拠です — セッションが変わってもキャッシュ
+済みのプレフィックスは生き残り、セッションログと食い違うリクエストは送られ
+ません。
+
+| セッション中に変わるもの | 製品の動作 |
+| --- | --- |
+| 安定した system 本文の後からの変更 | 以前の system メッセージはバイト単位でそのまま残り、新しい本文はその後ろに追加されます。モデルが現在の本文として扱うのは最新の system メッセージです。 |
+| その本文内の tools、skills、environment、project instructions | 同じく追加です。ワイヤ上の `tools` 配列は毎リクエストで全リストです。ツール追加・削除専用の履歴メッセージはありません — Chat Completions にそのフィールドがないためです。 |
+| キャッシュミス | そのターンは、どの組み立て済みドキュメントが動いたかを `prefix_change=` で示します。エポックが変わり、すべてのドキュメントハッシュが一致する場合は、原因をでっち上げずに `unattributed` と表示します。 |
+| セッションのキャッシュ | キャッシュフィールドを持つ応答が一度でもあれば、以後の各ターンが `cache_session=` を 1 行記録します。hit/miss はトークン合計です。キャッシュフィールドのない応答は `unreported` で、miss には数えません。`deepseek-build run` と REPL はこの合計をセッションに保存し、resume が続きから数えます。フルスクリーンのステータスチップは依然として最後のターンの比率です。フルスクリーンのカウンターはセッションファイルに書き込まれず、新しいプロセスは 0 から始まります。 |
+| ログと食い違うリクエスト | サンプリング前にターンが失敗します。シリアライズできない項目もフェイルクローズします。 |
+| deny | 後からの allow は deny を置き換えません。 |
+
+意図的に取り入れなかったもの: plugin host、agent teams、sandbox escalation、
+request-series bookkeeping（`initial` / `resume` / `change`）、そして
+Anthropic Messages トランスポートです。本製品は DeepSeek Chat Completions を
+話します（[ADR 0005](docs/adr/0005-deepseek-provider-contract.md)）。
+
+すでに存在するため再移植しなかったもの: 巨大なツール結果の spill（先頭・末尾と
+残りのパス）、ウォームプレフィックスに合わせた compaction、dsh より厳しい
+snippet staleness。これらは dsh から新たに取り入れた機能ではありません。
+
+詳しくは: [dsh リサーチノート](docs/research/dsh-deepseek-harness.md) ·
+[今回の作業での変更](docs/product/CHANGELIST_6_1_0.md) ·
+[設計ソース](docs/product/SOURCES.md)。
 
 ## ドキュメント
 

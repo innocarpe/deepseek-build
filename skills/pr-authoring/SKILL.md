@@ -1,10 +1,10 @@
 ---
 name: pr-authoring
 description: >
-  Write and open DeepSeek Build pull requests to the Orca-level narrative bar:
-  Problem / What changed / Out of scope, evidence, honest Testing, AI review,
-  Security audit, Notes. Use when creating a PR, drafting a PR body, shipping
-  a branch, or when the user asks for PR conventions / reviewable units of work.
+  Use when writing or opening a PR. Opening it is not the end; CI, the merge,
+  and the report stay in session-unit. The body still meets the narrative bar:
+  Problem, What changed, Out of scope, evidence, Testing, AI review, Security,
+  Notes.
 ---
 
 # PR authoring (DeepSeek Build harness)
@@ -43,6 +43,9 @@ This skill is the **agent harness** for change delivery. It is not CI.
 10. After `gh pr create`, verify labels: `gh pr view --json title,labels,url`.
 11. **SemVer only:** version mentions must be full `MAJOR.MINOR.PATCH` (e.g. `1.0.0`), never bare `1.0`. See `docs/contributing/versioning.md`.
 12. **CLI names:** public docs prefer `deepseek-build`; `dsb` is the supported alias (ADR 0006).
+13. **Opening the PR is not the end of the unit.** CI, the merge commit, and
+    the report stay in `skills/session-unit`. This skill stops at the body and
+    `gh pr view --json title,labels,url`.
 
 ## Optional local helper (not required)
 
@@ -90,3 +93,6 @@ running from inside the tree.
 - [ ] Kind label present and matches title
 - [ ] Unit of work is coherent and revertable
 - [ ] You would accept this PR from a stranger
+
+The unit is not done when this skill is done. CI, the merge commit, and the
+report stay in `skills/session-unit`.

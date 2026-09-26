@@ -5,11 +5,11 @@ Agent-loadable skills (`SKILL.md` directories) live here.
 | Skill | When |
 |-------|------|
 | [`grok-sync/`](./grok-sync/SKILL.md) | Syncing the vendored Grok Build tree forward: pin vs upstream, adoption matrix, three-way merge, gates, ledger + changelist |
-| [`pr-authoring/`](./pr-authoring/SKILL.md) | Opening or writing PRs; enforcing Orca-level narrative bar |
-| [`release/`](./release/SKILL.md) | Cutting a release: bump, CHANGELOG, tag, prebuilt assets, npm publish |
+| [`pr-authoring/`](./pr-authoring/SKILL.md) | Writing or opening a PR body. Opening the PR is not the end of the unit; the close stays in `session-unit` |
+| [`release/`](./release/SKILL.md) | The user asked to ship a version. A child brief cannot drop this skill. Then bump, CHANGELOG, tag, assets, npm |
 | [`orca-tab/`](./orca-tab/SKILL.md) | Open an Orca tab or launch grok, dsb, codex, or claude. Run the recipes; do not read the full `orca` manual |
-| [`session-unit/`](./session-unit/SKILL.md) | Finish the opening unit (checks, commits, PR) and hand the next unit to a new Orca tab |
-| [`worktree-dispatch/`](./worktree-dispatch/SKILL.md) | From the control-tower checkout: create a worktree per unit of work, hand it to an agent session, merge and clean up |
+| [`session-unit/`](./session-unit/SKILL.md) | Default end of asked work: PR, CI, merge commit, report. Stop earlier only when that turn said so |
+| [`worktree-dispatch/`](./worktree-dispatch/SKILL.md) | One worktree per unit, then merge and clean up. A brief cannot shrink the user's turn |
 
 ## How coding agents load these
 

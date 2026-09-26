@@ -53,7 +53,10 @@ an investigation that decides whether the rest is even possible.
 ## 2. Non-negotiables
 
 1. **Do not touch the `6.0.0` release lane.** No version bump, no CHANGELOG
-   edit, no tag, no `npm publish`. Another session owns it.
+   edit, no tag, no `npm publish`. Another session owns that cut. This ban
+   was for `6.0.0`. A later user turn that asks to ship a version wins; do
+   not copy this bullet into a new brief as a live ban
+   (`skills/session-unit`, `scripts/check-session-close.sh brief`).
 2. **Do not touch `main` or the primary checkout.** You work in your own
    worktree; the primary checkout is a control tower that stays clean.
 3. **Do not touch another session's worktree.** One exists on

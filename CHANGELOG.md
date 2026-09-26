@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- On a phone-width pane, tap the one-line prompt echo to read the whole prompt in place. The opened echo stays at the top of the scrollback instead of jumping back to the latest line. Tap that first line to fold it again; tapping the rest of the text does not. Wider panes still open a folded prompt on a double-click.
+
 ## 6.1.1 — 2026-09-26
 
 - dsb no longer receives or displays xAI/Grok announcements (the shell strips them at the settings boundary; the pager never merges the remote layer).

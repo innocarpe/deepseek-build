@@ -5370,6 +5370,315 @@ fn scrollback_click_still_selects_entry_on_mouse_up() {
     let selected_after = app.agents.get(&id).unwrap().scrollback.selected();
     assert_eq!(selected_after, Some(0));
 }
+
+/// Long enough to fold at both the one-line phone budget and the three-line desktop budget.
+/// One sentence is about three rows at the width-blind estimate, so it would stay `Expanded` until a
+/// width is known. Repeating it exceeds both budgets once the pane has a width.
+fn foldable_prompt_echo() -> String {
+    "This is a long prompt that should be collapsed and truncated at narrow widths because it has plenty of words to wrap over many lines indeed. ".repeat(12)
+}
+
+fn draw_agent_at(agent: &mut AgentView, width: u16, height: u16) {
+    let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, width, height));
+    let _ = agent.draw(
+        ratatui::layout::Rect::new(0, 0, width, height),
+        &mut buf,
+        &ActionRegistry::defaults(),
+        &mut crate::scrollback::render::ScratchBuffer::new(),
+        None,
+        false,
+        crate::app::agent_view::BannerSlotParams::none(),
+        false,
+        &mut Vec::new(),
+        crate::app::agent_view::AppRenderParams::default(),
+    );
+}
+
+fn tap_cell(app: &mut AppView, col: u16, row: u16) {
+    let _ = app.handle_input(&left_mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        col,
+        row,
+    ));
+    let _ = app.handle_input(&left_mouse(MouseEventKind::Up(MouseButton::Left), col, row));
+}
+
+fn selectable_cell(agent: &AgentView, entry_idx: usize, line: usize) -> (u16, u16) {
+    let line = agent
+        .last_scrollback_selection_model
+        .ranges
+        .iter()
+        .find(|range| range.entry_idx == entry_idx)
+        .and_then(|range| range.lines.get(line))
+        .unwrap_or_else(|| panic!("entry {entry_idx} has no selectable line {line}"));
+    (line.screen_x + line.selectable_cols.start, line.screen_y)
+}
+
+fn echo_lines(agent: &AgentView, idx: usize) -> Vec<String> {
+    agent
+        .scrollback
+        .entry(idx)
+        .expect("prompt entry")
+        .cached_output_ref()
+        .lines
+        .iter()
+        .map(|line| {
+            line.content
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect()
+}
+
+/// Content above the prompt, then the echo, then a short tail. Following the tail leaves the echo
+/// on screen and not already at the content top, so a pin after the tap is observable.
+///
+/// The caller draws once before this, so `last_width` is the pane the echo folds against. A prompt
+/// pushed with no width yet keeps the width-blind default and skips that fold.
+fn push_foldable_echo(agent: &mut AgentView) -> usize {
+    for i in 0..12 {
+        agent
+            .scrollback
+            .push_block(crate::scrollback::RenderBlock::agent_message(format!(
+                "before {i}"
+            )));
+    }
+    let idx = agent.scrollback.len();
+    agent
+        .scrollback
+        .push_block(crate::scrollback::RenderBlock::user_prompt(
+            foldable_prompt_echo(),
+        ));
+    for i in 0..2 {
+        agent
+            .scrollback
+            .push_block(crate::scrollback::RenderBlock::agent_message(format!(
+                "after {i}"
+            )));
+    }
+    idx
+}
+
+fn prompt_mode(agent: &AgentView, idx: usize) -> crate::scrollback::types::DisplayMode {
+    agent.scrollback.entry(idx).expect("prompt").display_mode()
+}
+
+fn prompt_screen_top(agent: &AgentView, idx: usize) -> u16 {
+    let area = agent.pane_areas.scrollback;
+    let (rect, top_clipped, _) = agent
+        .scrollback
+        .entry_screen_area(idx, area)
+        .expect("prompt is on screen");
+    assert!(!top_clipped, "the echo's first line is above the viewport");
+    rect.y
+}
+
+#[test]
+fn phone_prompt_echo_tap_expands_in_place_and_pins_the_first_line() {
+    use crate::scrollback::types::DisplayMode;
+    let mut app = test_app_with_agent();
+    let id = super::super::agent::AgentId(0);
+    draw_agent_at(app.agents.get_mut(&id).unwrap(), 55, 40);
+    let prompt_idx = push_foldable_echo(app.agents.get_mut(&id).unwrap());
+    draw_agent_at(app.agents.get_mut(&id).unwrap(), 55, 40);
+
+    let agent = app.agents.get(&id).unwrap();
+    assert!(
+        agent.scrollback.is_follow_mode(),
+        "the pane starts by following the tail"
+    );
+    assert_eq!(prompt_mode(agent, prompt_idx), DisplayMode::Collapsed);
+    let collapsed = echo_lines(agent, prompt_idx);
+    assert_eq!(collapsed.len(), 1, "phone echo is one line: {collapsed:?}");
+    assert!(
+        collapsed[0].ends_with(" \u{2026}"),
+        "the one line keeps the ellipsis: {collapsed:?}"
+    );
+    let area_y = agent.pane_areas.scrollback.y;
+    let top_before = prompt_screen_top(agent, prompt_idx);
+    assert!(
+        top_before > area_y,
+        "precondition: the echo is visible below the content top (top {top_before}, area {area_y})"
+    );
+    let (col, row) = selectable_cell(agent, prompt_idx, 0);
+
+    tap_cell(&mut app, col, row);
+    draw_agent_at(app.agents.get_mut(&id).unwrap(), 55, 40);
+
+    let agent = app.agents.get(&id).unwrap();
+    assert_eq!(prompt_mode(agent, prompt_idx), DisplayMode::Expanded);
+    assert!(
+        echo_lines(agent, prompt_idx).len() > 1,
+        "opening the echo shows more than the one-line band"
+    );
+    assert!(
+        !agent.scrollback.is_follow_mode(),
+        "opening the echo leaves follow mode"
+    );
+    assert_eq!(
+        prompt_screen_top(agent, prompt_idx),
+        agent.pane_areas.scrollback.y,
+        "the opened echo's first line stays at the content top after the next frame"
+    );
+
+    // The second half of a double-tap lands on that first line and must not fold it shut.
+    let (col, row) = selectable_cell(agent, prompt_idx, 0);
+    tap_cell(&mut app, col, row);
+    draw_agent_at(app.agents.get_mut(&id).unwrap(), 55, 40);
+    let agent = app.agents.get(&id).unwrap();
+    assert_eq!(prompt_mode(agent, prompt_idx), DisplayMode::Expanded);
+    assert!(!agent.scrollback.is_follow_mode());
+
+    app.agents.get_mut(&id).unwrap().last_click = None;
+    let agent = app.agents.get(&id).unwrap();
+    let (body_col, body_row) = selectable_cell(agent, prompt_idx, 2);
+    assert!(body_row > row, "the body tap is below the first line");
+    tap_cell(&mut app, body_col, body_row);
+    draw_agent_at(app.agents.get_mut(&id).unwrap(), 55, 40);
+    assert_eq!(
+        prompt_mode(app.agents.get(&id).unwrap(), prompt_idx),
+        DisplayMode::Expanded,
+        "tapping the opened body does not fold"
+    );
+
+    app.agents.get_mut(&id).unwrap().last_click = None;
+    let agent = app.agents.get(&id).unwrap();
+    let (col, row) = selectable_cell(agent, prompt_idx, 0);
+    tap_cell(&mut app, col, row);
+    draw_agent_at(app.agents.get_mut(&id).unwrap(), 55, 40);
+    let agent = app.agents.get(&id).unwrap();
+    assert_eq!(prompt_mode(agent, prompt_idx), DisplayMode::Collapsed);
+    assert_eq!(
+        echo_lines(agent, prompt_idx).len(),
+        1,
+        "the first-line tap folds back to one line"
+    );
+}
+
+#[test]
+fn phone_prompt_echo_drag_does_not_toggle_fold() {
+    use crate::scrollback::types::DisplayMode;
+    let mut app = test_app_with_agent();
+    let id = super::super::agent::AgentId(0);
+    draw_agent_at(app.agents.get_mut(&id).unwrap(), 55, 40);
+    let prompt_idx = push_foldable_echo(app.agents.get_mut(&id).unwrap());
+    draw_agent_at(app.agents.get_mut(&id).unwrap(), 55, 40);
+    let (col, row) = selectable_cell(app.agents.get(&id).unwrap(), prompt_idx, 0);
+
+    let _ = app.handle_input(&left_mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        col,
+        row,
+    ));
+    let _ = app.handle_input(&left_mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        col + 3,
+        row,
+    ));
+    let _ = app.handle_input(&left_mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        col + 3,
+        row,
+    ));
+    draw_agent_at(app.agents.get_mut(&id).unwrap(), 55, 40);
+    let agent = app.agents.get(&id).unwrap();
+    assert_eq!(prompt_mode(agent, prompt_idx), DisplayMode::Collapsed);
+    assert_eq!(echo_lines(agent, prompt_idx).len(), 1);
+
+    // A release on a different cell, with no drag event, is still not a tap.
+    let (col, row) = selectable_cell(agent, prompt_idx, 0);
+    let _ = app.handle_input(&left_mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        col,
+        row,
+    ));
+    let _ = app.handle_input(&left_mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        col + 2,
+        row,
+    ));
+    draw_agent_at(app.agents.get_mut(&id).unwrap(), 55, 40);
+    assert_eq!(
+        prompt_mode(app.agents.get(&id).unwrap(), prompt_idx),
+        DisplayMode::Collapsed
+    );
+}
+
+#[test]
+fn wide_prompt_echo_single_click_selects_without_expanding() {
+    use crate::scrollback::types::DisplayMode;
+    let mut app = test_app_with_agent();
+    let id = super::super::agent::AgentId(0);
+    draw_agent_at(app.agents.get_mut(&id).unwrap(), 120, 40);
+    let prompt_idx = push_foldable_echo(app.agents.get_mut(&id).unwrap());
+    draw_agent_at(app.agents.get_mut(&id).unwrap(), 120, 40);
+
+    let agent = app.agents.get(&id).unwrap();
+    assert_eq!(prompt_mode(agent, prompt_idx), DisplayMode::Collapsed);
+    assert_eq!(
+        echo_lines(agent, prompt_idx).len(),
+        3,
+        "past the phone threshold the collapsed echo keeps the three-line budget"
+    );
+    let (col, row) = selectable_cell(agent, prompt_idx, 0);
+    tap_cell(&mut app, col, row);
+    draw_agent_at(app.agents.get_mut(&id).unwrap(), 120, 40);
+    let agent = app.agents.get(&id).unwrap();
+    assert_eq!(prompt_mode(agent, prompt_idx), DisplayMode::Collapsed);
+    assert_eq!(agent.scrollback.selected(), Some(prompt_idx));
+
+    tap_cell(&mut app, col, row);
+    draw_agent_at(app.agents.get_mut(&id).unwrap(), 120, 40);
+    assert_eq!(
+        prompt_mode(app.agents.get(&id).unwrap(), prompt_idx),
+        DisplayMode::Expanded,
+        "a double-click on a wide pane still folds the echo open"
+    );
+}
+
+#[test]
+fn phone_prompt_echo_tap_expands_under_word_select() {
+    use crate::appearance::TextSelection;
+    use crate::scrollback::types::DisplayMode;
+    crate::appearance::cache::set_keep_text_selection(TextSelection::WordSelect);
+    struct RestoreFlash;
+    impl Drop for RestoreFlash {
+        fn drop(&mut self) {
+            crate::appearance::cache::set_keep_text_selection(TextSelection::Flash);
+        }
+    }
+    let _restore = RestoreFlash;
+
+    let mut app = test_app_with_agent();
+    let id = super::super::agent::AgentId(0);
+    draw_agent_at(app.agents.get_mut(&id).unwrap(), 55, 40);
+    let prompt_idx = push_foldable_echo(app.agents.get_mut(&id).unwrap());
+    draw_agent_at(app.agents.get_mut(&id).unwrap(), 55, 40);
+
+    let (col, row) = selectable_cell(app.agents.get(&id).unwrap(), prompt_idx + 2, 0);
+    tap_cell(&mut app, col, row);
+    let agent = app.agents.get(&id).unwrap();
+    assert_eq!(
+        agent.scrollback.selected(),
+        Some(prompt_idx + 2),
+        "an assistant row still selects under word_select"
+    );
+    assert_eq!(prompt_mode(agent, prompt_idx), DisplayMode::Collapsed);
+
+    let (col, row) = selectable_cell(agent, prompt_idx, 0);
+    tap_cell(&mut app, col, row);
+    draw_agent_at(app.agents.get_mut(&id).unwrap(), 55, 40);
+    let agent = app.agents.get(&id).unwrap();
+    assert_eq!(prompt_mode(agent, prompt_idx), DisplayMode::Expanded);
+    assert!(echo_lines(agent, prompt_idx).len() > 1);
+    assert!(!agent.scrollback.is_follow_mode());
+    assert_eq!(
+        prompt_screen_top(agent, prompt_idx),
+        agent.pane_areas.scrollback.y
+    );
+}
 #[test]
 fn merge_escapes_both_some_concatenates() {
     let result = AppView::merge_escapes(

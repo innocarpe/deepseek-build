@@ -311,6 +311,11 @@ prompt; step 1 is an account-identity action and needs a person.
   `CARGO_TERM_COLOR` and `CARGO_INCREMENTAL` are part of the cache key and
   must match in both workflows. An archive over 6 GiB is not uploaded, and
   a pack failure does not fail the release.
+- **First cache.** `v6.1.0` ran before this workflow existed, so it
+  uploaded no archive and the seed saved nothing. `workflow_dispatch` on
+  `seed-release-cache.yml` builds the release agent on `main` and the
+  following job restores that cache. A cold count of compiled crates fails
+  that job.
 - **Honest limits.** The release that produces the first archive is still
   cold. A runner-image Rust upgrade changes the cache key. Non-Apple-Silicon
   users are outside the current product support boundary and receive a clear

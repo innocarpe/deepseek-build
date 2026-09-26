@@ -15,6 +15,10 @@ on:
   workflow_run:
     workflows: ["release-prebuilt"]
     types: [completed]
+  # The v6.1.0 tag ran the old workflow and uploaded no archive, so the
+  # workflow_run seed had nothing to save. Dispatch builds that archive's
+  # contents on main and checks the next job can restore them.
+  workflow_dispatch:
 
 permissions:
   actions: read
@@ -88,3 +92,106 @@ jobs:
             exit 1
           fi
           ./scripts/release-rust-cache.sh unpack "$archive"
+
+  warm:
+    name: build the first release cache
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-14
+    timeout-minutes: 120
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.0
+
+      - name: Install protoc
+        run: brew install protobuf || true
+
+      - name: Install dotslash (vendored protoc launcher)
+        run: |
+          if ! command -v dotslash >/dev/null 2>&1; then
+            cargo install dotslash
+          fi
+
+      - name: Open the release cache key
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            third_party/grok-build
+          shared-key: release-prebuilt-darwin-arm64
+          cache-all-crates: true
+          cache-workspace-crates: true
+          cache-provider: github
+          save-if: true
+
+      - name: Build the release agent
+        run: ./scripts/build-grok-pager.sh release
+
+  verify:
+    name: restore the release cache
+    needs: warm
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-14
+    timeout-minutes: 120
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.0
+
+      - name: Install protoc
+        run: brew install protobuf || true
+
+      - name: Install dotslash (vendored protoc launcher)
+        run: |
+          if ! command -v dotslash >/dev/null 2>&1; then
+            cargo install dotslash
+          fi
+
+      - name: Restore the release cache
+        id: cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            third_party/grok-build
+          shared-key: release-prebuilt-darwin-arm64
+          cache-all-crates: true
+          cache-workspace-crates: true
+          cache-provider: github
+          save-if: false
+
+      - name: Require a cache hit
+        run: |
+          echo "cache-hit=${{ steps.cache.outputs.cache-hit }}"
+          if [[ "${{ steps.cache.outputs.cache-hit }}" != "true" ]]; then
+            echo "::error::release cache was not restored" >&2
+            exit 1
+          fi
+
+      - name: Rebuild and count crates that were not cached
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/rebuild.log"
+          ./scripts/build-grok-pager.sh release 2>&1 | tee "$log"
+          compiling="$(grep -c '^   Compiling ' "$log" || true)"
+          echo "compiling=$compiling"
+          # A cold vendored build compiles well over a thousand crates.
+          # The version-stamped crates may rebuild; the rest must be cached.
+          if [[ "$compiling" -gt 40 ]]; then
+            echo "::error::restored cache still compiled ${compiling} crates" >&2
+            exit 1
+          fi

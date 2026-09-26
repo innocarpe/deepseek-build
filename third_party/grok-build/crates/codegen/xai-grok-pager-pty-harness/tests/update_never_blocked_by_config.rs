@@ -91,7 +91,17 @@ fn output(mut command: Command) -> Output {
 }
 
 /// Run `grok update` in a fresh isolated home against the local pointer base.
-fn run_update(base: &str, config_toml: &str, extra_args: &[&str]) -> Output {
+///
+/// `npm_version` is what the fake npm answers `npm view … --json` with: the
+/// updater parses that stdout, so an empty answer reads as a JSON EOF failure
+/// and turns the run into a non-config failure. `None` leaves npm silent, which
+/// is enough for the runs that never ask it.
+fn run_update(
+    base: &str,
+    config_toml: &str,
+    extra_args: &[&str],
+    npm_version: Option<&str>,
+) -> Output {
     let home = tempfile::tempdir().unwrap();
     std::fs::write(home.path().join("config.toml"), config_toml).unwrap();
     let exe = {
@@ -99,22 +109,35 @@ fn run_update(base: &str, config_toml: &str, extra_args: &[&str]) -> Output {
         pager_binary().expect("resolve pager binary")
     };
     let mut command = grok_command(&exe, home.path(), base);
-    // The product installs with npm. A successful no-op npm keeps this test
-    // on config handling instead of the public registry.
-    prepend_noop_npm(&mut command, home.path());
+    // The product installs with npm. A no-op npm keeps this test on config
+    // handling instead of the public registry.
+    prepend_fake_npm(&mut command, home.path(), npm_version);
     command.arg("update").args(extra_args);
     output(command)
 }
 
-/// `npm` that exits 0, ahead of the real one on `PATH`.
-fn prepend_noop_npm(command: &mut Command, home: &Path) {
+/// `npm` ahead of the real one on `PATH`, out of the public registry's way.
+///
+/// With `version_json`, it answers `npm view … --json` the way a successful
+/// query does — one JSON string (or array) on stdout. Silence is only a no-op
+/// for the runs that never query npm.
+fn prepend_fake_npm(command: &mut Command, home: &Path, version_json: Option<&str>) {
     let bin = home.join("fake-bin");
     std::fs::create_dir_all(&bin).unwrap();
     let npm = bin.join(if cfg!(windows) { "npm.cmd" } else { "npm" });
     let script = if cfg!(windows) {
-        "@echo off\r\nexit /b 0\r\n"
+        match version_json {
+            // cmd's echo prints the quotes; the JSON string has to survive.
+            Some(body) => format!("@echo off\r\necho {body}\r\nexit /b 0\r\n"),
+            None => "@echo off\r\nexit /b 0\r\n".to_owned(),
+        }
     } else {
-        "#!/bin/sh\nexit 0\n"
+        match version_json {
+            // Single quotes: the shell must print the JSON string's double
+            // quotes, or the parser sees `6.1.3` and reports trailing characters.
+            Some(body) => format!("#!/bin/sh\nprintf '%s\\n' '{body}'\n"),
+            None => "#!/bin/sh\nexit 0\n".to_owned(),
+        }
     };
     std::fs::write(&npm, script).unwrap();
     #[cfg(unix)]
@@ -159,17 +182,21 @@ fn corrupt_config_never_changes_update_outcome() {
     let body = Arc::new(Mutex::new("0.0.1".to_owned()));
     let (_listener, base) = spawn_pointer_server(body.clone(), Arc::default());
 
-    // Probe the binary's own version so the pointer matches it exactly.
-    let check = run_update(&base, "[cli]\n", &["--check", "--json"]);
+    // Probe the binary's own version so the pointer matches it exactly. The check
+    // never asks npm, so the silent stub is enough here.
+    let check = run_update(&base, "[cli]\n", &["--check", "--json"], None);
     let status: Value = serde_json::from_slice(&check.stdout)
         .unwrap_or_else(|e| panic!("update --check --json must emit JSON: {e}"));
     let current = status["currentVersion"]
         .as_str()
         .expect("currentVersion in update --check --json")
         .to_owned();
-    *body.lock().unwrap_or_else(|e| e.into_inner()) = current;
+    *body.lock().unwrap_or_else(|e| e.into_inner()) = current.clone();
+    // The plain run compares against npm's published version. Answer with this
+    // build's own, so "already up to date" is what the pointer says too.
+    let npm_answers = format!("\"{current}\"");
 
-    let valid = run_update(&base, "[cli]\n", &[]);
+    let valid = run_update(&base, "[cli]\n", &[], Some(&npm_answers));
     assert!(
         valid.status.success(),
         "healthy grok update against the local base must exit 0\nstdout:\n{}\nstderr:\n{}",
@@ -177,7 +204,7 @@ fn corrupt_config_never_changes_update_outcome() {
         String::from_utf8_lossy(&valid.stderr)
     );
 
-    let corrupt = run_update(&base, "this is not toml {{{[[[", &[]);
+    let corrupt = run_update(&base, "this is not toml {{{[[[", &[], Some(&npm_answers));
     assert!(
         corrupt.status.success(),
         "a corrupt config.toml must not block grok update\nstdout:\n{}\nstderr:\n{}",

@@ -17,9 +17,8 @@ const COLLAPSED_MAX_LINES: usize = 3;
 /// Width (in columns) at or below which a collapsed prompt drops to
 /// [`COLLAPSED_NARROW_MAX_LINES`]. The measured iPhone Orca pane is 55 columns
 /// (the narrowest desktop pane on the same machine is 80). One row names the
-/// turn and cuts the rest of the prompt; two rows keep enough of it to read,
-/// and the echo band has no vertical padding, so the extra row is one line of
-/// text. Anything wider keeps [`COLLAPSED_MAX_LINES`], so the desktop layout
+/// turn and cuts the rest of the prompt; two rows keep enough of it to read.
+/// Anything wider keeps [`COLLAPSED_MAX_LINES`], so the desktop layout
 /// is untouched.
 ///
 /// [`NARROW_TERMINAL_COLS`](crate::appearance::NARROW_TERMINAL_COLS) is the same
@@ -540,14 +539,16 @@ impl BlockContent for UserPromptBlock {
         appearance.scrollback.blocks.prompt.vpad && !appearance.prompt.compact
     }
 
-    /// On a phone-width pane the prompt echo is a two-row band, and the two blank pad rows around it cost as much
-    /// vertical space as the band itself. Drop the pad there. Wider panes keep the configured pad, so the desktop
-    /// rhythm is untouched. The threshold is the same [`COLLAPSED_NARROW_TERMINAL_COLS`] the narrow fold already uses.
+    /// The echo's pad is width-independent: it follows the configured `vpad` on
+    /// every pane so the band keeps the same minimal inset on all four sides.
+    /// The phone pane used to drop the pad because two blank rows cost as much
+    /// as the two-row band; the four-equal-sides rule replaced that, and one
+    /// row top and bottom is the smallest inset that reads as padding at all.
     ///
-    /// This rule survives the trait default's narrow-pane drop (`layout.narrow`) because it is the stricter one on a
-    /// mid-width pane: there the pane is wide but the echo's own content column is not.
-    fn has_vpad_for_width(&self, appearance: &AppearanceConfig, content_width: u16) -> bool {
-        content_width > COLLAPSED_NARROW_TERMINAL_COLS && self.has_vpad_for(appearance)
+    /// This rule bypasses the trait default's narrow-pane drop (`layout.narrow`)
+    /// on purpose: the pad is the echo's own shape, not the frame's density.
+    fn has_vpad_for_width(&self, appearance: &AppearanceConfig, _content_width: u16) -> bool {
+        self.has_vpad_for(appearance)
     }
 
     fn has_raw_mode(&self) -> bool {
@@ -1485,9 +1486,9 @@ mod tests {
     // ── Width-derived fold, pad, and the decorative arrow ──────────
 
     /// The measured iPhone pane is 55 columns (`stty -f /dev/<tty> size` on the Orca-managed dsb panes — the same
-    /// measurement PR #199 recorded). With the default chrome (accent + 2+2 pads) and the 10-column timestamp gutter,
-    /// the prompt's text wraps at 55 - 5 - 10 = 40 columns. 34 stands for that narrow band with a little margin, so
-    /// these tests stay valid if the pad widths move by a column.
+    /// measurement PR #199 recorded). The echo's text wraps at 55 - 2 (outer) - 2 (accent + the echo's own right pad)
+    /// - 8 (timestamp) = 43 columns. 34 stands for a narrower band than that with a little margin, so these tests stay
+    /// valid if the pad widths move by a column.
     ///
     /// This is the reported case: a ~100-column one-liner that the width-blind `is_foldable()` scores as two visual
     /// rows (under the three-row roomy budget), so the block called itself unfolded and the narrow budget never
@@ -1512,7 +1513,7 @@ mod tests {
     }
 
     #[test]
-    fn prompt_vpad_drops_at_phone_width() {
+    fn prompt_vpad_keeps_at_phone_width() {
         let block = UserPromptBlock::new("hello");
         let appearance = AppearanceConfig::default();
         assert!(
@@ -1520,8 +1521,8 @@ mod tests {
             "the default config must ask for vpad, or this test proves nothing"
         );
         assert!(
-            !block.has_vpad_for_width(&appearance, PHONE_CONTENT_WIDTH),
-            "a phone-width pane drops the prompt's blank pad rows"
+            block.has_vpad_for_width(&appearance, PHONE_CONTENT_WIDTH),
+            "the echo keeps one pad row top and bottom at every width"
         );
     }
 

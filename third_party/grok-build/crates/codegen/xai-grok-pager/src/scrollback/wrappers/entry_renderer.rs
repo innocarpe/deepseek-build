@@ -294,11 +294,26 @@ impl<'a> EntryRenderer<'a> {
     /// When [`Self::hide_accent`] is set the accent column is reclaimed, so chrome is just the block pads (typically zeroed in minimal mode).
     pub fn chrome_width(&self) -> u16 {
         let layout = &self.appearance().scrollback.layout;
-        let pads = layout.block_pad_left + layout.block_pad_right;
+        let pads = layout.block_pad_left + self.block_pad_right();
         if self.hide_accent {
             pads
         } else {
             HorizontalLayout::ACCENT + pads
+        }
+    }
+
+    /// The right pad this entry's block takes.
+    ///
+    /// The prompt echo closes one column inside the frame instead of two so its
+    /// band keeps the same minimal inset on all four sides; every other block
+    /// keeps the configured pad. Minimal mode (`hide_accent`) also keeps the
+    /// configured value: there the whole frame is flush and the echo owns no
+    /// band.
+    fn block_pad_right(&self) -> u16 {
+        if !self.hide_accent && self.entry.block.is_user_prompt() {
+            1
+        } else {
+            self.appearance().scrollback.layout.block_pad_right
         }
     }
 
@@ -544,11 +559,16 @@ pub(crate) fn timestamp_gutter_applies(block: &RenderBlock) -> bool {
 
 /// Width reserved on the right of a block's content for the timestamp overlay.
 ///
+/// The reservation is the string's own width, with no leading pad: the short
+/// format tops out at `"12:30 PM"` (8). The overlay is right-aligned to the
+/// entry's right edge, so the reserved columns sit flush against the frame
+/// rather than one pad inside it.
+///
 /// Free function so every caller that only has the appearance and the block computes the same reservation as
 /// [`EntryRenderer::timestamp_reserved`].
 pub(crate) fn timestamp_reserved_for(appearance: &AppearanceConfig, block: &RenderBlock) -> u16 {
     if appearance.show_timestamps && timestamp_gutter_applies(block) {
-        10 // max short format: "  12:30 PM"
+        8 // max short format: "12:30 PM"
     } else {
         0
     }
@@ -564,8 +584,16 @@ pub(crate) fn block_content_width_for(
     block: &RenderBlock,
     entry_area_width: u16,
 ) -> u16 {
+    // Mirror [`EntryRenderer::block_pad_right`]: the prompt echo spends one
+    // right pad column, not the configured two.
+    let layout = &appearance.scrollback.layout;
+    let pad_right = if block.is_user_prompt() {
+        1
+    } else {
+        layout.block_pad_right
+    };
     let chrome =
-        crate::scrollback::layout::HorizontalLayout::chrome_width(&appearance.scrollback.layout);
+        crate::scrollback::layout::HorizontalLayout::ACCENT + layout.block_pad_left + pad_right;
     entry_area_width
         .saturating_sub(chrome)
         .saturating_sub(timestamp_reserved_for(appearance, block))
@@ -658,7 +686,7 @@ impl Renderable for EntryRenderer<'_> {
             Constraint::Length(accent_w),
             Constraint::Length(layout_cfg.block_pad_left),
             Constraint::Min(1),
-            Constraint::Length(layout_cfg.block_pad_right),
+            Constraint::Length(self.block_pad_right()),
         ])
         .areas(area);
 
@@ -859,7 +887,12 @@ impl Renderable for EntryRenderer<'_> {
             buf.set_line_safe_bidi(content_area.x, row, &line.content, content_area.width);
 
             if own_gutter {
-                let gutter = Rect::new(content_area.x + text_width, row, ts_reserved, 1);
+                let gutter = Rect::new(
+                    area.right().saturating_sub(ts_reserved),
+                    row,
+                    ts_reserved,
+                    1,
+                );
                 fill_bg_spaces(buf, gutter, line_bg.unwrap_or(self.fallback_bg()));
             }
 
@@ -876,20 +909,21 @@ impl Renderable for EntryRenderer<'_> {
             && let Some(ts) = self.entry.created_at
         {
             let first_content_y = content_area.y + if vpad_top_visible { 1 } else { 0 };
-            // Check if mouse is hovering the timestamp zone (rightmost 10 cols of the first content row)
+            // Hover zone: the timestamp columns at the entry's right edge.
+            let ts_zone_x = area.right().saturating_sub(ts_reserved.max(1));
             let ts_hovered = self.mouse_pos.is_some_and(|(mx, my)| {
-                my == first_content_y
-                    && mx >= content_area.x + content_area.width.saturating_sub(10)
-                    && mx < content_area.x + content_area.width
+                my == first_content_y && mx >= ts_zone_x && mx < area.right()
             });
             let ts_str = if ts_hovered {
-                ts.format("  %H:%M:%S | %b %d").to_string()
+                ts.format("%H:%M:%S | %b %d").to_string()
             } else {
-                ts.format("  %-I:%M %p").to_string()
+                ts.format("%-I:%M %p").to_string()
             };
             let ts_width = ts_str.len() as u16;
             if content_area.width > ts_width + 1 && first_content_y < max_row {
-                let ts_x = content_area.x + content_area.width - ts_width;
+                // Flush to the entry's right edge: the time closes the row at
+                // the band's own right end, with no pad between them.
+                let ts_x = area.right().saturating_sub(ts_width);
                 let ts_style = Style::default().fg(self.theme.gray);
                 buf.set_string_safe(ts_x, first_content_y, &ts_str, ts_style);
             }
@@ -1052,13 +1086,8 @@ mod tests {
         assert_eq!(buf.cell((0, 1)).unwrap().symbol(), " ", "no rail");
         assert_eq!(
             buf.cell((1, 1)).unwrap().symbol(),
-            " ",
-            "the rail's gutter stays a gutter"
-        );
-        assert_eq!(
-            buf.cell((2, 1)).unwrap().symbol(),
             "T",
-            "content must not reflow"
+            "content must not reflow: the accent column is the whole left gutter"
         );
     }
 
@@ -1069,7 +1098,7 @@ mod tests {
         let renderer = EntryRenderer::new(&entry, &theme);
 
         // Area: 20 chars wide, 3 rows
-        // Layout: accent(1) + left_pad(1) + content(16) + right_pad(2) = 20
+        // Layout: accent(1) + content(17) + right_pad(2) = 20
         let area = Rect::new(0, 0, 20, 3);
         let mut buf = Buffer::empty(area);
         renderer.render(area, &mut buf);
@@ -1079,12 +1108,12 @@ mod tests {
         assert_eq!(buf.cell((0, 1)).unwrap().symbol(), "┃");
         assert_eq!(buf.cell((0, 2)).unwrap().symbol(), "┃");
 
-        // Content starts past the accent column and its gutter
+        // Content starts at the accent column's right edge (no left pad)
         // Row 0 = vpad (empty), row 1 = content "Test", row 2 = vpad
-        assert_eq!(buf.cell((2, 1)).unwrap().symbol(), "T");
-        assert_eq!(buf.cell((3, 1)).unwrap().symbol(), "e");
-        assert_eq!(buf.cell((4, 1)).unwrap().symbol(), "s");
-        assert_eq!(buf.cell((5, 1)).unwrap().symbol(), "t");
+        assert_eq!(buf.cell((1, 1)).unwrap().symbol(), "T");
+        assert_eq!(buf.cell((2, 1)).unwrap().symbol(), "e");
+        assert_eq!(buf.cell((3, 1)).unwrap().symbol(), "s");
+        assert_eq!(buf.cell((4, 1)).unwrap().symbol(), "t");
     }
 
     #[test]
@@ -1106,9 +1135,9 @@ mod tests {
             let mut buf = Buffer::empty(area);
             let renderer = EntryRenderer::new(&entry, &theme).with_tick(tick);
             renderer.render(area, &mut buf);
-            // Default layout: accent(1) + left_pad(1), so content starts at 2
+            // Default layout: accent(1) is the whole left gutter, so content starts at 1
             // Tool call header has no vpad, so bullet sits on row 0.
-            let cell = buf.cell((2, 0)).unwrap();
+            let cell = buf.cell((1, 0)).unwrap();
             assert_eq!(
                 cell.symbol(),
                 "◆",
@@ -1141,7 +1170,7 @@ mod tests {
         let renderer = EntryRenderer::new(&entry, &theme).with_tick(7);
         renderer.render(area, &mut buf);
 
-        assert_eq!(buf.cell((2, 0)).unwrap().symbol(), "◆");
+        assert_eq!(buf.cell((1, 0)).unwrap().symbol(), "◆");
     }
 
     /// Collect the symbols from a row range in the buffer into a String.
@@ -1151,17 +1180,11 @@ mod tests {
             .collect()
     }
 
-    /// Columns the entry reserves at its right edge (the block's right pad), so
-    /// timestamp assertions follow the layout config instead of a literal.
-    fn ts_right_inset(renderer: &EntryRenderer) -> u16 {
-        renderer.appearance().scrollback.layout.block_pad_right
-    }
-
-    /// The reserved timestamp gutter (rightmost `ts_reserved` content columns) for `width`.
-    /// Derived from the renderer geometry so tests self-adjust to the default layout padding instead of hard-coding column numbers.
+    /// The columns the timestamp closes on: the entry's own right edge. The
+    /// overlay is flush with it (no pad between the time and the frame), so the
+    /// band is the last `ts_reserved` columns of the entry area.
     fn gutter_band(renderer: &EntryRenderer, width: u16) -> std::ops::Range<u16> {
-        let content_right = width - renderer.appearance().scrollback.layout.block_pad_right;
-        (content_right - renderer.timestamp_reserved())..content_right
+        (width - renderer.timestamp_reserved())..width
     }
 
     /// Check that a right-aligned timestamp ending with "AM" or "PM" exists on a row.
@@ -1188,7 +1211,7 @@ mod tests {
         // UserPrompt has vpad=true, first content row is y=1.
         let expected = entry.created_at.unwrap().format("%-I:%M %p").to_string();
         let ts_width = expected.len() as u16;
-        let ts_x = width - ts_right_inset(&renderer) - ts_width;
+        let ts_x = width - ts_width;
         let content_row = 1u16;
 
         let rendered = collect_row_symbols(&buf, content_row, ts_x, ts_x + ts_width);
@@ -1213,7 +1236,7 @@ mod tests {
         // AgentMessage has vpad=false, first content row is y=0.
         let expected = entry.created_at.unwrap().format("%-I:%M %p").to_string();
         let ts_width = expected.len() as u16;
-        let ts_x = width - ts_right_inset(&renderer) - ts_width;
+        let ts_x = width - ts_width;
 
         let rendered = collect_row_symbols(&buf, 0, ts_x, ts_x + ts_width);
         assert_eq!(
@@ -1250,7 +1273,7 @@ mod tests {
             .format("%H:%M:%S | %b %d")
             .to_string();
         let ts_width = expected.len() as u16;
-        let ts_x = width - ts_right_inset(&renderer) - ts_width;
+        let ts_x = width - ts_width;
 
         let rendered = collect_row_symbols(&buf, 0, ts_x, ts_x + ts_width);
         assert_eq!(
@@ -1477,7 +1500,7 @@ mod tests {
         // AgentMessage has no vpad, so the first content row is y=0
         let expected = entry.created_at.unwrap().format("%-I:%M %p").to_string();
         let ts_width = expected.len() as u16;
-        let ts_x = width - ts_right_inset(&renderer) - ts_width;
+        let ts_x = width - ts_width;
         let rendered = collect_row_symbols(&buf, 0, ts_x, ts_x + ts_width);
         assert_eq!(
             rendered, expected,
@@ -1615,7 +1638,7 @@ mod tests {
     }
 
     #[test]
-    fn estimate_collapsed_phone_prompt_matches_two_row_band() {
+    fn estimate_collapsed_phone_prompt_matches_the_padded_band() {
         let _theme = pin_theme();
         let theme = Theme::current();
         let mut entry = ScrollbackEntry::new(RenderBlock::user_prompt("x".repeat(200)));
@@ -1623,13 +1646,13 @@ mod tests {
         let r = EntryRenderer::new(&entry, &theme);
         assert_eq!(
             r.desired_height(55),
-            2,
-            "exact collapsed phone echo is two rows and no pad"
+            4,
+            "exact collapsed phone echo is two content rows plus one pad row each side"
         );
         assert_eq!(
             r.estimate_height(55),
             r.desired_height(55),
-            "the off-screen estimate counts the same two rows"
+            "the off-screen estimate counts the same padded band"
         );
     }
 

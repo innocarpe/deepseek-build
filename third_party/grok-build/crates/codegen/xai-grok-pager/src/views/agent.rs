@@ -2075,7 +2075,7 @@ mod tests {
         let plain = base_params(area);
         assert_eq!(
             AgentViewLayout::rows_available_for_prompt(plain),
-            25 - 11,
+            25 - 12,
             "a frame with no optional row gives everything else to the prompt"
         );
         let with_rows = AgentViewLayoutParams {
@@ -2085,7 +2085,7 @@ mod tests {
         };
         assert_eq!(
             AgentViewLayout::rows_available_for_prompt(with_rows),
-            25 - 11 - 4,
+            25 - 12 - 4,
             "each row above the prompt takes its own height plus the gap above it"
         );
     }
@@ -2136,8 +2136,8 @@ mod tests {
             ..params
         });
         assert_eq!(
-            over_budget.status_line.height, 1,
-            "the row past the budget comes out of the status row, got {:?}",
+            over_budget.status_line.height, 2,
+            "the status block stays whole; the stable bottom row absorbs the extra line, got {:?}",
             over_budget.status_line,
         );
         assert_eq!(over_budget.scrollback.height, SCROLLBACK_MIN_ROWS);

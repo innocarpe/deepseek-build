@@ -4976,11 +4976,12 @@ mod status_line_draw_tests {
     const FIVE_ROW_SCRIPT: &str = "row-1\nrow-2\nrow-3\nrow-4\nrow-5";
     #[test]
     fn short_terminal_leaves_the_row_four_of_its_five_rows() {
-        let buf = draw_script(FIVE_ROW_SCRIPT, 16);
+        // Height 17: the DeepSeek bottom status row takes the line that 16 used to give the script.
+        let buf = draw_script(FIVE_ROW_SCRIPT, 17);
         let screen = dump(&buf);
         assert!(
             find(&buf, "row-4").is_some(),
-            "four rows are left over at height 16\n{screen}"
+            "four rows are left over at height 17\n{screen}"
         );
         assert!(
             find(&buf, "row-5").is_none(),

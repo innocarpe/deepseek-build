@@ -690,7 +690,7 @@ mod tests {
             .try_recv()
             .expect("shutdown escapes must ride the writer queue");
         assert!(
-            String::from_utf8_lossy(payload.data()).contains("grok"),
+            String::from_utf8_lossy(payload.data()).contains("DeepSeek Build"),
             "expected the title reset in the queued escape"
         );
         assert!(rx.try_recv().is_err(), "one combined payload expected");

@@ -105,6 +105,17 @@ struct Cli {
     )]
     resume: Option<String>,
 
+    /// Continue the most recent TUI session for this workspace (bare `dsb` /
+    /// `dsb agent` only). Mirrors the vendored `--continue` (Claude Code's `-c`).
+    #[arg(
+        long = "continue",
+        short = 'c',
+        global = true,
+        default_value_t = false,
+        conflicts_with_all = ["resume", "session"]
+    )]
+    continue_last: bool,
+
     /// Start the TUI in minimal mode (bare `dsb` / `dsb agent` only).
     #[arg(long, global = true, default_value_t = false)]
     minimal: bool,
@@ -253,6 +264,7 @@ Examples:\n  \
   {name} chat               # line-mode chat only (legacy)\n  \
   {name} --dogfood          # trusted local coding\n  \
   {name} --resume <id>      # resume a full-screen TUI session\n  \
+  {name} -c                 # continue the most recent TUI session\n  \
   {name} run \"explain this repo\"\n  \
   dsb"
     );
@@ -281,6 +293,10 @@ fn tui_forward_flags(cli: &Cli) -> Vec<String> {
             out.push(id.to_string());
         }
     }
+    if cli.continue_last {
+        // `dsb -c` → pager `--continue`: most recent session for this workspace.
+        out.push("--continue".to_string());
+    }
     // L3 / VC012: product `--worktree` must reach the agent (opt-in isolation).
     if let Some(name) = cli.worktree.as_deref() {
         if name.is_empty() {
@@ -304,16 +320,18 @@ fn tui_forward_flags(cli: &Cli) -> Vec<String> {
     out
 }
 
-/// `--resume` / `--minimal` / `--fullscreen` / `--worktree*` target the full-screen TUI only.
+/// `--resume` / `--continue` / `--minimal` / `--fullscreen` / `--worktree*`
+/// target the full-screen TUI only.
 fn reject_tui_only_flags(cli: &Cli) -> Result<()> {
     if cli.minimal
         || cli.fullscreen
         || cli.resume.is_some()
+        || cli.continue_last
         || cli.worktree.is_some()
         || cli.worktree_ref.is_some()
     {
         bail!(
-            "--resume/--minimal/--fullscreen/--worktree/--worktree-ref are TUI-only flags \
+            "--resume/--continue/--minimal/--fullscreen/--worktree/--worktree-ref are TUI-only flags \
              (use bare `{inv}` or `{inv} agent`).\n\
              Line-mode sessions use `--session <id>` instead.",
             inv = invocation_name()
@@ -1067,6 +1085,26 @@ mod tests {
     }
 
     #[test]
+    fn tui_forward_flags_continue() {
+        let long = Cli::try_parse_from(["dsb", "--continue"]).unwrap();
+        assert_eq!(tui_forward_flags(&long), vec!["--continue"]);
+        let short = Cli::try_parse_from(["dsb", "-c"]).unwrap();
+        assert_eq!(tui_forward_flags(&short), vec!["--continue"]);
+        let combined = Cli::try_parse_from(["dsb", "--minimal", "-c"]).unwrap();
+        assert_eq!(
+            tui_forward_flags(&combined),
+            vec!["--minimal", "--continue"]
+        );
+    }
+
+    #[test]
+    fn continue_conflicts_with_resume_and_session() {
+        assert!(Cli::try_parse_from(["dsb", "-c", "--resume"]).is_err());
+        assert!(Cli::try_parse_from(["dsb", "--continue", "-r", "sess-abc"]).is_err());
+        assert!(Cli::try_parse_from(["dsb", "-c", "--session", "s1"]).is_err());
+    }
+
+    #[test]
     fn tui_forward_flags_minimal_then_fullscreen_exclusive() {
         let minimal = Cli::try_parse_from(["dsb", "--minimal"]).unwrap();
         assert_eq!(tui_forward_flags(&minimal), vec!["--minimal"]);
@@ -1118,6 +1156,14 @@ mod tests {
         assert!(reject_tui_only_flags(&cli).is_err());
         let with_ref = Cli::try_parse_from(["dsb", "chat", "--worktree-ref", "main"]).unwrap();
         assert!(reject_tui_only_flags(&with_ref).is_err());
+    }
+
+    #[test]
+    fn reject_continue_on_line_mode() {
+        let run = Cli::try_parse_from(["dsb", "run", "hi", "--continue"]).unwrap();
+        assert!(reject_tui_only_flags(&run).is_err());
+        let chat = Cli::try_parse_from(["dsb", "chat", "-c"]).unwrap();
+        assert!(reject_tui_only_flags(&chat).is_err());
     }
 
     #[test]
@@ -1174,6 +1220,17 @@ mod tests {
         let mut fwd = tui_forward_flags(&cli);
         fwd.extend(args.iter().cloned());
         assert_eq!(fwd, vec!["--some-tui-only-flag"]);
+    }
+
+    #[test]
+    fn agent_forwards_continue() {
+        let cli = Cli::try_parse_from(["dsb", "agent", "-c"]).unwrap();
+        let Commands::Agent { args } = cli.command.as_ref().unwrap() else {
+            panic!("expected agent subcommand");
+        };
+        let mut fwd = tui_forward_flags(&cli);
+        fwd.extend(args.iter().cloned());
+        assert_eq!(fwd, vec!["--continue"]);
     }
 
     #[test]

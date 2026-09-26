@@ -386,6 +386,9 @@ fn fallback_reason(
         // A pre-dispatch rewrite kept every arm from running, so it is the only
         // account of why grove did not serve this worktree.
         .or_else(|| rewrite_reason.map(str::to_owned))
+        // This build's collector declines grove without recording a skip.
+        // The report still has to say why the request became a copy.
+        .or(Some("grove-unavailable".to_owned()))
 }
 
 pub(super) fn creating_progress(grove_enabled: bool) -> &'static str {
@@ -892,7 +895,7 @@ mod tests {
         })
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, feature = "grove-identities"))]
     #[test]
     fn drain_translates_ring_events_to_telemetry_structs_and_acks() {
         use xai_grok_telemetry::events::{
@@ -947,7 +950,7 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, feature = "grove-identities"))]
     #[test]
     fn drain_still_reports_logged_events_when_the_ack_fails() {
         use xai_grok_telemetry::events::{
@@ -1092,7 +1095,7 @@ mod tests {
         assert!(!REDIRECT_DRAIN_IN_FLIGHT.load(Ordering::Acquire));
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, feature = "grove-identities"))]
     #[test]
     fn drain_on_empty_ring_is_a_noop() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -1115,7 +1118,7 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, feature = "grove-identities"))]
     #[test]
     fn drain_against_an_old_daemon_logs_nothing() {
         let tmp = tempfile::TempDir::new().unwrap();

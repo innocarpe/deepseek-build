@@ -1,7 +1,7 @@
 //! Key shortcut types and the `key!()` macro.
 //!
 //! ```
-//! use xai_grok_pager::input::key::key;
+//! use xai_grok_pager_render::input::key::key;
 //!
 //! // Simple key
 //! let q = key!('q');

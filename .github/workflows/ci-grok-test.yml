@@ -2,8 +2,16 @@
 #
 # This is its own workflow so CI's cancel-in-progress cannot kill it. A later
 # push starts that workflow only when these paths change, so a docs merge does
-# not cancel a test already running. A newer grok push still cancels the older
-# run: the signal we want is the latest main, not every intermediate commit.
+# not cancel a test already running.
+#
+# A newer grok push queues behind the running run instead of killing it. The
+# suite needs ~20 min to compile the workspace plus ~12 min of tests, and vendor
+# pushes land every ~20 min on an active day, so `cancel-in-progress: true` left
+# every run dead before the test binaries started: measured 2026-09-26, six runs
+# in 3.5 h produced no completed verdict at all (4 killed, 2 cancelled). Queuing
+# keeps one run in flight and the newest pending one (GitHub's default `queue:
+# single` cancels the older *pending* run), so the newest main is still what gets
+# tested next — it just gets tested after the running one finishes.
 #
 # Do not add this check to branch protection. The workflow does not run on
 # docs-only PRs, and GitHub treats a required check that never ran as a failure.
@@ -20,13 +28,16 @@ on:
       - "scripts/test-grok-vendor-offline.sh"
       - "docs/architecture/GROK_VENDOR.md"
       - ".github/workflows/ci-grok-test.yml"
+  # Re-validate the current main without a new push (the suite is otherwise only
+  # reachable by merging another vendor change).
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
   group: ci-grok-test-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   grok_test:
@@ -71,5 +82,9 @@ jobs:
           save-if: true
       # Grove identity and redirect-protocol tests are behind the
       # `grove-identities` feature, which this build leaves off (`nfs_off`).
+      #
+      # `--no-fail-fast`: without it cargo stops at the first failing test
+      # target, so one flaky crate hides every crate after it (2026-09-26: a
+      # flake in `xai-fast-worktree` hid the whole `xai-grok-pager` suite).
       - name: Test vendored workspace
-        run: cargo test --workspace
+        run: cargo test --workspace --no-fail-fast

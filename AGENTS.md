@@ -188,6 +188,15 @@ without Orca the same rule is `git worktree add -b <type>/<slug> <path> origin/m
   `orca worktree create` alone leaves a shell prompt. The tower does not
   implement the unit by path. `codex` and `claude` only when the user named
   them.
+- **A worktree is created together with its owning session.** One action, not
+  two: grok, codex and claude come from `orca worktree create --agent <name> …`,
+  dsb from `dsb` sent into the launcher shell that create opens
+  ([`skills/orca-tab`](skills/orca-tab/SKILL.md)). The owning session — a tab
+  inside that worktree — carries the unit end to end: implementation, PR, CI,
+  merge commit, and `skills/release` when that turn asked for a version. A
+  session that creates a worktree and keeps driving it by path from another
+  checkout has not handed off; that is the empty-card defect, and the fix is
+  to open the owning session in the worktree at once and hand over.
 - **Open an Orca tab, or launch grok / dsb / codex / claude, with
   [`skills/orca-tab`](skills/orca-tab/SKILL.md).** Run those recipes. Do not
   run `orca skills get orca-cli` for that job, even when another skill says

@@ -387,13 +387,13 @@ impl<'a> EntryRenderer<'a> {
         if let Some(lines) = self.entry.cached_estimate_lines(content_width) {
             return lines;
         }
-        // Collapsed / Truncated foldable entries render a compact ~1-line header, NOT their (often huge) hidden body.
-        // Ask at this width so a prompt that only folds in a narrow pane is estimated at one row instead of its full
-        // body height.
+        // Collapsed / Truncated foldable entries render their collapse budget, NOT their (often huge) hidden body.
+        // A tool or thought header is one row. A prompt asks [`BlockContent::collapsed_row_budget`]: two rows in a
+        // phone-width pane, three on a wider one. Assuming one row under-counted the phone echo.
         let lines = if self.entry.display_mode != DisplayMode::Expanded
             && self.entry.is_foldable_at(content_width)
         {
-            1
+            self.entry.block.collapsed_row_budget(content_width)
         } else {
             self.entry.estimate_source_lines(content_width)
         };
@@ -1606,6 +1606,41 @@ mod tests {
             r.estimate_height(80),
             r.desired_height(80),
             "collapsed tool-call estimate must equal exact (compact header)"
+        );
+    }
+
+    #[test]
+    fn estimate_collapsed_phone_prompt_matches_two_row_band() {
+        let _theme = pin_theme();
+        let theme = Theme::current();
+        let mut entry = ScrollbackEntry::new(RenderBlock::user_prompt("x".repeat(200)));
+        entry.set_display_mode(DisplayMode::Collapsed);
+        let r = EntryRenderer::new(&entry, &theme);
+        assert_eq!(
+            r.desired_height(55),
+            2,
+            "exact collapsed phone echo is two rows and no pad"
+        );
+        assert_eq!(
+            r.estimate_height(55),
+            r.desired_height(55),
+            "the off-screen estimate counts the same two rows"
+        );
+    }
+
+    #[test]
+    fn estimate_collapsed_desktop_prompt_matches_three_row_band() {
+        let _theme = pin_theme();
+        let theme = Theme::current();
+        let mut entry = ScrollbackEntry::new(RenderBlock::user_prompt("x".repeat(600)));
+        entry.set_display_mode(DisplayMode::Collapsed);
+        let r = EntryRenderer::new(&entry, &theme);
+        let exact = r.desired_height(180);
+        assert_eq!(exact, 5, "three content rows plus the two desktop pad rows");
+        assert_eq!(
+            r.estimate_height(180),
+            exact,
+            "the off-screen estimate counts the three-row band"
         );
     }
 

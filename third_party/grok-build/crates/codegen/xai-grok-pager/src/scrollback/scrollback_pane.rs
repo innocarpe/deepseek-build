@@ -1309,6 +1309,33 @@ mod tests {
         );
     }
 
+    /// A phone-width pane paints the collapsed echo as two selectable rows. The layout height and the painted
+    /// selection model have to agree, or a tap on the second line misses the prompt.
+    #[test]
+    fn phone_width_collapsed_echo_paints_two_rows() {
+        let area = Rect::new(0, 0, 55, 41);
+        let mut state = ScrollbackState::new();
+        state.prepare_layout(area.width, area.height);
+        state.push_block(RenderBlock::user_prompt("x".repeat(200)));
+        let model = render_model(&mut state, area);
+        let lines: Vec<_> = model
+            .ranges
+            .iter()
+            .filter(|range| range.entry_idx == 0)
+            .flat_map(|range| range.lines.iter())
+            .collect();
+        assert_eq!(
+            lines.len(),
+            2,
+            "the pane publishes two rows for the collapsed phone echo: {lines:?}"
+        );
+        assert_eq!(
+            state.get_cached_entry_height(0),
+            Some(2),
+            "the painted band is the same two rows the layout reserved"
+        );
+    }
+
     // Pins the "caret offset ignores clipping" fix: the member caret sits one row below the slot top only while the header row is visible
     #[test]
     fn verb_member_indicator_row_tracks_header_clipping() {

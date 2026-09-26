@@ -392,6 +392,8 @@ fn effective_max_age_precedence() {
     );
 }
 
+// Grove pin sweep is declined while `nfs_off` is the collector.
+#[cfg(feature = "grove-identities")]
 #[test]
 fn run_pass_prunes_orphan_grove_pins_after_grace() {
     xai_test_utils::require_git!();

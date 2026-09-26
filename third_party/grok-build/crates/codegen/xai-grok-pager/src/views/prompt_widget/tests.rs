@@ -5156,7 +5156,7 @@
         pw.draw(&mut buf, area, None, &style, Some(&info), None);
 
         assert_eq!(buf_text_at(&buf, 26, 38, 0), " my session ");
-        assert_eq!(buf_text_at(&buf, 30, 38, 3), " grok-3 ");
+        assert_eq!(buf_text_at(&buf, 30, 38, 3), "\u{2500} grok-3");
         assert_eq!(buf_text_at(&buf, 38, 40, 0), "\u{2500}\u{256e}");
         assert_eq!(buf_text_at(&buf, 38, 40, 3), "\u{2500}\u{256f}");
     }

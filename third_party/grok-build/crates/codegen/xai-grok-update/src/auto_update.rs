@@ -2422,7 +2422,7 @@ fn install_npm(target: Option<&str>, channel: &str, npm_registry: Option<&str>) 
     warn_if_other_grok_processes_running();
 
     let version_arg = match target {
-        Some(ver) => format!("@xai-official/grok@{ver}"),
+        Some(ver) => format!("{}@{ver}", crate::version::NPM_PACKAGE),
         None => {
             // All current callers resolve the version via get_latest_version (max(stable, alpha) for the alpha channel) before reaching here
             // Falling back to a raw dist-tag would bypass that logic, so warn loudly if this path is ever hit
@@ -2431,7 +2431,8 @@ fn install_npm(target: Option<&str>, channel: &str, npm_registry: Option<&str>) 
                 "install_npm called without a resolved version, falling back to dist-tag"
             );
             format!(
-                "@xai-official/grok@{}",
+                "{}@{}",
+                crate::version::NPM_PACKAGE,
                 if channel == "alpha" {
                     "alpha"
                 } else {

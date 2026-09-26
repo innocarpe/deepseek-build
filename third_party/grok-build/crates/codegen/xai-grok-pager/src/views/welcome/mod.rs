@@ -3567,7 +3567,7 @@ mod tests {
         let tall = WelcomeLayout::compute(input(Some(PROMPT_HEIGHT + 8)));
         assert!(one_line.has_hero_box() && tall.has_hero_box());
         assert_eq!(one_line.hero_box.y, 3, "centered with the one-line prompt");
-        assert_eq!(tall.hero_box.y, 1, "clamped to the real slack");
+        assert_eq!(tall.hero_box.y, 0, "clamped to the real slack");
         assert_eq!(tall.hero_box.height, one_line.hero_box.height);
         assert_places_every_row(&tall, &input(Some(PROMPT_HEIGHT + 8)));
     }

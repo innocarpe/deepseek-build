@@ -131,9 +131,27 @@ pub(crate) fn materialize_runtime_socket_deny_paths_from(
                     Err(metadata_error) if metadata_error.kind() == io::ErrorKind::NotFound => {
                         continue;
                     }
+                    // The parent is missing and the endpoint itself cannot be
+                    // stated. Keep the lexical path: a root-only `/run/podman`
+                    // must not abort profile construction, and the deny still
+                    // names the well-known socket.
+                    Err(metadata_error)
+                        if metadata_error.kind() == io::ErrorKind::PermissionDenied =>
+                    {
+                        if !paths.contains(&candidate) {
+                            paths.push(candidate);
+                        }
+                        continue;
+                    }
                     Ok(_) => return Err(with_context(error)),
                     Err(metadata_error) => return Err(with_context(metadata_error)),
                 }
+            }
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                if !paths.contains(&candidate) {
+                    paths.push(candidate);
+                }
+                continue;
             }
             Err(error) => return Err(with_context(error)),
         };
@@ -141,6 +159,12 @@ pub(crate) fn materialize_runtime_socket_deny_paths_from(
         let metadata = match std::fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                if !paths.contains(&path) {
+                    paths.push(path);
+                }
+                continue;
+            }
             Err(error) => return Err(with_context(error)),
         };
         if metadata.file_type().is_symlink() {

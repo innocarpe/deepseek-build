@@ -129,6 +129,9 @@ path = "src/bin/workspace_server_probe.rs"
 
 [features]
 default = ["sandbox-enforce"]
+# Real grove control protocol. Off in this build (`nfs_off`), so the drain
+# tests that require a speaking client stay out of the binary.
+grove-identities = []
 compression = []
 test-support = []
 test-util = []

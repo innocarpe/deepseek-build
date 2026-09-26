@@ -252,7 +252,7 @@ mod tests {
     fn suggest_args_explicit_active_when_not_auto() {
         with_test_env(|| {
             theme_cache::set_auto_mode(false);
-            theme_cache::set(ThemeKind::GrokNight);
+            theme_cache::set(ThemeKind::DeepSeekNight);
             let cmd = ThemeCommand;
             let models = crate::acp::model_state::ModelState::default();
             let ctx = AppCtx {
@@ -268,14 +268,14 @@ mod tests {
                 current_title: None,
             };
             let items = cmd.suggest_args(&ctx, "").expect("should return items");
-            let groknight = items
+            let active = items
                 .iter()
-                .find(|i| i.insert_text == "groknight")
-                .expect("groknight should be in list");
+                .find(|i| i.insert_text == "deepseeknight")
+                .expect("deepseeknight should be in list");
             assert!(
-                groknight.description.contains("(active)"),
+                active.description.contains("(active)"),
                 "explicit theme should show (active), got: {}",
-                groknight.description
+                active.description
             );
         });
     }
@@ -333,7 +333,7 @@ mod tests {
             let mut matcher = crate::slash::matcher::FuzzyMatcher::new();
             for (alias, canonical) in [
                 ("transparent", "terminal"),
-                ("dark", "groknight"),
+                ("dark", "deepseeknight"),
                 ("system", "auto"),
             ] {
                 let hits = matcher.rank(&items, alias, items.len(), |item| &item.match_text);

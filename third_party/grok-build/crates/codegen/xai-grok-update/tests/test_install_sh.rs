@@ -467,13 +467,11 @@ fn install_scripts_refuse_bad_proxy_url_for_deployment_key() {
         eprintln!("skipping: install.sh not found relative to crate; run under cargo");
         return;
     };
-    let desktop = desktop_install_sh_path()
-        .expect("desktop install.sh must resolve when pager install.sh is present");
-
-    let mut scripts: Vec<(&str, PathBuf)> = vec![
-        ("install.sh", pager_install),
-        ("desktop install.sh", desktop),
-    ];
+    // grok-desktop is not part of this tree. Test it when the script is present.
+    let mut scripts: Vec<(&str, PathBuf)> = vec![("install.sh", pager_install)];
+    if let Some(desktop) = desktop_install_sh_path() {
+        scripts.push(("desktop install.sh", desktop));
+    }
     if let Some(enterprise) = script_path("install-enterprise.sh") {
         scripts.insert(1, ("install-enterprise.sh", enterprise));
     }
@@ -549,13 +547,11 @@ fn install_scripts_allow_custom_https_proxy_url() {
         eprintln!("skipping: install.sh not found relative to crate; run under cargo");
         return;
     };
-    let desktop = desktop_install_sh_path()
-        .expect("desktop install.sh must resolve when pager install.sh is present");
-
-    let mut scripts: Vec<(&str, PathBuf)> = vec![
-        ("install.sh", pager_install),
-        ("desktop install.sh", desktop),
-    ];
+    // grok-desktop is not part of this tree. Test it when the script is present.
+    let mut scripts: Vec<(&str, PathBuf)> = vec![("install.sh", pager_install)];
+    if let Some(desktop) = desktop_install_sh_path() {
+        scripts.push(("desktop install.sh", desktop));
+    }
     if let Some(enterprise) = script_path("install-enterprise.sh") {
         scripts.insert(1, ("install-enterprise.sh", enterprise));
     }

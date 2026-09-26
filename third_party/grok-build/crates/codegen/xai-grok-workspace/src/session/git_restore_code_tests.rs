@@ -1417,7 +1417,16 @@ async fn ensure_binding_forks_conv_branch_off_base_and_is_idempotent() {
             .await
             .unwrap()
     );
-    assert_eq!(Some(main_sha.clone()), res.head_sha);
+    // A fresh conversation branch commits the default .gitignore, so its
+    // head is ahead of the base. The base itself is not written.
+    let head = res.head_sha.expect("head");
+    assert_ne!(head, main_sha);
+    assert!(
+        git_cli(&work, &["ls-tree", "-r", "--name-only", "HEAD"])
+            .await
+            .unwrap()
+            .contains(".gitignore")
+    );
     std::fs::write(work.join("f.txt"), "x").unwrap();
     git_cli(&work, &["add", "-A"]).await.unwrap();
     git_cli(&work, &["commit", "-m", "conv work"])

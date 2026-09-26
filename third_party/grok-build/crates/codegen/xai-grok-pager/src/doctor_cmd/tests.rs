@@ -493,7 +493,7 @@ fn human_mixed_fixture_is_exact() {
             "  · byobu                        tmux\n",
             "  · ssh                          yes\n",
             "  · color                        256\n",
-            "  · themes                       5/8: deepseeknight-v2, deepseeknight, deepseeknight-neutral, grokday, terminal\n",
+            "  · themes                       5/8: grokday, terminal, deepseeknight-v2, deepseeknight, deepseeknight-neutral\n",
             "  · keyboard                     cmd=dropped, opt=native (OS rescue active)\n",
             "  · newline                      Alt+Enter (Cursor: xterm.js cannot distinguish Shift+Enter)\n",
             "\n",

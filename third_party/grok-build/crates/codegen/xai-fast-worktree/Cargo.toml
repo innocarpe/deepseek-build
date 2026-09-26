@@ -20,6 +20,9 @@ required-features = ["lifecycle-bench"]
 
 [features]
 default-bazel = ["metadata"]
+# Real grove NFS identity collection. This build compiles `nfs_off` and
+# leaves the feature off, so the collector tests stay out of the binary.
+grove-identities = []
 bench = []
 lifecycle-bench = [
     "metadata",

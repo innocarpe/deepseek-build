@@ -258,13 +258,14 @@ mod tests {
         let mut buffer = Buffer::empty(area);
         render_new_worktree_dialog(area, &mut buffer, &state);
 
-        // Cursor cell: `bg == text_primary` on RGB themes, SGR REVERSED
-        // where text_primary is Reset (which would match every untinted cell).
+        // The input paints the cursor with `Theme::block_cursor_over`.
         let theme = Theme::current();
+        let cursor = theme.block_cursor_over(theme.bg_dark);
         let is_cursor = |cell: &ratatui::buffer::Cell| {
-            cell.modifier.contains(ratatui::style::Modifier::REVERSED)
-                || (theme.text_primary != ratatui::style::Color::Reset
-                    && cell.bg == theme.text_primary)
+            let fg_ok = cursor.fg.is_none_or(|fg| cell.fg == fg);
+            let bg_ok = cursor.bg.is_none_or(|bg| cell.bg == bg);
+            let mod_ok = cell.modifier.contains(cursor.add_modifier);
+            fg_ok && bg_ok && mod_ok
         };
         assert!(
             (0..area.height)

@@ -174,7 +174,7 @@ fn enum_choice_gated_off_covers_voice_permission_and_terminal_theme() {
     for key in ["theme", "auto_dark_theme", "auto_light_theme"] {
         assert!(enum_choice_gated_off(key, "terminal", theme_off));
         assert!(!enum_choice_gated_off(key, "terminal", on));
-        assert!(!enum_choice_gated_off(key, "groknight", theme_off));
+        assert!(!enum_choice_gated_off(key, "deepseeknight", theme_off));
     }
 }
 

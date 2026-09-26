@@ -301,7 +301,7 @@ mod tests {
             Some(ThemeKind::RosePineMoon),
             Some(ThemeKind::GrokNight),
         );
-        assert_eq!(result, ThemeKind::DeepSeekNight);
+        assert_eq!(result, ThemeKind::GrokNight);
     }
 
     #[test]

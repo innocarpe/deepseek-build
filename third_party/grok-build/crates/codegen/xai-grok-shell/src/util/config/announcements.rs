@@ -1,7 +1,20 @@
 use toml::Value as TomlValue;
+use xai_grok_config_types::RemoteSettings;
 
 /// Announcement entry received from cli-chat-proxy `/v1/settings`.
 pub use xai_grok_announcements::RemoteAnnouncement;
+
+/// Removes the remote announcements from settings before they enter product state.
+///
+/// DeepSeek Build does not carry xAI/Grok announcements, so every writer of
+/// `cfg.remote_settings` funnels through this: the stored settings never hold
+/// an announcement and the announcements push gate has nothing to seed clients
+/// with. The display side holds the same line in [`resolve_announcements`];
+/// `GROK_ANNOUNCEMENTS_OVERRIDE` and the config TOML layers are untouched.
+/// See docs/architecture/GROK_VENDOR.md.
+pub fn strip_remote_announcements(settings: &mut RemoteSettings) {
+    settings.announcements = None;
+}
 
 // ---------------------------------------------------------------------------
 // Announcements & tips from TOML

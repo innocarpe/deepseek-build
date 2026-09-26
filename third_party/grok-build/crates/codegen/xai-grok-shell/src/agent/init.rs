@@ -284,7 +284,8 @@ fn install_settings_wait(
         settings_get::SettingsWait::Ready(outcome) => {
             if !outcome.install_allowed(cfg, warmed_auth) {
                 tracing::info!("startup settings discarded at consume: policy or identity changed");
-            } else if let Some(settings) = outcome.settings.clone() {
+            } else if let Some(mut settings) = outcome.settings.clone() {
+                crate::util::config::strip_remote_announcements(&mut settings);
                 cfg.remote_settings = Some(settings);
                 crate::util::config::set_remote_campaigns_from_settings(
                     cfg.remote_settings.as_ref(),
@@ -317,8 +318,9 @@ fn ensure_remote_settings_side_effects(
         if cfg.remote_settings.is_none()
             && let SettingsWait::Ready(outcome) = wait
             && outcome.install_allowed(cfg, warmed_auth)
-            && let Some(settings) = outcome.settings.clone()
+            && let Some(mut settings) = outcome.settings.clone()
         {
+            crate::util::config::strip_remote_announcements(&mut settings);
             cfg.remote_settings = Some(settings);
             crate::util::config::set_remote_campaigns_from_settings(cfg.remote_settings.as_ref());
         }

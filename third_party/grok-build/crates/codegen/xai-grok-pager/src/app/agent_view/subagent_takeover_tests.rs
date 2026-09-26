@@ -141,8 +141,8 @@ fn double_click_opens_the_linked_child_or_folds_the_message_row() {
         ),
     ] {
         let mut parent = parent_selecting(block, owns_child);
-        (parent.last_click, _) = parent.handle_scrollback_click(now, 0, false);
-        let _ = parent.handle_scrollback_click(again, 0, false);
+        (parent.last_click, _) = parent.handle_scrollback_click(now, 0, false, None);
+        let _ = parent.handle_scrollback_click(again, 0, false, None);
         let mode = parent.scrollback.entry(0).map(|entry| entry.display_mode);
         assert_eq!(
             (expected_child, Some(expected_mode)),

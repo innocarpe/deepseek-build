@@ -805,6 +805,8 @@ impl AgentView {
                 if self.active_pane == AgentPane::Scrollback {
                     if let Some((click_col, click_row)) = self.pending_scrollback_click.take() {
                         let now = Instant::now();
+                        // A drag-free tap is a release on the same cell. A moved release is a selection, not a fold.
+                        let same_cell = mouse.column == click_col && mouse.row == click_row;
                         if is_text_selection_on_double_click() {
                             let exact_text_hit = self
                                 .last_scrollback_selection_model
@@ -833,7 +835,11 @@ impl AgentView {
                                     }
                                     _ => false,
                                 };
-                                if handled {
+                                // The phone echo tap is a single click. word_select would return here and the echo would stay one line.
+                                let phone_echo_tap = same_cell
+                                    && text_click_count == 1
+                                    && self.phone_prompt_echo_tap_escapes_word_select(click_row);
+                                if handled && !phone_echo_tap {
                                     self.last_text_click = Some(TextClickState {
                                         time: now,
                                         entry_idx: hit.entry_idx,
@@ -873,8 +879,9 @@ impl AgentView {
                                         .scrollback
                                         .entry_screen_area(idx, self.pane_areas.scrollback)
                                         .is_some_and(|(a, _, _)| click_row == a.y);
-                                let (last_click, show_word_select_tip) =
-                                    self.handle_scrollback_click(now, idx, header_row_click);
+                                let tap_row = same_cell.then_some(click_row);
+                                let (last_click, show_word_select_tip) = self
+                                    .handle_scrollback_click(now, idx, header_row_click, tap_row);
                                 self.last_click = last_click;
                                 if show_word_select_tip {
                                     return InputOutcome::Action(Action::ShowWordSelectTip);
@@ -886,7 +893,7 @@ impl AgentView {
                             && last_count >= 2
                         {
                             let (last_click, show_word_select_tip) =
-                                self.handle_scrollback_click(now, last_idx, false);
+                                self.handle_scrollback_click(now, last_idx, false, None);
                             self.last_click = last_click;
                             if show_word_select_tip {
                                 return InputOutcome::Action(Action::ShowWordSelectTip);

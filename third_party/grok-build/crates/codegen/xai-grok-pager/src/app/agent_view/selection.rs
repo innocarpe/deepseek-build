@@ -1078,12 +1078,16 @@ impl AgentView {
 
     /// Handle a click on a scrollback entry with multi-click detection.
     /// It only fires while Text selection is still fold/nav (not `word_select`), so dispatch can teach `/settings → Text selection`.
+    /// A phone-width prompt echo is the exception: a same-cell tap expands or folds it even under `word_select`, because that setting would otherwise swallow the tap before this method runs.
     /// A lone double-click, or one on fold-affordance rows (headers, prompts, tool rows), never tips.
+    ///
+    /// `click_row` is the screen row of a drag-free tap (press cell equals release cell). `None` keeps the desktop click: select, and fold on double-click.
     pub(in crate::app) fn handle_scrollback_click(
         &mut self,
         now: Instant,
         idx: usize,
         header_row_click: bool,
+        click_row: Option<u16>,
     ) -> (Option<(Instant, usize, u8)>, bool) {
         let click_count = if let Some((last_time, last_idx, prev_count)) = self.last_click
             && last_idx == idx
@@ -1158,60 +1162,72 @@ impl AgentView {
 
         // Credit-limit URL click is handled upstream (before this method) so only the URL line is clickable, not the whole block
 
+        // A same-cell tap on a phone-width prompt echo expands the one-line band, or folds only its first row once open.
+        // The match below stays the desktop gesture (double-click fold). A second click inside the multi-click window must not undo the tap.
+        let phone_tap = click_count == 1
+            && click_row.is_some_and(|row| {
+                self.scrollback
+                    .apply_narrow_prompt_echo_tap(idx, row, self.pane_areas.scrollback)
+            });
+
         // Double-click on bg-task / subagent blocks (matched above) opens a viewer instead of folding
-        match click_count {
-            1 if is_plan_tool => {
-                self.show_plan_preview();
-            }
-            2 if is_bg_task => {
-                // Double-click bg task: open block viewer (same as Enter).
-                if let Some(entry) = self.scrollback.entry(idx)
-                    && let crate::scrollback::block::RenderBlock::BgTask(ref bt) = entry.block
-                    && let Some(task) = self.session.bg_tasks.get(&bt.task_id)
-                {
-                    let is_running = task.status == crate::app::agent::BgTaskStatus::Running;
-                    self.install_block_viewer(
-                        crate::views::block_viewer::BlockViewerPane::for_bg_task(
-                            entry.id,
-                            &bt.task_id,
-                            &task.stdout,
-                            is_running,
-                        ),
-                    );
+        if !phone_tap {
+            match click_count {
+                1 if is_plan_tool => {
+                    self.show_plan_preview();
                 }
-            }
-            2 if is_child_row => {
-                // Same as Enter; a message row whose child view is gone folds like any other tool row
-                if !self.try_open_child_from_selected_row() && foldable {
-                    self.scrollback.toggle_fold_selected();
+                2 if is_bg_task => {
+                    // Double-click bg task: open block viewer (same as Enter).
+                    if let Some(entry) = self.scrollback.entry(idx)
+                        && let crate::scrollback::block::RenderBlock::BgTask(ref bt) = entry.block
+                        && let Some(task) = self.session.bg_tasks.get(&bt.task_id)
+                    {
+                        let is_running = task.status == crate::app::agent::BgTaskStatus::Running;
+                        self.install_block_viewer(
+                            crate::views::block_viewer::BlockViewerPane::for_bg_task(
+                                entry.id,
+                                &bt.task_id,
+                                &task.stdout,
+                                is_running,
+                            ),
+                        );
+                    }
                 }
-            }
-            2 if is_workflow => {
-                if let Some(entry) = self.scrollback.entry(idx)
-                    && let crate::scrollback::block::RenderBlock::Workflow(ref wf) = entry.block
-                {
-                    let run_id = wf.run_id.clone();
-                    self.open_workflow_detail_by_run_id(&run_id);
+                2 if is_child_row => {
+                    // Same as Enter; a message row whose child view is gone folds like any other tool row
+                    if !self.try_open_child_from_selected_row() && foldable {
+                        self.scrollback.toggle_fold_selected();
+                    }
                 }
-            }
-            2 if is_prompt => {
-                if foldable {
-                    self.scrollback.toggle_fold_selected();
+                2 if is_workflow => {
+                    if let Some(entry) = self.scrollback.entry(idx)
+                        && let crate::scrollback::block::RenderBlock::Workflow(ref wf) = entry.block
+                    {
+                        let run_id = wf.run_id.clone();
+                        self.open_workflow_detail_by_run_id(&run_id);
+                    }
                 }
-                self.scrollback.scroll_to_entry_top(idx);
-            }
-            2 => {
-                if foldable {
-                    self.scrollback.toggle_fold_selected();
+                // Phone width: the single tap owns the echo. The second click of a double-tap must not fold it shut.
+                2 if is_prompt && self.scrollback.prompt_echo_is_phone_width() => {}
+                2 if is_prompt => {
+                    if foldable {
+                        self.scrollback.toggle_fold_selected();
+                    }
+                    self.scrollback.scroll_to_entry_top(idx);
                 }
-            }
-            3.. if !is_prompt => {
-                if foldable {
-                    self.scrollback.toggle_fold_selected();
+                2 => {
+                    if foldable {
+                        self.scrollback.toggle_fold_selected();
+                    }
                 }
-                self.scrollback.scroll_to_entry_top(idx);
+                3.. if !is_prompt => {
+                    if foldable {
+                        self.scrollback.toggle_fold_selected();
+                    }
+                    self.scrollback.scroll_to_entry_top(idx);
+                }
+                _ => {}
             }
-            _ => {}
         }
 
         let last_click = if click_count >= 3 {
@@ -1220,6 +1236,22 @@ impl AgentView {
             Some((now, idx, click_count))
         };
         (last_click, show_word_select_tip)
+    }
+
+    /// A phone-width prompt echo tap must reach [`Self::handle_scrollback_click`].
+    /// `word_select` returns from mouse-up before that call; this is the tap that return must not swallow.
+    pub(in crate::app) fn phone_prompt_echo_tap_escapes_word_select(&self, click_row: u16) -> bool {
+        let Some(idx) = self
+            .scrollback
+            .entry_index_at_screen_row(click_row, self.pane_areas.scrollback)
+        else {
+            return false;
+        };
+        self.scrollback.narrow_prompt_echo_tap_changes_fold(
+            idx,
+            click_row,
+            self.pane_areas.scrollback,
+        )
     }
 
     /// Return the correct selection model for a hit, accounting for the /btw overlay panel which has its own model.
@@ -2084,11 +2116,11 @@ mod tests {
     /// Run one double-click gesture (two clicks 100ms apart) at `t` on `idx`, threading `last_click` the way the mouse caller does.
     /// Returns the tip flag of the second click.
     fn double_click_gesture(agent: &mut AgentView, t: Instant, idx: usize) -> bool {
-        let (last, tip1) = agent.handle_scrollback_click(t, idx, false);
+        let (last, tip1) = agent.handle_scrollback_click(t, idx, false, None);
         assert!(!tip1, "a single click must never tip");
         agent.last_click = last;
         let (last, tip2) =
-            agent.handle_scrollback_click(t + Duration::from_millis(100), idx, false);
+            agent.handle_scrollback_click(t + Duration::from_millis(100), idx, false, None);
         agent.last_click = last;
         tip2
     }

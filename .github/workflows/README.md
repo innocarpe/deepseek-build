@@ -7,7 +7,9 @@ Build/test CI only — **no process-police** (PR title/label regex bots).
 | Workflow | File | Trigger | Role |
 |----------|------|---------|------|
 | **CI** | [`ci.yml`](./ci.yml) | PR / push to `main` | Build + test; one required check |
+| **CI grok test** | [`ci-grok-test.yml`](./ci-grok-test.yml) | push to `main`, grok paths | Vendored workspace tests. Not a required check |
 | **release-prebuilt** | [`release-prebuilt.yml`](./release-prebuilt.yml) | `v*.*.*` tag | Build + attach the `darwin-arm64` release tarball |
+| **seed-release-cache** | [`seed-release-cache.yml`](./seed-release-cache.yml) | `release-prebuilt` completes | Re-save that build's Rust artifacts on `main` |
 | **publish-npm** | [`publish-npm.yml`](./publish-npm.yml) | `v*.*.*` tag | Publish to npm over OIDC trusted publishing ([ADR 0012](../../docs/adr/0012-npm-trusted-publishing.md)) |
 
 ## Primary workflow
@@ -27,12 +29,17 @@ GitHub UI shows checks as `CI / <job>` (e.g. `CI / fmt`, `CI / test`, `CI / requ
 | `clippy` | rust paths | clippy |
 | `test` | rust paths | `cargo test --workspace` |
 | `semver` | version files | Cargo/npm SemVer match (no compile) |
+| `npm` | `npm/**`, `package.json` | `node --test npm/test/*.js` (hermetic, seconds) |
 | `release_verify` | release/publish paths | publish → verify retry guard, hermetic (no network) |
 | `session close` | harness-close paths | finish line stays in the loaded description window; brief fixtures (hermetic) |
 | `grok fmt` | grok paths | `cargo fmt --all -- --check` in `third_party/grok-build` (no rust-cache) |
 | `grok clippy` | grok paths | `cargo clippy --workspace -- -D warnings` there (libs and bins, not tests) |
-| `grok test` | grok paths, push to `main` only | `cargo test --workspace` there |
 | **`required`** | **always** | aggregate; branch protection requires this |
+
+`CI grok test` is not a job of this workflow. It runs on `main` when grok
+paths change, in its own concurrency group, so a docs push cannot cancel it.
+Do not require that check: docs PRs never start the workflow, and GitHub
+fails a required check that did not run.
 
 ```text
 PR / push
@@ -41,11 +48,11 @@ PR / push
          ├─ clippy ──────┤  (parallel if rust)
          ├─ test ────────┤
          ├─ semver ──────┤  (if version files)
+         ├─ npm ─────────┤  (if npm paths)
          ├─ release_verify ┤  (if release/publish paths)
          ├─ session close ┤  (if harness-close paths)
          ├─ grok fmt ────┤  (parallel if grok paths)
          ├─ grok clippy ─┤
-         ├─ grok test ───┤  (push to main only)
          └─ required (always) ← require this check only
 ```
 
@@ -63,29 +70,27 @@ report `test` and could not merge. So:
 |---------|--------|
 | Action | `Swatinem/rust-cache@v2` |
 | Compile cache families | `workspace-clippy-v2`, `workspace-test-v2`, `grok-build-clippy-v2`, `grok-build-test-v2` |
-| Base restore | PR clippy/test jobs first restore the stable `main` cache family with `save-if: false` |
-| PR/main save layer | A second cache step saves `*-pr-${{ github.event.pull_request.number }}` on pull requests and the stable `*-v2` key on `main` |
-| `cache-workspace-crates` | `true`. For the vendored Grok workspace this does not make workspace crates fresh: a full cache hit still rebuilds them, and the saved archive stays about the size of the dependency cache. `cache-all-crates` only changes registry pruning and stays `false`. |
-| `cache-on-failure` | `true`, so a failing PR clippy/test run can still save artifacts for reruns |
+| Who saves | `main` only (`save-if` is false on pull requests) |
+| Who restores | Pull requests restore the default-branch entry for that key |
+| `cache-workspace-crates` | `true` on CI jobs. A full hit still rebuilds changed workspace crates; the archive is about the size of the dependency cache. `cache-all-crates` stays `false` there. |
+| `cache-on-failure` | `true` on `main`, so a failing main run can still save |
 | `cache-provider` | Explicitly `github` |
 
-The first run for a PR may restore a stable base cache from `main`, compile the
-delta, and save a PR-number-scoped layer even when the job fails. Later runs of
-the same PR can restore that PR layer directly.
+Pull requests do not save a `*-pr-N` copy. That copy was immutable for the
+life of the key, and the vendored clippy archive was about 2 GB per PR. On
+2026-09-26 twelve entries totaled 11.37 GB against the 10 GB included limit,
+and the oldest entries were the ones a release needs. A PR rerun restores
+`main` and recompiles its delta.
 
-GitHub Actions caches are immutable: for a given PR/cache key, the first
-successfully saved entry is the one later runs restore until the key changes or
-GitHub evicts it. Bumping the cache family to `v2` lets `main` and PRs create
-fresh entries instead of full-hitting older `v1` caches and reporting
-`Cache up-to-date`.
-
-Sibling PRs do not share saved PR layers because pull request runs are scoped to
-their `refs/pull/.../merge` refs. They can still restore the stable `main` base
-cache before saving their own PR layer. This improves rerun latency but uses more
-GitHub cache storage; old entries remain subject to GitHub cache eviction.
+GitHub Actions caches are immutable: the first successful save of a key is
+the one later runs restore until the key changes or GitHub evicts it.
 
 `fmt` and `grok fmt` do not use rust-cache because they only run rustfmt and do
 not compile artifacts.
+
+`RUST_*` and `CARGO_*` are part of the cache key. `CI grok test` sets
+`RUST_MIN_STACK`, so it does not share `grok clippy`'s archive. That is
+deliberate: the test job's stack size must not retarget the clippy key.
 
 ## Path filters (skip expensive work)
 
@@ -94,6 +99,7 @@ not compile artifacts.
 | **rust** | `crates/**`, `Cargo.toml`, `Cargo.lock`, toolchain, rustfmt, clippy, this workflow |
 | **grok** | `third_party/grok-build/**`, grok patches, grok build/test scripts, `docs/architecture/GROK_VENDOR.md`, this workflow |
 | **semver** | `Cargo.toml`, `package.json`, check-semver scripts |
+| **npm** | `npm/**`, `package.json`, this workflow |
 | **release_verify** | `scripts/verify-npm-version.sh`, its test + mock, `release.sh`, `npm-emergency-publish.sh`, `publish-npm.yml` |
 
 Docs-only → `changes` + `required` only (~seconds).
@@ -113,8 +119,9 @@ branch protection.
 
 | Workflow | Publishes? | Notes |
 |----------|-----------|-------|
-| `release-prebuilt.yml` | No | Builds and attaches the release tarball; `contents: write` |
-| `publish-npm.yml` | **Yes** | OIDC trusted publishing; `id-token: write`, no npm secret |
+| `release-prebuilt.yml` | No | Builds and attaches the release tarball; `contents: write`. Restores the default-branch Rust cache and uploads an archive; it does not save a tag-scoped cache |
+| `seed-release-cache.yml` | No | After a successful prebuilt run, saves that archive on `main` so the next tag can restore it |
+| `publish-npm.yml` | **Yes** | OIDC on the macOS job. The wait runs on Linux and stops early if `release-prebuilt` has already failed |
 
 `publish-npm.yml` refuses to publish unless the release asset exists and the
 packaged agent executes and reports the release version (ADR 0009 ordering), so
@@ -146,6 +153,7 @@ cargo test --workspace
 cargo clippy --workspace -- -D warnings
 cargo fmt --all -- --check
 ./scripts/check-semver.sh && node npm/scripts/check-version-match.js
+node --test npm/test/*.js
 # workflow lint (matches what CI relies on):
 actionlint .github/workflows/*.yml
 # release / dogfood checklist (not a CI job):

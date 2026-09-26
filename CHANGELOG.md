@@ -2,13 +2,21 @@
 
 ## Unreleased
 
+## 6.1.1 — 2026-09-26
+
+- dsb no longer receives or displays xAI/Grok announcements (the shell strips them at the settings boundary; the pager never merges the remote layer).
 - A worktree is created together with its owning session: `AGENTS.md` and `skills/worktree-dispatch` §1 say the create and the agent tab are one action (grok/codex/claude `--agent`, dsb sent into the launcher shell), the owning session carries the unit through PR, CI, merge and `skills/release`, and a session that keeps driving a new worktree by path from another checkout has not handed off. `scripts/check-worktree-ownership.sh` reads that state live — a worktree with dirty work and no agent tab is a defect (exit 1, `--json`) — with a hermetic fixture test in `scripts/test-check-worktree-ownership.sh`.
 - A unit's final report closes with the **Session disposition** block (`skills/session-unit` Report, one line in `AGENTS.md` §One session, one unit): close now · more in this session · to hand off. Finishing and not saying so, or asking `혹시 …를 더 볼까요?`, is the measured shape the block replaces; the phrases are pinned needle by needle in `scripts/test-session-close.py`.
 - On a phone-width pane (60 columns or fewer) the model and mode label (`DeepSeek V4.1 Flash (max) · always-approve`) leaves the input box's bottom border and takes its own row below the box, and the keyboard-hint row (`Enter:send · Opt+Enter:newline · Shift+Tab:mode`, and every state-specific variant of it) is gone: the label row is the row the hints used to occupy, so the bottom stack is exactly as tall as before. The DeepSeek balance and cache-hit row is unchanged, and panes above 60 columns render exactly as they did.
-
 - The shared vendored Grok target is a queue, and it is now visible and gated: `scripts/vendor-build.sh status` reads the cargo file lock (`target/debug/.cargo-lock`) and reports holders, waiters, elapsed, command and worktree per process (exit 1 while busy) plus host free/swap/load5m with the memory-gate verdict; `clone` copies the target copy-on-write into `~/.cache/dsb-vendor-targets/<slug>` so a session builds without waiting (registry deps stay fresh; a copy that collides with a live writer is retried with backoff and then finished by a per-file clonefile walk that skips files the other build removed); `run -- <cmd>` passes a free queue through as-is and on a busy queue starts a second build only when the memory gate passes, in a clone with `CARGO_BUILD_JOBS=2` (refused otherwise: status printed, exit 1); `prune` frees idle clones. `AGENTS.md` and `skills/worktree-dispatch` say the queue and the deadlock rule — cargo called from inside a cargo build or test on a shared target is a real lock cycle, and nothing under `third_party/grok-build` does it today.
-
-
+- CI caches are scoped to `main`: pull-request jobs restore without saving, `grok test` runs in its own workflow so a docs push cannot cancel it, npm tests run when npm files change, and the publish wait no longer holds a macOS runner.
+- `release.sh` refuses to run in the primary checkout, so the main worktree cannot end up on a release branch; the guard has its own test.
+- The first release cache is seeded on `main` and checked in the same run: a dispatch job builds the release agent on main, and the next job fails unless the restore reports a cache hit with at most 40 crates recompiled.
+- A new worktree opens one tab: the launcher shell is the tab, `dsb` is sent into it, and a leftover prompt tab is closed only after the agent screen shows it is working.
+- The vendored suite is aligned with this build: theme and layout goldens follow the DeepSeek picker order and title, an unstatable runtime socket stays a lexical deny path, `install_npm` names `@innocarpe/deepseek-build`, the grove identity and redirect-protocol tests sit behind the off-by-default `grove-identities` feature, and the request/log check accepts the one agent-message label it used to reject. `CI grok test` runs the full `cargo test --workspace`; the name skip list (the twelve pager goldens the suite already failed, plus four grove tests, with `--no-fail-fast`) is gone.
+- The one-tab launch rule is pinned by a hermetic test, so an edit that drops those sentences fails the release verify job.
+- The four user-facing READMEs describe the DeepSeek Harness (dsh) as evidence rather than a fourth layer, with the cache lifecycle and the six session behaviors; `Everyday use` now names the 60-column prompt fold, the configurable status line, and Flash image attachments.
+- `skills/worktree-dispatch` and `GROK_VENDOR.md` carry the measured vendor-build fast path (a shared `CARGO_TARGET_DIR` built the pager in 2 min 56 s, and `cargo check -p <pkg> --all-targets` is the gate before a full test build), and `skills/session-unit` opens the PR as soon as the evidence exists because the longest checks run on GitHub.
 
 ## 6.1.0 — 2026-09-26
 

@@ -84,15 +84,24 @@ is silently skipped.
 9. **A child brief cannot drop this skill** when the user asked to ship a
    version. `skills/session-unit` owns that check
    (`scripts/check-session-close.sh brief`). The release steps stay here.
+10. **Do not run `release.sh` in the primary checkout.** That checkout stays
+    on `main`. On 2026-09-26 running it there executed
+    `git checkout -b chore/release-6.0.2` and left the main worktree on that
+    branch. The script now exits 1 in that tree
+    (`scripts/lib/refuse-primary-checkout.sh`). Create a linked worktree
+    first (`skills/worktree-dispatch`), then run the script there. A tag
+    checkout for the asset fallback is also that linked worktree, not the
+    primary checkout.
 
 ## Standard cycle
 
 ```bash
-# 1. Prepare (clean tree, on main)
-git fetch origin && git checkout main && git pull
+# 1. Linked worktree off origin/main. Not the primary checkout.
+#    orca worktree create …  or:
+#    git worktree add -b chore/release-4.0.4 <path> origin/main
 
-# 2. Bump + release orchestrator (creates PR, merges, tags, waits, publishes)
-./scripts/release.sh 4.0.4 --desc "one-line release note"
+# 2. Bump + release orchestrator, with cwd = that worktree
+(cd <path> && ./scripts/release.sh 4.0.4 --desc "one-line release note")
 
 # 3. Human verification
 npm i -g @innocarpe/deepseek-build@4.0.4
@@ -212,6 +221,7 @@ gh workflow run publish-npm.yml --ref v4.0.4
 | Local publish when CI could publish | Loses provenance and leaves the irreversible step off the audit trail |
 | `npm stage publish` then hand-approving every release | Works (it is how `5.6.0` shipped), but `approve` is interactive by design — it cannot run unattended |
 | "Fixing" an OIDC 403 by adding a bypass token | The bypass is being retired; fix the publisher or the workflow instead |
+| `release.sh` in the primary checkout | Checks out `chore/release-<ver>` there and leaves the main worktree off `main` |
 
 ## Done means
 

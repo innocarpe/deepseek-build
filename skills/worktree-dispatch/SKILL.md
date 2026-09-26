@@ -1,13 +1,34 @@
 ---
 name: worktree-dispatch
-description: "From the control tower: one worktree per unit, then merge and clean up. A brief cannot shrink the user's turn. Launch grok or dsb with orca-tab, not the orca manual."
+description: "Main worktree stays on main. Open grok or dsb in that worktree. A brief cannot shrink the user's turn."
 ---
 
 # Worktree dispatch (control-tower checkout)
 
-The primary checkout is the control tower: it stays on `main`, clean, and
-directs work ([AGENTS.md](../../AGENTS.md) §Control-tower checkout). Code
-changes happen in Orca worktrees — **one worktree = one branch = one PR.**
+The primary checkout is the control tower. Its checked-out branch is `main`.
+Code changes happen in a linked worktree — **one worktree = one branch = one PR.**
+([AGENTS.md](../../AGENTS.md) §Control-tower checkout).
+
+## The main worktree stays on `main`
+
+On 2026-09-26 `./scripts/release.sh 6.0.2` ran in the primary checkout. The
+script executed `git checkout -b chore/release-6.0.2` there, and the
+maintainer's main worktree was still on that branch after the release had
+merged. The sentence above was already in this file. It did not stop the
+checkout. `scripts/lib/refuse-primary-checkout.sh` now makes `release.sh`
+exit before it can edit or switch that tree. `scripts/test-refuse-primary-checkout.sh`
+pins the refusal.
+
+- The only git write in the primary checkout is `git pull --ff-only origin main`,
+  and only when the branch is already `main` and no tracked file is changed.
+- If you find it on another branch and `git status --porcelain --untracked-files=no`
+  is empty, put it back: `git checkout main` then `git pull --ff-only origin main`.
+  If anything tracked is dirty, stop and report. Do not commit there to finish
+  the move.
+- A branch, a commit, and `release.sh` go in a linked worktree. Without Orca:
+  `git worktree add -b <type>/<slug> <path> origin/main`.
+- Do not `git checkout -b` in the primary checkout. That is the move the guard
+  exists to stop.
 
 This skill is the worktree lifecycle. Launching the agent tab — grok, codex,
 claude, or dsb — is [`orca-tab`](../orca-tab/SKILL.md). Do not run
@@ -63,51 +84,41 @@ Variables used below:
   processes carry that output path; the parent `cargo` does not). It is a
   hint, not a lock — when in doubt, ask the other sessions.
 
-## 1. Create the worktree — and know the tabs it comes with
+## 1. Open the worktree with the agent already in it
 
-```sh
-orca worktree create --repo path:"$TOWER" --name <slug> --no-parent --setup skip --json
-```
+A unit has started when `orca terminal list` for that worktree shows a tab
+whose screen is `dsb` or `grok` (or `codex` / `claude` when the user named
+them), working on the brief. A card whose only tab is a shell `❯` has not
+started.
 
-- `<slug>` is a short kebab description **without** the type prefix
-  (`provider-retry-backoff`). Orca turns `/` into `-`, so `feat/x` would become
-  `feat-x`; the type goes on the branch in step 2.
-- `--no-parent` marks an independent unit. Omit `--base-branch` so the repo
-  default (`origin/main`) is used. Stack on an open PR only on purpose:
-  `--base-branch <that PR's branch>` and `Depends on #N` in the PR body.
-- **`--setup skip` unless the unit needs the repo bootstrap.** Passing `run`
-  (or omitting the flag where the repo defines hooks) starts an `npm install`
-  in a tab of its own; it is slow, and it **fails loudly when the current
-  version's prebuilt asset is not published yet** — the run we measured
-  fetched `deepseek-build-6.0.0-darwin-arm64.tar.gz` and got a 404. The failure
-  is harmless but the tab stays.
-- From the JSON result keep `result.worktree.id` → `WT_ID` and
-  `result.worktree.path` → `WT`.
+On 2026-09-26 the bare create below left `pin-tower-main`,
+`ci-cache-and-coverage`, and `deepseek-native-depth-6-1-0` as that shell.
+The grok tabs that wrote the code were on the primary checkout. Orca on
+iOS showed the same empty cards. The commands live in
+[`orca-tab`](../orca-tab/SKILL.md). Do not restate them, and do not run
+`orca skills get orca-cli`.
 
-### `create` opens tabs you did not ask for — count them, then decide
+- The user named `grok`, or named `codex` or `claude`: `orca-tab` §2.
+  One `worktree create --agent <that name> --prompt …`. Do not also run a
+  bare create.
+- The user named `dsb` or `deepseek-build`, or named no agent: `orca-tab`
+  §3, then §1 with `--command dsb`. `--agent dsb` is rejected. This repo's
+  unnamed session is `dsb`. `grok` is the other session used here. Do not
+  launch `codex` or `claude` unless the user named them.
+- The worktree already exists and only has a shell: `orca-tab` §1 in that
+  worktree before any edit. Do not create a second tree.
 
-**Measured 2026-09-25, Orca `1.4.210`.** `create` always opens the launcher
-shell, and running the repo hooks opens a second tab:
+`<slug>` has no type prefix (`provider-retry-backoff`). Orca turns `/` into
+`-`. `--no-parent` unless the unit stacks. Omit `--base-branch` so the base
+is `origin/main`. `--setup skip` unless the unit needs the repo bootstrap.
+`run` starts `npm install` and fails loudly when that version's prebuilt
+asset is not published yet (measured: `deepseek-build-6.0.0-darwin-arm64.tar.gz`
+404). Keep `result.worktree.id` and `result.agentTerminalHandle` (dsb: the
+handle from `terminal create`).
 
-| `--setup` | Tabs the new worktree gets | Titles |
-|---|---|---|
-| `skip` | **1** | the launcher shell |
-| `run` (or omitted where hooks exist) | **2** | the launcher shell + `Setup` (the hook's run) |
-
-```sh
-orca terminal list --worktree "id:$WT_ID" --json    # before you add your own
-```
-
-**Read a tab before closing it.** `orca terminal close --terminal <handle>` is
-not undoable, and a `Setup` tab that failed still holds the error text worth
-reporting.
-
-**This create does not launch an agent.** To open grok, codex, claude, or dsb,
-follow [`orca-tab`](../orca-tab/SKILL.md) — its §2 or §3 includes the create.
-Do not run the command above and then add an agent tab on top. For grok,
-codex, and claude that one-step launch is one tab. Creating here, letting
-hooks run, and then adding an agent by hand is three. dsb cannot use
-`--agent`, so `orca-tab` §3 is the create and §1 is the tab.
+The bare create still opens a launcher shell (`skip`: one shell; `run`:
+shell plus `Setup`). Read a tab before `terminal close`. Closing is not
+undoable. That shell is not the session.
 
 ## 2. Name the branch
 
@@ -124,27 +135,14 @@ git -C "$WT" config user.email             # the identity you commit to this rep
 Orca can keep showing the old branch name for a moment. Address the worktree by
 `id:` or `path:`, not `branch:`.
 
-## 3a. Work it from the tower, by path
+## 3. The agent in the worktree writes the unit
 
-A short unit can be done by the tower session itself. Never `cd` into the tree
-and stay there — target it per command:
+The tower does not implement the diff. `git -C "$WT"` from the tower is for
+status, the merge, and cleanup. Writing the files from the tower is how the
+card stays a shell while a grok tab on `main` does the work. That is the
+2026-09-26 shape, and it is not a unit.
 
-| Tool | Target |
-|------|--------|
-| `git` | `git -C "$WT" …` |
-| `cargo`, `scripts/*.sh`, `npm` | subshell: `(cd "$WT" && cargo test -p dsb-cli)` |
-| `gh` | `--repo innocarpe/deepseek-build`, token per command (AGENTS.md); `gh pr create` also needs `--head <type>/<slug>`, since it reads the head branch from cwd |
-| file edits | absolute paths under `$WT` |
-
-## 3b. Open the agent session
-
-Follow [`orca-tab`](../orca-tab/SKILL.md). Do not restate its commands here,
-and do not run `orca skills get orca-cli` to fill them in.
-
-- grok, codex, claude: `orca-tab` §2. One create. Do not also run §1.
-- dsb / deepseek-build: `orca-tab` §3, then §1 with `--command dsb`.
-  `--agent dsb` is rejected.
-- A tab in a worktree that already exists: `orca-tab` §1.
+The agent tab is §1. The brief it receives:
 
 What a brief carries:
 
@@ -237,11 +235,12 @@ Then refresh the tower — only when it is on `main` with no changes to tracked
 files:
 
 ```sh
-if [ "$(git -C "$TOWER" branch --show-current)" != main ]; then
-  echo "tower is not on main; not pulling"
-elif [ -n "$(git -C "$TOWER" status --porcelain --untracked-files=no)" ]; then
-  echo "tower has uncommitted changes; not pulling:"
+if [ -n "$(git -C "$TOWER" status --porcelain --untracked-files=no)" ]; then
+  echo "tower has uncommitted changes; not moving it:"
   git -C "$TOWER" status --short --untracked-files=no
+elif [ "$(git -C "$TOWER" branch --show-current)" != main ]; then
+  git -C "$TOWER" checkout main
+  git -C "$TOWER" pull --ff-only origin main
 else
   git -C "$TOWER" pull --ff-only origin main
 fi
@@ -261,8 +260,10 @@ worktree whose agent was mid-build (2026-09-25).
 
 | Don't | Why |
 |-------|-----|
-| Edit or commit in the primary checkout | Tower sessions share its index; the change lands in someone else's diff |
-| Create the worktree, then add an agent tab by hand when `--agent <id>` would have worked | Leaves `Terminal 1` and `Setup` tabs the unit never needed — three tabs for one job |
+| Edit, commit, or `git checkout -b` in the primary checkout | That tree stays on `main`. On 2026-09-26 `release.sh` left it on `chore/release-6.0.2` |
+| Run `release.sh` in the primary checkout | The script refuses (`scripts/lib/refuse-primary-checkout.sh`) and exits 1 |
+| `orca worktree create` with no agent, then edit from the tower | The card stays a shell prompt. On 2026-09-26 three worktrees looked empty in Orca, including on iOS |
+| Create the worktree, then add an agent tab by hand when `--agent <id>` would have worked | For grok, codex, and claude, §2 of `orca-tab` is one create. dsb cannot use `--agent` |
 | Re-run `create` because you could not parse the handle | The side effect already happened; ask `terminal list` instead |
 | `orca skills get orca-cli` before launching grok or dsb | The recipes are in `orca-tab`. The full guide is what stalls the turn |
 | `terminal send … --enter` right after `tui-idle` without reading the screen | A first-run dialog swallows the brief and exits the agent (`orca-tab` §4) |

@@ -57,9 +57,13 @@ Title/label discipline is **process**, not a GitHub Actions gate.
 
 ## Workflow sketch
 
+Run this in a linked worktree. The primary checkout stays on `main`.
+`git checkout -b` there is how that tree left `main` on 2026-09-26
+(`chore/release-6.0.2`). See `skills/worktree-dispatch`.
+
 ```bash
-git fetch origin && git checkout main && git pull
-git checkout -b <type>/<short-kebab>
+# inside the linked worktree, already branched off origin/main
+git fetch origin && git pull --ff-only
 # … work …
 git push -u origin HEAD
 gh pr create --base main \
@@ -69,13 +73,11 @@ gh pr create --base main \
 gh pr view --json title,labels,url
 ```
 
-**Control-tower mode** (parallel sessions in Orca worktrees, AGENTS.md
-§Control-tower checkout): the worktree already has its branch
-(`skills/worktree-dispatch`), so skip the first two lines. Do not
-`git checkout main` there — `main` is checked out in the primary checkout. Run
-the rest against the worktree: `git -C "$WT" push -u origin HEAD`, and add
-`--repo innocarpe/deepseek-build --head <branch>` to the `gh` calls when not
-running from inside the tree.
+**Control-tower mode** (AGENTS.md §Control-tower checkout): the linked
+worktree already has its branch (`skills/worktree-dispatch`). Do not create
+that branch in the primary checkout; that checkout stays on `main`. Push with
+`git -C "$WT" push -u origin HEAD`, and add `--repo innocarpe/deepseek-build
+--head <branch>` to the `gh` calls when not running from inside the tree.
 
 ## Anti-patterns
 

@@ -13,7 +13,7 @@ use crate::scrollback::block::{BlockContent, RenderBlock};
 use crate::scrollback::entry::ScrollbackEntry;
 use crate::scrollback::layout::HorizontalLayout;
 use crate::scrollback::render::{ScratchBuffer, render_scrolled_entries_with_selection_boundaries};
-use crate::scrollback::selection::{RenderOutput, ScrollInfo, SelectionBox};
+use crate::scrollback::selection::{RenderOutput, ScrollInfo, SelectionBox, hug_padded_band};
 use crate::scrollback::state::{ScrollbackState, ViewMode};
 use crate::scrollback::sticky::{PromptDescriptor, StickyHeaderLayout, compute_sticky_layout};
 use crate::scrollback::text_selection::{
@@ -400,10 +400,17 @@ impl ScrollbackPane {
                     // When clip_top == 0, the full header is visible (just fading), so show full border
                     let top_clipped = pushed.clip_top > 0;
 
-                    let sel_box =
-                        SelectionBox::new(selection_area, Style::default().fg(border_color))
-                            .with_top_clipped(top_clipped)
-                            .with_bottom_clipped(false);
+                    // A sticky header is a prompt echo: pull the box onto the band's own pad rows, hugging the
+                    // top only while its pad row is still on screen (clip_top > 0 means it has scrolled out).
+                    let hugs_pad = state
+                        .entry(pushed.entry_idx)
+                        .is_some_and(|entry| entry.block.selection_hugs_vpad(state.appearance()));
+                    let box_area =
+                        hug_padded_band(selection_area, hugs_pad && !top_clipped, hugs_pad);
+
+                    let sel_box = SelectionBox::new(box_area, Style::default().fg(border_color))
+                        .with_top_clipped(top_clipped)
+                        .with_bottom_clipped(false);
 
                     pushed_header_selection_box = Some(sel_box);
                 }
@@ -458,10 +465,18 @@ impl ScrollbackPane {
             // Check if there's room for top corners
             let top_clipped = screen_row == 0 && area.y == 0;
 
-            let sel_box =
-                SelectionBox::new(selection_area, Style::default().fg(theme.selection_border))
-                    .with_top_clipped(top_clipped)
-                    .with_bottom_clipped(false);
+            // The pinned header is a prompt echo: pull the box onto the band's own pad rows. A pulled top gives
+            // the corner the header's own first row, so the "no room above" flag only stands while it stays
+            // un-pulled.
+            let hugs_pad = state
+                .entry(entry_idx)
+                .is_some_and(|entry| entry.block.selection_hugs_vpad(state.appearance()));
+            let box_area = hug_padded_band(selection_area, hugs_pad, hugs_pad);
+            let top_clipped = top_clipped && box_area.y == selection_area.y;
+
+            let sel_box = SelectionBox::new(box_area, Style::default().fg(theme.selection_border))
+                .with_top_clipped(top_clipped)
+                .with_bottom_clipped(false);
 
             pinned_header_selection_box = Some(sel_box);
         }
@@ -1076,14 +1091,29 @@ impl ScrollbackPane {
             if sel_range.len() <= 1 {
                 // Singleton (non-groupable, or expanded in Mode B, or lone groupable):
                 // Use the individual entry's area directly
-                let top_clipped = selected.top_clipped
-                    || (selected.area.y == content_area.y && content_area.y == 0);
+                let top_cut_off = selected.top_clipped;
+                let top_clipped =
+                    top_cut_off || (selected.area.y == content_area.y && content_area.y == 0);
                 let bottom = selected.area.y + selected.area.height;
                 let bottom_clipped =
                     selected.bottom_clipped || bottom > content_area.y + content_area.height;
 
+                // The echo's pad rows are its own edges: pull the box in so the corners land on the pad
+                // rather than on the gap rows around the band. Clip flags still gate each side.
+                let hugs_pad = state
+                    .entry(selected_abs)
+                    .is_some_and(|entry| entry.block.selection_hugs_vpad(state.appearance()));
+                let box_area = hug_padded_band(
+                    selected.area,
+                    hugs_pad && !top_cut_off,
+                    hugs_pad && !bottom_clipped,
+                );
+                // A pulled top gives the corner the band's own first row, so the "no room above" flag stands
+                // only while the top edge stays un-pulled.
+                let top_clipped = top_clipped && box_area.y == selected.area.y;
+
                 let sel_box =
-                    SelectionBox::new(selected.area, Style::default().fg(theme.selection_border))
+                    SelectionBox::new(box_area, Style::default().fg(theme.selection_border))
                         .with_top_clipped(top_clipped)
                         .with_bottom_clipped(bottom_clipped);
 
@@ -1416,6 +1446,114 @@ mod tests {
             state.get_cached_entry_height(0),
             Some(4),
             "the painted band is the two content rows plus one pad row each side"
+        );
+    }
+
+    /// Rows (screen y) carrying `symbol` anywhere in the buffer.
+    fn symbol_rows(buf: &Buffer, symbol: &str) -> Vec<u16> {
+        (buf.area.top()..buf.area.bottom())
+            .filter(|&y| {
+                (buf.area.left()..buf.area.right())
+                    .any(|x| buf.cell((x, y)).is_some_and(|cell| cell.symbol() == symbol))
+            })
+            .collect()
+    }
+
+    /// A selected echo hugs its own band: both corners land on the echo's pad rows instead of the gap rows the
+    /// box used to reach into, so no blank row sits inside the bracket ends.
+    #[test]
+    fn selected_expanded_echo_corners_hug_the_band() {
+        let area = Rect::new(0, 0, 55, 41);
+        let mut state = ScrollbackState::new();
+        state.push_block(RenderBlock::stub_non_groupable(
+            "above",
+            ratatui::style::Color::Blue,
+        ));
+        state.push_block(RenderBlock::user_prompt("x".repeat(200)));
+        {
+            let entry = state.entry_mut(1).expect("prompt entry");
+            entry.display_mode = DisplayMode::Expanded;
+            entry.invalidate_cache();
+        }
+        state.set_selected(Some(1));
+        state.prepare_layout(area.width, area.height);
+
+        let (band_y, band_height) = {
+            let layouts = state.get_cached_entry_layouts().expect("layout cache");
+            (layouts[0].height + layouts[0].gap_after, layouts[1].height)
+        };
+        assert!(
+            band_height > 2,
+            "the expanded echo has to be tall enough to hug, got {band_height} rows"
+        );
+
+        let mut buf = Buffer::empty(area);
+        let mut scratch = ScratchBuffer::default();
+        let pane = ScrollbackPane::new().active(true);
+        let output = pane.render_with_scratch(area, &mut buf, &mut state, &mut scratch);
+        // The frame paints the box the pane computes (`app/agent_view/render.rs`), so the test does the same.
+        output
+            .selection_box
+            .as_ref()
+            .expect("the selected echo publishes a selection box")
+            .render(&mut buf);
+
+        assert_eq!(
+            symbol_rows(&buf, "┌"),
+            vec![band_y],
+            "the top corner sits on the echo's own top pad row; the row above it is the gap"
+        );
+        assert_eq!(
+            symbol_rows(&buf, "└"),
+            vec![band_y + band_height - 1],
+            "the bottom corner sits on the echo's own bottom pad row"
+        );
+        let expected_verticals: Vec<u16> = ((band_y + 1)..(band_y + band_height - 1)).collect();
+        assert_eq!(
+            symbol_rows(&buf, "│"),
+            expected_verticals,
+            "the side borders stay between the two corners"
+        );
+    }
+
+    /// Blocks without a prompt echo's pad keep the box one row outside the entry, as they always have.
+    #[test]
+    fn selected_non_prompt_block_keeps_corners_one_row_outside() {
+        let area = Rect::new(0, 0, 55, 41);
+        let mut state = ScrollbackState::new();
+        state.push_block(RenderBlock::stub_non_groupable(
+            "above",
+            ratatui::style::Color::Blue,
+        ));
+        state.push_block(RenderBlock::tool_call("Execute", "git status", true));
+        state.set_selected(Some(1));
+        state.prepare_layout(area.width, area.height);
+
+        let (entry_y, entry_height) = {
+            let layouts = state.get_cached_entry_layouts().expect("layout cache");
+            (layouts[0].height + layouts[0].gap_after, layouts[1].height)
+        };
+        assert!(entry_y > 0, "the box needs a row above the entry");
+
+        let mut buf = Buffer::empty(area);
+        let mut scratch = ScratchBuffer::default();
+        let pane = ScrollbackPane::new().active(true);
+        let output = pane.render_with_scratch(area, &mut buf, &mut state, &mut scratch);
+        output
+            .selection_box
+            .as_ref()
+            .expect("the selected tool row publishes a selection box")
+            .render(&mut buf);
+
+        assert_eq!(
+            symbol_rows(&buf, "┌"),
+            vec![entry_y - 1],
+            "the top corner stays on the row above the entry"
+        );
+        assert_eq!(
+            symbol_rows(&buf, "└"),
+            vec![entry_y + entry_height],
+            "the bottom corner stays on the row below the entry"
         );
     }
 

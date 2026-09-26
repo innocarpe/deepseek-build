@@ -242,6 +242,36 @@ impl SelectionBox {
     }
 }
 
+/// Pull a padded band's selection rect in by one row on each hugged side, so the corners [`SelectionBox::render`]
+/// draws one row outside `inner_area` land on the band's own pad rows instead of the rows around it.
+///
+/// `hug_top`/`hug_bottom` name sides whose pad row is on screen. A side is pulled only while a row remains to hold
+/// the border, so a clipped or short area keeps its rect and never collapses to zero height.
+pub fn hug_padded_band(area: Rect, hug_top: bool, hug_bottom: bool) -> Rect {
+    // Both sides: the corners need the first and last row, the side borders the rows between them.
+    if hug_top && hug_bottom {
+        if area.height >= 3 {
+            return Rect {
+                y: area.y + 1,
+                height: area.height - 2,
+                ..area
+            };
+        }
+    } else if hug_top && area.height >= 2 {
+        return Rect {
+            y: area.y + 1,
+            height: area.height - 1,
+            ..area
+        };
+    } else if hug_bottom && area.height >= 2 {
+        return Rect {
+            height: area.height - 1,
+            ..area
+        };
+    }
+    area
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,5 +438,69 @@ mod tests {
 
         // Bottom corners at y=4
         assert_eq!(buf.cell((0, 4)).unwrap().symbol(), "└");
+    }
+
+    #[test]
+    fn test_hug_padded_band_puts_corners_on_the_pad_rows() {
+        let area = Rect::new(0, 10, 10, 5);
+        let hugged = hug_padded_band(area, true, true);
+        assert_eq!(hugged, Rect::new(0, 11, 10, 3));
+
+        let mut buf = Buffer::empty(Rect::new(0, 0, 10, 20));
+        SelectionBox::new(hugged, Style::default()).render(&mut buf);
+
+        // Corners on the band's own first and last rows, side borders only between them.
+        assert_eq!(buf.cell((0, 10)).unwrap().symbol(), "┌");
+        assert_eq!(buf.cell((0, 14)).unwrap().symbol(), "└");
+        for y in 11..=13 {
+            assert_eq!(buf.cell((0, y)).unwrap().symbol(), "│");
+        }
+        // The rows the corners used to occupy stay clear.
+        for y in [9, 15] {
+            assert_eq!(buf.cell((0, y)).unwrap().symbol(), " ");
+            assert_eq!(buf.cell((9, y)).unwrap().symbol(), " ");
+        }
+    }
+
+    #[test]
+    fn test_hug_padded_band_pulls_a_single_clipped_edge() {
+        // Top pad on screen, bottom cut off: only the top edge moves.
+        let area = Rect::new(0, 10, 10, 4);
+        let hugged = hug_padded_band(area, true, false);
+        assert_eq!(hugged, Rect::new(0, 11, 10, 3));
+
+        let mut buf = Buffer::empty(Rect::new(0, 0, 10, 20));
+        SelectionBox::new(hugged, Style::default())
+            .with_bottom_clipped(true)
+            .render(&mut buf);
+
+        assert_eq!(buf.cell((0, 10)).unwrap().symbol(), "┌");
+        // The last visible row is a dashed continuation, and nothing is drawn below the area.
+        assert_eq!(buf.cell((0, 13)).unwrap().symbol(), "┆");
+        assert_eq!(buf.cell((0, 14)).unwrap().symbol(), " ");
+    }
+
+    #[test]
+    fn test_hug_padded_band_never_collapses_a_short_area() {
+        // Both edges on a two-row area: no row would remain for the side borders, so the rect stays whole.
+        let two_rows = Rect::new(0, 10, 10, 2);
+        assert_eq!(hug_padded_band(two_rows, true, true), two_rows);
+        assert_eq!(hug_padded_band(two_rows, false, false), two_rows);
+
+        // One edge can still be pulled while a row remains.
+        assert_eq!(
+            hug_padded_band(two_rows, true, false),
+            Rect::new(0, 11, 10, 1)
+        );
+        assert_eq!(
+            hug_padded_band(two_rows, false, true),
+            Rect::new(0, 10, 10, 1)
+        );
+
+        // A single visible row has no row to spare on either side.
+        let single_row = Rect::new(0, 10, 10, 1);
+        assert_eq!(hug_padded_band(single_row, true, true), single_row);
+        assert_eq!(hug_padded_band(single_row, true, false), single_row);
+        assert_eq!(hug_padded_band(single_row, false, true), single_row);
     }
 }

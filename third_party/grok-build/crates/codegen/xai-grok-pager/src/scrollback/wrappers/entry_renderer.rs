@@ -1437,11 +1437,12 @@ mod tests {
         let entry = ScrollbackEntry::new(RenderBlock::user_prompt("hi"));
         let renderer = EntryRenderer::new(&entry, &theme);
 
-        // The short stamp is "  h:mm AM/PM": 9 chars for a single-digit hour, 10
-        // for a two-digit one, and the paint needs `content_width > ts_width + 1`.
-        // Width 11 leaves the accent column one column of content fewer than the
-        // shorter stamp plus one, so both forms stay suppressed.
-        let width: u16 = 11;
+        // The short stamp is `%-I:%M %p`: 7 chars for a single-digit hour, 8 for
+        // a two-digit one, and the paint needs `content_area.width > ts_width + 1`.
+        // Width 10 leaves the accent and the echo's right pad eight content
+        // columns, one column short of the shorter stamp plus one, so both forms
+        // stay suppressed whatever the wall clock reads.
+        let width: u16 = 10;
         let height = renderer.desired_height(width);
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);

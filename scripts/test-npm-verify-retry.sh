@@ -252,3 +252,7 @@ check_no_failclose_read scripts/npm-emergency-publish.sh
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]] || exit 1
+
+# Same job: the primary-checkout guard is hermetic and release.sh is already in this filter.
+echo "=== primary checkout guard ==="
+"$(cd "$(dirname "$0")" && pwd)/test-refuse-primary-checkout.sh"

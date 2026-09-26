@@ -26,6 +26,7 @@
   <a href="#快速开始">快速开始</a> ·
   <a href="#为什么选择-deepseek-build">为什么选择 DeepSeek Build</a> ·
   <a href="#工作原理">工作原理</a> ·
+  <a href="#deepseek-harness">DeepSeek Harness</a> ·
   <a href="#文档">文档</a> ·
   <a href="#参与贡献">参与贡献</a>
 </p>
@@ -80,7 +81,7 @@ export PATH="$HOME/.deepseek-build/bin:$PATH"
 | --- | --- |
 | **DeepSeek 原生** | DeepSeek API 默认、Flash/Pro 路由、推理强度（reasoning effort），以及 DeepSeek 品牌 TUI。 |
 | **安全编辑** | 基于版本的片段编辑（snippet）与失败即关闭的工作区权限，而非静默整文件替换。 |
-| **长会话经济性** | 稳定的提示词前缀、惰性技能加载与工具调用修复，让续接的会话保持连贯且缓存友好。 |
+| **长会话经济性** | 会话变化追加在缓存历史之后，而不重写它。缓存未命中会指明移动的组装文档，会话记录累计缓存合计，与会话日志不一致的请求会使该轮失败。 |
 | **吞吐能力** | 并行工具、后台 Shell 任务、子代理与可选的 worktree，运行在安全与缓存层之下。 |
 | **持久会话** | 续接最近的全屏会话，或直接定位到已保存的会话。 |
 
@@ -107,6 +108,11 @@ deepseek-build --dogfood
 写入与删除仍被拒绝。
 
 短命令可将示例中的 `deepseek-build` 替换为 `dsb`。
+
+宽度在 60 列及以下时，已提交的提示词会折成一行，并去掉装饰性的 `❯` 与空白
+填充行；更宽的窗口保留现有的三行预算。全屏界面底部有一条可配置的状态行。
+在官方 DeepSeek API 上，DeepSeek V4.1 Flash（`deepseek-flash`）可直接接收
+附件图片，纯文本模型不会把图片发到线上，而是使用磁盘回退。
 
 ## 认证与配置
 
@@ -165,8 +171,41 @@ DeepSeek API
 | **L2** | [Reasonix](https://github.com/esengine/DeepSeek-Reasonix) | 稳定前缀经济性、Flash/Pro 行为、工具调用修复。 |
 | **L3** | [Grok Build](https://github.com/xai-org/grok-build) | 基础运行时、TUI、并行工具、子代理、后台工作与 worktree。 |
 
+阅读 DeepSeek 官方 harness 并没有为此图增加层次：append 规则与请求/日志检查
+正来自该证据，下一节将展开说明。
+
 规范性冲突规则见[harness 哲学](docs/architecture/HARNESS_PHILOSOPHY.md)，
 完整系统图见[SYSTEM_ARCHITECTURE.md](docs/architecture/SYSTEM_ARCHITECTURE.md)。
+
+## DeepSeek Harness
+
+[dsh](https://github.com/deepseek-ai/deepseek-harness) 是 DeepSeek 官方开源
+的 harness。它既不是本产品的架构，也不是第四个层次：DeepSeek Build 仍是
+Rust 全屏 TUI，编辑归 Deep Code，缓存契约归 Reasonix，执行归 Grok Build。
+dsh 提供了一个家族如何行为的证据 —— 会话变化后缓存前缀仍然存活，与会话日志
+不一致的请求不会被发出。
+
+| 会话中变化的东西 | 产品的做法 |
+| --- | --- |
+| 稳定 system 正文的后续变更 | 之前的 system 消息逐字节保留，新正文追加在其后。模型把最近一条 system 消息视为当前正文。 |
+| 该正文中的 tools、skills、environment、project instructions | 同样是追加。线上的 `tools` 数组在每次请求中都是完整列表。没有工具增删专用的历史消息——Chat Completions 没有该字段。 |
+| 缓存未命中 | 该轮会以 `prefix_change=` 说明是哪个组装文档发生了变化。若 epoch 变了而所有文档哈希都相同，则说 `unattributed`，而不是编造原因。 |
+| 会话的缓存 | 只要有一个响应带有缓存字段，之后每轮都会记录一行 `cache_session=`。hit/miss 是 token 合计；没有缓存字段的响应记为 `unreported`，不计入 miss。`deepseek-build run` 与 REPL 会把合计随会话保存，resume 后继续累计。全屏状态芯片仍是最后一轮的比例；全屏计数器不写入会话文件，新进程从零开始。 |
+| 与日志不一致的请求 | 该轮在采样前失败。无法序列化的条目同样失败关闭。 |
+| deny | 后续的 allow 不会改变 deny。 |
+
+刻意未采用：plugin host、agent teams、sandbox escalation、request-series
+bookkeeping（`initial` / `resume` / `change`）以及 Anthropic Messages 传输。
+本产品使用 DeepSeek Chat Completions
+（[ADR 0005](docs/adr/0005-deepseek-provider-contract.md)）。
+
+已经具备、因此没有再次移植：超大工具结果的 spill（首尾与其余部分的路径）、
+贴合热前缀的 compaction、比 dsh 更严格的 snippet staleness。这些并不是从
+dsh 新引入的功能。
+
+延伸阅读：[dsh 研究笔记](docs/research/dsh-deepseek-harness.md) ·
+[本次工作的变更](docs/product/CHANGELIST_6_1_0.md) ·
+[设计来源](docs/product/SOURCES.md)。
 
 ## 文档
 

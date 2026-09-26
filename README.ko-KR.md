@@ -26,6 +26,7 @@
   <a href="#빠른-시작">빠른 시작</a> ·
   <a href="#왜-deepseek-build인가">왜 DeepSeek Build인가</a> ·
   <a href="#작동-방식">작동 방식</a> ·
+  <a href="#deepseek-harness">DeepSeek Harness</a> ·
   <a href="#문서">문서</a> ·
   <a href="#기여하기">기여하기</a>
 </p>
@@ -82,7 +83,7 @@ export PATH="$HOME/.deepseek-build/bin:$PATH"
 | --- | --- |
 | **DeepSeek 네이티브** | DeepSeek API 기본값, Flash/Pro 라우팅, reasoning effort, DeepSeek 브랜드 TUI. |
 | **안전한 편집** | 버전 바인딩 스니펫 편집과 fail-closed 워크스페이스 권한 — 무언의 전체 파일 교체 대신. |
-| **긴 세션 경제성** | 안정적인 프롬프트 프리픽스, 지연 스킬 로딩, 툴콜 복구로 재개 세션을 일관되고 캐시 친화적으로 유지. |
+| **긴 세션 경제성** | 세션 변경은 캐시된 히스토리를 다시 쓰는 대신 그 뒤에 붙습니다. 캐시 미스는 움직인 조립 문서를 말하고, 세션은 누적 캐시 합계를 기록하며, 세션 로그와 어긋난 요청은 그 턴을 실패시킵니다. |
 | **월클록 스루풋** | 병렬 도구, 백그라운드 셸 작업, 서브에이전트, 옵트인 워크트리를 안전·캐시 레이어 아래에서 실행. |
 | **지속 세션** | 가장 최근 풀스크린 세션을 재개하거나 저장된 세션으로 바로 이동. |
 
@@ -109,6 +110,12 @@ deepseek-build --dogfood
 활성화합니다. 워크스페이스 밖 쓰기·삭제는 계속 거부됩니다.
 
 짧은 명령을 쓰려면 예시의 `deepseek-build`를 `dsb`로 바꾸면 됩니다.
+
+폭이 60열 이하이면 제출된 프롬프트가 한 줄로 접히고, 장식용 `❯`와 빈 패딩
+줄이 빠집니다. 그보다 넓은 창은 지금의 세 줄 예산을 유지합니다. 풀스크린 화면
+하단에는 설정 가능한 상태 줄이 있습니다. 공식 DeepSeek API에서 DeepSeek V4.1
+Flash(`deepseek-flash`)는 첨부 이미지를 직접 받고, 텍스트 전용 모델은 이미지를
+와이어에 싣지 않고 디스크 fallback을 씁니다.
 
 ## 인증 및 설정
 
@@ -172,9 +179,43 @@ DeepSeek API
 | **L2** | [Reasonix](https://github.com/esengine/DeepSeek-Reasonix) | 안정 프리픽스 경제성, Flash/Pro 동작, 툴콜 복구. |
 | **L3** | [Grok Build](https://github.com/xai-org/grok-build) | 베이스 런타임, TUI, 병렬 도구, 서브에이전트, 백그라운드 작업, 워크트리. |
 
+DeepSeek의 공식 하네스를 읽은 것은 이 지도에 레이어를 더하지 않았습니다.
+append 규칙과 요청/로그 검사는 그 증거에서 왔으며, 다음 절에서 다룹니다.
+
 규범적 충돌 규칙은 [harness 철학](docs/architecture/HARNESS_PHILOSOPHY.md)에,
 전체 시스템 구성도는 [SYSTEM_ARCHITECTURE.md](docs/architecture/SYSTEM_ARCHITECTURE.md)에
 있습니다.
+
+## DeepSeek Harness
+
+[dsh](https://github.com/deepseek-ai/deepseek-harness)는 DeepSeek의 공식
+오픈소스 하네스입니다. 이 제품의 아키텍처가 아니며 네 번째 레이어도 아닙니다.
+DeepSeek Build는 Rust 풀스크린 TUI로 남고, 편집은 Deep Code, 캐시 계약은
+Reasonix, 실행은 Grok Build가 그대로 소유합니다. dsh는 한 가족의 동작에 대한
+증거입니다 — 세션이 바뀌어도 캐시된 접두는 살아 있고, 세션 로그와 어긋난
+요청은 보내지 않습니다.
+
+| 세션에서 바뀌는 것 | 제품이 하는 일 |
+| --- | --- |
+| 안정 시스템 본문의 나중 변경 | 앞선 system 메시지는 바이트 그대로 남고, 새 본문이 그 뒤에 붙습니다. 모델이 현재 본문으로 취급하는 것은 가장 최근 system 메시지입니다. |
+| 그 본문 안의 tools, skills, environment, project instructions | 같은 append입니다. 와이어의 `tools` 배열은 매 요청의 전체 목록입니다. tool 추가/삭제 전용 히스토리 메시지는 없습니다 — Chat Completions에 그 필드가 없습니다. |
+| 캐시 미스 | 턴이 어떤 조립 문서가 움직였는지 `prefix_change=`로 말합니다. 에폭이 달라졌는데 문서 해시가 전부 같으면 원인을 만들지 않고 `unattributed`라고 말합니다. |
+| 세션의 캐시 | 캐시 필드를 가진 응답이 한 번이라도 있으면, 이후 모든 턴이 `cache_session=` 한 줄을 남깁니다. hit/miss는 토큰 합입니다. 캐시 필드가 없는 응답은 `unreported`이고 miss로 세지 않습니다. `deepseek-build run`과 REPL은 이 합계를 세션에 저장해서 resume가 이어서 셉니다. 풀스크린 상태 칩은 여전히 마지막 턴의 비율이고, 풀스크린 카운터는 세션 파일에 쓰지 않으며 새 프로세스는 0에서 시작합니다. |
+| 로그와 다른 요청 | 샘플링 전에 턴이 실패합니다. 직렬화할 수 없는 항목도 실패로 닫습니다. |
+| deny | 나중 allow가 deny를 바꾸지 않습니다. |
+
+일부러 가져오지 않은 것: plugin host, agent teams, sandbox escalation,
+request-series bookkeeping(`initial` / `resume` / `change`), Anthropic Messages
+트랜스포트입니다. 이 제품은 DeepSeek Chat Completions를 말합니다
+([ADR 0005](docs/adr/0005-deepseek-provider-contract.md)).
+
+이미 있어서 다시 포팅하지 않은 것: 큰 도구 결과의 spill(앞/뒤와 나머지 경로),
+따뜻한 접두에 맞춘 compaction, dsh보다 엄격한 snippet staleness입니다. 이것들은
+dsh에서 새로 가져온 기능이 아닙니다.
+
+더 읽기: [dsh 리서치 노트](docs/research/dsh-deepseek-harness.md) ·
+[이 작업이 바꾼 것](docs/product/CHANGELIST_6_1_0.md) ·
+[디자인 소스](docs/product/SOURCES.md).
 
 ## 문서
 

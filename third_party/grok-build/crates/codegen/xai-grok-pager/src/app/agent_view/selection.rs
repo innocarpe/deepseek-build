@@ -7,8 +7,9 @@ use crate::app::app_view::InputOutcome;
 use crate::scrollback::table_geometry::{CellRef, TableGeometry};
 use crate::scrollback::text_selection::{
     ActiveBlockDrag, ActiveTextDrag, AutoScrollDirection, DragAutoScrollState, PendingBlockDrag,
-    PendingTextDrag, PersistentTextSelection, RangeHit, ResolvedSelectionModel, SelectionEndpoint,
-    SelectionKind, SelectionOrigin, TableSelectionGeometry, apply_selection_boundary,
+    PendingTextDrag, PersistentTextSelection, RangeHit, ResolvedSelectionBoundaries,
+    ResolvedSelectionModel, SelectionEndpoint, SelectionKind, SelectionOrigin,
+    TableSelectionGeometry, append_full_span_lines, apply_selection_boundary,
     block_drag_threshold_exceeded, compute_autoscroll, configured_word_separators,
     drag_threshold_exceeded, reconstruct_full_selection_text,
     reconstruct_full_selection_text_with_boundaries, reconstruct_selection_text,
@@ -264,6 +265,9 @@ impl AgentView {
         head: &RangeHit,
         prev: SelectionKind,
     ) -> SelectionKind {
+        if anchor.entry_idx != head.entry_idx || anchor.range_id != head.range_id {
+            return SelectionKind::Linear;
+        }
         let geom = self.drag_table_geometry_for(anchor.entry_idx, anchor.range_id);
         resolve_table_drag_kind(geom, anchor, head, prev)
     }
@@ -308,7 +312,7 @@ impl AgentView {
         {
             let head = self
                 .last_scrollback_selection_model
-                .hit_test_nearest_in_range(drag.anchor, col, row)
+                .hit_test_nearest(drag.anchor, col, row)
                 .unwrap_or(drag.head);
             let kind = self.resolve_drag_kind(&drag.anchor, &head, drag.kind);
             if let Some(ref mut drag) = self.drag_selection {
@@ -369,7 +373,7 @@ impl AgentView {
             return;
         }
         let model = self.selection_model_for_hit(&drag.anchor);
-        let Some(head) = model.hit_test_nearest_in_range(drag.anchor, col, row) else {
+        let Some(head) = model.hit_test_nearest(drag.anchor, col, row) else {
             return;
         };
         if head == drag.head {
@@ -540,7 +544,7 @@ impl AgentView {
         }
         let model = self.drag_model();
         let head = model
-            .hit_test_nearest_in_range(pending.anchor, mouse.column, mouse.row)
+            .hit_test_nearest(pending.anchor, mouse.column, mouse.row)
             .unwrap_or(pending.anchor);
         tracing::debug!(
             event = "promote_text_drag",
@@ -630,7 +634,7 @@ impl AgentView {
         let is_btw = drag.anchor.entry_idx == BTW_OVERLAY_ENTRY_IDX;
         let head = self
             .selection_model_for_hit(&drag.anchor)
-            .hit_test_nearest_in_range(drag.anchor, mouse.column, mouse.row)
+            .hit_test_nearest(drag.anchor, mouse.column, mouse.row)
             .unwrap_or(drag.head);
         let kind = self.resolve_drag_kind(&drag.anchor, &head, drag.kind);
         let changed = head != drag.head || kind != drag.kind;
@@ -717,6 +721,14 @@ impl AgentView {
     /// Clipboard text for a finished drag, tagged with the kind that produced it (`Linear` when a table copy fell through).
     /// The persisted highlight then mirrors what reached the clipboard.
     fn reconstruct_drag_copy(&self, drag: &ActiveTextDrag) -> Option<(String, SelectionKind)> {
+        if (drag.anchor.entry_idx, drag.anchor.range_id)
+            != (drag.head.entry_idx, drag.head.range_id)
+            && drag.anchor.entry_idx != BTW_OVERLAY_ENTRY_IDX
+        {
+            return self
+                .reconstruct_scrollback_span(drag)
+                .map(|text| (text, SelectionKind::Linear));
+        }
         if drag.kind != SelectionKind::Linear
             && let Some(geom) =
                 self.drag_table_geometry_for(drag.anchor.entry_idx, drag.anchor.range_id)
@@ -795,10 +807,146 @@ impl AgentView {
         .map(|text| (text, SelectionKind::Linear))
     }
 
+    /// Copy every selectable rendered line between the endpoints, including
+    /// rows that have scrolled out of the viewport during a long drag.
+    fn reconstruct_scrollback_span(&self, drag: &ActiveTextDrag) -> Option<String> {
+        let scrollback = if let Some(ref child_id) = self.active_subagent
+            && let Some(child) = self.subagent_views.get(child_id)
+        {
+            &child.scrollback
+        } else {
+            &self.scrollback
+        };
+        let mut model = ResolvedSelectionModel::default();
+        let mut boundaries = ResolvedSelectionBoundaries::default();
+        let first = drag.anchor.entry_idx.min(drag.head.entry_idx);
+        let last = drag.anchor.entry_idx.max(drag.head.entry_idx);
+        let visible_start = scrollback.visible_entry_range().start;
+        let layouts = scrollback.get_cached_entry_layouts();
+        let all_entries = std::cell::OnceCell::new();
+        let theme = crate::theme::Theme::current();
+        let show_thinking = crate::appearance::cache::load_show_thinking_blocks();
+        let base_width = crate::scrollback::HorizontalLayout::new(
+            self.pane_areas.scrollback,
+            &scrollback.appearance().scrollback.layout,
+        )
+        .entry_content_area()
+        .width;
+        for idx in first..=last {
+            let abs_idx = idx + visible_start;
+            if let Some(header) = self.last_scrollback_selection_model.range(idx, u16::MAX) {
+                for line in &header.lines {
+                    model.push_line(line.clone());
+                }
+            } else if let Some(layout) = layouts.and_then(|layouts| layouts.get(abs_idx)) {
+                // Group labels are synthetic painted rows, absent from the
+                // entry's cached output. Rebuild them when autoscroll has
+                // moved the header out of the current selection model.
+                let label = if layout.verb_group_header {
+                    let entries = all_entries
+                        .get_or_init(|| scrollback.entries_in_range(0..scrollback.len()));
+                    let end = scrollback
+                        .span_at(abs_idx)
+                        .map_or(entries.len(), |span| span.range.end);
+                    Some(
+                        crate::scrollback::state::verb_group::verb_group_header_label(
+                            entries,
+                            abs_idx,
+                            end,
+                            show_thinking,
+                            &theme,
+                        ),
+                    )
+                } else if layout.is_group_header()
+                    && crate::appearance::cache::load_group_tool_verbs()
+                {
+                    scrollback.span_at(abs_idx).and_then(|span| {
+                        let entries = all_entries
+                            .get_or_init(|| scrollback.entries_in_range(0..scrollback.len()));
+                        let crate::scrollback::state::groups::GroupKind::Truncation {
+                            hidden, ..
+                        } = span.kind
+                        else {
+                            return None;
+                        };
+                        crate::scrollback::state::verb_group::truncation_header_label(
+                            entries,
+                            span.range.clone(),
+                            (!span.expanded).then_some(hidden),
+                            show_thinking,
+                            &theme,
+                        )
+                    })
+                } else {
+                    None
+                };
+                if let Some(label) = label {
+                    model.push_line(crate::scrollback::text_selection::ResolvedSelectableLine {
+                        entry_idx: idx,
+                        range_id: u16::MAX,
+                        block_line_idx: 0,
+                        screen_y: 0,
+                        screen_x: 0,
+                        selectable_cols: 0
+                            ..crate::scrollback::types::str_display_cells(&label.text) as u16,
+                        text: label.text,
+                        painted_region: None,
+                        joiner_to_previous: None,
+                    });
+                }
+            }
+            if scrollback.entry_content_hidden_by_group(abs_idx) {
+                continue;
+            }
+            let Some(entry) = scrollback.get(abs_idx) else {
+                continue;
+            };
+            let rendered_width = self
+                .last_scrollback_selection_model
+                .visible_block_content_width(idx);
+            let fallback_width = if base_width == 0 {
+                drag.anchor_content_width.unwrap_or(1)
+            } else {
+                base_width.saturating_sub(crate::scrollback::wrappers::timestamp_reserved_for(
+                    scrollback.appearance(),
+                    &entry.block,
+                ))
+            };
+            let width = if idx == drag.anchor.entry_idx {
+                drag.anchor_content_width.or(rendered_width)
+            } else {
+                rendered_width
+            }
+            .unwrap_or(fallback_width.max(1));
+            entry.ensure_cached(
+                width,
+                scrollback.appearance(),
+                scrollback.selected() == Some(abs_idx),
+                scrollback.cwd(),
+            );
+            append_full_span_lines(
+                &mut model,
+                &mut boundaries,
+                idx,
+                &entry.cached_rendered_output_ref(),
+            );
+        }
+        reconstruct_selection_text_with_boundaries(&model, &boundaries, drag).or_else(|| {
+            reconstruct_selection_text_with_boundaries(
+                &self.last_scrollback_selection_model,
+                &self.last_scrollback_selection_boundaries,
+                drag,
+            )
+        })
+    }
+
     /// Persist a finished drag as the highlight.
     /// `kind` is the copied shape, not `drag.kind`: a degraded table drag persists `Linear` and drops its orphaned side-car.
     fn persist_drag_selection(&mut self, drag: &ActiveTextDrag, kind: SelectionKind) {
-        if kind == SelectionKind::Linear && drag.kind != SelectionKind::Linear {
+        if (drag.anchor.entry_idx, drag.anchor.range_id)
+            != (drag.head.entry_idx, drag.head.range_id)
+            || (kind == SelectionKind::Linear && drag.kind != SelectionKind::Linear)
+        {
             self.table_selection_geometry = None;
             self.drag_table_geometry = None;
         } else if let Some(geom) = self.drag_table_geometry.take()
@@ -820,6 +968,7 @@ impl AgentView {
                 block_line_idx: drag.head.block_line_idx,
                 col_within_range: drag.head.col_within_range,
             },
+            head_range: Some((drag.head.entry_idx, drag.head.range_id)),
             origin: SelectionOrigin::Drag,
             kind,
         });
@@ -1292,6 +1441,7 @@ impl AgentView {
             range_id: hit.range_id,
             anchor: selection.anchor,
             head: selection.head,
+            head_range: None,
             origin: SelectionOrigin::DoubleClick,
             kind: SelectionKind::Linear,
         });
@@ -1350,6 +1500,7 @@ impl AgentView {
                 block_line_idx: hit.block_line_idx,
                 col_within_range: width.saturating_sub(1),
             },
+            head_range: None,
             origin: SelectionOrigin::TripleClick,
             kind: SelectionKind::Linear,
         });
@@ -1464,6 +1615,7 @@ impl AgentView {
                 block_line_idx: last_block_line_idx,
                 col_within_range: last_width.saturating_sub(1),
             },
+            head_range: None,
             origin: SelectionOrigin::TripleClick,
             kind: SelectionKind::Linear,
         });
@@ -1511,6 +1663,7 @@ impl AgentView {
                 block_line_idx: lines.end.saturating_sub(1),
                 col_within_range: band.end.saturating_sub(1),
             },
+            head_range: None,
             origin: SelectionOrigin::TripleClick,
             kind: SelectionKind::TableCell,
         });
@@ -1560,6 +1713,7 @@ impl AgentView {
                 block_line_idx: last.end.saturating_sub(1),
                 col_within_range: geometry.band(head_cell.col).end.saturating_sub(1),
             },
+            head_range: None,
             origin: SelectionOrigin::TripleClick,
             kind: SelectionKind::TableGrid {
                 anchor: anchor_cell,
@@ -1652,6 +1806,23 @@ mod tests {
             },
             anchor_content_width: None,
         }
+    }
+
+    #[test]
+    fn leaving_a_table_range_switches_to_plain_linear_selection() {
+        let mut agent = agent_with_visible_table_lines_only();
+        agent.drag_table_geometry = agent.table_selection_geometry.clone();
+        let drag = table_drag();
+        let outside = RangeHit {
+            entry_idx: 1,
+            range_id: 0,
+            block_line_idx: 0,
+            col_within_range: 2,
+        };
+        assert_eq!(
+            agent.resolve_drag_kind(&drag.anchor, &outside, drag.kind),
+            SelectionKind::Linear
+        );
     }
 
     /// Build an agent whose scrollback selection model holds a single range with the given `(block_line_idx, text, joiner_to_previous)` lines.
@@ -1866,6 +2037,7 @@ mod tests {
                     block_line_idx: 1,
                     col_within_range: 9,
                 },
+                head_range: None,
                 origin: SelectionOrigin::DoubleClick,
                 kind: SelectionKind::Linear,
             })
@@ -2472,6 +2644,90 @@ mod tests {
         assert!(agent.reconstruct_drag_copy(&no_snapshot).is_none());
     }
 
+    #[test]
+    fn reconstruct_drag_copy_spans_complete_blocks_after_viewport_moves() {
+        let mut agent = make_agent();
+        agent.pane_areas.scrollback = Rect::new(0, 0, 80, 24);
+        for text in ["alpha first", "tool output", "beta last"] {
+            agent
+                .scrollback
+                .push_block(crate::scrollback::block::RenderBlock::agent_message(text));
+        }
+        // Nothing is still on screen. The copy must read the three rendered
+        // blocks, not just the range that held the mouse-down event.
+        agent.last_scrollback_selection_model = ResolvedSelectionModel::default();
+        let drag = ActiveTextDrag {
+            anchor: RangeHit {
+                entry_idx: 0,
+                range_id: 0,
+                block_line_idx: 0,
+                col_within_range: 6,
+            },
+            head: RangeHit {
+                entry_idx: 2,
+                range_id: 0,
+                block_line_idx: 0,
+                col_within_range: 3,
+            },
+            kind: SelectionKind::Linear,
+            anchor_content_width: Some(60),
+        };
+        assert_eq!(
+            agent.reconstruct_drag_copy(&drag),
+            Some(("first\n\ntool output\n\nbeta".into(), SelectionKind::Linear))
+        );
+    }
+
+    #[test]
+    fn reconstruct_drag_copy_includes_expanded_tool_output_between_messages() {
+        let mut agent = make_agent();
+        agent.pane_areas.scrollback = Rect::new(0, 0, 80, 24);
+        agent
+            .scrollback
+            .push_block(crate::scrollback::block::RenderBlock::agent_message(
+                "alpha first",
+            ));
+        agent
+            .scrollback
+            .push_block(crate::scrollback::block::RenderBlock::execute_with_output(
+                "printf tool-output",
+                "TOOL_OUTPUT_MARKER",
+                None::<String>,
+            ));
+        agent
+            .scrollback
+            .get_mut(1)
+            .unwrap()
+            .set_display_mode(crate::scrollback::types::DisplayMode::Expanded);
+        agent
+            .scrollback
+            .push_block(crate::scrollback::block::RenderBlock::agent_message(
+                "beta last",
+            ));
+        let drag = ActiveTextDrag {
+            anchor: RangeHit {
+                entry_idx: 0,
+                range_id: 0,
+                block_line_idx: 0,
+                col_within_range: 6,
+            },
+            head: RangeHit {
+                entry_idx: 2,
+                range_id: 0,
+                block_line_idx: 0,
+                col_within_range: 3,
+            },
+            kind: SelectionKind::Linear,
+            anchor_content_width: Some(60),
+        };
+        let (copied, _) = agent
+            .reconstruct_drag_copy(&drag)
+            .expect("copy across tool");
+        assert!(copied.starts_with("first\n\n"), "{copied:?}");
+        assert!(copied.contains("TOOL_OUTPUT_MARKER"), "{copied:?}");
+        assert!(copied.ends_with("\n\nbeta"), "{copied:?}");
+    }
+
     /// Mouse-down on a selectable line snapshots the anchor block's render width and promotion carries it onto the active drag.
     #[test]
     fn drag_promotion_carries_anchor_width_snapshot() {
@@ -2502,6 +2758,34 @@ mod tests {
             agent.drag_selection.and_then(|d| d.anchor_content_width),
             Some(46)
         );
+    }
+
+    #[test]
+    fn mouse_drag_promotes_across_message_blocks() {
+        let mut agent = make_agent();
+        let reg = ActionRegistry::defaults();
+        agent.pane_areas.scrollback = Rect::new(0, 0, 80, 24);
+        agent.active_pane = AgentPane::Scrollback;
+        let mut model = ResolvedSelectionModel::default();
+        for (idx, row, text) in [(0, 5, "first"), (1, 7, "second")] {
+            model.push_line(ResolvedSelectableLine {
+                entry_idx: idx,
+                range_id: 0,
+                block_line_idx: 0,
+                screen_y: row,
+                screen_x: 0,
+                selectable_cols: 0..text.len() as u16,
+                text: text.into(),
+                painted_region: None,
+                joiner_to_previous: None,
+            });
+        }
+        agent.last_scrollback_selection_model = model;
+        let _ = agent.handle_input(&Event::Mouse(mouse_down(1, 5)), &reg);
+        let _ = agent.handle_input(&Event::Mouse(mouse_drag(3, 7)), &reg);
+        let drag = agent.drag_selection.expect("text drag promoted");
+        assert_eq!(drag.anchor.entry_idx, 0);
+        assert_eq!(drag.head.entry_idx, 1);
     }
 
     /// Resolver miss at promotion (the anchor's range vanished from the frame between press and threshold): the head collapses to the anchor.
@@ -2858,6 +3142,7 @@ mod tests {
                 block_line_idx: 0,
                 col_within_range: 4,
             },
+            head_range: None,
             origin: SelectionOrigin::Drag,
             kind: SelectionKind::TableCell,
         });

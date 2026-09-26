@@ -275,8 +275,33 @@ pub struct PersistentTextSelection {
     pub range_id: u16,
     pub anchor: SelectionEndpoint,
     pub head: SelectionEndpoint,
+    /// The head's range when a plain drag crosses a block or selection range.
+    /// `None` preserves the range-local word, paragraph, and table selections.
+    pub head_range: Option<(usize, u16)>,
     pub origin: SelectionOrigin,
     pub kind: SelectionKind,
+}
+
+/// Visual order of selectable rows. Group headers are painted before their
+/// entry's output, even though their reserved range id is numerically last.
+fn hit_order(hit: RangeHit) -> (usize, u8, usize) {
+    (
+        hit.entry_idx,
+        u8::from(hit.range_id != u16::MAX),
+        hit.block_line_idx,
+    )
+}
+
+fn line_order(line: &ResolvedSelectableLine) -> (usize, u8, usize) {
+    (
+        line.entry_idx,
+        u8::from(line.range_id != u16::MAX),
+        line.block_line_idx,
+    )
+}
+
+fn same_range(a: RangeHit, b: RangeHit) -> bool {
+    a.entry_idx == b.entry_idx && a.range_id == b.range_id
 }
 
 impl ResolvedSelectionModel {
@@ -362,6 +387,32 @@ impl ResolvedSelectionModel {
         }
 
         best.map(|(_, _, hit)| hit)
+    }
+
+    /// Resolve a drag head against every visible selectable row, including
+    /// rows in another message or tool block and gaps between those rows.
+    pub fn hit_test_nearest(&self, anchor: RangeHit, col: u16, row: u16) -> Option<RangeHit> {
+        self.ranges
+            .iter()
+            .flat_map(|range| &range.lines)
+            .filter_map(|line| {
+                let (dx, col_within_range) = line.col_metrics(col)?;
+                let hit = RangeHit {
+                    entry_idx: line.entry_idx,
+                    range_id: line.range_id,
+                    block_line_idx: line.block_line_idx,
+                    col_within_range,
+                };
+                Some(((line.screen_y.abs_diff(row), dx), hit))
+            })
+            .min_by_key(|(distance, hit)| {
+                (
+                    *distance,
+                    hit.entry_idx.abs_diff(anchor.entry_idx),
+                    hit.block_line_idx.abs_diff(anchor.block_line_idx),
+                )
+            })
+            .map(|(_, hit)| hit)
     }
 
     pub fn hit_test_visible_block(&self, col: u16, row: u16) -> Option<&VisibleBlockGeometry> {
@@ -451,6 +502,9 @@ pub(crate) fn reconstruct_selection_text_with_boundaries(
     boundaries: &ResolvedSelectionBoundaries,
     drag: &ActiveTextDrag,
 ) -> Option<String> {
+    if !same_range(drag.anchor, drag.head) {
+        return reconstruct_visible_span(model, boundaries, drag);
+    }
     let range = model.range(drag.anchor.entry_idx, drag.anchor.range_id)?;
     let start_bl = min(drag.anchor.block_line_idx, drag.head.block_line_idx);
     let end_bl = max(drag.anchor.block_line_idx, drag.head.block_line_idx);
@@ -480,6 +534,143 @@ pub(crate) fn reconstruct_selection_text_with_boundaries(
     }
 
     Some(out)
+}
+
+/// Add an entry's complete rendered output to a drag-copy model. The caller
+/// supplies the render width used for the drag, so clipped viewport rows and
+/// intermediate blocks are available at mouse-up.
+pub(crate) fn append_full_span_lines(
+    model: &mut ResolvedSelectionModel,
+    boundaries: &mut ResolvedSelectionBoundaries,
+    entry_idx: usize,
+    output: &crate::scrollback::types::RenderedBlockOutput,
+) {
+    use crate::scrollback::types::{
+        derive_selection_text, painted_selectable_region, selectable_cols, visual_selectable_cols,
+    };
+    for (block_line_idx, line) in output.output.lines.iter().enumerate() {
+        let (Some(range_id), Some(cols)) = (
+            line.selection_range,
+            selectable_cols(&line.content, &line.selectable),
+        ) else {
+            continue;
+        };
+        let resolved = ResolvedSelectableLine {
+            entry_idx,
+            range_id,
+            block_line_idx,
+            screen_x: 0,
+            screen_y: 0,
+            selectable_cols: output.boundaries.get(block_line_idx).map_or_else(
+                || visual_selectable_cols(line).unwrap_or(cols.clone()),
+                |b| b.anchored_cols(visual_selectable_cols(line).unwrap_or(cols.clone())),
+            ),
+            text: derive_selection_text(line),
+            painted_region: Some(painted_selectable_region(line)),
+            joiner_to_previous: line.joiner.clone(),
+        };
+        if let Some(boundary) = output.boundaries.get(block_line_idx) {
+            boundaries.push(&resolved, Arc::clone(boundary));
+        }
+        model.push_line(resolved);
+    }
+}
+
+fn span_cols_for_line(
+    anchor: RangeHit,
+    head: RangeHit,
+    line: &ResolvedSelectableLine,
+) -> Option<Range<u16>> {
+    let (start, end) = if hit_order(anchor) <= hit_order(head) {
+        (anchor, head)
+    } else {
+        (head, anchor)
+    };
+    let pos = line_order(line);
+    if pos < hit_order(start) || pos > hit_order(end) {
+        return None;
+    }
+    let width = line
+        .selectable_cols
+        .end
+        .saturating_sub(line.selectable_cols.start);
+    let source = line.painted_region.as_deref().unwrap_or(&line.text);
+    let display = display_text_for_cols(source);
+    let first = pos == hit_order(start);
+    let last = pos == hit_order(end);
+    let from = if first {
+        endpoint_start_col(display.as_ref(), start.col_within_range).min(width)
+    } else {
+        0
+    };
+    let to = if last {
+        endpoint_end_col(display.as_ref(), end.col_within_range).min(width)
+    } else {
+        width
+    };
+    Some(from..to)
+}
+
+fn reconstruct_visible_span(
+    model: &ResolvedSelectionModel,
+    boundaries: &ResolvedSelectionBoundaries,
+    drag: &ActiveTextDrag,
+) -> Option<String> {
+    let mut lines: Vec<&ResolvedSelectableLine> =
+        model.ranges.iter().flat_map(|r| &r.lines).collect();
+    lines.sort_by_key(|line| line_order(line));
+    let mut out = String::new();
+    let mut prev: Option<&ResolvedSelectableLine> = None;
+    let mut saw_anchor = false;
+    let mut saw_head = false;
+    for line in lines {
+        let Some(cols) = span_cols_for_line(drag.anchor, drag.head, line) else {
+            continue;
+        };
+        let matches_hit = |hit: RangeHit| {
+            (line.entry_idx, line.range_id, line.block_line_idx)
+                == (hit.entry_idx, hit.range_id, hit.block_line_idx)
+        };
+        saw_anchor |= matches_hit(drag.anchor);
+        saw_head |= matches_hit(drag.head);
+        if let Some(previous) = prev {
+            if previous.entry_idx == line.entry_idx && previous.range_id == line.range_id {
+                out.push_str(line.joiner_to_previous.as_deref().unwrap_or("\n"));
+            } else if previous.entry_idx != line.entry_idx {
+                out.push_str("\n\n");
+            } else {
+                out.push('\n');
+            }
+        }
+        let width = line
+            .selectable_cols
+            .end
+            .saturating_sub(line.selectable_cols.start);
+        let selected = if crate::render::bidi::is_enabled() {
+            match line.painted_region.as_deref() {
+                Some(region) if line.text.trim_end() != region.trim_end() => line.text.clone(),
+                Some(region) => {
+                    let sliced = slice_text_cols(region, cols.clone());
+                    if cols.end == width && line.text == region.trim_end() {
+                        sliced.trim_end().to_string()
+                    } else {
+                        sliced
+                    }
+                }
+                None => slice_text_cols(&line.text, cols.clone()),
+            }
+        } else {
+            slice_text_cols(&line.text, cols.clone())
+        };
+        out.push_str(&apply_selection_boundary(
+            selected,
+            boundaries.boundary_for_line(line),
+            cols.start == 0,
+            cols.end == width,
+        ));
+        prev = Some(line);
+    }
+    (prev.is_some() && saw_anchor && saw_head).then_some(out)
 }
 
 pub fn block_drag_threshold_exceeded(pending: &PendingBlockDrag, col: u16, row: u16) -> bool {
@@ -528,6 +719,7 @@ pub fn render_active_selection_overlay(
             block_line_idx: drag.head.block_line_idx,
             col_within_range: drag.head.col_within_range,
         },
+        Some((drag.head.entry_idx, drag.head.range_id)),
         drag.kind,
         table,
         buf,
@@ -549,6 +741,7 @@ pub fn render_persistent_selection_overlay(
         selection.range_id,
         selection.anchor,
         selection.head,
+        selection.head_range,
         selection.kind,
         table,
         buf,
@@ -562,10 +755,42 @@ fn render_selection_overlay_impl(
     range_id: u16,
     anchor: SelectionEndpoint,
     head: SelectionEndpoint,
+    head_range: Option<(usize, u16)>,
     kind: SelectionKind,
     table: Option<&TableGeometry>,
     buf: &mut Buffer,
 ) {
+    if let Some((head_entry_idx, head_range_id)) = head_range
+        && (head_entry_idx, head_range_id) != (entry_idx, range_id)
+    {
+        let a = RangeHit {
+            entry_idx,
+            range_id,
+            block_line_idx: anchor.block_line_idx,
+            col_within_range: anchor.col_within_range,
+        };
+        let h = RangeHit {
+            entry_idx: head_entry_idx,
+            range_id: head_range_id,
+            block_line_idx: head.block_line_idx,
+            col_within_range: head.col_within_range,
+        };
+        let theme = Theme::current();
+        for line in model.ranges.iter().flat_map(|range| &range.lines) {
+            if let Some(cols) = span_cols_for_line(a, h, line) {
+                for col in cols {
+                    let x = line
+                        .screen_x
+                        .saturating_add(line.selectable_cols.start)
+                        .saturating_add(col);
+                    if let Some(cell) = buf.cell_mut((x, line.screen_y)) {
+                        apply_selection_highlight(&theme, cell);
+                    }
+                }
+            }
+        }
+        return;
+    }
     let Some(range) = model.range(entry_idx, range_id) else {
         return;
     };
@@ -1547,6 +1772,104 @@ fn map_inclusive_concat_col(
 mod tests {
     use super::*;
     use xai_grok_markdown::TableCellCopy;
+
+    fn span_line(
+        entry_idx: usize,
+        range_id: u16,
+        block_line_idx: usize,
+        row: u16,
+        text: &str,
+        joiner: Option<&str>,
+    ) -> ResolvedSelectableLine {
+        ResolvedSelectableLine {
+            entry_idx,
+            range_id,
+            block_line_idx,
+            screen_y: row,
+            screen_x: 0,
+            selectable_cols: 0..(text.len() as u16),
+            text: text.into(),
+            painted_region: None,
+            joiner_to_previous: joiner.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn plain_drag_crosses_message_tool_output_wrap_and_next_block() {
+        let mut model = ResolvedSelectionModel::default();
+        model.push_line(span_line(0, 0, 0, 0, "hello", None));
+        model.push_line(span_line(0, 1, 1, 1, "tool", None));
+        model.push_line(span_line(0, 1, 2, 2, " output", Some("")));
+        model.push_line(span_line(1, 0, 0, 4, "world", None));
+        let anchor = model.hit_test_text_exact(1, 0).unwrap();
+        let head = model.hit_test_nearest(anchor, 2, 4).unwrap();
+        assert_eq!((head.entry_idx, head.range_id), (1, 0));
+        let drag = ActiveTextDrag {
+            anchor,
+            head,
+            kind: SelectionKind::Linear,
+            anchor_content_width: None,
+        };
+        assert_eq!(
+            reconstruct_selection_text(&model, &drag).as_deref(),
+            Some("ello\ntool output\n\nwor")
+        );
+        let reverse = ActiveTextDrag {
+            anchor: head,
+            head: anchor,
+            ..drag
+        };
+        assert_eq!(
+            reconstruct_selection_text(&model, &reverse),
+            reconstruct_selection_text(&model, &drag)
+        );
+
+        let mut buf = Buffer::empty(Rect::new(0, 0, 20, 5));
+        render_active_selection_overlay(&model, &drag, None, &mut buf);
+        assert_ne!(
+            buf.cell((1, 0)).unwrap().style(),
+            buf.cell((0, 0)).unwrap().style()
+        );
+        assert_ne!(
+            buf.cell((2, 4)).unwrap().style(),
+            buf.cell((3, 4)).unwrap().style()
+        );
+        let persisted = PersistentTextSelection {
+            entry_idx: anchor.entry_idx,
+            range_id: anchor.range_id,
+            anchor: SelectionEndpoint {
+                block_line_idx: anchor.block_line_idx,
+                col_within_range: anchor.col_within_range,
+            },
+            head: SelectionEndpoint {
+                block_line_idx: head.block_line_idx,
+                col_within_range: head.col_within_range,
+            },
+            head_range: Some((head.entry_idx, head.range_id)),
+            origin: SelectionOrigin::Drag,
+            kind: SelectionKind::Linear,
+        };
+        let mut held = Buffer::empty(Rect::new(0, 0, 20, 5));
+        render_persistent_selection_overlay(&model, &persisted, None, &mut held);
+        assert_eq!(buf, held, "mouse-up must keep the same selected cells");
+    }
+
+    #[test]
+    fn group_header_precedes_same_entry_content_during_plain_drag() {
+        let mut model = ResolvedSelectionModel::default();
+        model.push_line(span_line(0, u16::MAX, 0, 0, "label", None));
+        model.push_line(span_line(0, 0, 0, 1, "body", None));
+        let drag = ActiveTextDrag {
+            anchor: model.hit_test_text_exact(0, 0).unwrap(),
+            head: model.hit_test_text_exact(3, 1).unwrap(),
+            kind: SelectionKind::Linear,
+            anchor_content_width: None,
+        };
+        assert_eq!(
+            reconstruct_selection_text(&model, &drag).as_deref(),
+            Some("label\nbody")
+        );
+    }
 
     fn single_line_drag(block_line_idx: usize, width: u16) -> ActiveTextDrag {
         ActiveTextDrag {
@@ -3487,6 +3810,7 @@ mod tests {
                 block_line_idx: 2,
                 col_within_range: 5,
             },
+            head_range: None,
             origin: SelectionOrigin::Drag,
             kind: SelectionKind::Linear,
         };
@@ -3540,6 +3864,7 @@ mod tests {
                 block_line_idx: 0,
                 col_within_range: 5,
             },
+            head_range: None,
             origin: SelectionOrigin::DoubleClick,
             kind: SelectionKind::Linear,
         };
@@ -3576,6 +3901,7 @@ mod tests {
                 block_line_idx: 0,
                 col_within_range: 10,
             },
+            head_range: None,
             origin: SelectionOrigin::DoubleClick,
             kind: SelectionKind::Linear,
         };
@@ -3640,6 +3966,7 @@ mod tests {
                 block_line_idx: 3,
                 col_within_range: 8,
             },
+            head_range: None,
             origin: SelectionOrigin::Drag,
             kind: SelectionKind::Linear,
         };

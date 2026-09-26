@@ -775,8 +775,9 @@ impl AgentView {
         }
         let compact = appearance.prompt.compact;
         let inner_width = AgentViewLayout::inner_width(area, layout_cfg, compact);
-        // Phone-width panes spend one more row on the prompt (the label moves below the box)
-        // and give the shortcut-hint row back, so the bottom stack keeps its height.
+        // Phone-width panes keep a one-row prompt info block (a plain divider) and
+        // fold the model onto the DeepSeek status row. The shortcut-hint row stays
+        // dropped, so the bottom stack is one row shorter than the desktop stack.
         let narrow = is_narrow_label_width(inner_width);
         let banner_height = if banner_height > 0 {
             if let Some(tip_text) = tip {
@@ -1113,9 +1114,9 @@ impl AgentView {
             dock_height,
             prompt_gap,
             voice_recording_height,
-            // A narrow pane has no hint row in any state: the model label takes it
-            // (see the `narrow` comment above), and `ShortcutsBar` no-ops on a
-            // zero-height rect, so every render site stays as-is.
+            // A narrow pane has no hint row in any state. The model no longer
+            // takes that row; it shares the DeepSeek status row. `ShortcutsBar`
+            // no-ops on a zero-height rect, so every render site stays as-is.
             shortcuts_height: u16::from(!narrow),
             status_line_height: status_line.height(),
             compact,
@@ -1494,12 +1495,12 @@ impl AgentView {
         }
         self.hit_upgrade_cta
             .set_unless_dropdown(upgrade_cta_rect, dropdown_open);
-        // DeepSeek bottom status row: account balance + prompt-cache hit
-        // rate. Renders only when the shell confirmed the session is
-        // DeepSeek-backed; the row always reserves one line but stays blank
-        // otherwise (x.ai sessions get no chips here).
+        // DeepSeek bottom status row. Desktop paints balance + `cache N%` here,
+        // and leaves the row blank until that status lands. A phone pane skips
+        // this pass and paints cost and model together later, once the label exists.
         buf.set_style(layout.deepseek_status, Style::default().bg(theme.bg_base));
-        if self.deepseek_status_session_id.as_ref() == self.session.session_id.as_ref()
+        if !narrow
+            && self.deepseek_status_session_id.as_ref() == self.session.session_id.as_ref()
             && let Some(ds) = self.deepseek_status.as_ref().filter(|s| s.is_deepseek)
         {
             let mut chips: Vec<Span<'static>> = Vec::new();
@@ -2370,6 +2371,25 @@ impl AgentView {
         } else {
             info
         };
+        if narrow {
+            let (balance, cache) = phone_cost_chips(self);
+            let flag_texts: Vec<&str> = info.flags.iter().map(|flag| flag.text).collect();
+            let band = crate::views::phone_bottom_band::compose_phone_bottom_band(
+                layout.deepseek_status.width as usize,
+                balance.as_deref(),
+                cache.as_deref(),
+                info.model_name,
+                &flag_texts,
+                info.usage_warning,
+                info.multiline,
+            );
+            crate::views::phone_bottom_band::paint_phone_bottom_band(
+                buf,
+                layout.deepseek_status,
+                &band,
+                &theme,
+            );
+        }
         let mut prompt_cursor_pos: Option<(u16, u16)> = None;
         let mut prompt_post_flush: Option<crate::terminal::overlay::PostFlush> = None;
         if permission_view_h > 0 {
@@ -4391,6 +4411,27 @@ fn fit_toast_text(msg: &str, avail_width: u16) -> Option<String> {
     let truncated: String = msg.chars().take(max_msg_chars.saturating_sub(1)).collect();
     Some(format!(" {}… ", truncated.trim_end()))
 }
+
+/// Balance and compact cache marker for the phone row. Empty until this
+/// session's DeepSeek status has landed — the model side of the row still paints.
+fn phone_cost_chips(agent: &AgentView) -> (Option<String>, Option<String>) {
+    if agent.deepseek_status_session_id.as_ref() != agent.session.session_id.as_ref() {
+        return (None, None);
+    }
+    let Some(ds) = agent.deepseek_status.as_ref().filter(|s| s.is_deepseek) else {
+        return (None, None);
+    };
+    let balance = ds
+        .balance
+        .as_ref()
+        .map(crate::views::agent_status::format_deepseek_balance);
+    let cache = crate::views::agent_status::format_cache_hit_marker(
+        ds.usage.totals.cached_read_tokens,
+        ds.usage.totals.input_tokens,
+    );
+    (balance, cache)
+}
+
 #[cfg(test)]
 mod toast_fit_tests {
     use super::fit_toast_text;

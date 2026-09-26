@@ -115,7 +115,10 @@ For the short command, replace `deepseek-build` with `dsb` in any example.
 
 At or below 60 columns, a submitted prompt folds to at most two rows and drops
 the decorative `❯` and blank pad rows; wider windows keep the three-line
-budget. The full-screen view has a configurable status line at the bottom. On
+budget. On that phone-width pane the balance, cache hit, model and permission
+share one row under the input box — cost and cache on the left, model and
+permission on the right. Wider panes keep the model on the box border and the
+balance on its own row. The full-screen view has a configurable status line at the bottom. On
 the official DeepSeek API, DeepSeek V4.1 Flash (`deepseek-flash`) accepts
 attached images directly, and text-only models keep images off the wire with
 the on-disk fallback.

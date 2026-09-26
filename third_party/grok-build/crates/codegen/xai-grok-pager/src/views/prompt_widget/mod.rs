@@ -271,19 +271,15 @@ impl PromptStyle {
         }
     }
 
-    /// Info block height: rows reserved below the text. One row carries the bottom divider
-    /// (with the label on it); a narrow pane ([`is_narrow_label_width`]) adds a second row
-    /// and keeps the divider plain, so the label moves below the box.
+    /// Info block height: one row below the text, the bottom divider.
+    ///
+    /// `narrow` no longer adds a row. A phone-width pane keeps this divider
+    /// plain (the label is not painted on it) and the agent view puts the
+    /// model on the DeepSeek status row instead. The argument stays so callers
+    /// that already pass the phone gate do not grow a second signature.
     pub fn info_block(&self, has_info: bool, narrow: bool) -> u16 {
-        if !has_info {
-            return 0;
-        }
-        // Only the chrome box has a divider (and therefore a label) to move.
-        if narrow && self.chrome && self.show_borders {
-            2
-        } else {
-            1
-        }
+        let _ = narrow;
+        if !has_info { 0 } else { 1 }
     }
 
     /// Mode-tinted accent: the override (e.g. plan mode) when set, else the focus-dependent default.
@@ -297,8 +293,9 @@ impl PromptStyle {
     }
 }
 
-/// Whether the pane at `area_width` is narrow enough that the model/mode label gives up
-/// the bottom divider and takes its own row below the box.
+/// Whether the pane at `area_width` is narrow enough that the model/mode label leaves
+/// the bottom divider. The divider stays a plain rule; the agent view paints the model
+/// on the status row under the box.
 ///
 /// Same threshold and same quantity (the prompt area width) as the narrow-pane rules in
 /// `scrollback::blocks`; phone panes measure 55 columns, the desktop widths 80 and up.
@@ -1618,8 +1615,8 @@ impl PromptWidget {
     }
 
     /// How tall this widget wants to be, given the available width of the full prompt area (including
-    /// chrome if enabled). Height = vpad_top + textarea rows + vpad_info + info line(s); a narrow
-    /// pane ([`is_narrow_label_width`]) spends one more row on the label below the box. Clamped to
+    /// chrome if enabled). Height = vpad_top + textarea rows + the one info row. A phone-width pane
+    /// does not spend a second row here; its model shares the status row below the box. Clamped to
     /// max_height.
     pub fn desired_height(
         &self,
@@ -3384,8 +3381,10 @@ impl PromptWidget {
             }
         }
 
-        // Bottom divider: ╰──────────grok-3 · flags──╯ on wide panes; a narrow pane
-        // ([`is_narrow_label_width`]) keeps the rule plain and puts the label on the row below.
+        // Bottom divider: ╰──────────grok-3 · flags──╯ on wide panes. A narrow pane
+        // ([`is_narrow_label_width`]) keeps the rule plain; the model shares the
+        // status row under the box, painted by the agent view, so this widget
+        // does not spend a second row on it.
         // Guard on actual allocated height, not requested `info_block`
         // During resize the layout may squeeze the info block to 0 rows, leaving chunks[2].y past the buffer boundary
         if info_block > 0

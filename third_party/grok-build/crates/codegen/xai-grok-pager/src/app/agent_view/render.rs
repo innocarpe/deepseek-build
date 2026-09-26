@@ -4429,7 +4429,7 @@ fn fit_toast_text(msg: &str, avail_width: u16) -> Option<String> {
     Some(format!(" {}… ", truncated.trim_end()))
 }
 
-/// Balance and compact cache marker for the phone row. Empty until this
+/// Balance and cache label for the phone row. Empty until this
 /// session's DeepSeek status has landed — the model side of the row still paints.
 fn phone_cost_chips(agent: &AgentView) -> (Option<String>, Option<String>) {
     if agent.deepseek_status_session_id.as_ref() != agent.session.session_id.as_ref() {
@@ -4442,7 +4442,7 @@ fn phone_cost_chips(agent: &AgentView) -> (Option<String>, Option<String>) {
         .balance
         .as_ref()
         .map(crate::views::agent_status::format_deepseek_balance);
-    let cache = crate::views::agent_status::format_cache_hit_marker(
+    let cache = crate::views::agent_status::format_cache_hit_pct(
         ds.usage.totals.cached_read_tokens,
         ds.usage.totals.input_tokens,
     );

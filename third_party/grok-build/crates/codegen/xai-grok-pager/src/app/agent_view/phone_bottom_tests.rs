@@ -218,7 +218,7 @@ fn phone_pane_puts_cost_and_model_on_one_row_and_drops_the_hint_row() {
     assert_one_band(
         &buf,
         "$15.87",
-        "c88%",
+        "cache 88%",
         "V4.1 Flash (max)",
         Some("always-approve"),
     );
@@ -236,14 +236,16 @@ fn phone_pane_fits_a_large_balance_and_a_full_cache() {
     assert_one_band(
         &buf,
         "$1234.56",
-        "c100%",
-        "V4.1 Flash (max)",
+        "cache 100%",
+        // The full cache label costs the five columns the old `c100%` saved,
+        // so the widest money string drops the effort suffix; the mode holds.
+        "V4.1 Flash",
         Some("always-approve"),
     );
 }
 
 #[test]
-fn phone_pane_drops_effort_before_clipping_a_long_model() {
+fn phone_pane_ellipsizes_the_long_model_after_effort_is_gone() {
     let mut agent = agent_with("DeepSeek V4.1 Flash Thinking", "1234.56", 100, 100);
     let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
     eprintln!(
@@ -255,14 +257,14 @@ fn phone_pane_drops_effort_before_clipping_a_long_model() {
     assert_one_band(
         &buf,
         "$1234.56",
-        "c100%",
-        "V4.1 Flash Thinking",
+        "cache 100%",
+        "V4.1 Flash Thi",
         Some("always-approve"),
     );
     assert!(!band.contains("(max)"), "effort yields: {band:?}");
     assert!(
-        !band.contains('…'),
-        "the long model still fits whole: {band:?}"
+        band.contains('…'),
+        "the long model takes the ellipsis the label left it: {band:?}"
     );
 }
 
@@ -277,7 +279,7 @@ fn phone_pane_ellipsizes_only_a_model_that_cannot_fit() {
     );
     let band = row_text(&buf, border_row(&buf) + 1);
     assert!(band.contains("$1234.56"), "{band:?}");
-    assert!(band.contains("c100%"), "{band:?}");
+    assert!(band.contains("cache 100%"), "{band:?}");
     assert!(band.trim_end().ends_with("always-approve"), "{band:?}");
     assert!(band.contains('…'), "{band:?}");
     let money = band.find("$1234.56").unwrap();
@@ -292,14 +294,20 @@ fn phone_pane_keeps_other_permission_modes_whole() {
     auto.session.set_auto_mode_for_test(true);
     let buf = draw(&mut auto, PHONE_COLS, PHONE_ROWS);
     eprintln!("phone 55x41 auto — bottom band:\n{}", bottom_rows(&buf, 4));
-    assert_one_band(&buf, "$15.87", "c88%", "V4.1 Flash (max)", Some("auto"));
+    assert_one_band(
+        &buf,
+        "$15.87",
+        "cache 88%",
+        "V4.1 Flash (max)",
+        Some("auto"),
+    );
 
     let mut ask = phone_agent();
     ask.session.set_yolo_mode_for_test(false);
     let buf = draw(&mut ask, PHONE_COLS, PHONE_ROWS);
     eprintln!("phone 55x41 ask — bottom band:\n{}", bottom_rows(&buf, 4));
     let band = row_text(&buf, border_row(&buf) + 1);
-    assert_one_band(&buf, "$15.87", "c88%", "V4.1 Flash (max)", None);
+    assert_one_band(&buf, "$15.87", "cache 88%", "V4.1 Flash (max)", None);
     assert!(
         !band.contains("always-approve") && !band.contains("auto"),
         "{band:?}"
@@ -310,11 +318,13 @@ fn phone_pane_keeps_other_permission_modes_whole() {
     plan.plan_mode_active = true;
     let buf = draw(&mut plan, PHONE_COLS, PHONE_ROWS);
     eprintln!("phone 55x41 plan — bottom band:\n{}", bottom_rows(&buf, 4));
+    // The plan flag plus the full cache label spend the columns the effort
+    // suffix used to take; the mode itself stays whole.
     assert_one_band(
         &buf,
         "$15.87",
-        "c88%",
-        "V4.1 Flash (max)",
+        "cache 88%",
+        "V4.1 Flash",
         Some("always-approve"),
     );
     let band = row_text(&buf, border_row(&buf) + 1);
@@ -335,7 +345,7 @@ fn phone_pane_drops_the_hint_row_mid_turn_too() {
     assert_one_band(
         &buf,
         "$15.87",
-        "c88%",
+        "cache 88%",
         "V4.1 Flash (max)",
         Some("always-approve"),
     );

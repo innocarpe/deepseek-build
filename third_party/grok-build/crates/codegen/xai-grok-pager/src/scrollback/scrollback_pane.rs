@@ -585,7 +585,7 @@ impl ScrollbackPane {
         // height passes use), not at the pane width: a prompt drops its pad on a narrow pane, and a wider pane width
         // here would reserve two rows that were never drawn.
         let cwd = state.cwd();
-        let block_content_width = block_content_width_for(appearance, &entry.block, area.width);
+        let block_content_width = block_content_width_for(entry, appearance, area.width);
         let has_vpad = entry
             .block
             .has_vpad_for_width(appearance, block_content_width);
@@ -1154,7 +1154,7 @@ fn paint_expandable_indicator(
     }
     // Width-aware so the chevron appears on a block that is folded at this width, including a prompt folded by the
     // narrow-pane default. Uses the same entry-area → content-width chain as the fold decision.
-    let content_width = block_content_width_for(appearance, &entry.block, content_area.width);
+    let content_width = block_content_width_for(entry, appearance, content_area.width);
     if !entry.block.is_foldable_at(content_width) {
         return;
     }
@@ -1309,11 +1309,11 @@ mod tests {
         );
     }
 
-    /// A phone-width pane paints the collapsed echo as two selectable text rows and nothing else: the band has
-    /// no pad row above or below (a row is ~2.15 columns of pitch, more than the one-column side gutters). The
-    /// layout height and the painted selection model have to agree, or a tap on the second line misses the prompt.
+    /// A phone-width pane paints the collapsed echo as two selectable text rows inside one pad row each side
+    /// (each pad is painted as a fraction of a row, the side gutters' own one column). The layout height and the
+    /// painted selection model have to agree, or a tap on the second line misses the prompt.
     #[test]
-    fn phone_width_collapsed_echo_paints_a_two_row_band() {
+    fn phone_width_collapsed_echo_paints_the_padded_band() {
         let area = Rect::new(0, 0, 55, 41);
         let mut state = ScrollbackState::new();
         state.prepare_layout(area.width, area.height);
@@ -1332,8 +1332,8 @@ mod tests {
         );
         assert_eq!(
             state.get_cached_entry_height(0),
-            Some(2),
-            "the painted band is the two content rows with no pad row"
+            Some(4),
+            "the painted band is the two content rows plus one pad row each side"
         );
     }
 

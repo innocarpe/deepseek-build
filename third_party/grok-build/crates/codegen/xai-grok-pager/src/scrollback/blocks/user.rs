@@ -18,7 +18,7 @@ const COLLAPSED_MAX_LINES: usize = 3;
 /// [`COLLAPSED_NARROW_MAX_LINES`]. The measured iPhone Orca pane is 55 columns
 /// (the narrowest desktop pane on the same machine is 80). One row names the
 /// turn and cuts the rest of the prompt; two rows keep enough of it to read,
-/// and the echo band has no vertical padding, so the extra row is one line of
+/// and the band's pad is a fraction of a row, so the extra row is one line of
 /// text. Anything wider keeps [`COLLAPSED_MAX_LINES`], so the desktop layout
 /// is untouched.
 ///
@@ -540,18 +540,19 @@ impl BlockContent for UserPromptBlock {
         appearance.scrollback.blocks.prompt.vpad && !appearance.prompt.compact
     }
 
-    /// On a phone-width pane the prompt echo is a two-row band, and the two blank pad rows around it cost as much
-    /// vertical space as the band itself. Drop the pad there. Wider panes keep the configured pad, so the desktop
-    /// rhythm is untouched. The threshold is the same [`COLLAPSED_NARROW_TERMINAL_COLS`] the narrow fold already uses.
-    ///
-    /// The row pitch at the phone's font (~2.15 columns) is what makes a pad row
-    /// the wrong unit here: one row above and below reads as more white than the
-    /// one-column gutter the sides keep, so the band spends its rows on text.
+    /// The echo keeps a pad row above and below on every pane, and the renderer
+    /// paints those rows to the *visible* size of the side gutters: on a
+    /// phone-width pane each one carries a fraction of the band's color (see
+    /// `EntryRenderer::paint_narrow_pad_row`) instead of a full row, because a
+    /// terminal row is a little over two columns tall (55x41 measured: 16.5px
+    /// cells, 35.5px rows) and a whole pad row would read as 2.15 columns of
+    /// white against the one-column gutter the sides keep. Wider panes paint the
+    /// configured full-height pad, so the desktop rhythm is untouched.
     ///
     /// This rule survives the trait default's narrow-pane drop (`layout.narrow`) because it is the stricter one on a
     /// mid-width pane: there the pane is wide but the echo's own content column is not.
-    fn has_vpad_for_width(&self, appearance: &AppearanceConfig, content_width: u16) -> bool {
-        content_width > COLLAPSED_NARROW_TERMINAL_COLS && self.has_vpad_for(appearance)
+    fn has_vpad_for_width(&self, appearance: &AppearanceConfig, _content_width: u16) -> bool {
+        self.has_vpad_for(appearance)
     }
 
     fn has_raw_mode(&self) -> bool {
@@ -1515,17 +1516,18 @@ mod tests {
         );
     }
 
-    /// The echo has no vertical pad on a phone-width pane: at this font a pad
-    /// row is ~2.15 columns of pitch, so one row above and below reads as more
-    /// white than the one-column left/right gutter they are meant to match — and
-    /// around a two-row echo the two rows cost as much as the echo itself.
-    /// Wider panes keep the configured pad, so the desktop rhythm is untouched.
+    /// The echo keeps its pad row above and below on every pane, and a
+    /// phone-width pane paints each one as a fraction of a row (the renderer's
+    /// `paint_narrow_pad_row`): at this font a whole pad row is ~2.15 columns of
+    /// white, where the left/right gutter the pad is matching is one column.
+    /// Wider panes paint the full-height pad, so the desktop rhythm is
+    /// untouched.
     ///
     /// The rule survives the trait default's narrow-pane drop (`layout.narrow`)
     /// because it is the stricter one on a mid-width pane: there the pane is
     /// wide but the echo's own content column is not.
     #[test]
-    fn prompt_vpad_drops_at_phone_width() {
+    fn prompt_vpad_keeps_at_phone_width() {
         let block = UserPromptBlock::new("hello");
         let appearance = AppearanceConfig::default();
         assert!(
@@ -1533,8 +1535,9 @@ mod tests {
             "the default config must ask for vpad, or this test proves nothing"
         );
         assert!(
-            !block.has_vpad_for_width(&appearance, PHONE_CONTENT_WIDTH),
-            "a phone-width pane drops the prompt's blank pad rows"
+            block.has_vpad_for_width(&appearance, PHONE_CONTENT_WIDTH),
+            "the echo keeps a pad row top and bottom; the renderer shrinks it to \
+             the side gutter's size on a phone-width pane"
         );
     }
 

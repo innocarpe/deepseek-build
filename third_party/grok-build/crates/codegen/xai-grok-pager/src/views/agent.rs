@@ -87,12 +87,13 @@ pub const SHORT_TERMINAL_ROWS: u16 = 16;
 /// The scrollback's floor, pushed as the layout's only `Min`.
 /// The solver ranks it above every `Length`, so an over-committed layout shrinks another row.
 pub const SCROLLBACK_MIN_ROWS: u16 = 5;
-/// One blank row under the bottom status row.
+/// Rows the frame keeps under the bottom status row.
 ///
-/// The frame used to end on that row (the `6.1.2` flush decision); the bottom
-/// text then sat flush on the screen edge. One row of air is the smallest
-/// inset that reads as padding.
-pub const BOTTOM_MARGIN_ROWS: u16 = 1;
+/// Zero: the status row is the frame's last row, so the frame's top and bottom
+/// margins match (both are the cell's own leading — the status bar opens the
+/// frame and the status row closes it). A blank floor row was 2.15 columns of
+/// white at the phone's font, where the frame's side margins are one column.
+pub const BOTTOM_MARGIN_ROWS: u16 = 0;
 /// Auto-compact threshold: at or below this height the compact flag handed to rendering is forced on.
 /// Deliberately above [`SHORT_TERMINAL_ROWS`], which still gates the harder cuts (tip-row rendering, dropping the CTA and follow-up rows).
 pub const AUTO_COMPACT_MAX_ROWS: u16 = 20;
@@ -175,8 +176,8 @@ pub struct AgentViewLayout {
     /// Bottom status row (DeepSeek balance + cache hit rate). Always
     /// present as a row; renders blank when no DeepSeek status is known.
     pub deepseek_status: Rect,
-    /// The blank row below the bottom status row ([`BOTTOM_MARGIN_ROWS`]): the
-    /// frame's floor. Renders empty; the renderer paints its background.
+    /// Rows below the bottom status row ([`BOTTOM_MARGIN_ROWS`], zero by
+    /// default): zero-area when the status row closes the frame.
     pub bottom_margin: Rect,
     /// Bottom status_line row; zero-area when disabled.
     pub status_line: Rect,
@@ -312,9 +313,9 @@ impl AgentViewLayout {
         // DeepSeek bottom status row: always present so the row count is
         // stable; renders blank when no status data has landed.
         constraints.push(Constraint::Length(1));
-        // One blank row under the last text row: the frame's floor keeps a
-        // single row of air so the bottom text never sits flush on the screen
-        // edge.
+        // Rows under the last text row ([`BOTTOM_MARGIN_ROWS`], zero by
+        // default): the frame's floor is the status row itself, so the frame's
+        // top and bottom margins match.
         constraints.push(Constraint::Length(BOTTOM_MARGIN_ROWS));
         let chunks = Layout::vertical(constraints).split(inner_area);
         let mut chunks = chunks.iter().copied();
@@ -2122,8 +2123,9 @@ mod tests {
 
     /// The frame spends no rows on margins at any width: the status bar lands
     /// on row 0 (no outer vpad, no status gap), the outer pads are the
-    /// selection-border floor, and the only air below the content is the one
-    /// blank floor row under the bottom status row.
+    /// selection-border floor, and the bottom status row closes the frame
+    /// ([`BOTTOM_MARGIN_ROWS`] is zero, so the frame's top and bottom margins
+    /// are the same cell leading).
     #[test]
     fn layout_spends_no_rows_on_margins_at_any_width() {
         for (cols, rows) in [(55u16, 41u16), (120, 40), (180, 50)] {
@@ -2158,19 +2160,19 @@ mod tests {
             assert_eq!(
                 layout.deepseek_status.bottom() + BOTTOM_MARGIN_ROWS,
                 area.bottom(),
-                "{cols}x{rows}: the status row keeps {BOTTOM_MARGIN_ROWS} blank floor row(s) under it, got {:?}",
+                "{cols}x{rows}: the status row keeps {BOTTOM_MARGIN_ROWS} row(s) under it, got {:?}",
                 layout.deepseek_status,
             );
             assert_eq!(
                 layout.bottom_margin.height, BOTTOM_MARGIN_ROWS,
-                "{cols}x{rows}: the floor row is the frame's last row, got {:?}",
+                "{cols}x{rows}: the rows under the status row are zero-area by default, got {:?}",
                 layout.bottom_margin,
             );
             assert_eq!(
                 layout.scrollback.height,
                 rows - 5 - BOTTOM_MARGIN_ROWS,
                 "{cols}x{rows}: every row but the status bar, prompt, shortcuts, \
-                 DeepSeek status and floor rows is scrollback, got {:?}",
+                 DeepSeek status and bottom-margin rows is scrollback, got {:?}",
                 layout.scrollback,
             );
         }

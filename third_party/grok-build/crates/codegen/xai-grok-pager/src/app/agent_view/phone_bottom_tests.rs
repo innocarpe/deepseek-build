@@ -59,6 +59,12 @@ fn agent_with(model: &str, balance: &str, cached: u64, input: u64) -> AgentView 
 
 fn draw(agent: &mut AgentView, cols: u16, rows: u16) -> Buffer {
     agent.last_terminal_size = (cols, rows);
+    // The app derives the pane's density flag from the terminal width
+    // (`AppView::apply_effective_density`); the fixture sets the same value, so
+    // a frame test draws the frame the pane draws.
+    let mut appearance = agent.scrollback.appearance().clone();
+    appearance.scrollback.layout.narrow = crate::views::agent::effective_narrow(cols);
+    agent.scrollback.set_appearance(appearance);
     let area = Rect::new(0, 0, cols, rows);
     let mut buf = Buffer::empty(area);
     let mut scratch = ScratchBuffer::new();
@@ -405,12 +411,16 @@ fn seed_prompt_echo(agent: &mut AgentView, text: &str) {
     agent.scrollback.push_block(RenderBlock::user_prompt(text));
 }
 
-/// Rows the prompt echo's band covers, read at the echo's text column: the
-/// block background spans exactly the echo's text rows, so a pad row shows up
-/// here as a band row with no text in it.
+/// Rows the prompt echo's band touches, read at the echo's text column: the
+/// text rows carry the band as their background, the pad rows carry it as the
+/// ink of their fractional block glyph (`▂` / `▆`), so all four rows of the
+/// band show up here.
 fn echo_band_rows(buf: &Buffer, band_bg: ratatui::style::Color) -> Vec<u16> {
     (0..buf.area.height)
-        .filter(|&y| buf.cell((1, y)).is_some_and(|c| c.bg == band_bg))
+        .filter(|&y| {
+            buf.cell((1, y))
+                .is_some_and(|c| c.bg == band_bg || c.fg == band_bg)
+        })
         .collect()
 }
 
@@ -446,16 +456,36 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
     let frame = frame_text(&buf);
     eprintln!("phone 55x41 — full frame:\n{frame}");
 
-    // (a) The echo band has no blank pad row: every band row carries the prompt.
+    // (a) The echo band is two text rows inside one pad row each side, and each
+    // pad row spends two eighths of its height on the band (one column of
+    // air at the phone's font, where a whole row is 2.15 columns).
     let band = echo_band_rows(&buf, theme.bg_light);
-    assert!(
-        !band.is_empty(),
-        "the fixture must paint the echo:\n{frame}"
+    assert_eq!(
+        band.len(),
+        4,
+        "the echo band is two text rows plus a pad row each side: {band:?}\n{frame}"
     );
-    for &y in &band {
+    let first = band[0];
+    let top_pad = buf.cell((1, first)).unwrap();
+    assert_eq!(
+        top_pad.symbol(),
+        "\u{2582}",
+        "the top pad row keeps the band on its lower two eighths:\n{frame}"
+    );
+    assert_eq!(top_pad.fg, theme.bg_light, "{frame}");
+    assert_eq!(top_pad.bg, theme.bg_base, "{frame}");
+    let last = band[3];
+    let bottom_pad = buf.cell((1, last)).unwrap();
+    assert_eq!(
+        bottom_pad.symbol(),
+        "\u{2586}",
+        "the bottom pad row keeps the band on its upper two eighths:\n{frame}"
+    );
+    assert_eq!(bottom_pad.bg, theme.bg_light, "{frame}");
+    for y in [band[1], band[2]] {
         assert!(
             row_text(&buf, y).contains('M'),
-            "echo band row {y} is a blank pad row:\n{frame}"
+            "text row {y} carries the prompt:\n{frame}"
         );
     }
 
@@ -473,7 +503,7 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
     );
 
     // (c) The turn time stops one column inside the echo's band.
-    let echo_y = band[0];
+    let echo_y = band[1];
     let band_right = (0..PHONE_COLS)
         .rev()
         .find(|&x| {
@@ -491,36 +521,43 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
         "the time stops one column inside the band's right edge: ink {last_ink}, band {band_right}\n{frame}"
     );
 
-    // (d) One blank floor row under the status band.
+    // (d) The status row closes the frame: no blank floor row, so the frame's
+    // bottom margin matches its top (both are the cell's own leading).
     let status_y = divider + 1;
     assert_eq!(
-        status_y + 1 + crate::views::agent::BOTTOM_MARGIN_ROWS,
-        PHONE_ROWS,
-        "the status band keeps one blank floor row under it:\n{frame}"
+        status_y,
+        PHONE_ROWS - 1,
+        "the status row is the frame's last row:\n{frame}"
+    );
+    assert_eq!(
+        crate::views::agent::BOTTOM_MARGIN_ROWS,
+        0,
+        "the frame keeps no blank floor row"
     );
     assert!(
-        row_text(&buf, status_y + 1).trim().is_empty(),
-        "the floor row is blank:\n{frame}"
+        row_text(&buf, status_y).contains("cache 88%"),
+        "the last row is the status band, not blank space:\n{frame}"
     );
 }
 
-/// The floor row is one blank row — never two, never none — at every phone
-/// height the app runs at.
+/// The status row closes the frame at every phone height the app runs at: no
+/// blank floor row, so the frame's bottom margin is the cell's own leading and
+/// matches the status bar that opens the frame.
 #[test]
-fn phone_status_band_keeps_one_floor_row_at_every_phone_height() {
+fn phone_status_row_closes_the_frame_at_every_phone_height() {
     for rows in [PHONE_ROWS, 36, 33, 30, 26, 24, 20] {
         let mut agent = phone_agent();
         let buf = draw(&mut agent, PHONE_COLS, rows);
         let frame = frame_text(&buf);
         let status_y = border_row(&buf) + 1;
         assert_eq!(
-            status_y + 1 + crate::views::agent::BOTTOM_MARGIN_ROWS,
-            rows,
-            "{PHONE_COLS}x{rows}: the status band keeps one blank floor row\n{frame}"
+            status_y + crate::views::agent::BOTTOM_MARGIN_ROWS,
+            rows - 1,
+            "{PHONE_COLS}x{rows}: the status row is the frame's last row\n{frame}"
         );
         assert!(
-            row_text(&buf, status_y + 1).trim().is_empty(),
-            "{PHONE_COLS}x{rows}: the floor row is blank\n{frame}"
+            row_text(&buf, status_y).contains("cache 88%"),
+            "{PHONE_COLS}x{rows}: the last row is the status band\n{frame}"
         );
     }
 }

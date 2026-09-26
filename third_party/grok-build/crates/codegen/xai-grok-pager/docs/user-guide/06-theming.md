@@ -189,8 +189,8 @@ Control viewport padding and block spacing:
 outer_vpad = 0          # Vertical padding (top/bottom) for the viewport (0 = flush)
 outer_hpad_left = 1     # Left margin (minimum: 1)
 outer_hpad_right = 1    # Right margin (minimum: 1)
-block_pad_left = 0      # Padding between accent line and content
-block_pad_right = 0     # Padding after content at right edge
+block_pad_left = 1      # Padding between accent line and content
+block_pad_right = 2     # Padding after content at right edge (mirrors the rail's column)
 ```
 
 ### Scrollbar

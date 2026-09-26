@@ -173,7 +173,8 @@ pub struct WelcomeRenderResult {
 
 use hero_box::HERO_BOX_MIN_WIDTH;
 
-/// Prompt input height for a one-line draft (shared across hero and stacked layout paths).
+/// Prompt input height for a one-line draft (shared across hero and stacked layout paths):
+/// the border row, the text row, and the divider below.
 const PROMPT_HEIGHT: u16 = 3;
 
 /// Half the content area, as in the session view, but never more than the logo-less stacked column leaves beside the menu, tip, version and announcement rows.

@@ -218,10 +218,12 @@ impl Default for PromptStyle {
         Self {
             focused: true,
             show_prefix: true,
-            vpad_top: 1,
+            // The box's four sides inset their text equally: the border
+            // row/column plus one inset cell (see `LayoutConfig::BOX_PAD`).
+            vpad_top: crate::appearance::LayoutConfig::BOX_PAD,
             chrome: true,
-            chrome_pad_left: 2,
-            chrome_pad_right: 1,
+            chrome_pad_left: crate::appearance::LayoutConfig::BOX_PAD,
+            chrome_pad_right: crate::appearance::LayoutConfig::BOX_PAD,
             bg: PromptBg::Default,
             accent_color_override: None,
             border_color_override: None,
@@ -271,7 +273,13 @@ impl PromptStyle {
         }
     }
 
-    /// Info block height: one row below the text, the bottom divider.
+    /// Info block height: one row below the text, the bottom divider, plus the
+    /// box's bottom text inset.
+    ///
+    /// The inset mirrors the top one: [`vpad_top`](Self::vpad_top) spends its
+    /// first row on the top border and the remaining rows are the inset, so the
+    /// two sides stay equal whatever `vpad_top` is. Chromeless boxes have no
+    /// border to inset from and keep a plain info row.
     ///
     /// `narrow` no longer adds a row. A phone-width pane keeps this divider
     /// plain (the label is not painted on it) and the agent view puts the
@@ -279,7 +287,15 @@ impl PromptStyle {
     /// that already pass the phone gate do not grow a second signature.
     pub fn info_block(&self, has_info: bool, narrow: bool) -> u16 {
         let _ = narrow;
-        if !has_info { 0 } else { 1 }
+        if !has_info {
+            return 0;
+        }
+        // Only the chrome box has a border to inset from and a divider to carry.
+        if !(self.chrome && self.show_borders) {
+            return 1;
+        }
+        let inset = self.vpad_top.saturating_sub(1);
+        inset + 1
     }
 
     /// Mode-tinted accent: the override (e.g. plan mode) when set, else the focus-dependent default.
@@ -3062,6 +3078,9 @@ impl PromptWidget {
 
         // Split content: vpad_top, text, info_block
         let vpad_top = style.vpad_top;
+        // The top border spends the first vpad row; what remains is the top text
+        // inset. The bottom divider mirrors it (see `info_block`).
+        let info_inset = vpad_top.saturating_sub(1);
         let narrow = is_narrow_label_width(area.width);
         let info_block = style.info_block(info.is_some(), narrow);
         let chunks = Layout::vertical([
@@ -3100,12 +3119,14 @@ impl PromptWidget {
 
             // Caption inlined in the divider, ending on the same column as the info line below.
             // The pad spaces blank the adjacent `─`.
+            // The info label's rect runs to one cell inside the right border, so the
+            // caption's exclusive right edge is that border column.
             let caption = style
                 .title
                 .as_deref()
                 .map(str::trim)
                 .filter(|t| !t.is_empty());
-            let caption_right = content_area.x + content_area.width;
+            let caption_right = area.x + area.width.saturating_sub(1);
             let max_w = caption_right.saturating_sub(area.x + 3);
             if let Some(caption) = caption
                 && max_w >= 6
@@ -3381,19 +3402,17 @@ impl PromptWidget {
             }
         }
 
-        // Bottom divider: ╰──────────grok-3 · flags──╯ on wide panes. A narrow pane
-        // ([`is_narrow_label_width`]) keeps the rule plain; the model shares the
-        // status row under the box, painted by the agent view, so this widget
-        // does not spend a second row on it.
+        // The divider sits below the bottom text inset, which mirrors `vpad_top`'s
+        // inset (its first row is the top border): both sides inset equally.
         // Guard on actual allocated height, not requested `info_block`
-        // During resize the layout may squeeze the info block to 0 rows, leaving chunks[2].y past the buffer boundary
+        // During resize the layout may squeeze the info block, leaving chunks[2] short of the rows the divider and label need
         if info_block > 0
             && style.chrome
             && style.show_borders
             && let Some(info_chunk) = chunks.get(2)
-            && info_chunk.height > 0
+            && info_chunk.height > info_inset
         {
-            let div_y = info_chunk.y;
+            let div_y = info_chunk.y + info_inset;
             let div_style = Style::default().fg(border_color).bg(bg);
             let left_x = area.x;
             let right_x = area.x + area.width.saturating_sub(1);
@@ -3411,12 +3430,10 @@ impl PromptWidget {
                 }
             }
             // A blank info line still writes its padding spaces, which would punch holes in the divider it sits on.
-            // On a narrow pane the label leaves that divider alone and sits on the row below the box;
-            // the row is only there when the info block got its second row (a resize squeeze can drop it).
-            let label_y = if narrow { div_y + 1 } else { div_y };
-            if (!narrow || info_chunk.height > 1)
-                && let Some(info) = info.filter(|i| !i.is_blank())
-            {
+            // A phone-width pane paints no label on this divider at all: the agent
+            // view puts the model on the DeepSeek status row under the box, so no
+            // label row is reserved here.
+            if !narrow && let Some(info) = info.filter(|i| !i.is_blank()) {
                 // Reserve one cell per corner so the label starts on a blank pad
                 // rather than on the divider rule. `content_area` begins
                 // `chrome_pad_left` cells in, which left `─` painted directly
@@ -3424,7 +3441,7 @@ impl PromptWidget {
                 // phone-width pane, where the model label fills the row.
                 let info_rect = Rect {
                     x: area.x + 1,
-                    y: label_y,
+                    y: div_y,
                     width: area.width.saturating_sub(2),
                     height: 1,
                 };

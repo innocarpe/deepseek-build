@@ -829,7 +829,9 @@ impl QueuePane {
     /// That button is likewise right-aligned to the full width (it insets only on the left).
     fn content_area(area: Rect, layout_cfg: &LayoutConfig) -> Rect {
         use crate::scrollback::layout::HorizontalLayout;
-        let pad_left = HorizontalLayout::ACCENT + layout_cfg.block_pad_left.saturating_sub(1);
+        // The same left inset as every other text row: the accent column's slot
+        // plus the block pad.
+        let pad_left = HorizontalLayout::ACCENT + layout_cfg.block_pad_left;
         Rect {
             x: area.x + pad_left,
             y: area.y,

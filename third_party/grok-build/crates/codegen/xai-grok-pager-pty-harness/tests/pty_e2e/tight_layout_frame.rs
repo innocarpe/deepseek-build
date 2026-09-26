@@ -22,6 +22,16 @@ const LONG_TOKEN_LEN: usize = 200;
 /// the content area.
 const TIMESTAMP_GUTTER: u16 = 10;
 
+/// Where the scrollback text band starts inside the pane: the outer margin, the
+/// accent rail, and the rail's gutter (the default `block_pad_left`). The value
+/// is width-independent, so the desktop frame honours it too.
+const TEXT_BAND_LEFT_INSET: usize = 3;
+
+/// Where the band ends, counted from the pane's last column: the right pad
+/// (which mirrors the rail's column) plus the outer-margin column the scrollbar
+/// shares. Equal to [`TEXT_BAND_LEFT_INSET`] by design.
+const TEXT_BAND_RIGHT_INSET: u16 = 3;
+
 fn phone_response() -> String {
     let mut body = String::new();
     for i in 1..=RESPONSE_PARAGRAPHS {
@@ -55,9 +65,10 @@ fn echo_row(screen: &str, text: &str) -> String {
 }
 
 /// The frame spends no rows on margins at either width: status bar on row 0,
-/// echo text at column 2 (outer margin 1 + the accent column), content reaching
-/// the scrollbar column's left neighbour. Widening the same session keeps the
-/// flush frame while the phone-only gates lift (the echo draws its arrow again).
+/// echo text at column 3 (outer margin + accent column + the rail's gutter),
+/// content reaching the right pad's left neighbour. Widening the same session
+/// keeps the flush frame while the phone-only gates lift (the echo draws its
+/// arrow again).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore]
 async fn tight_frame_and_phone_only_gates() {
@@ -98,8 +109,8 @@ async fn tight_frame_and_phone_only_gates() {
     let echo = echo_row(&screen, PROBE);
     assert_eq!(
         leading_spaces(&echo),
-        2,
-        "the echo band's text starts after the outer margin and the accent column\nrow: {echo:?}"
+        TEXT_BAND_LEFT_INSET,
+        "the echo band's text starts past the outer margin, the accent column, and the rail's gutter\nrow: {echo:?}"
     );
     assert!(
         !echo.contains('\u{276f}'),
@@ -118,13 +129,13 @@ async fn tight_frame_and_phone_only_gates() {
     for row in &token_rows {
         assert_eq!(
             leading_spaces(row),
-            2,
+            TEXT_BAND_LEFT_INSET,
             "wrapped content keeps the same left edge as the echo\nrow: {row:?}"
         );
     }
-    // The long token breaks at the text band's width: the pane's two reserved
-    // outer columns (accent + margin on the left, scrollbar + margin on the
-    // right) and the block's timestamp gutter sit outside it.
+    // The long token breaks at the text band's width: the pane's outer margins,
+    // the block's left gutter (accent column + pad) and right pad, and the
+    // scrollbar column all sit outside it.
     let rightmost = token_rows
         .iter()
         .map(|row| row.rfind('x').unwrap_or(0))
@@ -132,7 +143,7 @@ async fn tight_frame_and_phone_only_gates() {
         .unwrap();
     assert_eq!(
         rightmost,
-        (PHONE_COLS - 2 - TIMESTAMP_GUTTER) as usize,
+        (PHONE_COLS - 1 - TEXT_BAND_RIGHT_INSET - TIMESTAMP_GUTTER) as usize,
         "wrapped content runs to the text band's right edge\nrows: {:?}",
         token_rows
             .iter()
@@ -155,8 +166,8 @@ async fn tight_frame_and_phone_only_gates() {
     let echo = echo_row(&wide, PROBE);
     assert_eq!(
         leading_spaces(&echo),
-        2,
-        "the desktop echo keeps only the outer margin and the accent column\nrow: {echo:?}"
+        TEXT_BAND_LEFT_INSET,
+        "the desktop echo keeps the same text-band inset (the pads are width-independent)\nrow: {echo:?}"
     );
     assert!(
         echo.contains('\u{276f}'),

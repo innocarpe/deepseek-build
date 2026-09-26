@@ -702,8 +702,8 @@ impl AgentView {
             vpad_top: 1,
             compact: appearance.prompt.compact,
             chrome: true,
-            chrome_pad_left: layout_cfg.block_pad_left,
-            chrome_pad_right: layout_cfg.block_pad_right,
+            chrome_pad_left: layout_cfg.eff_box_pad_left(),
+            chrome_pad_right: layout_cfg.eff_box_pad_right(),
             bg: PromptBg::Default,
             accent_color_override: if let Some(c) = self.prompt_input_mode.accent_color(&theme) {
                 Some(c)
@@ -5043,15 +5043,19 @@ mod status_line_draw_tests {
     #[test]
     fn row_clamped_away_by_the_prompt_keeps_the_exported_size() {
         let mut agent = make_agent();
-        draw_script_for(&mut agent, ONE_ROW_SCRIPT, 20);
+        // A 14-row frame: the prompt's cap (half the area) plus the fixed rows
+        // fill the screen, so the status row has no row left once the prompt
+        // grows to that cap.
+        draw_script_for(&mut agent, ONE_ROW_SCRIPT, 14);
         let painted = agent.last_status_line_size;
         assert_eq!(
             painted,
-            Some(crate::views::status_line::RowSize { cols: 76, lines: 1 }),
-            "the row fills the inner width of an 80-column area"
+            Some(crate::views::status_line::RowSize { cols: 78, lines: 1 }),
+            "the row fills the inner width of an 80-column area (80 - the two \
+             reserved outer columns)"
         );
         agent.prompt.set_text_preserving(&"line\n".repeat(20));
-        let buf = draw_script_for(&mut agent, ONE_ROW_SCRIPT, 20);
+        let buf = draw_script_for(&mut agent, ONE_ROW_SCRIPT, 14);
         assert!(
             find(&buf, ONE_ROW_SCRIPT).is_none(),
             "a prompt at its cap leaves no row to paint\n{}",

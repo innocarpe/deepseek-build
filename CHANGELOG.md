@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- The frame is flush at every width. The outer margin no longer spends blank
+  rows (the status bar is the first row and the bottom status row is the last),
+  the horizontal margin is the one column the selection border draws into, and
+  blocks carry no side pads: an entry's text starts at the accent column on a
+  55-column phone pane and on a 180-column desktop pane alike. The pads stay
+  configurable under `[scrollback.layout]` in `pager.toml`.
+- Phone-only render gates are unchanged. At or below 60 columns the submitted
+  prompt echo still folds to one row and drops its decorative `❯`, and the
+  default block vpad goes away; desktop widths keep the three-line echo, the
+  arrow and the block vpad.
+
 ## 6.1.1 — 2026-09-26
 
 - dsb no longer receives or displays xAI/Grok announcements (the shell strips them at the settings boundary; the pager never merges the remote layer).

@@ -72,11 +72,13 @@ pub trait BlockContent {
 
     /// Vertical padding at `content_width` — the width this block's text wraps at.
     ///
-    /// Two pad rows around a one-row band are a large fraction of a phone viewport, so a narrow pane may drop the pad
-    /// where a desktop pane keeps it. Defaults to the width-blind answer.
+    /// Two pad rows around a one-row band are a large fraction of a phone viewport, so a narrow pane drops the pad
+    /// where a desktop pane keeps it. The pane's narrowness comes from the appearance (`layout.narrow`), which the
+    /// pager derives from the pane width once per resize; content width alone cannot decide it, because a wide pane
+    /// can hold a narrow block. Defaults to the width-blind answer on every other pane.
     fn has_vpad_for_width(&self, appearance: &AppearanceConfig, content_width: u16) -> bool {
         let _ = content_width;
-        self.has_vpad_for(appearance)
+        !appearance.scrollback.layout.narrow && self.has_vpad_for(appearance)
     }
 
     fn has_vpad(&self, ctx: &BlockContext) -> bool {

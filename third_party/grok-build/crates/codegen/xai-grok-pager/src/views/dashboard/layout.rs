@@ -151,7 +151,9 @@ pub fn allocate_peek(
 
 /// Outer horizontal padding for the dispatch box (cols on each side).
 ///
-/// Matches `LayoutConfig::outer_hpad_left/right = 2` from the agent view's default appearance config.
+/// The dashboard keeps its own roomier frame: unlike the agent view's flush
+/// layout, this screen has no accent rail to lean on, so its rounded box and row
+/// list keep a two-column margin.
 pub const DISPATCH_OUTER_HPAD: u16 = 2;
 
 /// Outer horizontal padding for the top page header (cols on each side).

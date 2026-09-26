@@ -2874,6 +2874,35 @@ mod tests {
         );
     }
 
+    /// The derived narrow flag drops the default block vpad in the height pass:
+    /// a block that keeps the default pad measures 3 rows on a desktop pane and 1
+    /// on a phone pane, and the render pass reads the same answer.
+    #[test]
+    fn test_narrow_pane_drops_the_default_block_vpad() {
+        use crate::appearance::AppearanceConfig;
+
+        let mut wide = ScrollbackState::new();
+        wide.push_block(stub_block("hello there"));
+        wide.prepare_layout(120, 20);
+        assert_eq!(
+            wide.get_cached_entry_height(0),
+            Some(3),
+            "a desktop pane keeps the default vpad (1 content row + 2 pad rows)"
+        );
+
+        let mut phone = ScrollbackState::new();
+        let mut appearance = AppearanceConfig::default();
+        appearance.scrollback.layout.narrow = true;
+        phone.set_appearance(appearance);
+        phone.push_block(stub_block("hello there"));
+        phone.prepare_layout(53, 20);
+        assert_eq!(
+            phone.get_cached_entry_height(0),
+            Some(1),
+            "a phone pane drops the default vpad"
+        );
+    }
+
     #[test]
     fn test_push_chunk_to_agent() {
         let mut state = ScrollbackState::new();

@@ -95,15 +95,16 @@ fn bottom_rows(buf: &Buffer, n: u16) -> String {
 
 /// The prompt box's bottom divider row: the last row whose first chrome column holds `╰`.
 ///
-/// `LayoutConfig::default()` pads the outer viewport by two columns, so the box's left
-/// edge sits at column 2.
+/// The box fills the inner area, so its left edge is the reserved outer column
+/// (`LayoutConfig::eff_hpad_left`).
 fn border_row(buf: &Buffer) -> u16 {
+    let left = crate::appearance::LayoutConfig::default().eff_hpad_left(false) as usize;
     (0..buf.area.height)
         .rev()
         .find(|&y| {
             row_text(buf, y)
                 .chars()
-                .nth(2)
+                .nth(left)
                 .is_some_and(|c| c == '\u{2570}')
         })
         .unwrap_or_else(|| panic!("prompt box divider not found in\n{}", frame_text(buf)))
@@ -151,7 +152,13 @@ fn phone_pane_puts_the_label_below_the_box_and_drops_the_hint_row() {
     let border_y = border_row(&buf);
     let border = row_text(&buf, border_y);
     let label_row = row_text(&buf, border_y + 1);
-    let balance_row = row_text(&buf, PHONE_ROWS - 2);
+    // The balance chip row is the last row that carries it: the flush frame puts
+    // it against the pane's last row, with no bottom margin below it.
+    let balance_y = (0..buf.area.height)
+        .rev()
+        .find(|&y| row_text(&buf, y).contains("$15.87"))
+        .expect("the balance chip row");
+    let balance_row = row_text(&buf, balance_y);
 
     // The divider is a plain rule: no glyph of the label sits between ╰ and ╯.
     assert!(
@@ -197,7 +204,7 @@ fn phone_pane_puts_the_label_below_the_box_and_drops_the_hint_row() {
         balance_row.contains("cache"),
         "the cache-hit chip stays too: {balance_row:?}"
     );
-    for y in (PHONE_ROWS - 1)..buf.area.height {
+    for y in (balance_y + 1)..buf.area.height {
         assert!(
             row_text(&buf, y).trim().is_empty(),
             "nothing renders below the balance row (row {y}): {:?}",

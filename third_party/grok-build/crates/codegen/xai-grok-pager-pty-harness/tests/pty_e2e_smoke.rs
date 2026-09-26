@@ -9,8 +9,6 @@ mod common;
 
 #[path = "pty_e2e/agent_response.rs"]
 mod agent_response;
-#[path = "pty_e2e/auto_compact_top_row.rs"]
-mod auto_compact_top_row;
 #[path = "pty_e2e/connect_ui_timeout_env_override.rs"]
 mod connect_ui_timeout_env_override;
 #[path = "pty_e2e/dock_crowded_sections.rs"]
@@ -21,6 +19,8 @@ mod dock_hover_stop_background_task;
 mod doubled_lines_out_of_band_repro;
 #[path = "pty_e2e/embedded_mode_boots_without_hanging_on_blocked_backend.rs"]
 mod embedded_mode_boots_without_hanging_on_blocked_backend;
+#[path = "pty_e2e/flush_frame_rows.rs"]
+mod flush_frame_rows;
 #[path = "pty_e2e/fullscreen_external_editor_round_trip.rs"]
 mod fullscreen_external_editor_round_trip;
 #[path = "pty_e2e/initial_prompt_positional_auto_submits.rs"]
@@ -53,6 +53,8 @@ mod shift_tab_on_welcome_starts_session_in_plan_mode;
 mod small_screen_tip_survives_slow_turn;
 #[path = "pty_e2e/tab_focuses_scrollback_in_vim_and_default_modes.rs"]
 mod tab_focuses_scrollback_in_vim_and_default_modes;
+#[path = "pty_e2e/tight_layout_frame.rs"]
+mod tight_layout_frame;
 #[path = "pty_e2e/waiting_for_model_label.rs"]
 mod waiting_for_model_label;
 #[path = "pty_e2e/welcome_screen.rs"]

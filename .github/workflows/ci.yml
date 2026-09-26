@@ -37,6 +37,7 @@ jobs:
       semver: ${{ steps.filter.outputs.semver }}
       release_verify: ${{ steps.filter.outputs.release_verify }}
       changelog: ${{ steps.filter.outputs.changelog }}
+      session_close: ${{ steps.filter.outputs.session_close }}
       grok: ${{ steps.filter.outputs.grok }}
     steps:
       - uses: actions/checkout@v4
@@ -79,6 +80,24 @@ jobs:
               - 'scripts/release.sh'
               - 'docs/contributing/release-cycle.md'
               - 'skills/release/SKILL.md'
+              - '.github/workflows/ci.yml'
+            # The 2026-09-26 stop: the finish line lived past the skill-description
+            # window sessions actually load, and a copied release-lane ban beat
+            # the user turn. Reverting that window, or a brief fixture that
+            # reproduces the stop, fails here. Not a title or path-inventory lint.
+            session_close:
+              - 'AGENTS.md'
+              - 'skills/session-unit/**'
+              - 'skills/release/SKILL.md'
+              - 'skills/worktree-dispatch/SKILL.md'
+              - 'skills/pr-authoring/SKILL.md'
+              - 'docs/contributing/review-checklist.md'
+              - 'docs/product/ULTRAGOAL_PROMPT_COLD_START_DEEPSEEK_DEPTH_6X.md'
+              - 'scripts/check-session-close.sh'
+              - 'scripts/check-pr-merged.sh'
+              - 'scripts/lib/session_close.py'
+              - 'scripts/lib/pr_merged.py'
+              - 'scripts/test-session-close.py'
               - '.github/workflows/ci.yml'
             grok:
               - 'third_party/grok-build/**'
@@ -218,6 +237,19 @@ jobs:
       - run: ./scripts/reorder-changelog.sh --check
       - run: ./scripts/test-changelog-release.sh
 
+  # Hermetic. Fails if the unit's finish line leaves the 160-character
+  # description window, or if a brief that bans the release lane while the
+  # user asked for a version starts to pass.
+  session_close:
+    name: session close
+    needs: changes
+    if: needs.changes.outputs.session_close == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 ./scripts/test-session-close.py
+
   # Vendored Grok validation. PRs keep the fast format and strict Clippy gates.
   # The full upstream workspace test runs once after merge instead of once per
   # stacked PR; the required aggregator accepts that job as skipped on PRs.
@@ -339,7 +371,7 @@ jobs:
   # ---------------------------------------------------------------------------
   required:
     name: required
-    needs: [changes, fmt, clippy, test, semver, release_verify, changelog, grok_fmt, grok_clippy, grok_test]
+    needs: [changes, fmt, clippy, test, semver, release_verify, changelog, session_close, grok_fmt, grok_clippy, grok_test]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -354,6 +386,7 @@ jobs:
           echo "semver=${{ needs.semver.result }}"
           echo "release_verify=${{ needs.release_verify.result }}"
           echo "changelog=${{ needs.changelog.result }}"
+          echo "session_close=${{ needs.session_close.result }}"
           echo "grok_fmt=${{ needs.grok_fmt.result }}"
           echo "grok_clippy=${{ needs.grok_clippy.result }}"
           echo "grok_test=${{ needs.grok_test.result }}"
@@ -373,6 +406,7 @@ jobs:
             "semver:${{ needs.semver.result }}" \
             "release_verify:${{ needs.release_verify.result }}" \
             "changelog:${{ needs.changelog.result }}" \
+            "session_close:${{ needs.session_close.result }}" \
             "grok_fmt:${{ needs.grok_fmt.result }}" \
             "grok_clippy:${{ needs.grok_clippy.result }}" \
             "grok_test:${{ needs.grok_test.result }}"

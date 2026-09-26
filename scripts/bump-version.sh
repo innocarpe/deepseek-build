@@ -2,9 +2,10 @@
 # Bump the release version across the repo.
 #
 # Single source of truth: root Cargo.toml [workspace.package] version.
-# This script keeps Cargo.toml, package.json, Cargo.lock, CHANGELOG.md,
-# README.md version literals and the docs/product/versions/README.md decision
-# log in sync (ADR 0006 / versioning.md).
+# This script keeps Cargo.toml, package.json, Cargo.lock, CHANGELOG.md and the
+# docs/product/versions/README.md decision log in sync (ADR 0006 / versioning.md).
+# The user-facing READMEs carry no version literals (release-cycle.md, README
+# policy) and are not touched here.
 #
 # CHANGELOG invariant (release-cycle.md): "# Changelog" -> "## Unreleased" at
 # the very top -> version sections newest-first. The new section is inserted
@@ -66,7 +67,7 @@ fi
 
 if [[ "$DRY" -eq 1 ]]; then
   echo "bump-version (dry-run): $OLD -> $NEW"
-  echo "  would edit: Cargo.toml, package.json, Cargo.lock (via cargo check), CHANGELOG.md, README.md (version literals), docs/product/versions/README.md"
+  echo "  would edit: Cargo.toml, package.json, Cargo.lock (via cargo check), CHANGELOG.md, docs/product/versions/README.md"
   [[ -n "$DESC" ]] && echo "  desc: $DESC"
   # Report the CHANGELOG move from the same code the real bump runs, so the
   # preview cannot promise an outcome the bump does not produce.
@@ -105,21 +106,12 @@ PY
 # Regenerate Cargo.lock (syncs the dsb-* workspace entries to the new version).
 cargo check -p dsb-cli >/dev/null
 
-# CHANGELOG section (via the shared mover) + versions README row + README literals.
+# CHANGELOG section (via the shared mover) + versions README row.
 python3 scripts/lib/changelog_release.py apply CHANGELOG.md "$NEW" "$(date +%Y-%m-%d)" "$DESC"
 
 python3 - "$NEW" "$(date +%Y-%m-%d)" "$OLD" "$DESC" <<'PY'
-import re, sys
+import sys
 new, date, old, desc = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
-
-# --- README.md (pure version literals only; never the product-status banner) -
-s = open('README.md').read()
-s2 = re.sub(r'(?m)^(# → (?:deepseek-build|dsb) )[0-9]+\.[0-9]+\.[0-9]+',
-            rf'\g<1>{new}', s)
-s2 = re.sub(r'(# → check-semver: ok \()[0-9]+\.[0-9]+\.[0-9]+(\))',
-            rf'\g<1>{new}\g<2>', s2)
-if s2 != s:
-    open('README.md', 'w').write(s2)
 
 # --- docs/product/versions/README.md decision-log row ------------------------
 s = open('docs/product/versions/README.md').read()

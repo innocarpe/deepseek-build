@@ -129,6 +129,7 @@ survived.
 | `crates/codegen/xai-grok-shell/src/session/helpers/spec10_path_a_assembly.rs` and `crates/codegen/xai-grok-shell/src/session/acp_session_impl/turn.rs` | `observe_path_a_prefix_change`: when the Path A epoch differs from this session's previous assembly in this process, the turn logs which of the five assembled documents moved (`prefix_change=`). No baseline and an unchanged epoch log no change line | Spec 10 Path A attribution. The shell does not depend on `dsb-context`, so the overlay shape never ran on this turn. Axes are the documents the assembly already concatenates |
 | `crates/codegen/xai-grok-sampling-types/src/types.rs`, `conversation.rs`, `crates/codegen/xai-chat-state/src/usage.rs`, `crates/codegen/xai-grok-shell/src/session/acp_session_impl/turn_end.rs` | Chat Completions `Usage` keeps `prompt_cache_miss_tokens`. The session ledger sums hit and miss only when those fields were sent, and `emit_turn_completed` logs `cache_session=` once per turn | Spec 10 §1.5.2 on Path A. The official host sends the miss; dropping the field made the client report a hit with no miss. The overlay counter in `dsb-agent` is unchanged |
 | `crates/codegen/xai-grok-shell/src/session/helpers/spec10_path_a_cache_guard.rs` | Spec 10 §1.9 Path A bench. Scored bytes are `assemble_spec10_path_a_turn` + `place_stable_body`, then `ChatCompletionRequest::from` (`conversation_to_chat_messages`). The mock accounts the `messages` array | The overlay bench scores `dsb-context`. Path A does not link that crate, so a guard that lives only there stays green when this assembly breaks |
+| `crates/codegen/xai-grok-shell/src/util/config/announcements.rs` + `agent/init.rs`, `agent/mvp_agent/agent_ops.rs` | `strip_remote_announcements` removes the `announcements` field at every `remote_settings` write (startup getter, boot wait, shared store, poll-only apply); `resolve_announcements` never merges the `remote` layer | dsb carries no xAI/Grok announcements: the fetch stays (the same blob carries harness settings), but announcements neither enter stored settings nor reach the pager's display set, so the welcome hero, session banner, header/dashboard CTA and `/announcements` gate stay empty for remote items. `GROK_ANNOUNCEMENTS_OVERRIDE` and config TOML layers are kept |
 
 Tests: `resume_hint_line_brands_invocation_name` and
 `failed_relaunch_hint_brands_invocation_name` pin the `dsb` output; upstream
@@ -138,6 +139,11 @@ invariants, the classic dark/GrokDay light resolution defaults, and the picker
 contract. Settings preview coverage retains legacy theme kinds while both
 catalogs expose `deepseeknight-v2`, `DeepSeek Night (classic)` and
 `DeepSeek Night Neutral`.
+ The announcement boundaries are pinned from both sides:
+`install_remote_settings_strips_remote_announcements_before_the_gate` keeps
+the stored field gone and the push gate silent, `resolve_announcements`
+ignores the remote layer while the override seed still wins, and the pty
+announcement cases assert that remote pushes never paint.
  The SSH paste deviation is pinned by the PTY case
 `ssh_image_path_attaches`, which spawns the pager with `SSH_CONNECTION` set —
 a unit test cannot, because `terminal_context()` is a process-wide static

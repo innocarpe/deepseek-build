@@ -1650,8 +1650,9 @@ impl MvpAgent {
     /// Writes remote settings into `cfg` along with the fields derived from them, so no derived field drifts between post-fetch callers.
     pub(super) fn store_remote_settings(
         &self,
-        settings: crate::util::config::RemoteSettings,
+        mut settings: crate::util::config::RemoteSettings,
     ) {
+        crate::util::config::strip_remote_announcements(&mut settings);
         let mut cfg = self.cfg.borrow_mut();
         cfg.remote_settings = Some(settings);
         crate::util::config::sync_campaign_fields(&mut cfg);
@@ -1909,7 +1910,7 @@ impl MvpAgent {
             tracing::debug!("settings poll apply skipped: settings changed mid-fetch");
             return;
         }
-        stored.announcements = fresh.announcements;
+        crate::util::config::strip_remote_announcements(stored);
         stored.accept_request_encodings = fresh.accept_request_encodings;
         crate::util::config::cache_remote_accept_request_encodings(
             &origin,

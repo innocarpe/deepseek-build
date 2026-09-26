@@ -1,6 +1,20 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
     use super::*;
 
+    /// A user-config announcement in the shape `announcements_from_toml` parses.
+    fn config_with_announcement(id: &str) -> toml::Value {
+        toml::from_str(&format!(
+            r#"
+            [[announcements]]
+            id = "{id}"
+            title = "{id} title"
+            message = "{id} message"
+            severity = "critical"
+            "#
+        ))
+        .unwrap()
+    }
+
     /// Stale or duplicate gens short-circuit BEFORE the apply (and its config disk loads) runs; nothing observable may change.
     #[test]
     fn announcements_update_stale_gen_short_circuits_before_apply() {
@@ -35,6 +49,7 @@
 
     /// The watermark lasts one connection: the event loop resets it to 0 on leader reconnect.
     /// A re-elected shell's fresh (possibly lower) gen sequence then applies, and a second copy of the seed broadcast stays a no-op.
+    /// The pushed list is display-stripped, so an apply only advances the watermark.
     #[test]
     fn announcements_update_applies_after_reconnect_watermark_reset() {
         let mut app = make_app_with_agent("sess-ann");
@@ -50,10 +65,10 @@
         assert!(first, "gen 1 must apply after the reconnect reset");
         assert_eq!(app.announcements_last_gen, 1);
         assert!(
-            app.active_announcements
+            !app.active_announcements
                 .iter()
                 .any(|a| a.id.as_deref() == Some("fresh")),
-            "pushed announcement must land"
+            "a pushed announcement must not land on screen"
         );
 
         // The per-client seed broadcast can deliver the same gen twice.
@@ -66,7 +81,8 @@
     }
 
     /// A push prunes hidden ids whose announcement is gone and schedules a persist so the on-disk set cannot grow unboundedly. Driven through the
-    /// layer-injected seam so the developer's real `~/.grok` cannot leak in.
+    /// layer-injected seam so the developer's real `~/.grok` cannot leak in; the live item comes from the user config layer because pushed
+    /// announcements are display-stripped.
     #[test]
     fn announcements_update_prunes_stale_hidden_ids_and_persists() {
         let mut app = make_app_with_agent("sess-ann");
@@ -77,9 +93,9 @@
         apply_announcements_update(
             &mut app,
             1,
-            &[critical_announcement("live")],
+            &[],
             None,
-            None,
+            Some(&config_with_announcement("live")),
             None,
         );
 
@@ -102,17 +118,17 @@
         );
     }
 
-    /// A pushed critical with a NEW id must re-show the banner even though an older critical was hidden (the whole point of per-ID hide). Driven
-    /// through the layer-injected seam (no real `~/.grok` reads).
+    /// A new critical id from the config layer must re-show the banner even though an older critical was hidden (the whole point of per-ID hide).
+    /// Driven through the layer-injected seam (no real `~/.grok` reads).
     #[test]
     fn announcements_update_new_critical_id_rearms_hidden_banner() {
         let mut app = make_app_with_agent("sess-ann");
         apply_announcements_update(
             &mut app,
             1,
-            &[critical_announcement("outage-a")],
+            &[],
             None,
-            None,
+            Some(&config_with_announcement("outage-a")),
             None,
         );
         app.hidden_announcement_ids.insert("outage-a".to_string());
@@ -121,9 +137,9 @@
         apply_announcements_update(
             &mut app,
             2,
-            &[critical_announcement("outage-b")],
+            &[],
             None,
-            None,
+            Some(&config_with_announcement("outage-b")),
             None,
         );
 
@@ -139,19 +155,10 @@
 
     /// A push must not drop config-layer announcements, and prune must not erase their persisted hide keys.
     /// Config layers re-resolve every launch, so a dropped key would re-show a critical the user already hid.
+    /// The pushed remote item itself is display-stripped and must never paint.
     #[test]
     fn announcements_update_remerges_config_layers_and_keeps_their_hide_keys() {
         let mut app = make_app_with_agent("sess-ann");
-        let user_cfg: toml::Value = toml::from_str(
-            r#"
-            [[announcements]]
-            id = "cfg-crit"
-            title = "Config outage"
-            message = "from user config"
-            severity = "critical"
-            "#,
-        )
-        .unwrap();
         app.hidden_announcement_ids = ["cfg-crit".to_string()].into_iter().collect();
 
         apply_announcements_update(
@@ -159,7 +166,7 @@
             1,
             &[critical_announcement("live")],
             None,
-            Some(&user_cfg),
+            Some(&config_with_announcement("cfg-crit")),
             None,
         );
 
@@ -171,8 +178,8 @@
             .collect();
         assert_eq!(
             ids,
-            ["live", "cfg-crit"],
-            "config-layer announcement must survive the push (remote > user order)"
+            ["cfg-crit"],
+            "the pushed remote item must not display; the config layer survives"
         );
         assert!(
             app.hidden_announcement_ids.contains("cfg-crit"),
@@ -186,14 +193,14 @@
             app.pending_effects
         );
         assert_eq!(
-            shown_banner_id(&app).as_deref(),
-            Some("live"),
-            "pushed critical shows; the hidden config-layer one stays skipped"
+            shown_banner_id(&app),
+            None,
+            "the only live config-layer item stays hidden"
         );
     }
 
-    /// A mid-session push must open the `/announcements` gate on already-live subagent child views, not just top-level agents. Driven through the
-    /// layer-injected seam (no real `~/.grok` reads).
+    /// A push must open the `/announcements` gate on already-live subagent child views, not just top-level agents. Driven through the
+    /// layer-injected seam (no real `~/.grok` reads); the item comes from the user config layer.
     #[test]
     fn announcements_update_fans_slash_gate_to_live_subagent_views() {
         let mut app = make_app_with_parent_and_child("parent-sess", "child-sess");
@@ -208,9 +215,9 @@
         apply_announcements_update(
             &mut app,
             1,
-            &[critical_announcement("outage-a")],
+            &[],
             None,
-            None,
+            Some(&config_with_announcement("outage-a")),
             None,
         );
 
@@ -228,3 +235,22 @@
         );
     }
 
+    /// A remote push is display-stripped end to end: the watermark advances, but nothing lands on screen.
+    #[test]
+    fn remote_push_never_reaches_the_display_set() {
+        let mut app = make_app_with_agent("sess-ann");
+
+        let changed = handle_ext_notification(
+            &announcements_update_notif(1, &[critical_announcement("remote-crit")]),
+            &mut app,
+        );
+
+        assert!(changed, "a fresh gen still applies");
+        assert_eq!(app.announcements_last_gen, 1);
+        assert!(
+            app.active_announcements.is_empty(),
+            "remote announcements must not display"
+        );
+        assert!(app.announcement.is_none(), "no hero item may be picked");
+        assert_eq!(shown_banner_id(&app), None, "no banner may be armed");
+    }

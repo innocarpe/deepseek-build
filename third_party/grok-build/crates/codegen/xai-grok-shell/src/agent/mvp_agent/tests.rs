@@ -8478,6 +8478,7 @@ fn announcements_push_gate_emits_on_expiry_crossing() {
 }
 /// A poll apply must touch ONLY `remote_settings.announcements` (and the request-encoding advertisement).
 /// Every other stored field keeps its pre-poll value (full reapply stays owned by startup, auth, and `/new`).
+/// The announcements field lands stripped: a poll must never put remote announcements back into product state.
 #[tokio::test]
 #[serial_test::serial(remote_sig_disarm)]
 async fn polled_settings_apply_touches_announcements_only() {
@@ -8497,7 +8498,10 @@ async fn polled_settings_apply_touches_announcements_only() {
         .remote_settings
         .as_ref()
         .expect("settings still present");
-    assert_eq!(after.announcements, Some(vec![ann("new")]));
+    assert_eq!(
+        after.announcements, None,
+        "a poll apply must keep remote announcements stripped"
+    );
     assert_eq!(
         after.tips,
         Some(vec!["stored-tip".to_string()]),
@@ -8513,6 +8517,44 @@ async fn polled_settings_apply_touches_announcements_only() {
         Some("stored-model"),
         "default_model must be untouched by a poll apply"
     );
+}
+/// Announced remote settings must enter product state stripped: a stored install keeps
+/// `remote_settings.announcements = None`, and the shared push gate over that state has
+/// nothing to send even when forced.
+#[tokio::test]
+async fn install_remote_settings_strips_remote_announcements_before_the_gate() {
+    let (agent, mut rx) = build_agent_with_gateway_rx();
+    agent.install_remote_settings(settings_with(Some(vec![ann("grok-4.7")])));
+    assert_eq!(
+        agent
+            .cfg
+            .borrow()
+            .remote_settings
+            .as_ref()
+            .and_then(|s| s.announcements.clone()),
+        None,
+        "the installer must strip remote announcements"
+    );
+    // Drain whatever side effects the install pushed (settings update, models, ...).
+    while rx.try_recv().is_ok() {}
+    // `Force` always pushes; over stripped settings the payload list must be empty.
+    agent.emit_announcements(AnnouncementsPushMode::Force);
+    while let Ok(msg) = rx.try_recv() {
+        if let xai_acp_lib::AcpClientMessage::ExtNotification(args) = msg
+            && args.request.method.as_ref() == "x.ai/announcements/update"
+        {
+            let parsed: serde_json::Value =
+                serde_json::from_str(args.request.params.get()).expect("valid JSON payload");
+            let list = parsed
+                .get("announcements")
+                .and_then(|a| a.as_array())
+                .expect("announcements array");
+            assert!(
+                list.is_empty(),
+                "stripped settings must push an empty list, got {parsed}"
+            );
+        }
+    }
 }
 /// The request-encoding advertisement is read per turn, so a poll must carry it:
 /// turning the proxy flag off has to stop compression before the next `/new` or restart.

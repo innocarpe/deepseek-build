@@ -43,6 +43,18 @@ Host tools (see spike):
 
 Evidence for G004: the script must exit 0 for `check` on a machine with the host tools above.
 
+### Capturing the pager
+
+- Build the pager binary **once** and reuse it for every width you capture
+  (55×41, desktop). Rebuilding per width pays the same link cost again.
+- A PTY launched with an empty `GROK_HOME` stops on the sign-in screen
+  (`Approve in your browser to finish signing in.`) and paints no layout frame
+  (measured 2026-09-26, tmux at 55×41). Capture through
+  `xai-grok-pager-pty-harness` instead: `flows::seed_fake_oauth` for auth plus
+  `spawn_minimal_sized(content, rows, cols)` for the sized spawn — the helper
+  and the pattern are in
+  `crates/codegen/xai-grok-pager-pty-harness/tests/pty_e2e/common.rs`.
+
 ---
 
 ## Refresh procedure

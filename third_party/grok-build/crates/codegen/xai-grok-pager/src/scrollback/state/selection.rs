@@ -5,9 +5,9 @@ use super::*;
 /// A same-cell tap on a phone-width user-prompt echo.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NarrowPromptEchoTap {
-    /// The collapsed one-line echo opens in place.
+    /// The collapsed two-line echo opens in place.
     Expand,
-    /// The expanded echo's first row folds it again.
+    /// Any row of the expanded echo folds it again.
     Collapse,
 }
 
@@ -288,9 +288,9 @@ impl ScrollbackState {
 
     /// What a same-cell tap on a phone-width user prompt does.
     ///
-    /// Collapsed (the whole two-line echo): expand. Expanded: collapse only when `click_row` is the
-    /// echo's first row. A body row, a desktop width, or a prompt that fits without folding returns
-    /// `None` so the click stays a selection.
+    /// Collapsed (the whole two-line echo): expand. Expanded: collapse when the tap lands on any
+    /// row of that echo, including a body row and the pad. A desktop width, a prompt that fits
+    /// without folding, or a row outside the echo returns `None` so the click stays a selection.
     fn narrow_prompt_echo_tap(
         &self,
         idx: usize,
@@ -308,14 +308,12 @@ impl ScrollbackState {
         if !entry.is_foldable_at(width) {
             return None;
         }
+        if !self.prompt_echo_contains_row(idx, click_row, scrollback_area) {
+            return None;
+        }
         match entry.display_mode() {
             DisplayMode::Collapsed | DisplayMode::Truncated => Some(NarrowPromptEchoTap::Expand),
-            DisplayMode::Expanded
-                if self.prompt_echo_first_row(idx, click_row, scrollback_area) =>
-            {
-                Some(NarrowPromptEchoTap::Collapse)
-            }
-            DisplayMode::Expanded => None,
+            DisplayMode::Expanded => Some(NarrowPromptEchoTap::Collapse),
         }
     }
 
@@ -344,23 +342,17 @@ impl ScrollbackState {
         true
     }
 
-    fn prompt_echo_first_row(
+    /// The tap's screen row sits inside this echo's visible rect, pad rows included.
+    fn prompt_echo_contains_row(
         &self,
         idx: usize,
         click_row: u16,
         scrollback_area: ratatui::layout::Rect,
     ) -> bool {
-        let Some((rect, top_clipped, _)) = self.entry_screen_area(idx, scrollback_area) else {
+        let Some((rect, _, _)) = self.entry_screen_area(idx, scrollback_area) else {
             return false;
         };
-        // The echo's pad row sits above its first content row, and the tap
-        // gesture targets the content line, not the pad.
-        let width = self.prompt_content_width(self.last_width);
-        let pad_top = u16::from(
-            self.entry(idx)
-                .is_some_and(|entry| entry.block.has_vpad_for_width(&self.appearance, width)),
-        );
-        !top_clipped && rect.height > 0 && click_row == rect.y.saturating_add(pad_top)
+        rect.height > 0 && click_row >= rect.y && click_row < rect.y.saturating_add(rect.height)
     }
 
     /// Shared implementation for fold operations with scroll anchoring.

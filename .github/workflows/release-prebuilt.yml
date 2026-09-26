@@ -1,13 +1,14 @@
 # Build and attach the Apple Silicon macOS prebuilt on version tags (ADR 0009).
-# Maintainer still runs npm publish (OTP) after assets exist.
+# publish-npm.yml publishes after the asset is attached.
 #
-# Change-scope fast path:
-#   - third_party/ unchanged since the previous release tag -> reuse that
-#     release's vendored agent binary, rebuild only the dsb-cli wrappers
-#     (minutes instead of a full vendored build).
-#   - third_party/ changed -> full vendored build; sccache + rust-cache make
-#     subsequent full builds incremental.
-# If the previous Apple Silicon tarball is missing, we fall back to full.
+# The agent is always rebuilt. Reusing the previous tag's binary shipped a
+# version string that failed the npm postinstall check.
+#
+# Cache: restore the default-branch Rust cache (seed-release-cache.yml writes
+# it after this workflow). Do not save here. A cache saved on a tag ref is
+# invisible to the next tag. This job uploads an archive the seed workflow
+# re-saves on the default branch. A missing or oversized archive does not
+# fail the release.
 name: release-prebuilt
 
 on:
@@ -23,10 +24,11 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 env:
-  RUSTC_WRAPPER: sccache
-  SCCACHE_GHA_CACHE: "true"
+  # CARGO_* and RUST* are part of the Swatinem cache key. seed-release-cache.yml
+  # must set the same values or the next tag will not restore this build.
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
 
@@ -39,6 +41,7 @@ jobs:
           - os: macos-14
             platform: darwin-arm64
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
         with:
@@ -75,14 +78,12 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "release=v$VERSION platform=${{ matrix.platform }}"
 
-      - uses: mozilla-actions/sccache-action@v0.0.6
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.94.0
 
-      # Registry/git + workspace target cache. Speeds full agent rebuilds when
-      # the vendored tree only changes a little; cheap no-op on wrapper-only.
+      # Restore only. The save lands on this tag ref, which the next tag
+      # cannot read. seed-release-cache.yml saves the archive on main.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
@@ -90,7 +91,8 @@ jobs:
             third_party/grok-build
           shared-key: release-prebuilt-${{ matrix.platform }}
           cache-all-crates: true
-          cache-on-failure: true
+          cache-provider: github
+          save-if: false
 
       - name: Install protoc
         run: |
@@ -129,7 +131,16 @@ jobs:
       - name: Build agent
         run: |
           ./scripts/build-grok-pager.sh release
-          AGENT="$(ls third_party/grok-build/target/release/xai-grok-pager-bin third_party/grok-build/target/release/xai-grok-pager 2>/dev/null | head -1)"
+          AGENT=""
+          for cand in \
+            third_party/grok-build/target/release/xai-grok-pager-bin \
+            third_party/grok-build/target/release/xai-grok-pager
+          do
+            if [[ -x "$cand" ]]; then
+              AGENT="$cand"
+              break
+            fi
+          done
           test -n "$AGENT"
           cp -f "$AGENT" "$HOME/.deepseek-build/bin/deepseek-build-agent"
           chmod 755 "$HOME/.deepseek-build/bin/deepseek-build-agent"
@@ -180,8 +191,22 @@ jobs:
           fi
           gh release upload "v${VERSION}" "$ASSET" --clobber
 
-      - name: sccache stats
-        if: always()
+      # After the asset upload so publish-npm can proceed while this packs.
+      # continue-on-error: a cache miss next time is better than a failed release.
+      - name: Pack Rust cache for the default branch
+        id: pack
+        if: success()
+        continue-on-error: true
         run: |
-          echo "=== sccache stats (hit rate is the useful signal) ==="
-          sccache --show-stats || true
+          set -euo pipefail
+          ./scripts/release-rust-cache.sh pack "$RUNNER_TEMP/release-rust-cache.tar.gz"
+
+      - name: Upload Rust cache archive
+        if: steps.pack.outcome == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-rust-cache-darwin-arm64
+          path: ${{ runner.temp }}/release-rust-cache.tar.gz
+          retention-days: 2
+          if-no-files-found: ignore

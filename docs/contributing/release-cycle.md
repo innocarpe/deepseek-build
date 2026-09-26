@@ -20,11 +20,11 @@ one-time code to type ([ADR 0012](../adr/0012-npm-trusted-publishing.md)).
 remaining human step is a **one-time** enrollment on the npm website
 (§Trusted Publisher enrollment), not a per-release gate.
 
-> **Status of the automatic path.** It is implemented and the trusted publisher
-> is **enrolled** (2026-09-25), but an OIDC publish has **not yet run**: no
-> release has been cut since. The next release is the first real exercise. If
-> the tag run fails at the publish step, the emergency path is the working
-> route, and the troubleshooting order is in ADR 0012.
+> **Status of the automatic path.** The trusted publisher is **enrolled**, and
+> `v6.0.1` published through `publish-npm.yml` on 2026-09-25 (the publish step
+> itself took about 9 seconds once the asset existed). If a later tag fails at
+> the publish step, the emergency path is the working route, and the
+> troubleshooting order is in ADR 0012.
 >
 > Enrolling it needed 2FA enabled on the npm account first — npm requires
 > interactive 2FA to modify package settings, and the account had it disabled.
@@ -36,13 +36,13 @@ remaining human step is a **one-time** enrollment on the npm website
 |------|------|-----|
 | `npm publish` | ~10 s | The npm package is a thin JS wrapper (no compiled code, ADR 0009) |
 | User `npm i -g` | ~10 s | `postinstall` downloads `deepseek-build-{ver}-{platform}.tar.gz` from GitHub Releases |
-| Prebuilt build (cold, full vendored change) | 30–60+ min | Whole Grok TUI workspace (1300+ packages) compiled per platform |
-| Prebuilt build (wrapper-only change) | ~1–3 min | `third_party/` unchanged → agent binary reused from previous release tarball (fast path) |
-| Prebuilt build (pure version bump) | ~1–3 min | Same fast path; only `dsb-cli` rebuilt so `--version` matches |
+| Prebuilt build (cold, no default-branch cache) | 40–60+ min | Whole Grok TUI workspace compiled for `darwin-arm64`. `v6.0.1` took 46 minutes, of which the agent build was 41. `rust-cache` logged `No cache found` and sccache's Rust hit rate was 0.15% |
+| Prebuilt build (warm default-branch cache) | recompile of the version-marked crates | The agent is always rebuilt so `--version` matches the package. With a restored `target/`, unchanged dependencies are not recompiled. The first release after the cache seed is still cold; the seed is what the release after that restores |
 
-The 60–70 min local builds seen before were cold builds on a loaded machine
-(parallel worktrees). sccache (local and CI) plus the change-scope fast path
-turn repeated builds into incremental ones.
+There is no wrapper-reuse fast path. Reusing the previous tag's agent binary
+shipped a version string the npm postinstall check rejected. Local sccache
+still helps a developer's own rebuilds. CI does not use it: a cache saved on
+a tag ref cannot be restored by the next tag.
 
 ## Scripts
 
@@ -292,27 +292,32 @@ prompt; step 1 is an account-identity action and needs a person.
 
 ## CI notes (`release-prebuilt.yml`)
 
-> **Operational reality (do not rely on CI):** the `release-prebuilt.yml` tag
-> run routinely stays stuck in the GitHub Actions queue ("queued" forever), so
-> release assets have been attached **manually from a local tag worktree** for
-> every shipped version. The wait loop in `release.sh` is a fast-path when CI
-> works; the manual fallback below is the reliable path. The current release
-> matrix is intentionally limited to Apple Silicon macOS (`darwin-arm64`).
-> `publish-npm.yml` is built for the same reality: it waits for the asset, so a
-> late manual attach still publishes, and it can be re-run on demand.
+> **Operational reality.** `v6.0.1` and `v6.0.2` both left the queue within
+> seconds (2026-09-25 / 2026-09-26). Older tags did sit in the queue, so the
+> manual asset fallback below stays. The matrix is Apple Silicon macOS
+> (`darwin-arm64`) only. `publish-npm.yml` waits for the asset on a Linux
+> runner, so a late manual attach still publishes, and the workflow can be
+> re-run on demand. The wait stops early when `release-prebuilt` has already
+> finished without the asset.
 
-- **Change-scope fast path:** if `third_party/` is unchanged since the previous
-  SemVer tag, the vendored agent binary is extracted from that release's
-  tarball and only `dsb-cli` is rebuilt (minutes). If the previous Apple
-  Silicon tarball is missing, the job falls back to a full build.
-  Checkout uses `fetch-depth: 0` + explicit tag fetch so `prev_tag` is not
-  empty (v5.1.0 regressed to `scope=full prev_tag=none` under shallow clone).
-- **sccache:** `RUSTC_WRAPPER=sccache` + `SCCACHE_GHA_CACHE=true`; every run
-  prints `sccache --show-stats` so hit rate is visible in the job log.
-- **rust-cache:** `Swatinem/rust-cache@v2` covers the product workspace and
-  `third_party/grok-build` (registry + target) for warmer full rebuilds.
-- **Honest limits:** GitHub runner queue time is outside our control; a first
-  full build after a large vendored change is still long; non-Apple-Silicon
+- **Always a full agent build.** The binary's version string has to match
+  the package. `scope=full` is the only scope the job logs.
+- **Rust cache across tags.** `release-prebuilt.yml` restores
+  `Swatinem/rust-cache@v2` (`shared-key: release-prebuilt-darwin-arm64`,
+  `save-if: false`) and uploads `release-rust-cache.tar.gz`.
+  `seed-release-cache.yml` runs after that success, in the default-branch
+  context, and saves the archive there. The next tag can restore a
+  default-branch cache; it cannot restore the previous tag's own save.
+  `CARGO_TERM_COLOR` and `CARGO_INCREMENTAL` are part of the cache key and
+  must match in both workflows. An archive over 6 GiB is not uploaded, and
+  a pack failure does not fail the release.
+- **First cache.** `v6.1.0` ran before this workflow existed, so it
+  uploaded no archive and the seed saved nothing. `workflow_dispatch` on
+  `seed-release-cache.yml` builds the release agent on `main` and the
+  following job restores that cache. A cold count of compiled crates fails
+  that job.
+- **Honest limits.** The release that produces the first archive is still
+  cold. A runner-image Rust upgrade changes the cache key. Non-Apple-Silicon
   users are outside the current product support boundary and receive a clear
   unsupported-platform message.
 
@@ -329,8 +334,12 @@ prompt; step 1 is an account-identity action and needs a person.
 - **Provenance:** generated automatically by trusted publishing, and
   `--provenance` is passed explicitly. Verify after publish with
   `npm view @innocarpe/deepseek-build@<version> dist.attestations`.
-- **Runner:** `macos-14`, so the job can execute the packaged `darwin-arm64`
-  agent. npm trusted publishing supports GitHub-hosted runners only.
+- **Runners:** `wait for asset` is `ubuntu-latest` (timeout 100 minutes,
+  inner deadline 90). `publish` is `macos-14` (timeout 20 minutes) and
+  starts only after the asset exists, so it can execute the packaged
+  `darwin-arm64` agent. npm trusted publishing supports GitHub-hosted
+  runners only. A build that has already failed does not hold the wait
+  until the deadline.
 - **After publish** the job runs the user-facing path: a clean
   `npm install -g` and `dsb --version` / `deepseek-build --version`. That step
   runs whenever a publish happened or the version was already live — including

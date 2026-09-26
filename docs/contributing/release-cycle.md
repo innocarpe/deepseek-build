@@ -48,7 +48,7 @@ a tag ref cannot be restored by the next tag.
 
 | Script | Role |
 |--------|------|
-| [`bump-version.sh`](../../scripts/bump-version.sh) | Single-command bump: `Cargo.toml`, `package.json`, `Cargo.lock`, `CHANGELOG.md` (moves the `Unreleased` items into the new version section), README.md version literals, `docs/product/versions/README.md`. Requires a clean tree; `--dry-run` previews the move. |
+| [`bump-version.sh`](../../scripts/bump-version.sh) | Single-command bump: `Cargo.toml`, `package.json`, `Cargo.lock`, `CHANGELOG.md` (moves the `Unreleased` items into the new version section), `docs/product/versions/README.md`. Requires a clean tree; `--dry-run` previews the move. |
 | [`reorder-changelog.sh`](../../scripts/reorder-changelog.sh) | Reorder CHANGELOG.md to the invariant (Unreleased top, versions newest-first) without touching non-version sections; `--check` exits non-zero if out of order. Reorders only — it does not move items between sections. |
 | [`test-changelog-release.sh`](../../scripts/test-changelog-release.sh) | Hermetic regression test for the `Unreleased` move (`lib/changelog_release.py`); fixture CHANGELOGs in a temp dir, no network, no repo state |
 | [`lib/version_log.py`](../../scripts/lib/version_log.py) | Fill the decision-log row's `PR #_(fill in)_` with the release PR number; called by `release.sh` the moment `gh pr create` returns (idempotent, so a resumed release re-runs safely) |
@@ -200,9 +200,14 @@ stays silent without it — the regression cannot come back unnoticed.
 
 ## README policy
 
-- **Pure version literals** (the `# → deepseek-build X.Y.Z` / `dsb X.Y.Z` /
-  `check-semver: ok (X.Y.Z)` lines under the install header) are updated
-  automatically by `bump-version.sh`.
+- **The user-facing READMEs carry no version literals.** `README.md`,
+  `README.ko-KR.md`, `README.ja-JP.md` and `README.zh-CN.md` are landing
+  pages: version-free install guides plus live shields.io badges (GitHub
+  release, npm). `500645e` ("simplify the project landing page", 2026-08-07)
+  removed the `# → deepseek-build X.Y.Z` / `dsb X.Y.Z` / `check-semver: ok
+  (X.Y.Z)` output samples, and no tag from `v5.5.0` on carries them. There is
+  nothing in the READMEs to update at release time, and `bump-version.sh` does
+  not touch them — version truth on disk is `Cargo.toml`.
 - **MAJOR bump gate (fail-close):** cutting a new major (e.g. `6.0.0`) is
   rejected by `release.sh` unless the product version history
   (`docs/product/versions/README.md`) already logs that major (the row is

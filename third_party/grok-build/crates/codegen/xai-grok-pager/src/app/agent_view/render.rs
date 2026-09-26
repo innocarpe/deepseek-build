@@ -702,8 +702,8 @@ impl AgentView {
             vpad_top: 1,
             compact: appearance.prompt.compact,
             chrome: true,
-            chrome_pad_left: layout_cfg.block_pad_left,
-            chrome_pad_right: layout_cfg.block_pad_right,
+            chrome_pad_left: layout_cfg.eff_box_pad_left(),
+            chrome_pad_right: layout_cfg.eff_box_pad_right(),
             bg: PromptBg::Default,
             accent_color_override: if let Some(c) = self.prompt_input_mode.accent_color(&theme) {
                 Some(c)
@@ -4984,12 +4984,13 @@ mod status_line_draw_tests {
     const FIVE_ROW_SCRIPT: &str = "row-1\nrow-2\nrow-3\nrow-4\nrow-5";
     #[test]
     fn short_terminal_leaves_the_row_four_of_its_five_rows() {
-        // Height 17: the DeepSeek bottom status row takes the line that 16 used to give the script.
-        let buf = draw_script(FIVE_ROW_SCRIPT, 17);
+        // Height 19: at 17 the status row only keeps two script lines. Two more
+        // rows bring row-4 in without giving the fifth line a row of its own.
+        let buf = draw_script(FIVE_ROW_SCRIPT, 19);
         let screen = dump(&buf);
         assert!(
             find(&buf, "row-4").is_some(),
-            "four rows are left over at height 17\n{screen}"
+            "four rows are left over at height 19\n{screen}"
         );
         assert!(
             find(&buf, "row-5").is_none(),
@@ -5042,15 +5043,19 @@ mod status_line_draw_tests {
     #[test]
     fn row_clamped_away_by_the_prompt_keeps_the_exported_size() {
         let mut agent = make_agent();
-        draw_script_for(&mut agent, ONE_ROW_SCRIPT, 20);
+        // A 14-row frame: the prompt's cap (half the area) plus the fixed rows
+        // fill the screen, so the status row has no row left once the prompt
+        // grows to that cap.
+        draw_script_for(&mut agent, ONE_ROW_SCRIPT, 14);
         let painted = agent.last_status_line_size;
         assert_eq!(
             painted,
-            Some(crate::views::status_line::RowSize { cols: 76, lines: 1 }),
-            "the row fills the inner width of an 80-column area"
+            Some(crate::views::status_line::RowSize { cols: 78, lines: 1 }),
+            "the row fills the inner width of an 80-column area (80 - the two \
+             reserved outer columns)"
         );
         agent.prompt.set_text_preserving(&"line\n".repeat(20));
-        let buf = draw_script_for(&mut agent, ONE_ROW_SCRIPT, 20);
+        let buf = draw_script_for(&mut agent, ONE_ROW_SCRIPT, 14);
         assert!(
             find(&buf, ONE_ROW_SCRIPT).is_none(),
             "a prompt at its cap leaves no row to paint\n{}",

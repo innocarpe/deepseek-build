@@ -963,6 +963,10 @@ pub struct AppView {
     /// Feeds the auto-compact derivation (`views::agent::effective_compact`).
     /// 0 means unknown (never forces compact).
     pub last_known_terminal_rows: u16,
+    /// Terminal width (columns) from startup / the last `Event::Resize`.
+    /// Feeds the phone-width density derivation (`views::agent::effective_narrow`).
+    /// 0 means unknown (never forces narrow).
+    pub last_known_terminal_cols: u16,
     /// One-shot gate for the small-screen `/compact-mode` tip: set after the first evaluation at a stable agent-view draw (regardless of outcome).
     /// Later resizes thus can never re-trigger the tip within this run.
     pub small_screen_tip_evaluated: bool,
@@ -1579,6 +1583,7 @@ impl AppView {
             tip_seen_counts: Default::default(),
             export_copy_slash_used: false,
             last_known_terminal_rows: 0,
+            last_known_terminal_cols: 0,
             small_screen_tip_evaluated: false,
             ssh_wrap_tip_evaluated: false,
             clipboard_focus_tip: Default::default(),
@@ -2210,19 +2215,26 @@ impl AppView {
         self.welcome_prompt.sync_tab_width_from_appearance();
         self.appearance = config;
     }
-    /// Recompute the render-value compact flag from the user setting and terminal height (`views::agent::effective_compact`).
-    /// Propagate it to the appearance fan-out and every agent's prompt widget when it changed.
-    /// In-memory only: never touches the user setting (`current_ui.compact_mode`), the render cache, or disk.
-    pub(crate) fn apply_effective_compact(&mut self) {
+    /// Recompute the render-value density flags from the terminal size:
+    /// the compact flag from the height (`views::agent::effective_compact`) and the
+    /// narrow-pane flag from the width (`views::agent::effective_narrow`).
+    /// Propagate them to the appearance fan-out and every agent's prompt widget when they changed.
+    /// In-memory only: never touches the user setting (`current_ui.compact_mode`), the persisted
+    /// layout config, the render cache, or disk.
+    pub(crate) fn apply_effective_density(&mut self) {
         let derived = crate::views::agent::effective_compact(
             self.current_ui.compact_mode,
             self.last_known_terminal_rows,
         );
-        if self.appearance.prompt.compact == derived {
+        let narrow = crate::views::agent::effective_narrow(self.last_known_terminal_cols);
+        if self.appearance.prompt.compact == derived
+            && self.appearance.scrollback.layout.narrow == narrow
+        {
             return;
         }
         let mut config = self.appearance.clone();
         config.prompt.compact = derived;
+        config.scrollback.layout.narrow = narrow;
         self.set_appearance(config);
         for agent in self.agents.values_mut() {
             agent.prompt.set_compact(derived);
@@ -2397,7 +2409,7 @@ impl AppView {
             Event::Key(k) if k.kind != KeyEventKind::Release => Some(k),
             _ => None,
         };
-        if let Event::Resize(_, rows) = ev {
+        if let Event::Resize(cols, rows) = ev {
             for agent in self.agents.values_mut() {
                 agent.note_terminal_resize();
                 for child in agent.subagent_views.values_mut() {
@@ -2405,7 +2417,8 @@ impl AppView {
                 }
             }
             self.last_known_terminal_rows = *rows;
-            self.apply_effective_compact();
+            self.last_known_terminal_cols = *cols;
+            self.apply_effective_density();
         }
         if let Some(key) = key_event
             && let Some(pending) = &self.pending_action

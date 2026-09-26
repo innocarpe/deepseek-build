@@ -97,6 +97,18 @@ const _: () = assert!(SHORT_TERMINAL_ROWS < AUTO_COMPACT_MAX_ROWS);
 pub fn effective_compact(user_compact: bool, terminal_rows: u16) -> bool {
     user_compact || (terminal_rows > 0 && terminal_rows <= AUTO_COMPACT_MAX_ROWS)
 }
+
+/// Whether a pane `terminal_cols` wide renders the phone-width density
+/// ([`NARROW_TERMINAL_COLS`](xai_grok_pager_render::appearance::NARROW_TERMINAL_COLS)):
+/// no blank outer margin rows, one-column outer pads, block pads collapsed, and
+/// the default block vpad dropped.
+///
+/// Like the compact derivation this is a render value: it never reaches the
+/// persisted layout config, so widening the pane restores the desktop rhythm.
+/// `terminal_cols == 0` means "not yet measured" and never forces narrow.
+pub fn effective_narrow(terminal_cols: u16) -> bool {
+    terminal_cols > 0 && terminal_cols <= crate::appearance::NARROW_TERMINAL_COLS
+}
 /// Every input [`AgentViewLayout::compute`] reads: the screen area, the appearance config, and the
 /// requested height of each row it stacks.
 #[derive(Debug, Clone, Copy, Default)]
@@ -2025,7 +2037,11 @@ mod tests {
     #[test]
     fn status_line_row_yields_to_a_prompt_at_its_cap() {
         let area = Rect::new(0, 0, 80, 20);
-        let layout = layout_with_status_line(area, area.height / 2, 3);
+        // The status row is handed `inner - (status bar + scrollback Min + prompt
+        // + shortcuts bar)`. A prompt that fills that sum leaves it zero, and the
+        // scrollback keeps its Min.
+        let counted_rows = 1 + SCROLLBACK_MIN_ROWS + 1;
+        let layout = layout_with_status_line(area, area.height - counted_rows, 3);
         assert_eq!(
             layout.status_line.height, 0,
             "no rows are left over for the status row, got {:?}",
@@ -2069,6 +2085,88 @@ mod tests {
             layout.scrollback,
         );
     }
+    /// The width the phone density keys off: the measured iPhone Orca pane (55) and
+    /// the shared threshold are narrow, a desktop pane (80) is not, and 0 means the
+    /// terminal has not been measured yet.
+    #[test]
+    fn effective_narrow_keys_off_pane_width() {
+        assert!(!effective_narrow(0), "0 means not yet measured");
+        assert!(effective_narrow(55), "the measured iPhone Orca pane");
+        assert!(
+            effective_narrow(crate::appearance::NARROW_TERMINAL_COLS),
+            "the threshold itself is inside"
+        );
+        assert!(!effective_narrow(
+            crate::appearance::NARROW_TERMINAL_COLS + 1
+        ));
+        assert!(!effective_narrow(80), "the narrowest desktop pane");
+        assert!(!effective_narrow(120));
+    }
+
+    /// The frame is flush at every width: the status bar lands on row 0 (no
+    /// outer vpad, no status gap), the outer pads are the selection-border floor,
+    /// and the bottom row is the last row of the screen.
+    #[test]
+    fn layout_spends_no_rows_on_margins_at_any_width() {
+        for (cols, rows) in [(55u16, 41u16), (120, 40), (180, 50)] {
+            let area = Rect::new(0, 0, cols, rows);
+            let layout = AgentViewLayout::compute(AgentViewLayoutParams {
+                layout_cfg: LayoutConfig::default(),
+                ..base_params(area)
+            });
+
+            assert_eq!(
+                layout.status_bar.y, area.y,
+                "{cols}x{rows}: the status bar starts on the first row, got {:?}",
+                layout.status_bar,
+            );
+            assert_eq!(
+                layout.scrollback.y,
+                layout.status_bar.bottom(),
+                "{cols}x{rows}: no status gap, got {:?} under {:?}",
+                layout.scrollback,
+                layout.status_bar,
+            );
+            assert_eq!(
+                layout.scrollback.x,
+                area.x + LayoutConfig::MIN_HPAD,
+                "{cols}x{rows}: the outer left margin is the selection border's column"
+            );
+            assert_eq!(
+                layout.scrollback.right(),
+                area.right() - LayoutConfig::MIN_HPAD,
+                "{cols}x{rows}: and so is the right one"
+            );
+            assert_eq!(
+                layout.deepseek_status.bottom(),
+                area.bottom(),
+                "{cols}x{rows}: no bottom margin row, got {:?}",
+                layout.deepseek_status,
+            );
+            assert_eq!(
+                layout.scrollback.height,
+                rows - 5,
+                "{cols}x{rows}: every row but the status bar, prompt, shortcuts \
+                 and DeepSeek status rows is scrollback, got {:?}",
+                layout.scrollback,
+            );
+        }
+    }
+
+    /// The inner width the composer wraps at: the two reserved outer columns are
+    /// all that separates it from the pane edge, at any width.
+    #[test]
+    fn inner_width_keeps_only_the_reserved_outer_columns() {
+        for cols in [55u16, 80, 120, 180] {
+            let area = Rect::new(0, 0, cols, 40);
+            assert_eq!(
+                AgentViewLayout::inner_width(area, &LayoutConfig::default(), false),
+                cols - 2 * LayoutConfig::MIN_HPAD,
+                "{cols} columns"
+            );
+        }
+    }
+
     #[test]
     fn prompt_budget_counts_the_rows_above_the_prompt() {
         let area = Rect::new(0, 0, 80, 25);

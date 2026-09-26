@@ -143,6 +143,7 @@ pub(crate) fn test_app() -> AppView {
         tip_seen_counts: Default::default(),
         export_copy_slash_used: false,
         last_known_terminal_rows: 0,
+        last_known_terminal_cols: 0,
         small_screen_tip_evaluated: false,
         ssh_wrap_tip_evaluated: false,
         clipboard_focus_tip: Default::default(),

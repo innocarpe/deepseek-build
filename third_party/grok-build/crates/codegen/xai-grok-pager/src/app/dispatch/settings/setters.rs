@@ -926,7 +926,7 @@ pub(super) fn set_default_selected_permission_inner(
 pub(super) fn set_compact_mode_inner(app: &mut AppView, new: bool) {
     app.current_ui.compact_mode = new;
     crate::appearance::cache::set(new);
-    app.apply_effective_compact();
+    app.apply_effective_density();
 }
 
 /// Set compact mode. Idempotent: skips if `new == prev`.

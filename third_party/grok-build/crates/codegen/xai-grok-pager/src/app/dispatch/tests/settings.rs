@@ -414,6 +414,50 @@ fn auto_compact_threshold_boundary() {
         "16 rows (the short-terminal degradation zone) stays compact"
     );
 }
+
+/// The width side of the same derivation: a 55-column pane turns the phone-width
+/// density on, the boundary sits at the shared constant, and widening restores the
+/// desktop layout. The height is held at a desktop value so only the width can
+/// decide, and the derived flag never writes the persisted layout config.
+#[test]
+fn resize_to_phone_width_derives_narrow_density() {
+    use crossterm::event::Event;
+    let mut app = test_app_with_agent();
+    assert!(
+        !app.appearance.scrollback.layout.narrow,
+        "a fresh app renders the desktop layout"
+    );
+
+    let _ = app.handle_input(&Event::Resize(55, 41));
+    assert!(
+        app.appearance.scrollback.layout.narrow,
+        "the measured iPhone Orca pane renders the phone density"
+    );
+    assert!(
+        !app.appearance.prompt.compact,
+        "41 rows is not short enough for auto-compact: the two derivations are independent"
+    );
+
+    let _ = app.handle_input(&Event::Resize(crate::appearance::NARROW_TERMINAL_COLS, 41));
+    assert!(
+        app.appearance.scrollback.layout.narrow,
+        "the shared threshold itself is narrow"
+    );
+    let _ = app.handle_input(&Event::Resize(
+        crate::appearance::NARROW_TERMINAL_COLS + 1,
+        41,
+    ));
+    assert!(
+        !app.appearance.scrollback.layout.narrow,
+        "one column past the threshold is a desktop pane"
+    );
+
+    let _ = app.handle_input(&Event::Resize(120, 40));
+    assert!(
+        !app.appearance.scrollback.layout.narrow,
+        "widening restores the desktop layout"
+    );
+}
 /// The resize derivation never writes the thread-local user cache; the cache (like `current_ui` and disk) holds the USER value only.
 /// Runs in a fresh thread because the cache thread-locals are sticky.
 #[test]
@@ -457,7 +501,7 @@ fn hydration_rederive_corrects_divergent_startup_seed() {
     app.last_known_terminal_rows = 40;
     assert!(!app.appearance.prompt.compact);
     app.current_ui.compact_mode = true;
-    app.apply_effective_compact();
+    app.apply_effective_density();
     assert!(
         app.appearance.prompt.compact,
         "hydrated user value must win over the stale seed"
@@ -486,7 +530,7 @@ fn hot_reload_rederive_syncs_prompt_widgets_on_every_agent() {
     let mut config = app.appearance.clone();
     config.prompt.compact = app.appearance.prompt.compact;
     app.set_appearance(config);
-    app.apply_effective_compact();
+    app.apply_effective_density();
     assert!(app.appearance.prompt.compact, "derived value applied");
     assert!(
         expect_agent(&app, id_a).prompt.compact() && expect_agent(&app, id_b).prompt.compact(),

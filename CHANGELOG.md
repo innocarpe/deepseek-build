@@ -3,6 +3,16 @@
 ## Unreleased
 
 - On a phone-width pane, tap the one-line prompt echo to read the whole prompt in place. The opened echo stays at the top of the scrollback instead of jumping back to the latest line. Tap that first line to fold it again; tapping the rest of the text does not. Wider panes still open a folded prompt on a double-click.
+- The frame is flush at every width. The outer margin no longer spends blank
+  rows (the status bar is the first row and the bottom status row is the last),
+  the horizontal margin is the one column the selection border draws into, and
+  blocks carry no side pads: an entry's text starts at the accent column on a
+  55-column phone pane and on a 180-column desktop pane alike. The pads stay
+  configurable under `[scrollback.layout]` in `pager.toml`.
+- Phone-only render gates are unchanged. At or below 60 columns the submitted
+  prompt echo still folds to one row and drops its decorative `❯`, and the
+  default block vpad goes away; desktop widths keep the three-line echo, the
+  arrow and the block vpad.
 
 ## 6.1.1 — 2026-09-26
 

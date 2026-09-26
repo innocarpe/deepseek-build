@@ -2592,7 +2592,7 @@ fn render_footer(
         return;
     }
 
-    // 2-col left padding to match the agent view's footer position (`block_pad_left = 2`)
+    // The dashboard's own two-column frame (the agent view's footer is flush).
     const FOOTER_PAD_LEFT: u16 = 2;
     let _ = theme;
     let inner = Rect {

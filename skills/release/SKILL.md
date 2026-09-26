@@ -9,8 +9,8 @@ description: >
 # Release (DeepSeek Build harness)
 
 This skill is the **agent checklist** for cutting a release. It is not CI — it
-is the completeness gate so nothing (bump, tag, assets, npm, CHANGELOG, README)
-is silently skipped.
+is the completeness gate so nothing (bump, tag, assets, npm, CHANGELOG, version
+log) is silently skipped.
 
 ## Load these docs (in order)
 
@@ -55,9 +55,9 @@ is silently skipped.
    `reorder-changelog.sh --check` reports it. If a shipped section gains an
    item whose code is not in that tag, check `git merge-tree` before assuming
    someone filed it on purpose.
-3. **MAJOR gate (fail-close):** a MAJOR bump is blocked unless README's
-   product-status banner already references the new major (`**5.0.0** …` row).
-   Update `docs/product/` + README *before* running the release.
+3. **MAJOR gate (fail-close):** a MAJOR bump is blocked unless the product
+   version log (`docs/product/versions/README.md`) already logs the new major
+   (`**5.0.0** …` row). Update `docs/product/` *before* running the release.
 4. **Build from the tag tree, never a diverged worktree HEAD.** The tag may
    point at a commit the release worktree is not on. `git checkout v<ver>`
    first, then build.
@@ -202,7 +202,8 @@ gh workflow run publish-npm.yml --ref v4.0.4
 - [ ] CHANGELOG still newest-first: `./scripts/reorder-changelog.sh --check`
 - [ ] The `<ver>` section names what shipped — items moved out of
       `Unreleased`, not a lone `--desc` line (`git show v<ver>:CHANGELOG.md | head -30`)
-- [ ] README version literals match `<ver>`
+- [ ] `README*.md` carry no version literals (version-free by policy; the
+      release/npm badges are live)
 - [ ] `npm view @innocarpe/deepseek-build@<ver> dist.attestations` shows a
       provenance attestation (CI path; the emergency path has none)
 
@@ -216,7 +217,7 @@ gh workflow run publish-npm.yml --ref v4.0.4
 | Publishing from a worktree whose HEAD ≠ tag | Ships unreleased/unmerged code as the binary |
 | Skipping asset check because CI "should" attach | CI queue routinely never runs; 404s for users |
 | `4.0` / `v4` in any public text | SemVer fail-close (Agents.md) |
-| Bumping to a new MAJOR with stale README banner | Tag ships ahead of the documented story |
+| Bumping to a new MAJOR with no version-log row | Tag ships ahead of the documented story |
 | Claiming done after `npm publish` | Unverified global install is not a release |
 | Local publish when CI could publish | Loses provenance and leaves the irreversible step off the audit trail |
 | `npm stage publish` then hand-approving every release | Works (it is how `5.6.0` shipped), but `approve` is interactive by design — it cannot run unattended |
@@ -227,5 +228,6 @@ gh workflow run publish-npm.yml --ref v4.0.4
 
 - [ ] Tag `v<ver>` exists on origin and has the platform tarball attached
 - [ ] `@innocarpe/deepseek-build@<ver>` is live and a clean global install works
-- [ ] CHANGELOG newest-first + README literals/banner consistent with `<ver>`
+- [ ] CHANGELOG newest-first + `docs/product/versions/README.md` row consistent
+      with `<ver>`
 - [ ] No omission: bump, PR, merge, tag, assets, publish, verify all happened

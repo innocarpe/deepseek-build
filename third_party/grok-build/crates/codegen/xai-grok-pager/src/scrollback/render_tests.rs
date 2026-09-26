@@ -1278,9 +1278,10 @@ fn test_selected_entry_output_divergence_uses_selected_branch() {
 #[test]
 fn message_block_content_width_subtracts_timestamp_reservation() {
     // Picked so the message wraps to a different line count at `content_width - 10` than at `content_width`
-    // With a 30-wide viewport and 4 columns of chrome, pane_content_width is 26 and per-block content_width is 16
+    // With a 30-wide viewport and the accent column as the only chrome, pane_content_width is 29 and per-block
+    // content_width is 19; the message below needs 5 rows at 19 and 3 at 29.
     let entries = vec![make_markdown_entry(
-        "hello world foo bar baz qux quux corge grault garply waldo",
+        "hello world foo bar baz qux quux corge grault garply waldo fred plugh xyzzy thud",
     )];
     let viewport = Rect::new(0, 0, 30, 20);
     let result = render_with_scratch(&entries, viewport, 0, None);
@@ -2752,9 +2753,10 @@ fn official_vscode_remote_tool_headers_delegate_only_self_resolving_paint() {
                 "main.rs",
                 LinkPresentation::Opaque,
             ),
+            // Narrower than the collapsed row's accent + "◆ Read main.rs" (15), so the header truncates.
             (
                 DisplayMode::Collapsed,
-                16,
+                14,
                 "\u{2026}",
                 LinkPresentation::Opaque,
             ),
@@ -3747,4 +3749,51 @@ fn dim_from_entry_stays_visible_on_terminal_theme() {
         "RGB themes keep the gray_dim fg overwrite"
     );
     assert!(!cell.modifier.contains(Modifier::DIM));
+}
+
+/// Where the prompt echo's text starts inside the scrollback viewport, at any
+/// pane width: one column in, at the accent column's right edge. The old padded
+/// frame put it three columns in (accent + both 2-column block pads); a reader
+/// who wants the gutter back can still configure one.
+#[test]
+fn echo_band_text_starts_at_the_accent_column() {
+    use crate::scrollback::ScrollbackState;
+
+    fn echo_row(pad: u16) -> String {
+        let mut state = ScrollbackState::new();
+        state.push_block(RenderBlock::user_prompt("hello"));
+        let mut appearance = AppearanceConfig::default();
+        appearance.scrollback.layout.block_pad_left = pad;
+        appearance.scrollback.layout.block_pad_right = pad;
+        state.set_appearance(appearance);
+        let viewport = Rect::new(0, 0, 53, 6);
+        state.prepare_layout(viewport.width, viewport.height);
+        let (buf, _) = render_state(&state, viewport, false);
+        (0..viewport.height)
+            .map(|y| buffer_row_text(&buf, y))
+            .find(|row| row.contains("hello"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "no echo row rendered (pad={pad}):\n{}",
+                    (0..viewport.height)
+                        .map(|y| buffer_row_text(&buf, y))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+            })
+    }
+
+    let flush = echo_row(0);
+    assert_eq!(
+        flush.find("hello"),
+        Some(1),
+        "the default echo starts right after the accent column, got {flush:?}"
+    );
+
+    let padded = echo_row(2);
+    assert_eq!(
+        padded.find("hello"),
+        Some(3),
+        "a configured 2-column pad keeps the old inset, got {padded:?}"
+    );
 }

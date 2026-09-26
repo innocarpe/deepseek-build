@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Selecting a prompt echo draws the selection bracket around the echo band itself: the corners sit on the band's own top and bottom pad rows instead of the blank rows above and below it, so the bracket hugs the echo with only its one-row pad inside. Blocks with no band of their own — tool rows, thoughts, groups — keep the box they have today.
 - On a phone-width pane, tapping an opened prompt echo folds it back to two lines. The second tap counts even inside the double-click window, and it counts on any row of that echo, not only the first line. The first tap still opens the echo in place and keeps it at the top of the scrollback. Wider panes still open a folded prompt on a double-click.
 - Scrolled up in a conversation, the scrollback's last row carries a centered `Jump to bottom (click) ↓` chip; clicking or tapping anywhere on it returns to the bottom and re-engages follow mode. The chip widens down to `Jump to bottom ↓` and then `▼` when the pane cannot hold the full phrase with a column of air either side, and it is absent at the bottom, under the `none` indicator setting, and while the block viewer or the scrollback search is open. It sits inside the scrollback rather than the gap row the old `▼` used, so it covers neither the prompt nor the phone bottom band; the `▲` response-top arrow is unchanged.
 

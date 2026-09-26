@@ -15,7 +15,7 @@ use crate::render::SafeBuf;
 use crate::render::scrollbar::render_scrollbar_styled;
 use crate::scrollback::layout::HorizontalLayout;
 use crate::scrollback::search::ScrollbackSearchState;
-use crate::scrollback::selection::SelectionBox;
+use crate::scrollback::selection::{SelectionBox, hug_padded_band};
 use crate::scrollback::state::ScrollbackState;
 use crate::theme::Theme;
 use crate::views::prompt_widget::PromptWidget;
@@ -564,10 +564,20 @@ pub fn render_entry_hover(
         .group_selection_split;
     let group = scrollback.group_range_of(hover_idx, split_mode);
     if group.len() <= 1 {
-        if let Some((area, top_clipped, bottom_clipped)) =
+        if let Some((entry_area, top_clipped, bottom_clipped)) =
             scrollback.entry_screen_area(hover_idx, scrollback_area)
         {
-            SelectionBox::new(area, Style::default().fg(theme.hover_border))
+            // The hovered echo hugs its band like the selected one: corners on its own pad rows, and each side
+            // pulled only while that pad row is on screen.
+            let hugs_pad = scrollback
+                .entry(hover_idx)
+                .is_some_and(|entry| entry.block.selection_hugs_vpad(scrollback.appearance()));
+            let box_area = hug_padded_band(
+                entry_area,
+                hugs_pad && !top_clipped,
+                hugs_pad && !bottom_clipped,
+            );
+            SelectionBox::new(box_area, Style::default().fg(theme.hover_border))
                 .with_top_clipped(top_clipped)
                 .with_bottom_clipped(bottom_clipped)
                 .render(buf);

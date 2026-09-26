@@ -136,6 +136,7 @@ survived.
 | `crates/codegen/xai-grok-shell/src/session/helpers/spec10_path_a_cache_guard.rs` | Spec 10 §1.9 Path A bench. Scored bytes are `assemble_spec10_path_a_turn` + `place_stable_body`, then `ChatCompletionRequest::from` (`conversation_to_chat_messages`). The mock accounts the `messages` array | The overlay bench scores `dsb-context`. Path A does not link that crate, so a guard that lives only there stays green when this assembly breaks |
 | `crates/codegen/xai-grok-shell/src/util/config/announcements.rs` + `agent/init.rs`, `agent/mvp_agent/agent_ops.rs` | `strip_remote_announcements` removes the `announcements` field at every `remote_settings` write (startup getter, boot wait, shared store, poll-only apply); `resolve_announcements` never merges the `remote` layer | dsb carries no xAI/Grok announcements: the fetch stays (the same blob carries harness settings), but announcements neither enter stored settings nor reach the pager's display set, so the welcome hero, session banner, header/dashboard CTA and `/announcements` gate stay empty for remote items. `GROK_ANNOUNCEMENTS_OVERRIDE` and config TOML layers are kept |
 | `crates/codegen/xai-fast-worktree/src/git/safety_tests.rs` | `copy_tree` copies a listed file through `copy_listed_file`, which skips one the source dropped before the copy reached it; a tree that is not there still fails | git spawns automatic maintenance detached by default (`maintenance.autoDetach`), so `commit`/`push`/`fetch` leave a process that deletes `.git/objects/maintenance.lock` as its run ends. `read_dir` listed the lock, the process removed it, `fs::copy` returned `NotFound`, and `CI grok test` failed at `safety_tests.rs:122` (run 36225954017) |
+| `crates/codegen/xai-grok-pager/src/scrollback/{selection.rs,block.rs,scrollback_pane.rs}`, `views/agent.rs` | `hug_padded_band(area, hug_top, hug_bottom)` pulls a selection rect in one row per hugged side, so the corners `SelectionBox::render` draws outside `inner_area` land on the echo's own pad rows; `RenderBlock::selection_hugs_vpad` gates it to a prompt echo that carries the pad. The pane's content singleton, both sticky-header boxes and the hover box pass through it, and a side is pulled only while its pad row is on screen. Every other block keeps the old geometry | The entry area spans the echo's pad rows and the box draws one row outside it, so a selected echo was bracketed together with one blank row at each end. The echo's own one-row pad is the margin that should show |
 
 Tests: `resume_hint_line_brands_invocation_name` and
 `failed_relaunch_hint_brands_invocation_name` pin the `dsb` output; upstream
@@ -184,6 +185,13 @@ resize to 80 and 180.
 The snapshot helper's skip for a listed file the source dropped is pinned by
 `a_file_the_source_dropped_after_the_listing_is_skipped`, with
 `a_copy_of_a_tree_that_is_not_there_still_fails` keeping a missing tree fatal.
+The echo's hugged selection box is pinned on the pane and in the helper:
+`selected_expanded_echo_corners_hug_the_band` renders a 55×41 pane with the
+expanded echo selected and asserts `┌` on the band's own top pad row, `└` on
+its bottom pad row and the side borders only between them,
+`selected_non_prompt_block_keeps_corners_one_row_outside` keeps a tool row's
+box on the rows outside the entry, and the `hug_padded_band` unit tests cover
+both sides, one clipped side, and areas too short to pull.
 
 ### Patch series
 

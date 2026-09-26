@@ -699,15 +699,12 @@ impl AgentView {
         let prompt_style = PromptStyle {
             focused: prompt_focused,
             show_prefix: appearance.prompt.show_prefix,
-            // The border row plus one row of text inset, so all four sides of the
-            // box inset their text by the same amount (see `LayoutConfig::BOX_PAD`).
-            // At or below `SHORT_TERMINAL_ROWS` the row is not there to spend: the
-            // composer keeps the border row only (the bottom inset follows it).
-            vpad_top: if area.height <= agent::SHORT_TERMINAL_ROWS {
-                1
-            } else {
-                crate::appearance::LayoutConfig::BOX_PAD
-            },
+            // One row above the text: the top border. A pad row there is ~2.15
+            // columns of pitch at the phone's font — more white than the
+            // one-column inset the sides keep (see `LayoutConfig::BOX_PAD`), so
+            // the text sits directly under the border and the divider follows it
+            // (see `PromptStyle::info_block`).
+            vpad_top: 1,
             compact: appearance.prompt.compact,
             chrome: true,
             chrome_pad_left: layout_cfg.eff_box_pad_left(),

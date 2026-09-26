@@ -305,10 +305,9 @@ impl<'a> EntryRenderer<'a> {
     /// The right pad this entry's block takes.
     ///
     /// The prompt echo closes one column inside the frame instead of two so its
-    /// band keeps the same minimal inset on all four sides; every other block
-    /// keeps the configured pad. Minimal mode (`hide_accent`) also keeps the
-    /// configured value: there the whole frame is flush and the echo owns no
-    /// band.
+    /// side gutters read as the same one column; every other block keeps the
+    /// configured pad. Minimal mode (`hide_accent`) also keeps the configured
+    /// value: there the whole frame is flush and the echo owns no band.
     fn block_pad_right(&self) -> u16 {
         if !self.hide_accent && self.entry.block.is_user_prompt() {
             1
@@ -560,9 +559,9 @@ pub(crate) fn timestamp_gutter_applies(block: &RenderBlock) -> bool {
 /// Width reserved on the right of a block's content for the timestamp overlay.
 ///
 /// The reservation is the string's own width, with no leading pad: the short
-/// format tops out at `"12:30 PM"` (8). The overlay is right-aligned to the
-/// entry's right edge, so the reserved columns sit flush against the frame
-/// rather than one pad inside it.
+/// format tops out at `"12:30 PM"` (8). The overlay is right-aligned inside that
+/// gutter, one block's right pad short of the entry's edge, so the time never
+/// closes on the band's last column.
 ///
 /// Free function so every caller that only has the appearance and the block computes the same reservation as
 /// [`EntryRenderer::timestamp_reserved`].
@@ -921,9 +920,13 @@ impl Renderable for EntryRenderer<'_> {
             };
             let ts_width = ts_str.len() as u16;
             if content_area.width > ts_width + 1 && first_content_y < max_row {
-                // Flush to the entry's right edge: the time closes the row at
-                // the band's own right end, with no pad between them.
-                let ts_x = area.right().saturating_sub(ts_width);
+                // The time closes the reserved gutter one right-pad short of the
+                // entry's edge (never less than one column), so the band's last
+                // column stays blank and the clock never touches the frame.
+                let ts_x = area
+                    .right()
+                    .saturating_sub(self.block_pad_right().max(1))
+                    .saturating_sub(ts_width);
                 let ts_style = Style::default().fg(self.theme.gray);
                 buf.set_string_safe(ts_x, first_content_y, &ts_str, ts_style);
             }
@@ -1180,11 +1183,19 @@ mod tests {
             .collect()
     }
 
-    /// The columns the timestamp closes on: the entry's own right edge. The
-    /// overlay is flush with it (no pad between the time and the frame), so the
-    /// band is the last `ts_reserved` columns of the entry area.
+    /// Columns the entry keeps between the time and its own right edge: the
+    /// block's right pad (one column on the prompt echo, the configured pad on
+    /// every other block), never less than one so the time cannot touch the
+    /// band's edge.
+    fn ts_right_inset(renderer: &EntryRenderer) -> u16 {
+        renderer.block_pad_right().max(1)
+    }
+
+    /// The reserved timestamp gutter: the last `ts_reserved` columns of the
+    /// content band, ending one right-pad short of the entry's edge.
     fn gutter_band(renderer: &EntryRenderer, width: u16) -> std::ops::Range<u16> {
-        (width - renderer.timestamp_reserved())..width
+        let content_right = width - ts_right_inset(renderer);
+        (content_right - renderer.timestamp_reserved())..content_right
     }
 
     /// Check that a right-aligned timestamp ending with "AM" or "PM" exists on a row.
@@ -1211,7 +1222,7 @@ mod tests {
         // UserPrompt has vpad=true, first content row is y=1.
         let expected = entry.created_at.unwrap().format("%-I:%M %p").to_string();
         let ts_width = expected.len() as u16;
-        let ts_x = width - ts_width;
+        let ts_x = width - ts_right_inset(&renderer) - ts_width;
         let content_row = 1u16;
 
         let rendered = collect_row_symbols(&buf, content_row, ts_x, ts_x + ts_width);
@@ -1236,7 +1247,7 @@ mod tests {
         // AgentMessage has vpad=false, first content row is y=0.
         let expected = entry.created_at.unwrap().format("%-I:%M %p").to_string();
         let ts_width = expected.len() as u16;
-        let ts_x = width - ts_width;
+        let ts_x = width - ts_right_inset(&renderer) - ts_width;
 
         let rendered = collect_row_symbols(&buf, 0, ts_x, ts_x + ts_width);
         assert_eq!(
@@ -1273,7 +1284,7 @@ mod tests {
             .format("%H:%M:%S | %b %d")
             .to_string();
         let ts_width = expected.len() as u16;
-        let ts_x = width - ts_width;
+        let ts_x = width - ts_right_inset(&renderer) - ts_width;
 
         let rendered = collect_row_symbols(&buf, 0, ts_x, ts_x + ts_width);
         assert_eq!(
@@ -1500,7 +1511,7 @@ mod tests {
         // AgentMessage has no vpad, so the first content row is y=0
         let expected = entry.created_at.unwrap().format("%-I:%M %p").to_string();
         let ts_width = expected.len() as u16;
-        let ts_x = width - ts_width;
+        let ts_x = width - ts_right_inset(&renderer) - ts_width;
         let rendered = collect_row_symbols(&buf, 0, ts_x, ts_x + ts_width);
         assert_eq!(
             rendered, expected,
@@ -1637,8 +1648,65 @@ mod tests {
         );
     }
 
+    /// The measured iPhone pane (55 columns): the echo's band is its two text
+    /// rows and nothing else — no pad row above or below (`UserPromptBlock`'s
+    /// width rule drops them) — and the turn time stops one column inside the
+    /// band's right edge.
     #[test]
-    fn estimate_collapsed_phone_prompt_matches_the_padded_band() {
+    fn phone_echo_band_is_text_rows_only_and_the_time_keeps_off_the_edge() {
+        let _theme = pin_theme();
+        let theme = Theme::current();
+        let mut entry = ScrollbackEntry::new(RenderBlock::user_prompt("x".repeat(200)));
+        entry.set_display_mode(DisplayMode::Collapsed);
+        let width: u16 = 55;
+        let r = EntryRenderer::new(&entry, &theme);
+        let height = r.desired_height(width);
+        let area = Rect::new(0, 0, width, height);
+        let mut buf = Buffer::empty(area);
+        r.render(area, &mut buf);
+        let frame = (0..height)
+            .map(|y| format!("{y:>3} │{}", collect_row_symbols(&buf, y, 0, width)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        eprintln!("phone echo band {width}x{height}:\n{frame}");
+
+        assert_eq!(
+            height, 2,
+            "the phone echo band is its two text rows with no pad row:\n{frame}"
+        );
+        assert_eq!(
+            buf.cell((1, 0)).unwrap().symbol(),
+            "x",
+            "the text opens the band's first row (no pad row above):\n{frame}"
+        );
+        let wrap = r.block_content_width(width);
+        assert!(
+            (1..1 + wrap).all(|x| buf.cell((x, 0)).unwrap().symbol() == "x"),
+            "the first text row is {wrap} contiguous text cells (no gap cell):\n{frame}"
+        );
+
+        let expected = entry.created_at.unwrap().format("%-I:%M %p").to_string();
+        let ts_width = expected.len() as u16;
+        let inset = ts_right_inset(&r);
+        let ts_x = width - inset - ts_width;
+        assert_eq!(
+            collect_row_symbols(&buf, 0, ts_x, ts_x + ts_width),
+            expected,
+            "the time closes the row {inset} column(s) inside the band's right edge:\n{frame}"
+        );
+        assert!(
+            inset >= 1,
+            "the echo's right pad keeps the time off the band's edge"
+        );
+        assert_eq!(
+            buf.cell((width - 1, 0)).unwrap().symbol(),
+            " ",
+            "the band's last column stays blank:\n{frame}"
+        );
+    }
+
+    #[test]
+    fn estimate_collapsed_phone_prompt_matches_two_row_band() {
         let _theme = pin_theme();
         let theme = Theme::current();
         let mut entry = ScrollbackEntry::new(RenderBlock::user_prompt("x".repeat(200)));
@@ -1646,13 +1714,13 @@ mod tests {
         let r = EntryRenderer::new(&entry, &theme);
         assert_eq!(
             r.desired_height(55),
-            4,
-            "exact collapsed phone echo is two content rows plus one pad row each side"
+            2,
+            "exact collapsed phone echo is two content rows and no pad"
         );
         assert_eq!(
             r.estimate_height(55),
             r.desired_height(55),
-            "the off-screen estimate counts the same padded band"
+            "the off-screen estimate counts the same two rows"
         );
     }
 

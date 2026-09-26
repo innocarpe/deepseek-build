@@ -11,7 +11,9 @@
 use super::{AgentView, AppRenderParams, BannerSlotParams, test_fixtures};
 use crate::actions::ActionRegistry;
 use crate::app::agent::AgentState;
+use crate::scrollback::RenderBlock;
 use crate::scrollback::render::ScratchBuffer;
+use crate::theme::Theme;
 use agent_client_protocol as acp;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -392,6 +394,133 @@ fn desktop_pane_keeps_the_label_on_the_divider_and_the_hint_row() {
         assert!(
             between.iter().any(|row| !row.trim().is_empty()),
             "the desktop hint row still paints: {between:?}"
+        );
+    }
+}
+
+// ── Prompt-area padding: the echo band, the composer box, the floor row ──
+
+/// Seed the scrollback with the echo a submitted prompt leaves in the frame.
+fn seed_prompt_echo(agent: &mut AgentView, text: &str) {
+    agent.scrollback.push_block(RenderBlock::user_prompt(text));
+}
+
+/// Rows the prompt echo's band covers, read at the echo's text column: the
+/// block background spans exactly the echo's text rows, so a pad row shows up
+/// here as a band row with no text in it.
+fn echo_band_rows(buf: &Buffer, band_bg: ratatui::style::Color) -> Vec<u16> {
+    (0..buf.area.height)
+        .filter(|&y| buf.cell((1, y)).is_some_and(|c| c.bg == band_bg))
+        .collect()
+}
+
+/// The composer box's top border row: the last row whose outer left column
+/// holds `╭` (its `╰` is [`border_row`]).
+fn top_border_row(buf: &Buffer) -> u16 {
+    let left = crate::appearance::LayoutConfig::default().eff_hpad_left(false) as usize;
+    (0..buf.area.height)
+        .rev()
+        .find(|&y| {
+            row_text(buf, y)
+                .chars()
+                .nth(left)
+                .is_some_and(|c| c == '\u{256d}')
+        })
+        .unwrap_or_else(|| panic!("prompt box top border not found in\n{}", frame_text(buf)))
+}
+
+/// The frame the report's screenshots show, at the measured iPhone size: the
+/// echo's band is its text rows and no pad row, the composer box is the top
+/// border, one text row and the divider, the turn time stops one column inside
+/// the echo's right edge, and the status band keeps its single floor row.
+#[test]
+fn phone_frame_pads_the_prompt_areas_by_one_cell() {
+    let _guard = crate::theme::cache::pin_theme();
+    let theme = Theme::current();
+    let mut agent = phone_agent();
+    // Two wrapped rows at the echo's content width, so the collapsed phone
+    // budget shows the whole prompt and paints no fold affordance row.
+    seed_prompt_echo(&mut agent, &"M".repeat(60));
+    agent.prompt.set_text("phone draft");
+    let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    let frame = frame_text(&buf);
+    eprintln!("phone 55x41 — full frame:\n{frame}");
+
+    // (a) The echo band has no blank pad row: every band row carries the prompt.
+    let band = echo_band_rows(&buf, theme.bg_light);
+    assert!(
+        !band.is_empty(),
+        "the fixture must paint the echo:\n{frame}"
+    );
+    for &y in &band {
+        assert!(
+            row_text(&buf, y).contains('M'),
+            "echo band row {y} is a blank pad row:\n{frame}"
+        );
+    }
+
+    // (b) The composer box is exactly the border, text and divider rows.
+    let top = top_border_row(&buf);
+    let divider = border_row(&buf);
+    assert_eq!(
+        divider - top,
+        2,
+        "the composer box is border + text + divider, got rows {top}..={divider}:\n{frame}"
+    );
+    assert!(
+        row_text(&buf, top + 1).contains("phone draft"),
+        "the box's middle row is the text row:\n{frame}"
+    );
+
+    // (c) The turn time stops one column inside the echo's band.
+    let echo_y = band[0];
+    let band_right = (0..PHONE_COLS)
+        .rev()
+        .find(|&x| {
+            buf.cell((x, echo_y))
+                .is_some_and(|c| c.bg == theme.bg_light)
+        })
+        .expect("the echo's band must have a right edge");
+    let last_ink = (0..PHONE_COLS)
+        .rev()
+        .find(|&x| buf.cell((x, echo_y)).is_some_and(|c| c.symbol() != " "))
+        .expect("the echo's first row must carry text");
+    assert_eq!(
+        band_right - last_ink,
+        1,
+        "the time stops one column inside the band's right edge: ink {last_ink}, band {band_right}\n{frame}"
+    );
+
+    // (d) One blank floor row under the status band.
+    let status_y = divider + 1;
+    assert_eq!(
+        status_y + 1 + crate::views::agent::BOTTOM_MARGIN_ROWS,
+        PHONE_ROWS,
+        "the status band keeps one blank floor row under it:\n{frame}"
+    );
+    assert!(
+        row_text(&buf, status_y + 1).trim().is_empty(),
+        "the floor row is blank:\n{frame}"
+    );
+}
+
+/// The floor row is one blank row — never two, never none — at every phone
+/// height the app runs at.
+#[test]
+fn phone_status_band_keeps_one_floor_row_at_every_phone_height() {
+    for rows in [PHONE_ROWS, 36, 33, 30, 26, 24, 20] {
+        let mut agent = phone_agent();
+        let buf = draw(&mut agent, PHONE_COLS, rows);
+        let frame = frame_text(&buf);
+        let status_y = border_row(&buf) + 1;
+        assert_eq!(
+            status_y + 1 + crate::views::agent::BOTTOM_MARGIN_ROWS,
+            rows,
+            "{PHONE_COLS}x{rows}: the status band keeps one blank floor row\n{frame}"
+        );
+        assert!(
+            row_text(&buf, status_y + 1).trim().is_empty(),
+            "{PHONE_COLS}x{rows}: the floor row is blank\n{frame}"
         );
     }
 }

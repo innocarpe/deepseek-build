@@ -144,7 +144,9 @@ pub struct PromptStyle {
     pub focused: bool,
     /// Whether to show the ❯ prefix character.
     pub show_prefix: bool,
-    /// Vertical padding above the text content.
+    /// Vertical padding above the text content: the box's top border row. The
+    /// text sits directly under it — a one-row text inset would be ~2.15 columns
+    /// of pitch, more white than the one-column inset the sides keep.
     pub vpad_top: u16,
     /// Whether to render chrome (accent line + hpad + background fill).
     /// When true, the widget renders the full block layout (accent | hpad | content | hpad).
@@ -218,9 +220,10 @@ impl Default for PromptStyle {
         Self {
             focused: true,
             show_prefix: true,
-            // The box's four sides inset their text equally: the border
-            // row/column plus one inset cell (see `LayoutConfig::BOX_PAD`).
-            vpad_top: crate::appearance::LayoutConfig::BOX_PAD,
+            // One row above the text: the top border, no text inset row. The
+            // sides keep one inset column (see `LayoutConfig::BOX_PAD`); a row is
+            // ~2.15 columns of pitch, so it would out-weigh them.
+            vpad_top: 1,
             chrome: true,
             chrome_pad_left: crate::appearance::LayoutConfig::BOX_PAD,
             chrome_pad_right: crate::appearance::LayoutConfig::BOX_PAD,
@@ -273,29 +276,20 @@ impl PromptStyle {
         }
     }
 
-    /// Info block height: one row below the text, the bottom divider, plus the
-    /// box's bottom text inset.
+    /// Info block height: one row below the text, the bottom divider.
     ///
-    /// The inset mirrors the top one: [`vpad_top`](Self::vpad_top) spends its
-    /// first row on the top border and the remaining rows are the inset, so the
-    /// two sides stay equal whatever `vpad_top` is. Chromeless boxes have no
-    /// border to inset from and keep a plain info row.
+    /// No bottom text inset row: the box's vertical air is the border rows alone
+    /// (the text sits directly under the top border), because one pad row is
+    /// ~2.15 columns of pitch — more than the one-column inset the sides keep.
+    /// See [`vpad_top`](Self::vpad_top).
     ///
-    /// `narrow` no longer adds a row. A phone-width pane keeps this divider
-    /// plain (the label is not painted on it) and the agent view puts the
-    /// model on the DeepSeek status row instead. The argument stays so callers
-    /// that already pass the phone gate do not grow a second signature.
+    /// `narrow` adds no row. A phone-width pane keeps this divider plain (the
+    /// label is not painted on it) and the agent view puts the model on the
+    /// DeepSeek status row instead. The argument stays so callers that already
+    /// pass the phone gate do not grow a second signature.
     pub fn info_block(&self, has_info: bool, narrow: bool) -> u16 {
         let _ = narrow;
-        if !has_info {
-            return 0;
-        }
-        // Only the chrome box has a border to inset from and a divider to carry.
-        if !(self.chrome && self.show_borders) {
-            return 1;
-        }
-        let inset = self.vpad_top.saturating_sub(1);
-        inset + 1
+        u16::from(has_info)
     }
 
     /// Mode-tinted accent: the override (e.g. plan mode) when set, else the focus-dependent default.
@@ -3078,9 +3072,6 @@ impl PromptWidget {
 
         // Split content: vpad_top, text, info_block
         let vpad_top = style.vpad_top;
-        // The top border spends the first vpad row; what remains is the top text
-        // inset. The bottom divider mirrors it (see `info_block`).
-        let info_inset = vpad_top.saturating_sub(1);
         let narrow = is_narrow_label_width(area.width);
         let info_block = style.info_block(info.is_some(), narrow);
         let chunks = Layout::vertical([
@@ -3402,17 +3393,16 @@ impl PromptWidget {
             }
         }
 
-        // The divider sits below the bottom text inset, which mirrors `vpad_top`'s
-        // inset (its first row is the top border): both sides inset equally.
+        // Bottom divider: the info block's row, directly under the text.
         // Guard on actual allocated height, not requested `info_block`
-        // During resize the layout may squeeze the info block, leaving chunks[2] short of the rows the divider and label need
+        // During resize the layout may squeeze the info block to 0 rows, leaving chunks[2].y past the buffer boundary
         if info_block > 0
             && style.chrome
             && style.show_borders
             && let Some(info_chunk) = chunks.get(2)
-            && info_chunk.height > info_inset
+            && info_chunk.height > 0
         {
-            let div_y = info_chunk.y + info_inset;
+            let div_y = info_chunk.y;
             let div_style = Style::default().fg(border_color).bg(bg);
             let left_x = area.x;
             let right_x = area.x + area.width.saturating_sub(1);

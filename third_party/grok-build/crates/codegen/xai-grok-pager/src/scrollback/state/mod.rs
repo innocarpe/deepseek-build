@@ -3651,7 +3651,7 @@ mod tests {
     }
 
     #[test]
-    fn phone_width_prompt_echo_is_two_rows_plus_the_pads() {
+    fn phone_width_prompt_echo_is_two_rows() {
         let mut state = ScrollbackState::new();
         state.prepare_layout(PHONE_PANE, 20);
         // Longer than the ~100-column fold fixture: three wrapped rows would be the
@@ -3665,15 +3665,15 @@ mod tests {
 
         let height = state.get_cached_entry_height(0).expect("layout cache");
         assert_eq!(
-            height, 4,
-            "the collapsed prompt echo is two content rows with one pad row each side"
+            height, 2,
+            "the collapsed prompt echo is two content rows and no pad row"
         );
     }
 
     /// The first layout pass estimates off-screen entries. A collapsed phone echo that has not been measured yet
-    /// still has to reserve its padded two-row band, or the scroll height is short until the prompt scrolls into view.
+    /// still has to reserve its two-row band, or the scroll height is short until the prompt scrolls into view.
     #[test]
-    fn offscreen_phone_prompt_estimates_the_padded_band() {
+    fn offscreen_phone_prompt_estimates_the_two_row_band() {
         let mut state = ScrollbackState::new();
         state.prepare_layout(PHONE_PANE, 8);
         state.begin_batch();
@@ -3695,8 +3695,8 @@ mod tests {
         );
         assert_eq!(
             cache.entries.first().map(|e| e.height),
-            Some(4),
-            "the estimate counts the two content rows and their pad rows"
+            Some(2),
+            "the estimate counts the same two content rows"
         );
     }
 

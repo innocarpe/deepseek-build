@@ -326,7 +326,7 @@ pub struct ScrollConfig {
     /// If a scroll would be less than this percentage of the viewport, scroll by this amount instead.
     /// 0 means minimal scroll (default); 100 always scrolls a full page.
     pub min_page_fraction: u8,
-    /// Follow indicator style in the gap row below scrollback.
+    /// Follow indicator style on the scrollback's last row.
     pub follow_indicator: FollowIndicator,
     /// When follow mode scrolls to new content, auto-select the latest entry.
     pub follow_auto_select: bool,
@@ -352,12 +352,12 @@ impl Default for ScrollConfig {
     }
 }
 
-/// Scroll indicator display mode: the ▼ jump-to-bottom arrow below scrollback and its ▲ jump-to-response-top mirror under the sticky prompt header.
+/// Scroll indicator display mode: the jump-to-bottom chip on the scrollback's last row and its ▲ jump-to-response-top mirror under the sticky prompt header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FollowIndicator {
     /// No scroll indicators.
     None,
-    /// Show ▼ centered in the gap row below scrollback when not following and there's content below the viewport.
+    /// Show the jump-to-bottom chip centered on the scrollback's last row when not following and there's content below the viewport.
     /// Show ▲ centered under the sticky prompt header while the answer being read starts above the viewport top.
     #[default]
     Center,

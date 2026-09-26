@@ -1755,7 +1755,7 @@ impl AgentView {
                 }
             }
         }
-        let mut follow_indicator_y: Option<u16> = None;
+        let mut jump_to_bottom_visible = false;
         let mut response_top_indicator_y: Option<u16> = None;
         if self.block_viewer.is_none() && !search_active {
             use crate::appearance::FollowIndicator;
@@ -1788,22 +1788,27 @@ impl AgentView {
                     && self.scrollback.has_content_below()
                     && content_line_y.is_none()
                 {
-                    follow_indicator_y = Some(gap_y);
+                    jump_to_bottom_visible = true;
                 }
                 if self.scrollback.has_response_top_above() {
                     response_top_indicator_y = sticky_gap_row.map(|row| layout.scrollback.y + row);
                 }
             }
         }
-        let indicator_center_x = layout.scrollback.x + layout.scrollback.width / 2;
-        draw_scroll_arrow(
+        // The chip owns the scrollback's last row. The ▼ it replaces sat in the gap row below the
+        // scrollback, which on a phone-width pane (`prompt_gap == 0`) belongs to the next chrome
+        // row; the last scrollback row is above the prompt, the bottom band and the floor row.
+        match draw_jump_to_bottom_chip(
             buf,
             &theme,
-            indicator_center_x,
-            follow_indicator_y,
-            "▼",
-            &mut self.hit_follow_indicator,
-        );
+            layout.scrollback,
+            jump_to_bottom_visible,
+            self.hit_follow_indicator.hovered,
+        ) {
+            Some(rect) => self.hit_follow_indicator.set(Some(rect)),
+            None => self.hit_follow_indicator.clear(),
+        }
+        let indicator_center_x = layout.scrollback.x + layout.scrollback.width / 2;
         draw_scroll_arrow(
             buf,
             &theme,
@@ -4416,6 +4421,47 @@ fn draw_scroll_arrow(
     }
     hit.set(Some(Rect::new(center_x.saturating_sub(1), y, 3, 1)));
 }
+/// The jump-to-bottom chip's label ladder for a scrollback `width` columns wide: the full phrase,
+/// then the short form, then the bare arrow. Every form keeps one column of air on each side.
+fn jump_to_bottom_label(width: u16) -> Option<&'static str> {
+    const LABELS: [&str; 3] = ["Jump to bottom (click) ↓", "Jump to bottom ↓", "▼"];
+    LABELS
+        .into_iter()
+        .find(|label| unicode_width::UnicodeWidthStr::width(*label) as u16 + 2 <= width)
+}
+/// Paint the jump-to-bottom chip centered on the last row of the scrollback `area` and return the
+/// rect it painted, or `None` when it is hidden or the area is too narrow for even the arrow.
+/// Callers set-or-clear the hit area on the returned rect, like [`draw_scroll_arrow`]: the hit must
+/// cover the whole chip (a 3-column hit is not tappable on a phone) and never outlive its frame.
+fn draw_jump_to_bottom_chip(
+    buf: &mut Buffer,
+    theme: &Theme,
+    area: Rect,
+    visible: bool,
+    hovered: bool,
+) -> Option<Rect> {
+    if !visible || area.height == 0 {
+        return None;
+    }
+    let label = jump_to_bottom_label(area.width)?;
+    let width = unicode_width::UnicodeWidthStr::width(label) as u16;
+    let y = area.bottom().saturating_sub(1);
+    let x = area.x + area.width.saturating_sub(width) / 2;
+    let style = Style::default()
+        .fg(if hovered {
+            theme.gray_bright
+        } else {
+            theme.gray
+        })
+        .bg(theme.bg_light);
+    for (i, ch) in label.chars().enumerate() {
+        if let Some(cell) = buf.cell_mut((x + i as u16, y)) {
+            cell.set_char(ch);
+            cell.set_style(style);
+        }
+    }
+    Some(Rect::new(x, y, width, 1))
+}
 /// Pad `msg` for the toast slot, truncating with a trailing ellipsis when it cannot fit in `avail_width` columns.
 /// (Long clipboard toasts embed backup file paths; dropping the whole toast would hide the copy feedback entirely.)
 /// Returns `None` only when the slot is too narrow for any text.
@@ -5128,5 +5174,73 @@ mod status_line_draw_tests {
             agent.last_status_line_size, painted,
             "a frame with no row must not export a width the script would read as the 80-column fallback"
         );
+    }
+}
+
+#[cfg(test)]
+mod follow_indicator_tests {
+    use super::{draw_jump_to_bottom_chip, draw_scroll_arrow, jump_to_bottom_label};
+    use crate::app::agent_view::HitArea;
+    use crate::theme::Theme;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+
+    fn row_text(buf: &Buffer, y: u16) -> String {
+        (0..buf.area.width)
+            .filter_map(|x| buf.cell((x, y)).map(|c| c.symbol().to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn chip_label_ladder_keeps_a_column_of_air_either_side() {
+        assert_eq!(jump_to_bottom_label(26), Some("Jump to bottom (click) ↓"));
+        assert_eq!(jump_to_bottom_label(25), Some("Jump to bottom ↓"));
+        assert_eq!(jump_to_bottom_label(18), Some("Jump to bottom ↓"));
+        assert_eq!(jump_to_bottom_label(17), Some("▼"));
+        assert_eq!(jump_to_bottom_label(3), Some("▼"));
+        assert_eq!(jump_to_bottom_label(2), None);
+    }
+
+    #[test]
+    fn chip_paints_the_last_row_and_returns_the_rect_it_painted() {
+        let area = Rect::new(5, 5, 40, 5);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 60, 12));
+        let rect = draw_jump_to_bottom_chip(&mut buf, &Theme::current(), area, true, false)
+            .expect("40 columns hold the full phrase");
+        assert_eq!(rect, Rect::new(13, 9, 24, 1));
+        assert!(row_text(&buf, rect.y).contains("Jump to bottom (click) ↓"));
+    }
+
+    #[test]
+    fn a_hidden_or_too_narrow_chip_paints_nothing() {
+        let area = Rect::new(0, 0, 40, 4);
+        let mut buf = Buffer::empty(area);
+        assert_eq!(
+            draw_jump_to_bottom_chip(&mut buf, &Theme::current(), area, false, false),
+            None
+        );
+        let rows: Vec<String> = (0..area.height).map(|y| row_text(&buf, y)).collect();
+        assert!(rows.iter().all(|row| row.trim().is_empty()), "{rows:?}");
+
+        let narrow = Rect::new(0, 0, 2, 4);
+        let mut narrow_buf = Buffer::empty(narrow);
+        assert_eq!(
+            draw_jump_to_bottom_chip(&mut narrow_buf, &Theme::current(), narrow, true, false),
+            None
+        );
+        let zero_height = Rect::new(0, 2, 40, 0);
+        assert_eq!(
+            draw_jump_to_bottom_chip(&mut buf, &Theme::current(), zero_height, true, false),
+            None
+        );
+    }
+
+    #[test]
+    fn the_response_top_arrow_keeps_its_one_glyph_three_column_hit() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 21, 3));
+        let mut hit = HitArea::default();
+        draw_scroll_arrow(&mut buf, &Theme::current(), 10, Some(1), "▲", &mut hit);
+        assert_eq!(hit.rect, Some(Rect::new(9, 1, 3, 1)));
+        assert_eq!(row_text(&buf, 1).trim(), "▲");
     }
 }

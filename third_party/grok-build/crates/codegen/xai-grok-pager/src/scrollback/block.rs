@@ -72,7 +72,7 @@ pub trait BlockContent {
 
     /// Vertical padding at `content_width` — the width this block's text wraps at.
     ///
-    /// Two pad rows around a one-row band are a large fraction of a phone viewport, so a narrow pane drops the pad
+    /// Two pad rows around a two-row echo are a large fraction of a phone viewport, so a narrow pane drops the pad
     /// where a desktop pane keeps it. The pane's narrowness comes from the appearance (`layout.narrow`), which the
     /// pager derives from the pane width once per resize; content width alone cannot decide it, because a wide pane
     /// can hold a narrow block. Defaults to the width-blind answer on every other pane.
@@ -105,6 +105,15 @@ pub trait BlockContent {
     fn is_foldable_at(&self, content_width: u16) -> bool {
         let _ = content_width;
         self.is_foldable()
+    }
+
+    /// Rows a collapsed foldable block paints at `content_width`.
+    ///
+    /// Tool and thinking headers are one row. A user prompt paints its collapse budget, so the off-screen height
+    /// estimate has to ask rather than assume one row.
+    fn collapsed_row_budget(&self, content_width: u16) -> u16 {
+        let _ = content_width;
+        1
     }
 
     /// Get the next display mode when toggling fold. Default behavior: toggle between Collapsed and Expanded. Blocks
@@ -468,6 +477,10 @@ impl BlockContent for RenderBlock {
 
     fn is_foldable_at(&self, content_width: u16) -> bool {
         delegate_block!(self, is_foldable_at(content_width))
+    }
+
+    fn collapsed_row_budget(&self, content_width: u16) -> u16 {
+        delegate_block!(self, collapsed_row_budget(content_width))
     }
 
     fn next_fold_mode(&self, current: DisplayMode, is_running: bool) -> DisplayMode {

@@ -19,6 +19,8 @@ mod dock_crowded_sections;
 mod dock_hover_stop_background_task;
 #[path = "pty_e2e/doubled_lines_out_of_band_repro.rs"]
 mod doubled_lines_out_of_band_repro;
+#[path = "pty_e2e/echo_two_lines_frame.rs"]
+mod echo_two_lines_frame;
 #[path = "pty_e2e/embedded_mode_boots_without_hanging_on_blocked_backend.rs"]
 mod embedded_mode_boots_without_hanging_on_blocked_backend;
 #[path = "pty_e2e/flush_frame_rows.rs"]

@@ -113,7 +113,7 @@ execution under policy. Writes and deletes outside the workspace remain denied.
 
 For the short command, replace `deepseek-build` with `dsb` in any example.
 
-At or below 60 columns, a submitted prompt folds into a single row and drops
+At or below 60 columns, a submitted prompt folds to at most two rows and drops
 the decorative `❯` and blank pad rows; wider windows keep the three-line
 budget. On that phone-width pane the balance, cache hit, model and permission
 share one row under the input box — cost and cache on the left, model and

@@ -116,11 +116,32 @@ fn copy_tree(from: &Path, to: &Path) {
     for entry in std::fs::read_dir(from).unwrap() {
         let entry = entry.unwrap();
         let (from, to) = (entry.path(), to.join(entry.file_name()));
-        if entry.file_type().unwrap().is_dir() {
+        // An entry can be gone by the time the walk reaches it: the source is a
+        // live repository, and git spawns automatic maintenance detached by
+        // default (`maintenance.autoDetach`), so `commit`, `push` and `fetch`
+        // leave behind a process that deletes `.git/objects/maintenance.lock`
+        // as its run ends. A `file_type` that fails for a gone entry falls
+        // through to `copy_listed_file`, which skips it the same way.
+        if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
             copy_tree(&from, &to);
         } else {
-            std::fs::copy(&from, &to).unwrap();
+            copy_listed_file(&from, &to);
         }
+    }
+}
+
+/// Copy one file a walk has already listed.
+///
+/// The source is a live repository (see `copy_tree`), so the walk can list a
+/// file the maintenance process removes before the copy reaches it. The copy
+/// then fails with `NotFound` — `ci-grok-test` run 36225954017 failed exactly
+/// so, on `.git/objects/maintenance.lock`. A file that is gone by then is
+/// skipped; every other error still fails.
+fn copy_listed_file(from: &Path, to: &Path) {
+    if let Err(error) = std::fs::copy(from, to)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        panic!("copy {} to {}: {error}", from.display(), to.display());
     }
 }
 
@@ -134,4 +155,36 @@ fn attributes(worktree: &Path, rules: impl AsRef<[u8]>, branch: &str) {
 fn snapshot_into(worktree: &Path, source: &Path, ref_name: &str) {
     crate::snapshot_worktree_to_ref(worktree, ref_name, "snapshot").unwrap();
     crate::transfer_snapshot_to_repo(worktree, source, ref_name).unwrap();
+}
+
+/// A copy that walks a live repository lists a file the source can drop before
+/// the copy reaches it — the maintenance process behind
+/// `.git/objects/maintenance.lock` is exactly that. Reaching here is the
+/// assertion: a panic would fail whichever test was running.
+#[test]
+fn a_file_the_source_dropped_after_the_listing_is_skipped() {
+    let root = tempfile::tempdir().unwrap();
+    let listed = root.path().join("maintenance.lock");
+    std::fs::write(&listed, "").unwrap();
+    let to = root.path().join("snapshot").join("maintenance.lock");
+    std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+
+    std::fs::remove_file(&listed).unwrap(); // the maintenance run ended
+
+    copy_listed_file(&listed, &to);
+
+    assert!(
+        !to.exists(),
+        "a file the source dropped leaves nothing behind"
+    );
+}
+
+/// The skip is for entries the walk listed, not for a missing tree: an empty
+/// snapshot would leave every assertion about it meaningless.
+#[test]
+#[should_panic]
+fn a_copy_of_a_tree_that_is_not_there_still_fails() {
+    let root = tempfile::tempdir().unwrap();
+
+    copy_tree(&root.path().join("gone"), &root.path().join("snapshot"));
 }

@@ -3,6 +3,9 @@
 ## Unreleased
 
 - On a phone-width pane the input box keeps a plain bottom rule, and the balance, cache hit, model and permission share the one row under it. Cost and cache sit on the left (`$10.77 c94%`); the model and permission sit on the right (`V4.1 Flash (max) · always-approve`). A leading `DeepSeek ` is dropped on that row, the cache marker is `cN%` rather than `cache N%`, and a trailing reasoning-effort parenthesis is dropped only when keeping it would cut the permission mode off. The keyboard-hint row stays gone. Panes whose prompt area is wider than 60 columns keep the model on the box border and `cache N%` on its own row.
+- On a phone-width pane, a collapsed prompt echo shows up to two rows, with an ellipsis when the prompt is longer. Wider panes keep the three-line budget.
+- A session on OpenRouter sticks to one upstream provider. The request body now carries the session id as OpenRouter's `session_id` sticky-routing key, so a session (subagents included) keeps the provider that holds its prefix cache instead of re-billing the whole prompt at the input rate whenever the router moves. Requests to every other endpoint are byte-identical.
+- `CI grok test` no longer flakes on `commit_the_source_reaches_but_does_not_name_lets_the_snapshot_go`: git's automatic maintenance is spawned detached by default and deletes `.git/objects/maintenance.lock` as its run ends, and the vendored safety helper's copy now skips a listed file the source has already dropped instead of panicking on `NotFound`.
 
 ## 6.1.2 — 2026-09-26
 

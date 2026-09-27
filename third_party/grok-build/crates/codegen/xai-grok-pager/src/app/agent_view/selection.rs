@@ -2795,17 +2795,81 @@ mod tests {
             &crate::theme::Theme::default(),
         );
         assert!(agent.hit_sb_copy.rect.is_none());
-        agent.render_held_copy_chip(&mut buf, Some(5), &crate::theme::Theme::default());
+        agent.render_held_copy_chip(&mut buf, Some(5), 83, &crate::theme::Theme::default());
         let chip = agent.hit_held_copy.rect.expect("visible held copy chip");
         assert_eq!(chip.y, 5);
+        assert_eq!(chip.x, 81, "chip belongs in right padding, outside text");
         assert_eq!(
             buf.cell((chip.x, chip.y)).unwrap().symbol(),
             crate::glyphs::copy_icon()
         );
         assert!(matches!(
             agent.handle_mouse(&mouse_down(chip.x, chip.y)),
-            InputOutcome::Action(crate::app::actions::Action::CopyHeldSelection)
+            InputOutcome::Action(crate::app::actions::Action::CopyHeldSelectionOnly)
         ));
+    }
+
+    #[test]
+    fn sticky_header_held_selection_has_chip_and_y_payload() {
+        let mut agent = make_agent();
+        agent
+            .scrollback
+            .push_block(crate::scrollback::block::RenderBlock::user_prompt(
+                "STICKY_PROMPT",
+            ));
+        agent.scrollback.set_selected(Some(0));
+        let mut model = ResolvedSelectionModel {
+            content_area: Rect::new(1, 4, 80, 5),
+            ..Default::default()
+        };
+        model.push_line(ResolvedSelectableLine {
+            entry_idx: 0,
+            range_id: 0,
+            block_line_idx: 0,
+            screen_y: 2,
+            screen_x: 2,
+            selectable_cols: 0..13,
+            text: "STICKY_PROMPT".into(),
+            painted_region: None,
+            joiner_to_previous: None,
+        });
+        agent.update_scrollback_selection_state(model, Default::default());
+        agent.persistent_text_selection = Some(PersistentTextSelection {
+            entry_idx: 0,
+            range_id: 0,
+            anchor: SelectionEndpoint {
+                block_line_idx: 0,
+                col_within_range: 0,
+            },
+            head: SelectionEndpoint {
+                block_line_idx: 0,
+                col_within_range: 5,
+            },
+            head_range: None,
+            origin: SelectionOrigin::Drag,
+            kind: SelectionKind::Linear,
+        });
+        agent.remember_selection_copy("STICKY");
+        assert_eq!(agent.held_copy_chip_row(), Some(2));
+        assert_eq!(agent.visible_held_selection_copy_text(), Some("STICKY"));
+        let mut buf = ratatui::buffer::Buffer::empty(Rect::new(0, 0, 85, 10));
+        agent.render_held_copy_chip(&mut buf, Some(2), 83, &crate::theme::Theme::default());
+        let chip = agent.hit_held_copy.rect.expect("sticky header copy chip");
+        assert_eq!(chip.y, 2);
+        agent.active_pane = AgentPane::Prompt;
+        assert!(matches!(
+            agent.handle_mouse(&mouse_down(chip.x, chip.y)),
+            InputOutcome::Action(crate::app::actions::Action::CopyHeldSelectionOnly)
+        ));
+        assert!(matches!(
+            agent.handle_mouse(&mouse_drag(chip.x, chip.y + 1)),
+            InputOutcome::Unchanged
+        ));
+        assert!(matches!(
+            agent.handle_mouse(&mouse_up(chip.x, chip.y + 1)),
+            InputOutcome::Unchanged
+        ));
+        assert!(!agent.held_copy_pressed);
     }
 
     /// Build an agent whose scrollback selection model holds a single range with the given `(block_line_idx, text, joiner_to_previous)` lines.

@@ -107,9 +107,9 @@ use super::status::{
 use super::task_result::{dispatch_task_result, unregister_all_active_sessions};
 use super::transcript::{
     dispatch_copy_assistant_message, dispatch_copy_block_content, dispatch_copy_block_meta,
-    dispatch_copy_held_selection, dispatch_dump_input_log, dispatch_export_conversation,
-    dispatch_open_block_viewer, dispatch_open_config_agents_modal, dispatch_open_extensions_modal,
-    dispatch_open_transcript_pager,
+    dispatch_copy_held_selection, dispatch_copy_held_selection_only, dispatch_dump_input_log,
+    dispatch_export_conversation, dispatch_open_block_viewer, dispatch_open_config_agents_modal,
+    dispatch_open_extensions_modal, dispatch_open_transcript_pager,
 };
 use super::turn::{
     dispatch_cancel_scheduled_task, dispatch_cancel_turn, dispatch_cancel_turn_choice,
@@ -698,6 +698,10 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
         }
         Action::CopyHeldSelection => {
             dispatch_copy_held_selection(app);
+            vec![]
+        }
+        Action::CopyHeldSelectionOnly => {
+            dispatch_copy_held_selection_only(app);
             vec![]
         }
         Action::CopyAssistantMessage { n, file_path } => {

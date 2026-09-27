@@ -1260,6 +1260,8 @@ pub struct AgentView {
     pub(crate) hit_sb_copy: HitArea,
     /// Hit area for the copy chip on a visible held text selection.
     pub(crate) hit_held_copy: HitArea,
+    /// Consume the drag and release after a held-copy chip press.
+    pub(crate) held_copy_pressed: bool,
     /// Hit area for scrollback selection box view button.
     pub(crate) hit_sb_view: HitArea,
     /// Active question view (from `AskUserQuestion` tool). When `Some`, the prompt area shows a structured question UI and input is modal.

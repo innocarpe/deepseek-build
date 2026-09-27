@@ -358,6 +358,7 @@ impl AgentView {
             scrollback_search: None,
             hit_sb_copy: Default::default(),
             hit_held_copy: Default::default(),
+            held_copy_pressed: false,
             hit_sb_view: Default::default(),
             question_view: None,
             elicitation_view: None,

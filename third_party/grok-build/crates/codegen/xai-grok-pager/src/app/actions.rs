@@ -322,6 +322,8 @@ pub enum Action {
     CopyBlockContent,
     /// Copy the held text selection, falling back to the selected block for `y`.
     CopyHeldSelection,
+    /// Copy only the held selection; a stale chip must never copy a block.
+    CopyHeldSelectionOnly,
     /// Copy the Nth most recent assistant message (1 is the latest).
     /// `None` copies to the clipboard (with file fallback on failure); `Some(p)` writes a UTF-8 file.
     CopyAssistantMessage {

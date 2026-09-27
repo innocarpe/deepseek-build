@@ -19,8 +19,8 @@ pub(super) fn dispatch_copy_block_content(app: &mut AppView) {
     });
 }
 
-/// `y` and the held-selection chip copy the exact dragged payload. If the
-/// selection has expired, `y` keeps its original selected-block behavior.
+/// `y` prefers the visible dragged payload. If it has expired, `y` keeps its
+/// original selected-block behavior.
 pub(super) fn dispatch_copy_held_selection(app: &mut AppView) {
     with_active_agent(app, |agent| {
         if let Some(text) = agent
@@ -28,6 +28,15 @@ pub(super) fn dispatch_copy_held_selection(app: &mut AppView) {
             .map(str::to_owned)
             .or_else(|| text_for_copy_block_content(agent))
         {
+            agent.copy_to_clipboard(&text);
+        }
+    });
+}
+
+/// A rendered selection chip is never a request to copy a different block.
+pub(super) fn dispatch_copy_held_selection_only(app: &mut AppView) {
+    with_active_agent(app, |agent| {
+        if let Some(text) = agent.visible_held_selection_copy_text().map(str::to_owned) {
             agent.copy_to_clipboard(&text);
         }
     });

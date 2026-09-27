@@ -31,6 +31,7 @@ impl AgentView {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 self.left_mouse_down = true;
+                self.held_copy_pressed = false;
                 if self.hit_todo_close.contains(mouse.column, mouse.row) {
                     self.todo.overlay.escape();
                     self.todo.on_state_change();
@@ -373,7 +374,8 @@ impl AgentView {
                 if self.hit_held_copy.contains(mouse.column, mouse.row)
                     && !self.pos_occluded(mouse.column, mouse.row)
                 {
-                    return InputOutcome::Action(Action::CopyHeldSelection);
+                    self.held_copy_pressed = true;
+                    return InputOutcome::Action(Action::CopyHeldSelectionOnly);
                 }
                 if self.hit_sb_copy.contains(mouse.column, mouse.row)
                     && !self.pos_occluded(mouse.column, mouse.row)
@@ -772,6 +774,9 @@ impl AgentView {
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
+                if self.held_copy_pressed {
+                    return InputOutcome::Unchanged;
+                }
                 self.pending_link_click = None;
                 tracing::debug!(
                     event = "scrollback_mouse_drag",
@@ -785,6 +790,9 @@ impl AgentView {
             }
             MouseEventKind::Up(MouseButton::Left) => {
                 self.left_mouse_down = false;
+                if std::mem::take(&mut self.held_copy_pressed) {
+                    return InputOutcome::Unchanged;
+                }
                 tracing::debug!(
                     event = "scrollback_mouse_up",
                     col = mouse.column,
@@ -1138,6 +1146,7 @@ impl AgentView {
                     }
                 }
                 changed |= self.hit_sb_copy.update_hover(mouse.column, mouse.row);
+                changed |= self.hit_held_copy.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_sb_view.update_hover(mouse.column, mouse.row);
                 if let Some(hd_area) = self.history_dropdown_area {
                     let hs_count = self.prompt.history_search.result_count();

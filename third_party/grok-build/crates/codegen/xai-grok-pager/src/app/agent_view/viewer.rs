@@ -971,6 +971,7 @@ impl AgentView {
         &mut self,
         buf: &mut Buffer,
         row: Option<u16>,
+        viewport_right: u16,
         theme: &Theme,
     ) {
         let Some(row) = row else {
@@ -982,7 +983,14 @@ impl AgentView {
             self.hit_held_copy.clear();
             return;
         }
-        let x = area.x.saturating_add(area.width).saturating_sub(2);
+        // The horizontal layout reserves right padding beside selectable
+        // text. Use its first cell, falling back inside only when a custom
+        // zero-pad layout leaves no such column.
+        let x = if area.right() < viewport_right {
+            area.right()
+        } else {
+            area.right().saturating_sub(1)
+        };
         let areas = render_char_buttons(
             buf,
             x,

@@ -83,50 +83,29 @@ pub struct ResolvedSelectionModel {
     pub content_area: Rect,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ResolvedSelectionBoundary {
-    entry_idx: usize,
-    range_id: u16,
-    block_line_idx: usize,
-    boundary: Arc<SelectionBoundary>,
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ResolvedSelectionBoundaries {
-    boundaries: Vec<ResolvedSelectionBoundary>,
+    boundaries: std::collections::HashMap<(usize, u16, usize), Arc<SelectionBoundary>>,
     rows: std::collections::HashMap<(usize, u16, usize), usize>,
 }
 
 impl ResolvedSelectionBoundaries {
     pub(crate) fn push(&mut self, line: &ResolvedSelectableLine, boundary: Arc<SelectionBoundary>) {
-        self.boundaries.push(ResolvedSelectionBoundary {
-            entry_idx: line.entry_idx,
-            range_id: line.range_id,
-            block_line_idx: line.block_line_idx,
-            boundary,
-        });
+        self.boundaries
+            .entry((line.entry_idx, line.range_id, line.block_line_idx))
+            .or_insert(boundary);
     }
 
     fn boundary_for_line(&self, line: &ResolvedSelectableLine) -> Option<&SelectionBoundary> {
         self.boundaries
-            .iter()
-            .find(|boundary| {
-                boundary.entry_idx == line.entry_idx
-                    && boundary.range_id == line.range_id
-                    && boundary.block_line_idx == line.block_line_idx
-            })
-            .map(|boundary| boundary.boundary.as_ref())
+            .get(&(line.entry_idx, line.range_id, line.block_line_idx))
+            .map(Arc::as_ref)
     }
 
     pub(crate) fn boundary_for_hit(&self, hit: &RangeHit) -> Option<&SelectionBoundary> {
         self.boundaries
-            .iter()
-            .find(|boundary| {
-                boundary.entry_idx == hit.entry_idx
-                    && boundary.range_id == hit.range_id
-                    && boundary.block_line_idx == hit.block_line_idx
-            })
-            .map(|boundary| boundary.boundary.as_ref())
+            .get(&(hit.entry_idx, hit.range_id, hit.block_line_idx))
+            .map(Arc::as_ref)
     }
 
     #[cfg(test)]
@@ -826,8 +805,9 @@ pub fn render_persistent_selection_overlay(
     );
 }
 
-/// Last visible content row painted by a held selection. Sticky headers above
-/// the scrollback content are deliberately excluded from copy-chip placement.
+/// Last visible row painted by a held selection, including a sticky header
+/// above the scrollback content. The header may be the only visible copy of a
+/// selected prompt.
 pub fn last_visible_selected_row(
     model: &ResolvedSelectionModel,
     selection: &PersistentTextSelection,
@@ -853,9 +833,7 @@ pub fn last_visible_selected_row(
         .ranges
         .iter()
         .flat_map(|range| &range.lines)
-        .filter(|line| {
-            line.screen_y >= area.y && line.screen_y < area.y.saturating_add(area.height)
-        })
+        .filter(|line| line.screen_y < area.y.saturating_add(area.height))
         .filter(|line| {
             if selection.head_range.is_some()
                 && (head_entry, head_range) != (selection.entry_idx, selection.range_id)
@@ -4873,5 +4851,49 @@ mod tests {
         assert_eq!(clip_cols_to_content("", 0..5), 0..0);
         // Wide glyphs count display columns.
         assert_eq!(clip_cols_to_content("│ 名前 │", 1..6), 2..6);
+    }
+
+    #[test]
+    #[ignore = "measure long cross-range mouse-up reconstruction explicitly"]
+    fn long_cross_range_copy_timing() {
+        for count in [5_000, 10_000] {
+            let mut model = ResolvedSelectionModel::default();
+            let mut boundaries = ResolvedSelectionBoundaries::default();
+            let boundary = Arc::new(SelectionBoundary::new(String::new(), String::new()));
+            for idx in 0..count {
+                let line = span_line(0, 0, idx, idx as u16, "word", None);
+                boundaries.push(&line, Arc::clone(&boundary));
+                model.push_line(line);
+            }
+            let tail = span_line(1, 0, 0, count as u16, "tail", None);
+            boundaries.push(&tail, boundary);
+            model.push_line(tail);
+            let drag = ActiveTextDrag {
+                anchor: RangeHit {
+                    entry_idx: 0,
+                    range_id: 0,
+                    block_line_idx: 0,
+                    col_within_range: 0,
+                },
+                head: RangeHit {
+                    entry_idx: 1,
+                    range_id: 0,
+                    block_line_idx: 0,
+                    col_within_range: 3,
+                },
+                kind: SelectionKind::Linear,
+                anchor_content_width: None,
+            };
+            let started = std::time::Instant::now();
+            let copied = reconstruct_selection_text_with_boundaries(&model, &boundaries, &drag)
+                .expect("cross-range copy");
+            eprintln!(
+                "cross-range mouse-up reconstruction: {count} rows, {} bytes, {:?}",
+                copied.len(),
+                started.elapsed()
+            );
+            assert!(copied.starts_with("word\nword"));
+            assert!(copied.ends_with("\ntail"));
+        }
     }
 }

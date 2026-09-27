@@ -1718,6 +1718,20 @@ impl AgentView {
             let held_copy_row = (!any_drag_active && !overlay_focused)
                 .then(|| self.held_copy_chip_row())
                 .flatten();
+            let held_copy_row = held_copy_row.map(|row| {
+                let toast_on_last_row = self
+                    .active_toast_message()
+                    .and_then(|msg| fit_toast_text(msg, layout.scrollback.width))
+                    .is_some();
+                if toast_on_last_row
+                    && row == layout.scrollback.bottom().saturating_sub(1)
+                    && row > layout.scrollback.y
+                {
+                    row - 1
+                } else {
+                    row
+                }
+            });
             if !any_drag_active
                 && !overlay_focused
                 && let Some(ref selection_box) = sb_output.selection_box
@@ -1734,7 +1748,12 @@ impl AgentView {
                 self.hit_sb_copy.clear();
                 self.hit_sb_view.clear();
             }
-            self.render_held_copy_chip(buf, held_copy_row, &theme);
+            self.render_held_copy_chip(
+                buf,
+                held_copy_row,
+                layout.scrollback_content.right(),
+                &theme,
+            );
             let rail_shown = self.timeline_rail.is_some();
             if !rail_shown {
                 agent::render_scrollbar(

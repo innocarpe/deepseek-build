@@ -560,8 +560,12 @@ impl BlockContent for UserPromptBlock {
         ctx.appearance.scrollback.blocks.prompt.bg
     }
 
+    /// Compact prompt mode drops the pad rows to save rows, except on a phone
+    /// pane: there each pad row is painted as a fraction of a row, and without
+    /// it the echo's text sits on the band's top and bottom edges.
     fn has_vpad_for(&self, appearance: &AppearanceConfig) -> bool {
-        appearance.scrollback.blocks.prompt.vpad && !appearance.prompt.compact
+        appearance.scrollback.blocks.prompt.vpad
+            && (!appearance.prompt.compact || appearance.scrollback.layout.narrow)
     }
 
     /// The echo keeps a pad row above and below on every pane, and the renderer

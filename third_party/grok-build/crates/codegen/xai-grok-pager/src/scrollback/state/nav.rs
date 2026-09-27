@@ -394,11 +394,23 @@ impl ScrollbackState {
             .max(1)
     }
 
+    /// Whether this frame pins prompts as sticky headers.
+    ///
+    /// Compact prompt mode drops them to save rows, except on a phone pane: there the pinned echo is how a
+    /// scrolled-up reader keeps the turn they are in, and compact is on for reasons unrelated to that — a
+    /// `/compact-mode` taken from the small-screen tip, or auto-compact while the on-screen keyboard shrinks the
+    /// pane to [`AUTO_COMPACT_MAX_ROWS`](crate::views::agent::AUTO_COMPACT_MAX_ROWS) rows.
+    pub(crate) fn sticky_headers_active(&self) -> bool {
+        let appearance = &self.appearance;
+        appearance.scrollback.display.sticky_headers
+            && (!appearance.prompt.compact || appearance.scrollback.layout.narrow)
+    }
+
     /// Current sticky header height in screen rows (0 when no header/cache).
     fn current_header_screen_rows(&self) -> u16 {
-        // Mirror render_with_sticky_headers: no sticky header is drawn when disabled or in compact prompt mode
+        // Mirror render_with_sticky_headers: no sticky header is drawn when they are off for this frame
         // The whole viewport is then content, so paging must not subtract a header height
-        if !self.appearance.scrollback.display.sticky_headers || self.appearance.prompt.compact {
+        if !self.sticky_headers_active() {
             return 0;
         }
         let Some(cache) = self.layout_cache.as_ref() else {

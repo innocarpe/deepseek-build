@@ -18,6 +18,21 @@ pub(crate) const TIMESTAMP_SHORT_MAX_COLS: u16 = 8;
 /// The clock ends one column inside the entry's right edge.
 pub(crate) const CLOCK_EDGE_INSET: u16 = 1;
 
+/// Columns between a clock's last glyph and its entry's right edge.
+///
+/// [`CLOCK_EDGE_INSET`], except on a phone pane that keeps the held-copy
+/// gutter: the transcript already leaves that column blank right of every entry
+/// (the frame paints it in the echo's band), so it is the clock's column of air
+/// and the clock closes on the entry's last column, as tight to the right as
+/// the text's own one column on the left.
+pub(crate) fn clock_edge_inset(appearance: &AppearanceConfig) -> u16 {
+    if appearance.scrollback.layout.narrow && appearance.scrollback.display.selection_buttons {
+        0
+    } else {
+        CLOCK_EDGE_INSET
+    }
+}
+
 /// Columns a wide pane takes from the first content line only: the short clock,
 /// one blank column before it, and [`CLOCK_EDGE_INSET`].
 pub(crate) const TIMESTAMP_FIRST_LINE_RESERVE: u16 =
@@ -98,11 +113,11 @@ pub(crate) fn timestamp_anchor(
 }
 
 /// One blank column between the last body glyph and the clock.
-fn fits(text_cols: u16, clock: &str, row_span: u16) -> bool {
+fn fits(text_cols: u16, clock: &str, row_span: u16, edge_inset: u16) -> bool {
     text_cols
         .saturating_add(1)
         .saturating_add(clock_cols(clock))
-        .saturating_add(CLOCK_EDGE_INSET)
+        .saturating_add(edge_inset)
         <= row_span
 }
 
@@ -146,8 +161,9 @@ impl ClockPlan {
 
         let short = short_clock(ts);
         let long = long_clock(ts);
-        let short_fits = fits(q.first_line_cols, &short, q.row_span);
-        let long_fits = fits(q.first_line_cols, &long, q.row_span);
+        let edge_inset = clock_edge_inset(q.appearance);
+        let short_fits = fits(q.first_line_cols, &short, q.row_span, edge_inset);
+        let long_fits = fits(q.first_line_cols, &long, q.row_span, edge_inset);
         let expanded = q.allow_long && q.entry.timestamp_expanded;
         let want_long = expanded || (q.allow_long && q.hovered);
 
@@ -197,19 +213,30 @@ impl ClockPlan {
 
 /// Meta rows at the top of a prompt echo whose selection should hug the band, not the clock.
 ///
-/// The echo's band keeps one right-pad column. A missing cache means the row is not known yet.
+/// A missing cache means the row is not known yet. On a phone pane the top pad sits above the meta row
+/// ([`pad_above_meta`]), so the clock is inside the band the box hugs and no row is dropped.
 pub(crate) fn selection_clock_meta_rows(
     entry: &ScrollbackEntry,
     appearance: &AppearanceConfig,
 ) -> u16 {
-    if !entry.block.selection_hugs_vpad(appearance) {
+    if !entry.block.selection_hugs_vpad(appearance) || pad_above_meta(appearance) {
         return 0;
     }
     let Some(content_width) = entry.cached_content_width() else {
         return 0;
     };
-    let row_span = content_width.saturating_add(1);
+    let right_pad = crate::scrollback::wrappers::entry_chrome(entry, appearance).right_pad;
+    let row_span = content_width.saturating_add(right_pad);
     u16::from(cached_clock_is_meta(entry, appearance, row_span))
+}
+
+/// Whether an echo's top pad row sits above its clock meta row rather than under it.
+///
+/// A phone pane paints each pad row as a fraction of a row, mostly the pane's background. Under the meta row it
+/// would split the clock from the text with a dark strip, so there the pad leads the band: pad, clock, text, pad.
+/// Wider panes paint full pad rows and keep the clock on the band's first row.
+pub(crate) fn pad_above_meta(appearance: &AppearanceConfig) -> bool {
+    appearance.scrollback.layout.narrow
 }
 
 /// Whether the cached body needs the meta row. Hover is ignored: a hover must not change height.
@@ -239,10 +266,10 @@ pub(crate) fn cached_clock_is_meta(
     .meta
 }
 
-/// Right edge of a painted clock inside an entry area whose right edge is `entry_right`.
-pub(crate) fn clock_origin(entry_right: u16, text: &str) -> u16 {
+/// Left column of a painted clock inside an entry area whose right edge is `entry_right`.
+pub(crate) fn clock_origin(entry_right: u16, text: &str, appearance: &AppearanceConfig) -> u16 {
     entry_right
-        .saturating_sub(CLOCK_EDGE_INSET)
+        .saturating_sub(clock_edge_inset(appearance))
         .saturating_sub(clock_cols(text))
 }
 

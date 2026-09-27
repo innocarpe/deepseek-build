@@ -23,7 +23,7 @@ use crate::views::queue_mutation::QueueMutation;
 use crate::views::shortcuts_bar::HintItem;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Padding, Widget};
 /// Which pane is currently active in the agent view.
@@ -345,7 +345,7 @@ impl AgentViewLayout {
         constraints.push(Constraint::Length(bottom_margin_rows));
         let chunks = Layout::vertical(constraints).split(inner_area);
         let mut chunks = chunks.iter().copied();
-        let status_bar = chunks.next().unwrap_or_default();
+        let mut status_bar = chunks.next().unwrap_or_default();
         let mut tasks = if tasks_height > 0 {
             chunks.next();
             chunks.next().unwrap_or_default()
@@ -360,9 +360,13 @@ impl AgentViewLayout {
         };
         chunks.next();
         let mut scrollback = chunks.next().unwrap_or_default();
-        // A phone's task list and transcript own the whole width. The prompt
-        // composer and other panes keep their configured outer text inset.
+        // A phone's status bar, task list and transcript own the whole width.
+        // The prompt composer and other panes keep their configured outer text
+        // inset. The status bar's hit rects come from the rect it renders into,
+        // so they move with it.
         if layout_cfg.narrow {
+            status_bar.x = area.x;
+            status_bar.width = area.width;
             if tasks.height > 0 {
                 tasks.x = area.x;
                 tasks.width = area.width;
@@ -756,31 +760,40 @@ pub fn render_scrollbar(
     }
 }
 
-/// The scrollbar owns the phone frame's last column. Keep the prompt echo's
-/// band visible behind it, including the fractional top and bottom pad rows.
-pub(crate) fn paint_phone_scrollback_right_edge(
+/// Carry a phone pane's prompt-echo band from the transcript's last column to
+/// `right_edge` (exclusive), across the held-copy gutter and the scrollbar
+/// column the transcript does not paint.
+///
+/// Only the rows the scrollback reports as band rows are touched, so a code
+/// block or a highlighted line at the transcript's edge never leaks into those
+/// columns. Run it before the scrollbar and the overlays: a drawn scrollbar
+/// then owns its column, and the band reaches the frame edge only while no bar
+/// is drawn. A pad row keeps its fractional glyph; a text or clock row carries
+/// the band's colour, never the glyph at the edge.
+pub(crate) fn extend_phone_band_rows(
     buf: &mut Buffer,
     content: Rect,
-    frame: Rect,
-    theme: &Theme,
+    right_edge: u16,
+    band_rows: &[u16],
 ) {
-    if content.width == 0 || content.right() >= frame.right() {
+    if content.width == 0 || content.right() >= right_edge {
         return;
     }
     let source_x = content.right() - 1;
-    let edge_x = frame.right() - 1;
-    for y in content.y..content.bottom() {
+    for &y in band_rows {
+        if y < content.y || y >= content.bottom() {
+            continue;
+        }
         let Some(source) = buf.cell((source_x, y)).cloned() else {
             continue;
         };
         let pad = matches!(source.symbol(), "\u{2582}" | "\u{2586}");
-        if (source.bg != theme.bg_base || pad)
-            && let Some(edge) = buf.cell_mut((edge_x, y))
-        {
-            edge.bg = source.bg;
-            if pad {
-                edge.set_symbol(source.symbol());
+        for x in content.right()..right_edge {
+            if let Some(edge) = buf.cell_mut((x, y)) {
+                edge.set_symbol(if pad { source.symbol() } else { " " });
                 edge.fg = source.fg;
+                edge.bg = source.bg;
+                edge.modifier = source.modifier;
             }
         }
     }
@@ -2235,10 +2248,11 @@ mod tests {
         );
     }
 
-    /// The phone transcript reaches both frame edges while the composer keeps
-    /// its own inset. The status reaches the measured PTY bottom at every width.
+    /// The phone status bar and transcript reach both frame edges while the
+    /// composer keeps its own inset. The status reaches the measured PTY bottom
+    /// at every width.
     #[test]
-    fn layout_uses_full_width_phone_transcript_and_flush_pty_bottom() {
+    fn layout_uses_full_width_phone_bars_and_flush_pty_bottom() {
         for (cols, rows) in [(55u16, 41u16), (120, 40), (180, 50)] {
             let area = Rect::new(0, 0, cols, rows);
             let narrow = effective_narrow(cols, rows);
@@ -2253,6 +2267,13 @@ mod tests {
             assert_eq!(
                 layout.status_bar.y, area.y,
                 "{cols}x{rows}: the status bar starts on the first row, got {:?}",
+                layout.status_bar,
+            );
+            let status_inset = if narrow { 0 } else { LayoutConfig::MIN_HPAD };
+            assert_eq!(
+                (layout.status_bar.x, layout.status_bar.right()),
+                (area.x + status_inset, area.right() - status_inset),
+                "{cols}x{rows}: a phone status bar spans the frame, got {:?}",
                 layout.status_bar,
             );
             assert_eq!(

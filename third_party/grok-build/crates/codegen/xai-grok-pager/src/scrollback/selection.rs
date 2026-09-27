@@ -68,6 +68,9 @@ pub struct RenderOutput {
     /// The ▲ response-top indicator renders here.
     /// Publishing the row the pane actually used keeps the indicator from re-deriving (and possibly disagreeing with) the frame's layout.
     pub sticky_gap_row: Option<u16>,
+    /// Screen rows of a band that spans the pane: the flowing and the sticky prompt echo on a phone pane.
+    /// The frame carries these rows past the transcript's right edge (see `extend_phone_band_rows`).
+    pub band_rows: Vec<u16>,
 }
 
 /// Scroll information for scrollbar rendering.

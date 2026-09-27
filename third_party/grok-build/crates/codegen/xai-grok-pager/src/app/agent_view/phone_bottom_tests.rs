@@ -477,28 +477,35 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
     let mut agent = phone_agent();
     // Two wrapped rows at the echo's content width, so the collapsed phone
     // budget shows the whole prompt and paints no fold affordance row. The
-    // first row is full, so the clock takes the meta row above the top pad.
+    // first row is full, so the clock takes the meta row under the top pad.
     seed_prompt_echo(&mut agent, &"M".repeat(60));
     agent.prompt.set_text("phone draft");
     let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
     let frame = frame_text(&buf);
     eprintln!("phone 55x41 — full frame:\n{frame}");
 
-    // (a) The echo band is the meta clock row, two text rows, and one pad row
-    // each side, and each pad row spends two eighths of its height on the band
-    // (one column of air at the phone's font, where a whole row is 2.15 columns).
+    // (a) The echo band is the top pad, the meta clock row, two text rows and
+    // the bottom pad, in that order: the pad leads, so the clock row joins the
+    // text without a strip of the pane between them. Each pad row spends two
+    // eighths of its height on the band (one column of air at the phone's
+    // font, where a whole row is 2.15 columns).
     let band = echo_band_rows(&buf, theme.bg_light);
     assert_eq!(
         band.len(),
         5,
-        "the echo band is the meta clock row, two text rows plus a pad row each side: {band:?}\n{frame}"
+        "the echo band is a pad row each side, the meta clock row and two text rows: {band:?}\n{frame}"
     );
-    let meta = band[0];
+    assert_eq!(
+        band.windows(2).all(|w| w[1] == w[0] + 1),
+        true,
+        "the band's rows are contiguous: {band:?}\n{frame}"
+    );
+    let meta = band[1];
     assert!(
         row_text(&buf, meta).contains("AM") || row_text(&buf, meta).contains("PM"),
-        "the meta row carries the right-aligned turn clock:\n{frame}"
+        "the meta row, under the top pad, carries the right-aligned turn clock:\n{frame}"
     );
-    let top_pad = buf.cell((1, band[1])).unwrap();
+    let top_pad = buf.cell((1, band[0])).unwrap();
     assert_eq!(
         top_pad.symbol(),
         "\u{2582}",
@@ -525,6 +532,22 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
             "{frame}"
         );
     }
+    // The echo's text keeps the minimum unit of air inside its band: one
+    // column at the left edge, and on the right the held-copy gutter (then the
+    // scrollbar's column, band while no bar is drawn).
+    let first_text = band[2];
+    assert_eq!(buf.cell((0, first_text)).unwrap().symbol(), " ", "{frame}");
+    assert_eq!(buf.cell((1, first_text)).unwrap().symbol(), "M", "{frame}");
+    assert_eq!(
+        buf.cell((PHONE_COLS - 3, first_text)).unwrap().symbol(),
+        "M",
+        "the full first row runs to the column before the gutter:\n{frame}"
+    );
+    assert_eq!(
+        buf.cell((PHONE_COLS - 2, first_text)).unwrap().symbol(),
+        " ",
+        "{frame}"
+    );
 
     // (b) The composer box is exactly the border, text and divider rows.
     let top = top_border_row(&buf);
@@ -539,25 +562,27 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
         "the box's middle row is the text row:\n{frame}"
     );
 
-    // (c) The turn time stops one column inside the echo's band. The echo's
-    // first content row is full, so the clock sits on the meta row; that row is
-    // still part of the band.
+    // (c) The turn time closes on the transcript's last column: the held-copy
+    // gutter the transcript leaves blank is its column of air, as tight as the
+    // text's one column on the left, and the scrollbar's column follows (band
+    // while no bar is drawn). The echo's first content row is full, so the
+    // clock sits on the meta row; that row is still part of the band.
     let echo_y = meta;
-    let band_right = (0..PHONE_COLS)
-        .rev()
-        .find(|&x| {
-            buf.cell((x, echo_y))
-                .is_some_and(|c| c.bg == theme.bg_light)
-        })
-        .expect("the echo's band must have a right edge");
-    let last_ink = (0..PHONE_COLS - 1)
+    let last_ink = (0..PHONE_COLS)
         .rev()
         .find(|&x| buf.cell((x, echo_y)).is_some_and(|c| c.symbol() != " "))
         .expect("the echo's meta row must carry the clock");
+    for x in last_ink + 1..PHONE_COLS {
+        let cell = buf.cell((x, echo_y)).unwrap();
+        assert!(
+            cell.symbol() == " " && cell.bg == theme.bg_light,
+            "column {x} right of the time is blank band\n{frame}"
+        );
+    }
     assert_eq!(
-        band_right - last_ink,
+        PHONE_COLS - 1 - last_ink,
         2,
-        "the time keeps its original inset inside the full-width band: ink {last_ink}, band {band_right}\n{frame}"
+        "the copy gutter and the bar's column follow the ink\n{frame}"
     );
 
     // (d) The status band reaches the PTY bottom; the host adds pixel space below.
@@ -597,5 +622,255 @@ fn phone_status_band_reaches_pty_bottom_at_every_phone_height() {
             rows,
             "{PHONE_COLS}x{rows}: the status band reaches the PTY bottom\n{frame}"
         );
+    }
+}
+
+// ── Scrolled transcript: the pinned echo, the band's right edge, the scrollbar column ──
+
+/// Three turns, each a prompt with a unique marker and an answer long enough to
+/// scroll the phone pane, with a fenced code block whose shading reaches the
+/// transcript's right edge.
+fn seed_scrolling_turns(agent: &mut AgentView) {
+    for turn in 0..3 {
+        seed_prompt_echo(
+            agent,
+            &format!("prompt-{turn} 지금 얼마나 완벽하게 다 개선되었나 테스트 좀 해보자."),
+        );
+        let mut body: String = (0..8)
+            .map(|i| format!("answer {turn} line {i}\n\n"))
+            .collect();
+        body.push_str("```rust\nfn main() {\n    println!(\"a line long enough to reach the pane edge\");\n}\n```\n\n");
+        body.extend((8..30).map(|i| format!("answer {turn} line {i}\n\n")));
+        agent
+            .scrollback
+            .push_block(RenderBlock::agent_message(body));
+    }
+}
+
+fn set_compact(agent: &mut AgentView, compact: bool) {
+    let mut appearance = agent.scrollback.appearance().clone();
+    appearance.prompt.compact = compact;
+    agent.scrollback.set_appearance(appearance);
+}
+
+/// Scroll so the middle turn's prompt sits wholly above the viewport (its answer
+/// fills the pane) and redraw. Returns the frame.
+fn scroll_into_middle_answer(agent: &mut AgentView, cols: u16, rows: u16) -> Buffer {
+    let _ = draw(agent, cols, rows);
+    let prompt = agent
+        .scrollback
+        .get_cached_prompt_descriptors()
+        .and_then(|d| d.get(1).copied())
+        .expect("the middle prompt's descriptor");
+    let past = prompt.y_virtual + usize::from(prompt.full_height) + 6;
+    agent.scrollback.set_scroll_offset(past);
+    let buf = draw(agent, cols, rows);
+    assert_eq!(
+        agent.scrollback.scroll_offset(),
+        past,
+        "the middle answer is tall enough to scroll into"
+    );
+    buf
+}
+
+fn rows_with(buf: &Buffer, needle: &str) -> Vec<u16> {
+    (0..buf.area.height)
+        .filter(|&y| row_text(buf, y).contains(needle))
+        .collect()
+}
+
+/// A phone pane pins the prompt echo a scrolled-up reader is inside, in compact
+/// mode too: a `/compact-mode` taken from the small-screen tip, or auto-compact
+/// while the keyboard shrinks the pane, used to drop the pinned echo, so the
+/// echo scrolled away. A desktop pane keeps compact's own rule.
+#[test]
+fn phone_pins_the_echo_in_compact_mode_too() {
+    let _guard = crate::theme::cache::pin_theme();
+    let theme = Theme::current();
+    for (rows, compact) in [(PHONE_ROWS, false), (PHONE_ROWS, true), (20, true)] {
+        let mut agent = phone_agent();
+        seed_scrolling_turns(&mut agent);
+        set_compact(&mut agent, compact);
+        let buf = scroll_into_middle_answer(&mut agent, PHONE_COLS, rows);
+        let frame = frame_text(&buf);
+        let pinned = agent
+            .scrollback
+            .sticky_layout()
+            .and_then(|sticky| sticky.pinned)
+            .unwrap_or_else(|| {
+                panic!("{PHONE_COLS}x{rows} compact={compact}: no pinned echo\n{frame}")
+            });
+        assert_eq!(pinned.entry_idx, 2, "the middle prompt is pinned\n{frame}");
+        let marker = rows_with(&buf, "prompt-1");
+        assert_eq!(
+            marker.len(),
+            1,
+            "{PHONE_COLS}x{rows} compact={compact}: the pinned echo shows its prompt once\n{frame}"
+        );
+        assert!(
+            marker[0] <= 3,
+            "{PHONE_COLS}x{rows} compact={compact}: the echo is pinned under the status bar, got row {}\n{frame}",
+            marker[0]
+        );
+        // The band's own right pad column never holds text.
+        assert_eq!(
+            buf.cell((PHONE_COLS - 3, marker[0])).unwrap().bg,
+            theme.bg_light,
+            "the pinned echo paints its band\n{frame}"
+        );
+    }
+
+    let mut desktop = phone_agent();
+    seed_scrolling_turns(&mut desktop);
+    set_compact(&mut desktop, true);
+    let buf = scroll_into_middle_answer(&mut desktop, DESKTOP_COLS, DESKTOP_ROWS);
+    assert!(
+        rows_with(&buf, "prompt-1").is_empty(),
+        "a desktop pane keeps compact mode's scrolling echo\n{}",
+        frame_text(&buf)
+    );
+}
+
+/// Compact prompt mode keeps the echo's fractional pad rows on a phone pane:
+/// without them the text sits on the band's top and bottom edges.
+#[test]
+fn phone_compact_echo_keeps_its_fractional_pads() {
+    let _guard = crate::theme::cache::pin_theme();
+    let theme = Theme::current();
+    let mut agent = phone_agent();
+    seed_prompt_echo(&mut agent, "prompt-c 지금 전반적으로 구현 다 잘 됐어???");
+    set_compact(&mut agent, true);
+    let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    let frame = frame_text(&buf);
+    let text_y = rows_with(&buf, "prompt-c")
+        .first()
+        .copied()
+        .unwrap_or_else(|| panic!("the echo is on screen\n{frame}"));
+    let band = echo_band_rows(&buf, theme.bg_light);
+    let pads: Vec<&str> = band
+        .iter()
+        .filter(|&&y| y != text_y)
+        .map(|&y| buf.cell((1, y)).unwrap().symbol())
+        .collect();
+    assert!(
+        pads.contains(&"\u{2582}") && pads.contains(&"\u{2586}"),
+        "the echo keeps a lower-eighths pad above and an upper pad below, got {pads:?} on rows {band:?}\n{frame}"
+    );
+}
+
+/// Selecting the pinned echo in compact mode keeps its box inside the pane. A
+/// compact echo has no pad row to pull the box onto, so an unclipped top would
+/// draw its corners on the status bar's row.
+#[test]
+fn phone_compact_pinned_echo_selection_leaves_the_status_bar_alone() {
+    let _guard = crate::theme::cache::pin_theme();
+    let mut agent = phone_agent();
+    seed_scrolling_turns(&mut agent);
+    set_compact(&mut agent, true);
+    let plain = scroll_into_middle_answer(&mut agent, PHONE_COLS, PHONE_ROWS);
+    agent.active_pane = super::ActivePane::Scrollback;
+    agent.scrollback.set_selected(Some(2));
+    let selected = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    assert_eq!(
+        agent
+            .scrollback
+            .sticky_layout()
+            .and_then(|sticky| sticky.pinned)
+            .map(|pinned| pinned.entry_idx),
+        Some(2),
+        "the selected echo is the pinned one\n{}",
+        frame_text(&selected)
+    );
+    assert_eq!(
+        row_text(&selected, 0),
+        row_text(&plain, 0),
+        "the status bar row keeps its text\n{}",
+        frame_text(&selected)
+    );
+}
+
+/// With the scrollbar drawn, the echo's band fills every column up to the bar —
+/// the transcript's own width plus the held-copy gutter the transcript leaves
+/// blank — in the flow and pinned alike, and the bar keeps its own column.
+#[test]
+fn phone_echo_band_fills_up_to_the_scrollbar() {
+    let _guard = crate::theme::cache::pin_theme();
+    let theme = Theme::current();
+    let mut agent = phone_agent();
+    seed_scrolling_turns(&mut agent);
+    let _ = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    let descriptors = agent
+        .scrollback
+        .get_cached_prompt_descriptors()
+        .expect("prompt descriptors")
+        .to_vec();
+    // Pinned (inside the middle answer), then flowing (the last prompt a few
+    // rows under the viewport top).
+    let pinned_frame = scroll_into_middle_answer(&mut agent, PHONE_COLS, PHONE_ROWS);
+    agent
+        .scrollback
+        .set_scroll_offset(descriptors[2].y_virtual.saturating_sub(8));
+    let flow_frame = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    for (label, buf, marker) in [
+        ("pinned", &pinned_frame, "prompt-1"),
+        ("flow", &flow_frame, "prompt-2"),
+    ] {
+        let frame = frame_text(buf);
+        let text_rows = rows_with(buf, marker);
+        assert_eq!(
+            text_rows.len(),
+            1,
+            "{label}: the echo is on screen\n{frame}"
+        );
+        let y = text_rows[0];
+        let bar = PHONE_COLS - 1;
+        // The left edge, and the right edge up to the bar: the band's own right
+        // pad, then the held-copy gutter the transcript leaves blank. A wide
+        // glyph's second cell inside the text keeps the buffer's default style.
+        for x in [0, bar - 3, bar - 2, bar - 1] {
+            assert_eq!(
+                buf.cell((x, y)).unwrap().bg,
+                theme.bg_light,
+                "{label}: band column {x} of row {y} reaches the scrollbar\n{frame}"
+            );
+        }
+        // The thumb's colour can match the band's, so only its glyph is checked.
+        let bar_cell = buf.cell((bar, y)).unwrap();
+        let track = bar_cell.symbol() == " " && bar_cell.bg == theme.scrollbar_bg;
+        assert!(
+            track || bar_cell.symbol() == "\u{2588}",
+            "{label}: the scrollbar keeps its column, got {:?}\n{frame}",
+            (bar_cell.symbol(), bar_cell.bg)
+        );
+    }
+}
+
+/// The scrollbar column only ever holds the bar: no transcript background (a
+/// code block's shading, a text row's fill) and no pad glyph is copied into it
+/// while the transcript scrolls under it.
+#[test]
+fn phone_scrollbar_column_holds_only_the_bar_while_scrolling() {
+    let _guard = crate::theme::cache::pin_theme();
+    let theme = Theme::current();
+    let mut agent = phone_agent();
+    seed_scrolling_turns(&mut agent);
+    let _ = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    let (_, viewport, total) = agent.scrollback.scroll_info();
+    let bar = PHONE_COLS - 1;
+    for offset in (0..total.saturating_sub(usize::from(viewport))).step_by(3) {
+        agent.scrollback.set_scroll_offset(offset);
+        let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+        // The scrollback's rows: under the status bar, as tall as its viewport.
+        for y in 1..1 + viewport {
+            let cell = buf.cell((bar, y)).unwrap();
+            let track = cell.symbol() == " " && cell.bg == theme.scrollbar_bg;
+            let thumb = cell.symbol() == "\u{2588}";
+            assert!(
+                track || thumb,
+                "offset {offset}: scrollbar row {y} holds {:?}\n{}",
+                (cell.symbol(), cell.fg, cell.bg),
+                frame_text(&buf)
+            );
+        }
     }
 }

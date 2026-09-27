@@ -24,7 +24,7 @@ use crate::scrollback::text_selection::{
 };
 use crate::scrollback::types::{BlockContext, DisplayMode, derive_selection_text, selectable_cols};
 use crate::scrollback::wrappers::block_content_width_for;
-use crate::scrollback::wrappers::{entry_chrome, paint_pad_row};
+use crate::scrollback::wrappers::{band_spans_the_pane, entry_chrome, paint_pad_row};
 use crate::theme::Theme;
 
 /// Displays conversation entries with optional pinned header for the current turn's prompt. For efficiency, scratch
@@ -319,10 +319,8 @@ impl ScrollbackPane {
             entry_range.clone(),
         );
 
-        // Compute sticky header layout (disabled in compact mode).
-        let use_sticky = state.appearance().scrollback.display.sticky_headers
-            && !state.appearance().prompt.compact;
-        let sticky = if use_sticky {
+        // Compute sticky header layout (see `sticky_headers_active` for when compact mode drops it).
+        let sticky = if state.sticky_headers_active() {
             compute_sticky_layout(state.scroll_offset(), area.height, &prompts)
         } else {
             StickyHeaderLayout::default()
@@ -357,6 +355,16 @@ impl ScrollbackPane {
         // Sticky descriptors carry absolute indices; the selection model is relative to the rendered range (`render_content` remaps the same way).
         let selection_idx = |entry_idx: usize| entry_idx.saturating_sub(entry_range.start);
         let mut header_selection: Vec<StickyHeaderSelection> = Vec::new();
+        // A sticky echo paints the same band as the flowing one, so its rows are band rows too.
+        let mut header_band_rows: Vec<u16> = Vec::new();
+        let mut note_header_band = |entry_idx: usize, header_area: Rect| {
+            if state
+                .entry(entry_idx)
+                .is_some_and(|entry| band_spans_the_pane(entry, state.appearance()))
+            {
+                header_band_rows.extend(header_area.y..header_area.bottom());
+            }
+        };
         let mut pushed_header_selection_box: Option<SelectionBox> = None;
         if let Some(ref pushed) = sticky.pushed {
             let visible_height = pushed.visible_height();
@@ -368,6 +376,7 @@ impl ScrollbackPane {
                     width: area.width,
                     height: visible_height,
                 };
+                note_header_band(pushed.entry_idx, header_area);
                 header_selection.extend(self.render_sticky_header(
                     buf,
                     header_area,
@@ -417,6 +426,9 @@ impl ScrollbackPane {
                         hugs_pad,
                     );
 
+                    // A box whose top is the pane's first row has no row of its own above it:
+                    // that row belongs to the status bar.
+                    let top_clipped = top_clipped || box_area.y <= area.y;
                     let sel_box = SelectionBox::new(box_area, Style::default().fg(border_color))
                         .with_top_clipped(top_clipped)
                         .with_bottom_clipped(false);
@@ -438,6 +450,7 @@ impl ScrollbackPane {
                     width: area.width,
                     height: visible_height,
                 };
+                note_header_band(pinned.entry_idx, header_area);
                 header_selection.extend(self.render_sticky_header(
                     buf,
                     header_area,
@@ -471,8 +484,9 @@ impl ScrollbackPane {
             // bottom_clipped = false since there's always a gap row between header and content.
             let screen_row = sticky.pinned_screen_row().unwrap_or(0);
 
-            // Check if there's room for top corners
-            let top_clipped = screen_row == 0 && area.y == 0;
+            // Room for the top corners: the row above the box must be the pane's own, not the
+            // status bar's. A compact echo carries no pad row to pull the box onto.
+            let top_clipped = screen_row == 0;
 
             // The pinned header is a prompt echo: pull the box onto the band's own pad rows. A pulled top gives
             // the corner the header's own first row, so the "no room above" flag only stands while it stays
@@ -492,7 +506,7 @@ impl ScrollbackPane {
                 hugs_pad,
                 hugs_pad,
             );
-            let top_clipped = top_clipped && box_area.y == selection_area.y;
+            let top_clipped = top_clipped && box_area.y <= area.y;
 
             let sel_box = SelectionBox::new(box_area, Style::default().fg(theme.selection_border))
                 .with_top_clipped(top_clipped)
@@ -546,6 +560,8 @@ impl ScrollbackPane {
             }
         };
         prepend_header_selection(&mut output.output.selection_model, header_selection);
+        header_band_rows.append(&mut output.output.band_rows);
+        output.output.band_rows = header_band_rows;
         // A header-only viewport skips the content renderer, so publish the (zero-height, pane-bottom) content
         // rect here; drag autoscroll reads it to tell "all chrome" apart from "no frame yet".
         if output.output.selection_model.content_area == Rect::default() {
@@ -862,13 +878,24 @@ impl ScrollbackPane {
             use_vpad,
         );
         let mut clock_rect = None;
-        // [meta?] [vpad?] [content...]
+        // [meta?] [vpad?] [content...], or on a phone pane [vpad?] [meta?] [content...] (see `pad_above_meta`),
+        // exactly as the entry paints in the flow.
+        let pad_first =
+            use_vpad && crate::scrollback::timestamp_layout::pad_above_meta(&ctx.appearance);
         let mut y = content_area.y;
         if plan.meta {
+            let clock_y = y.saturating_add(u16::from(pad_first));
             if let Some(text) = plan.text.as_deref()
-                && y < content_area.y + content_area.height
+                && clock_y < content_area.y + content_area.height
             {
-                clock_rect = Some(paint_sticky_clock(buf, theme, entry_right, y, text));
+                clock_rect = Some(paint_sticky_clock(
+                    buf,
+                    theme,
+                    &ctx.appearance,
+                    entry_right,
+                    clock_y,
+                    text,
+                ));
             }
             y = y.saturating_add(1);
         }
@@ -892,9 +919,14 @@ impl ScrollbackPane {
             let narrow = ctx.appearance.scrollback.layout.narrow;
             let flat = false;
             if let Some(band) = bg_color {
-                // Under the meta clock when that row is present. Painting at
-                // `content_area.y` would cover the clock.
-                let pad_top_y = content_area.y.saturating_add(u16::from(plan.meta));
+                // Under the meta clock when that row is present, unless the pad
+                // leads the band (a phone pane). Painting a pad on the clock's
+                // row would cover the clock.
+                let pad_top_y = if pad_first {
+                    content_area.y
+                } else {
+                    content_area.y.saturating_add(u16::from(plan.meta))
+                };
                 paint_pad_row(
                     buf,
                     area,
@@ -951,6 +983,7 @@ impl ScrollbackPane {
             clock_rect = Some(paint_sticky_clock(
                 buf,
                 theme,
+                &ctx.appearance,
                 entry_right,
                 first_content_y,
                 text,
@@ -1057,6 +1090,7 @@ impl ScrollbackPane {
                 link_overlay: result.link_overlay,
                 inline_media: result.inline_media,
                 diagram_affordances: result.diagram_affordances,
+                band_rows: result.band_rows,
                 ..Default::default()
             },
             selection_boundaries,
@@ -1411,13 +1445,14 @@ fn sticky_clock_plan(
         has_content: !output.lines.is_empty(),
     };
     let stable = ClockPlan::decide(&query(false));
-    let clock_row = if stable.meta {
+    let pad_first = vpad && crate::scrollback::timestamp_layout::pad_above_meta(&ctx.appearance);
+    let clock_row = if stable.meta && !pad_first {
         content_top
     } else {
         content_top.saturating_add(u16::from(vpad))
     };
     let hovered = stable.text.as_deref().is_some_and(|text| {
-        let x = clock_origin(entry_right, text);
+        let x = clock_origin(entry_right, text, &ctx.appearance);
         mouse_pos.is_some_and(|(mx, my)| point_in_clock(mx, my, x, clock_row, clock_cols(text)))
     });
     if !hovered {
@@ -1434,12 +1469,13 @@ fn sticky_clock_plan(
 fn paint_sticky_clock(
     buf: &mut ratatui::buffer::Buffer,
     theme: &crate::theme::Theme,
+    appearance: &crate::appearance::AppearanceConfig,
     entry_right: u16,
     y: u16,
     text: &str,
 ) -> Rect {
     use crate::scrollback::timestamp_layout::{clock_cols, clock_origin};
-    let x = clock_origin(entry_right, text);
+    let x = clock_origin(entry_right, text, appearance);
     buf.set_string_safe(x, y, text, Style::default().fg(theme.gray));
     Rect::new(x, y, clock_cols(text), 1)
 }
@@ -1789,10 +1825,10 @@ mod tests {
         );
     }
 
-    /// A full phone-width line puts the clock on a row above the band. The box still
-    /// hugs the pad rows; the top corner does not move up onto the clock.
+    /// A full phone-width line puts the clock on a row of its own, under the band's
+    /// top pad. The box hugs the pad rows, so the clock is inside it with the text.
     #[test]
-    fn narrow_full_echo_selection_hugs_the_pad_under_the_clock() {
+    fn narrow_full_echo_selection_hugs_the_pad_above_the_clock() {
         let area = Rect::new(0, 0, 55, 41);
         let mut state = ScrollbackState::new();
         let mut appearance = AppearanceConfig::default();
@@ -1832,8 +1868,8 @@ mod tests {
 
         assert_eq!(
             symbol_rows(&buf, "┌"),
-            vec![band_y + 1],
-            "the top corner sits on the pad under the clock, not on the clock row"
+            vec![band_y],
+            "the top corner sits on the echo's own top pad, above the clock row"
         );
         assert_eq!(
             symbol_rows(&buf, "└"),

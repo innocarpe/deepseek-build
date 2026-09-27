@@ -66,6 +66,25 @@ for c in cargo python3 git; do
   command -v "$c" >/dev/null 2>&1 || { echo "dsbdev: $c is not on PATH" >&2; exit 1; }
 done
 
+# macOS assesses every freshly built executable and dylib on its first run
+# (the pager: 10 s). Under the DsbExempt runner, listed under Developer Tools,
+# cargo and dsb skip that (scripts/lib/dsb-exempt.c). DSB_EXEMPT=0 turns it
+# off; a path picks that runner.
+exempt=()
+if [[ "$(uname -s)" == Darwin && "${DSB_EXEMPT:-}" != 0 ]]; then
+  if [[ -n "${DSB_EXEMPT:-}" && "$DSB_EXEMPT" != 1 ]]; then
+    runner="$DSB_EXEMPT"
+  else
+    runner="$(command -v dsb-exempt || true)"
+    for app in /Applications "$HOME/Applications"; do
+      [[ -n "$runner" ]] || { [[ -x "$app/DsbExempt.app/Contents/MacOS/dsb-exempt" ]] && runner="$app/DsbExempt.app/Contents/MacOS/dsb-exempt"; } || true
+    done
+  fi
+  if [[ -n "$runner" && -x "$runner" ]]; then
+    exempt=("$runner")
+  fi
+fi
+
 target="${DSBDEV_TARGET_DIR:-$vendor/target}"
 profile=debug
 build_args=(-p xai-grok-pager-bin)
@@ -86,11 +105,11 @@ if ((!release)); then
   python3 "$HELPER" snapshot --vendor "$vendor" --out "$state/snapshot.json"
 fi
 
-echo "dsbdev: building ($profile, -j $jobs) — $vendor" >&2
+echo "dsbdev: building ($profile, -j $jobs${exempt[0]:+, under DsbExempt}) — $vendor" >&2
 set +e
 (
   cd "$vendor" \
-    && CARGO_TARGET_DIR="$target" cargo build "${build_args[@]}" -j "$jobs" \
+    && CARGO_TARGET_DIR="$target" ${exempt[@]+"${exempt[@]}"} cargo build "${build_args[@]}" -j "$jobs" \
       --message-format=json-render-diagnostics
 ) | python3 "$HELPER" summarize --out "$state/last-build.json" --started "$started"
 statuses=("${PIPESTATUS[@]}")
@@ -116,4 +135,4 @@ if ((!run)); then
   exit 0
 fi
 echo "dsbdev: running dsb with DEEPSEEK_BUILD_AGENT_BIN=$bin" >&2
-DEEPSEEK_BUILD_AGENT_BIN="$bin" exec dsb ${dsb_args[@]+"${dsb_args[@]}"}
+DEEPSEEK_BUILD_AGENT_BIN="$bin" exec ${exempt[@]+"${exempt[@]}"} dsb ${dsb_args[@]+"${dsb_args[@]}"}

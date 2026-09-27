@@ -9,7 +9,6 @@ use crate::render::wrapping::{RtOptions, blockquote_prefix_len, word_wrap_line_w
 use crate::scrollback::block::BlockContent;
 use crate::scrollback::types::{
     AccentStyle, BlockBackground, BlockContext, BlockLine, BlockOutput, DisplayMode, Selectable,
-    str_display_cells,
 };
 
 const USER_PROMPT_BODY_RANGE: u16 = 0;
@@ -147,11 +146,9 @@ fn token_styled_line(
 /// still close the row), and a grapheme that would cross the boundary stays out whole.
 ///
 /// Cells are counted the way the buffer paints them (`Buffer::set_stringn`): span by span, one
-/// grapheme of that span at a time. A whole-string width can be narrower (`"لا".width()` is 1,
-/// painted as 2 cells), and graphemes of the joined text can straddle spans (an emoji sequence the
-/// wrapper split across rows) that the buffer still paints apart. Zero-width graphemes paint no
-/// cell, so the ones right after the cut stay: a combining mark in the span after its base letter
-/// is not dropped.
+/// grapheme of that span at a time, see [`painted_cells`]. A whole-string width can be narrower
+/// (`"لا".width()` is 1, painted as 2 cells). Graphemes that paint no cell right after the cut
+/// stay: a combining mark in the span after its base letter is not dropped.
 fn clip_line_to_width(line: Line<'_>, width: usize) -> Line<'_> {
     let Line {
         style,
@@ -163,7 +160,7 @@ fn clip_line_to_width(line: Line<'_>, width: usize) -> Line<'_> {
     for span in spans {
         let mut cut = None;
         for (at, grapheme) in span.content.grapheme_indices(true) {
-            let cells = grapheme.width();
+            let cells = painted_cells(grapheme);
             if used + cells > width {
                 cut = Some(at);
                 break;
@@ -185,6 +182,31 @@ fn clip_line_to_width(line: Line<'_>, width: usize) -> Line<'_> {
         style,
         alignment,
         spans: out,
+    }
+}
+
+/// Cells the buffer paints for one grapheme (`Buffer::set_stringn`): none for a grapheme with a
+/// control character, which it skips although `"\t".width()` is 1; otherwise its width.
+fn painted_cells(grapheme: &str) -> usize {
+    if grapheme.contains(char::is_control) {
+        0
+    } else {
+        grapheme.width()
+    }
+}
+
+/// Cells the buffer paints for one span's text, grapheme by grapheme.
+fn span_painted_cells(text: &str) -> usize {
+    text.graphemes(true).map(painted_cells).sum()
+}
+
+/// Append `span`, folding it into the last span when they share a style. The wrapper cuts a word too
+/// long for its row between characters, which can split one grapheme (an emoji sequence) across two
+/// rows; joined back as one string, the clip, the buffer and a copy all see that grapheme whole.
+fn push_merged<'a>(spans: &mut Vec<Span<'a>>, span: Span<'a>) {
+    match spans.last_mut() {
+        Some(last) if last.style == span.style => last.content.to_mut().push_str(&span.content),
+        _ => spans.push(span),
     }
 }
 
@@ -571,7 +593,7 @@ impl UserPromptBlock {
                     let mut tail_cells: usize = tail
                         .spans
                         .iter()
-                        .map(|s| str_display_cells(&s.content))
+                        .map(|s| span_painted_cells(&s.content))
                         .sum();
                     for (row, row_joiner) in wrapped.iter().zip(&wrap_joiners).skip(wrap_idx + 1) {
                         // One cell past the budget is enough for the clip to see what follows the cut.
@@ -581,15 +603,13 @@ impl UserPromptBlock {
                         if let Some(space) = row_joiner
                             && !space.is_empty()
                         {
-                            tail_cells += str_display_cells(space);
-                            tail.spans.push(Span::styled(space.clone(), text_style));
+                            tail_cells += span_painted_cells(space);
+                            push_merged(&mut tail.spans, Span::styled(space.clone(), text_style));
                         }
-                        let body = spans_after_indent(&row.spans, quote_indent);
-                        tail_cells += body
-                            .iter()
-                            .map(|s| str_display_cells(&s.content))
-                            .sum::<usize>();
-                        tail.spans.extend(body);
+                        for span in spans_after_indent(&row.spans, quote_indent) {
+                            tail_cells += span_painted_cells(&span.content);
+                            push_merged(&mut tail.spans, span);
+                        }
                     }
                     let mut final_content = clip_line_to_width(tail, reduced_width);
                     trim_line_end(&mut final_content);
@@ -1656,12 +1676,12 @@ mod tests {
         assert_eq!(str_display_cells(&last), 10);
     }
 
-    /// The cut counts cells span by span, as the buffer paints them. The wrapper splits a family emoji
-    /// across two rows; joined, its pieces are one grapheme of the text but still two spans, which the
-    /// buffer paints apart. Measuring the joined grapheme let the row run past the budget, and the
-    /// ellipsis was not painted.
+    /// The wrapper splits a family emoji across two rows (it cuts a word too long for its row between
+    /// characters). Joined back, the pieces are one string again: the buffer paints the emoji whole, a
+    /// copy of the row reads the same grapheme, and the ellipsis still fits. Kept as two spans, the row
+    /// painted its pieces apart past the budget and the ellipsis was not painted.
     #[test]
-    fn collapsed_last_line_counts_cells_span_by_span() {
+    fn collapsed_last_line_joins_a_grapheme_the_wrapper_split() {
         const WIDTH: u16 = 6;
         let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}";
         let block = UserPromptBlock::new(format!("head\n{family}ab\nend"));
@@ -1672,6 +1692,11 @@ mod tests {
         );
         let lines = block.wrap_prompt_lines(WIDTH, Some(2), false, false);
         let last = &line_at(&lines, 1).content;
+        assert_eq!(line_text(last), format!("{family}ab \u{2026}"));
+        assert!(
+            last.spans.iter().any(|s| s.content.contains(family)),
+            "the emoji is one string, so a copy reads what the buffer paints: {last:?}"
+        );
         let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, WIDTH, 1));
         buf.set_line(0, 0, last, WIDTH);
         let painted: String = (0..WIDTH)
@@ -1681,6 +1706,23 @@ mod tests {
             painted.trim_end().ends_with('\u{2026}'),
             "the ellipsis is painted: {painted:?} from {last:?}"
         );
+    }
+
+    /// The buffer skips control characters, so a tab paints no cell although `"\t".width()` is 1. The
+    /// cut counts it as the buffer does and the row still reaches the ellipsis at the edge.
+    #[test]
+    fn collapsed_last_line_counts_a_tab_as_no_cell() {
+        const WIDTH: u16 = 8;
+        let block = UserPromptBlock::new("head\n\tABCDEFGH\ntail");
+        let lines = block.wrap_prompt_lines(WIDTH, Some(2), false, false);
+        let last = &line_at(&lines, 1).content;
+        assert_eq!(line_text(last), "\tABCDEF \u{2026}");
+        let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, WIDTH, 1));
+        buf.set_line(0, 0, last, WIDTH);
+        let painted: String = (0..WIDTH)
+            .map(|x| buf.cell((x, 0)).unwrap().symbol().to_string())
+            .collect();
+        assert_eq!(painted, "ABCDEF \u{2026}");
     }
 
     /// A quoted prompt's continuation rows start with the `│ ` the wrapper repeats. Joining the hidden

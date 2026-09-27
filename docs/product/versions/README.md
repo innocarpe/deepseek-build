@@ -75,7 +75,7 @@ Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** p
 | 2026-09-27 | **`6.1.6`** Phone frame: pinned echo in compact mode, echo band to the scrollbar, tighter echo and clock, full-width status bar | PR #303 |
 | 2026-09-27 | **`6.1.7`** Phone frame keeps a one-row floor; spinner and composer border fixes | PR #311 |
 | 2026-09-27 | **`6.1.8`** phone echo clock only where the last row has room, pinned echo keeps its rows, wide-glyph gutter | PR #313 |
-| 2026-09-28 | **`6.1.9`** phone prompt echo folds to two rows by its word-wrapped rows; npm 12 install guidance | PR #_(fill in)_ |
+| 2026-09-28 | **`6.1.9`** phone prompt echo folds to two rows by its word-wrapped rows; npm 12 install guidance | PR #318 |
 | 2026-09-25 | **`6.0.0`** Grok Build base ported `1.0.0` → `1.0.41` (41 releases, 472 upstream items) with the DeepSeek overlay re-derived by three-way merge; sync infra (`grok-sync` skill, runbook, ledger, inventory) added so the next sync is a procedure rather than a rediscovery | [CHANGELIST_6_0_0.md](../CHANGELIST_6_0_0.md) · [UPSTREAM_SYNC_LEDGER.md](../UPSTREAM_SYNC_LEDGER.md) |
 | 2026-08-07 | **`5.0.1`** widen the DeepSeek whale logo to official terminal proportions | PR #113 |
 | 2026-08-07 | **`4.0.4`** Image attachments on text-only DeepSeek endpoints (persist to session assets + OCR hint); DeepSeek status line with account balance & cache hit rate; G003 mint file_version on Path A read_file | PR #98 |

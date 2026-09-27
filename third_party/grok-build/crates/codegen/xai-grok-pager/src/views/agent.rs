@@ -23,7 +23,7 @@ use crate::views::queue_mutation::QueueMutation;
 use crate::views::shortcuts_bar::HintItem;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Padding, Widget};
 /// Which pane is currently active in the agent view.
@@ -87,9 +87,43 @@ pub const SHORT_TERMINAL_ROWS: u16 = 16;
 /// The scrollback's floor, pushed as the layout's only `Min`.
 /// The solver ranks it above every `Length`, so an over-committed layout shrinks another row.
 pub const SCROLLBACK_MIN_ROWS: u16 = 5;
-/// The terminal reserves no whole row below the status; the iOS host applies
-/// the smaller pixel inset outside the measured PTY viewport.
-pub const PHONE_BOTTOM_MARGIN_ROWS: u16 = 0;
+/// The frame's floor: the row under the bottom status row, at every width.
+///
+/// [`paint_bottom_margin`] fills it with an upper half block (`▀`) — the
+/// frame's background on the top half, the terminal's own background on the
+/// bottom half — so the frame ends half a row under the status text whatever
+/// inset the host keeps outside the PTY. A whole blank row is twice the air the
+/// composer keeps under its text, and no row leaves the status text on the
+/// frame edge. Short terminals ([`SHORT_TERMINAL_ROWS`]) drop it with the other
+/// margins, like the dashboard's floor.
+pub const BOTTOM_MARGIN_ROWS: u16 = 1;
+
+/// Rows [`AgentViewLayout::compute`] reserves under the status row for a frame
+/// `area_height` rows tall.
+pub fn bottom_margin_rows(area_height: u16) -> u16 {
+    if area_height <= SHORT_TERMINAL_ROWS {
+        0
+    } else {
+        BOTTOM_MARGIN_ROWS
+    }
+}
+
+/// Paint the frame's floor ([`BOTTOM_MARGIN_ROWS`]). A theme whose background
+/// is the terminal's own (`Reset`) has no edge to draw, so the row stays blank:
+/// a `Reset` foreground would paint the half block in the text colour.
+pub(crate) fn paint_bottom_margin(buf: &mut Buffer, rect: Rect, base: Color) {
+    for y in rect.y..rect.bottom() {
+        for x in rect.x..rect.right() {
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                cell.reset();
+                if !matches!(base, Color::Reset) {
+                    cell.set_symbol("\u{2580}");
+                    cell.fg = base;
+                }
+            }
+        }
+    }
+}
 /// Auto-compact threshold: at or below this height the compact flag handed to rendering is forced on.
 /// Deliberately above [`SHORT_TERMINAL_ROWS`], which still gates the harder cuts (tip-row rendering, dropping the CTA and follow-up rows).
 pub const AUTO_COMPACT_MAX_ROWS: u16 = 20;
@@ -335,14 +369,8 @@ impl AgentViewLayout {
         // DeepSeek bottom status row: always present so the row count is
         // stable; renders blank when no status data has landed.
         constraints.push(Constraint::Length(1));
-        // The iOS host owns the fractional bottom inset outside the PTY.
-        // The composer and status remain adjacent at every width.
-        let bottom_margin_rows = if layout_cfg.narrow {
-            PHONE_BOTTOM_MARGIN_ROWS
-        } else {
-            0
-        };
-        constraints.push(Constraint::Length(bottom_margin_rows));
+        // The frame's floor under the status row (see `BOTTOM_MARGIN_ROWS`).
+        constraints.push(Constraint::Length(bottom_margin_rows(area.height)));
         let chunks = Layout::vertical(constraints).split(inner_area);
         let mut chunks = chunks.iter().copied();
         let mut status_bar = chunks.next().unwrap_or_default();
@@ -437,8 +465,12 @@ impl AgentViewLayout {
         // DeepSeek bottom status row: always present as a row; renders blank
         // when no DeepSeek status is known.
         let deepseek_status = chunks.next().unwrap_or_default();
-        // Optional floor rows under the status row.
-        let bottom_margin = chunks.next().unwrap_or_default();
+        // The floor under the status row spans the frame, not the inset.
+        let mut bottom_margin = chunks.next().unwrap_or_default();
+        if bottom_margin.height > 0 {
+            bottom_margin.x = area.x;
+            bottom_margin.width = area.width;
+        }
         let scrollbar_x = area.right().saturating_sub(scrollbar_cfg.gap_right + 1);
         let timeline_width = if scrollbar_cfg.enabled {
             timeline_width
@@ -2249,16 +2281,16 @@ mod tests {
     }
 
     /// The phone status bar and transcript reach both frame edges while the
-    /// composer keeps its own inset. The status reaches the measured PTY bottom
-    /// at every width.
+    /// composer keeps its own inset. Every width keeps the frame's floor row
+    /// under the status, spanning the frame.
     #[test]
-    fn layout_uses_full_width_phone_bars_and_flush_pty_bottom() {
+    fn layout_uses_full_width_phone_bars_and_a_frame_floor() {
         for (cols, rows) in [(55u16, 41u16), (120, 40), (180, 50)] {
             let area = Rect::new(0, 0, cols, rows);
             let narrow = effective_narrow(cols, rows);
             let mut layout_cfg = LayoutConfig::default();
             layout_cfg.narrow = narrow;
-            let bottom_margin_rows = if narrow { PHONE_BOTTOM_MARGIN_ROWS } else { 0 };
+            let bottom_margin_rows = BOTTOM_MARGIN_ROWS;
             let layout = AgentViewLayout::compute(AgentViewLayoutParams {
                 layout_cfg,
                 ..base_params(area)
@@ -2275,6 +2307,12 @@ mod tests {
                 (area.x + status_inset, area.right() - status_inset),
                 "{cols}x{rows}: a phone status bar spans the frame, got {:?}",
                 layout.status_bar,
+            );
+            assert_eq!(
+                (layout.bottom_margin.x, layout.bottom_margin.width),
+                (area.x, area.width),
+                "{cols}x{rows}: the floor spans the frame, got {:?}",
+                layout.bottom_margin,
             );
             assert_eq!(
                 layout.scrollback.y,
@@ -2334,7 +2372,7 @@ mod tests {
         let plain = base_params(area);
         assert_eq!(
             AgentViewLayout::rows_available_for_prompt(plain),
-            25 - 8,
+            25 - 8 - bottom_margin_rows(25),
             "a frame with no optional row gives everything else to the prompt, minus any reserved floor rows"
         );
         let with_rows = AgentViewLayoutParams {
@@ -2344,7 +2382,7 @@ mod tests {
         };
         assert_eq!(
             AgentViewLayout::rows_available_for_prompt(with_rows),
-            25 - 8 - 3,
+            25 - 8 - 3 - bottom_margin_rows(25),
             "the banner takes its own height plus the gap above it; the turn \
              status row sits flush, so it takes only its own row"
         );

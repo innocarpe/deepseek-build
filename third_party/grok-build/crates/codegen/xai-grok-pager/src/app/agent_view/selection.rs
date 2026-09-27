@@ -2700,7 +2700,7 @@ mod tests {
     }
 
     #[test]
-    fn copy_button_inside_scrollback_avoids_status_controls() {
+    fn block_copy_button_never_falls_back_onto_first_text_row() {
         let mut agent = make_agent();
         agent
             .scrollback
@@ -2719,6 +2719,9 @@ mod tests {
         agent.hit_dashboard.set(Some(Rect::new(109, 0, 11, 1)));
         agent.pane_areas.scrollback = Rect::new(0, 1, 120, 9);
         let mut buf = ratatui::buffer::Buffer::empty(Rect::new(0, 0, 120, 10));
+        for x in 1..119 {
+            buf.cell_mut((x, 1)).unwrap().set_symbol("X");
+        }
         let selection_box = crate::scrollback::selection::SelectionBox::new(
             Rect::new(1, 1, 118, 4),
             ratatui::style::Style::default(),
@@ -2730,12 +2733,26 @@ mod tests {
             false,
             &crate::theme::Theme::default(),
         );
-        let copy = agent.hit_sb_copy.rect.expect("copy button is visible");
-        assert_eq!(copy.y, 1, "copy button must clear the status row");
-        assert_eq!(
-            buf.cell((copy.x, copy.y)).unwrap().symbol(),
-            crate::glyphs::copy_icon()
+        assert!(
+            agent.hit_sb_copy.rect.is_none(),
+            "off-pane corner has no safe button row"
         );
+        assert_eq!(buf.cell((116, 1)).unwrap().symbol(), "X");
+        assert_eq!(buf.cell((117, 1)).unwrap().symbol(), "X");
+
+        let safe_box = crate::scrollback::selection::SelectionBox::new(
+            Rect::new(1, 3, 118, 4),
+            ratatui::style::Style::default(),
+        );
+        agent.render_selection_buttons(
+            &mut buf,
+            &safe_box,
+            Some(Rect::new(1, 3, 118, 1)),
+            false,
+            &crate::theme::Theme::default(),
+        );
+        let copy = agent.hit_sb_copy.rect.expect("safe corner copy button");
+        assert_eq!(copy.y, 2);
         assert!(!agent.hit_dashboard.contains(copy.x, copy.y));
         assert!(matches!(
             agent.handle_mouse(&mouse_down(copy.x, copy.y)),

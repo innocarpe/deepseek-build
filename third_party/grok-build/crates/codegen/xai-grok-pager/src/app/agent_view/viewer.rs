@@ -851,16 +851,14 @@ impl AgentView {
 
         let sel = &selection_box.inner_area;
         let right_x = sel.x + sel.width.saturating_sub(1);
-        let corner_button_row = || {
-            let corner_y = sel.y.saturating_sub(1);
-            if corner_y < self.pane_areas.scrollback.y {
-                // A clipped border can share the status row with several
-                // controls. Keep buttons inside scrollback in that case.
-                sel.y
-            } else {
-                corner_y
-            }
-        };
+        let corner_y = sel.y.saturating_sub(1);
+        // An off-pane corner is the status row. Moving its controls onto
+        // `sel.y` would cover the selected entry's first text line.
+        if !inline && (selection_box.top_clipped || corner_y < self.pane_areas.scrollback.y) {
+            self.hit_sb_copy.clear();
+            self.hit_sb_view.clear();
+            return;
+        }
 
         let btn_base = Style::default().fg(theme.selection_border);
         let btn_hover = Style::default().fg(theme.text_primary);
@@ -874,7 +872,6 @@ impl AgentView {
                 (right_x.saturating_sub(2), entry_y)
             } else {
                 // Corner row: buttons to the left of ╮.
-                let corner_y = corner_button_row();
                 (right_x.saturating_sub(2), corner_y)
             };
             if !selection_box.top_clipped || inline {
@@ -901,7 +898,6 @@ impl AgentView {
                 let entry_y = selected_entry_area.map(|r| r.y).unwrap_or(sel.y);
                 (right_x.saturating_sub(2), entry_y)
             } else {
-                let corner_y = corner_button_row();
                 (right_x.saturating_sub(2), corner_y)
             };
             if !selection_box.top_clipped || inline {
@@ -925,7 +921,6 @@ impl AgentView {
                 let entry_y = selected_entry_area.map(|r| r.y).unwrap_or(sel.y);
                 (right_x.saturating_sub(2), entry_y)
             } else {
-                let corner_y = corner_button_row();
                 (right_x.saturating_sub(2), corner_y)
             };
             if !selection_box.top_clipped || inline {

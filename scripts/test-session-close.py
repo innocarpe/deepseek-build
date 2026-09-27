@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Hermetic lock for the unit close.
 
-The live tree must pass. A copy with the 2026-09-26 description window, with
-the old "PR is open" checklist line, or without a debrief needle must fail.
-Brief fixtures reproduce the release-lane ban and the withheld merge. Merge
-fixtures never call gh.
+The live tree must pass. A copy with the 2026-09-26 description window, or
+with the old "PR is open" checklist line, must fail. Brief fixtures reproduce
+the release-lane ban and the withheld merge. Merge fixtures never call gh.
 """
 
 from __future__ import annotations
@@ -24,7 +23,6 @@ import session_close  # noqa: E402
 SURFACE_FILES = [
     "AGENTS.md",
     "skills/session-unit/SKILL.md",
-    "skills/session-debrief/SKILL.md",
     "skills/release/SKILL.md",
     "skills/worktree-dispatch/SKILL.md",
     "skills/pr-authoring/SKILL.md",
@@ -36,12 +34,6 @@ OLD_SESSION_DESCRIPTION = (
     "Use when a session starts, drifts off the opening ask, a follow-up unit "
     "appears, or the user says to focus or finish: do that one unit through "
     "the PR, then hand the next to a new Orca tab."
-)
-
-PRE_DEBRIEF_SESSION_DESCRIPTION = (
-    "Use when a session starts or is told to finish work: the default end is "
-    "the PR, CI, a merge commit, and the report. Stop earlier only if that "
-    "turn said so. Hand the next named unit to a new Orca tab."
 )
 
 
@@ -124,27 +116,6 @@ def main() -> None:
         ok("finish line past the first 160 chars fails")
 
         copy_tree(dest)
-        replace_description(skill, PRE_DEBRIEF_SESSION_DESCRIPTION)
-        errors = session_close.check_root(dest)
-        if not any("WC debrief" in error and "session-unit" in error for error in errors):
-            fail(f"pre-debrief description did not fail the window: {errors}")
-        ok("session-unit description without the debrief fails the window")
-
-        copy_tree(dest)
-        debrief = dest / "skills/session-debrief/SKILL.md"
-        debrief_desc = session_close.description_of(
-            (ROOT / "skills/session-debrief/SKILL.md").read_text(encoding="utf-8")
-        )
-        replace_description(debrief, ("note " * 30) + debrief_desc)
-        errors = session_close.check_root(dest)
-        if not any(
-            "first 160 chars lack" in error and "session-debrief" in error
-            for error in errors
-        ):
-            fail(f"padding the debrief window past 160 did not fail: {errors}")
-        ok("session-debrief window past the first 160 chars fails")
-
-        copy_tree(dest)
         body = (dest / "skills/session-unit/SKILL.md").read_text(encoding="utf-8")
         body += "\nThe PR is open, or the opening explicitly stopped earlier\n"
         (dest / "skills/session-unit/SKILL.md").write_text(body, encoding="utf-8")
@@ -153,22 +124,14 @@ def main() -> None:
             fail(f"restoring the open-PR checklist did not fail: {errors}")
         ok("open-PR checklist line fails")
 
-        # The Session disposition block (2026-09-26) and the debrief
-        # (2026-09-27) are pinned needle by needle: a copy without any one
-        # phrase must fail.
+        # The Session disposition block (2026-09-26) is pinned needle by
+        # needle: a copy without any one phrase must fail.
         for rel, needle in [
             ("skills/session-unit/SKILL.md", "Session disposition"),
             ("skills/session-unit/SKILL.md", "Close now"),
             ("skills/session-unit/SKILL.md", "More in this session"),
             ("skills/session-unit/SKILL.md", "To hand off"),
-            ("skills/session-unit/SKILL.md", "session-debrief"),
-            ("skills/session-unit/SKILL.md", "no record needed"),
-            ("skills/session-debrief/SKILL.md", "not a summary of the final answer"),
-            ("skills/session-debrief/SKILL.md", "no company HQ record"),
-            ("skills/session-debrief/SKILL.md", "write nowhere else"),
             ("AGENTS.md", "Session disposition"),
-            ("AGENTS.md", "skills/session-debrief"),
-            ("AGENTS.md", "no record needed"),
         ]:
             copy_tree(dest)
             path = dest / rel

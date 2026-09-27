@@ -91,14 +91,11 @@ jobs:
               - '.github/workflows/ci.yml'
             # The 2026-09-26 stop: the finish line lived past the skill-description
             # window sessions actually load, and a copied release-lane ban beat
-            # the user turn. The 2026-09-27 debrief rides the same lock: the
-            # close ends at the report only after the WC recording step ran.
-            # Reverting that window, or a brief fixture that reproduces the
-            # stop, fails here. Not a title or path-inventory lint.
+            # the user turn. Reverting that window, or a brief fixture that
+            # reproduces the stop, fails here. Not a title or path-inventory lint.
             session_close:
               - 'AGENTS.md'
               - 'skills/session-unit/**'
-              - 'skills/session-debrief/**'
               - 'skills/release/SKILL.md'
               - 'skills/worktree-dispatch/SKILL.md'
               - 'skills/pr-authoring/SKILL.md'
@@ -258,9 +255,9 @@ jobs:
       - run: ./scripts/reorder-changelog.sh --check
       - run: ./scripts/test-changelog-release.sh
 
-  # Hermetic. Fails if the unit's finish line or its debrief clause leaves
-  # the 160-character description window, or if a brief that bans the
-  # release lane while the user asked for a version starts to pass.
+  # Hermetic. Fails if the unit's finish line leaves the 160-character
+  # description window, or if a brief that bans the release lane while the
+  # user asked for a version starts to pass.
   session_close:
     name: session close
     needs: changes

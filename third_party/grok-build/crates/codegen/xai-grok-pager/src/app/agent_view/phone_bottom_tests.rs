@@ -206,9 +206,9 @@ fn assert_one_band(buf: &Buffer, balance: &str, cache: &str, model: &str, mode: 
         );
     }
     assert_eq!(
-        band_y + 1 + crate::views::agent::bottom_margin_rows(buf.area.height),
+        band_y + 1 + crate::views::agent::PHONE_BOTTOM_MARGIN_ROWS,
         buf.area.height,
-        "the band sits on the frame's floor row, got {band_y} in {}",
+        "the band reaches the measured PTY bottom, got {band_y} in {}",
         buf.area.height
     );
     assert!(
@@ -586,26 +586,26 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
         "the time's pad, the copy gutter and the bar's column follow the ink\n{frame}"
     );
 
-    // (d) The status band sits on the frame's floor row at the PTY bottom.
+    // (d) The status band reaches the PTY bottom; the host adds pixel space below.
     let status_y = divider + 1;
     assert_eq!(
-        status_y + 1 + crate::views::agent::BOTTOM_MARGIN_ROWS,
+        status_y + 1 + crate::views::agent::PHONE_BOTTOM_MARGIN_ROWS,
         PHONE_ROWS,
-        "the status band sits on the floor row at the measured PTY bottom:\n{frame}"
+        "the status band reaches the measured PTY bottom:\n{frame}"
     );
 }
 
-/// The status band sits on the frame's floor at every phone height, and it
-/// still paints its content there: a geometry-only check would pass on a blank
-/// band, so each height runs the same content assertions as the 55x41 frame
-/// test. The floor is one row in the frame's own background, so the air under
-/// the status text is the frame's whatever inset the host keeps outside the
-/// PTY. A short terminal drops the floor with the other margins.
+/// The status band reaches the measured PTY bottom at every phone height, and
+/// it still paints its content there: a geometry-only check would pass on a
+/// blank band, so each height runs the same content assertions as the 55x41
+/// frame test.
 #[test]
-fn phone_frame_keeps_a_floor_row_at_every_phone_height() {
-    let _guard = crate::theme::cache::pin_theme();
-    let theme = Theme::current();
-    assert_eq!(crate::views::agent::BOTTOM_MARGIN_ROWS, 1);
+fn phone_status_band_reaches_pty_bottom_at_every_phone_height() {
+    assert_eq!(
+        crate::views::agent::PHONE_BOTTOM_MARGIN_ROWS,
+        0,
+        "the phone layout leaves pixel spacing to the host"
+    );
     for rows in [PHONE_ROWS, 36, 33, 30, 26, 24, 20] {
         let mut agent = phone_agent();
         let buf = draw(&mut agent, PHONE_COLS, rows);
@@ -619,29 +619,11 @@ fn phone_frame_keeps_a_floor_row_at_every_phone_height() {
         );
         let status_y = border_row(&buf) + 1;
         assert_eq!(
-            status_y + 1 + crate::views::agent::BOTTOM_MARGIN_ROWS,
+            status_y + 1 + crate::views::agent::PHONE_BOTTOM_MARGIN_ROWS,
             rows,
-            "{PHONE_COLS}x{rows}: the status band sits on the floor row\n{frame}"
+            "{PHONE_COLS}x{rows}: the status band reaches the PTY bottom\n{frame}"
         );
-        let floor = rows - 1;
-        for x in 0..PHONE_COLS {
-            let cell = buf.cell((x, floor)).unwrap();
-            assert_eq!(
-                (cell.symbol(), cell.bg),
-                (" ", theme.bg_base),
-                "{PHONE_COLS}x{rows}: floor cell {x} is the frame's own background\n{frame}"
-            );
-        }
     }
-    let short = crate::views::agent::SHORT_TERMINAL_ROWS;
-    let mut agent = phone_agent();
-    let buf = draw(&mut agent, PHONE_COLS, short);
-    let frame = frame_text(&buf);
-    assert_eq!(
-        border_row(&buf) + 2,
-        short,
-        "{PHONE_COLS}x{short}: a short terminal drops the floor\n{frame}"
-    );
 }
 
 // ── Scrolled transcript: the pinned echo, the band's right edge, the scrollbar column ──

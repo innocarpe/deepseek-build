@@ -101,9 +101,10 @@ pub trait BlockContent {
     ///
     /// The width-blind [`Self::is_foldable`] predates phone-width panes: a prompt that fits three rows at desktop
     /// width can need more at a phone pane. Defaults to the width-blind answer, so only blocks whose fold decision
-    /// depends on the wrap width override it.
-    fn is_foldable_at(&self, content_width: u16) -> bool {
-        let _ = content_width;
+    /// depends on the wrap width override it. `appearance` carries what else shapes that wrap (a prompt's prefix and
+    /// its first-line clock reserve), so the answer matches the rows the renderer paints.
+    fn is_foldable_at(&self, content_width: u16, appearance: &AppearanceConfig) -> bool {
+        let _ = (content_width, appearance);
         self.is_foldable()
     }
 
@@ -475,8 +476,8 @@ impl BlockContent for RenderBlock {
         delegate_block!(self, is_foldable())
     }
 
-    fn is_foldable_at(&self, content_width: u16) -> bool {
-        delegate_block!(self, is_foldable_at(content_width))
+    fn is_foldable_at(&self, content_width: u16, appearance: &AppearanceConfig) -> bool {
+        delegate_block!(self, is_foldable_at(content_width, appearance))
     }
 
     fn collapsed_row_budget(&self, content_width: u16) -> u16 {

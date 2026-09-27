@@ -254,8 +254,8 @@ impl ScrollbackEntry {
     /// A prompt can be foldable in a phone-width pane and not in a desktop one (see [`BlockContent::is_foldable_at`]),
     /// so the gate has to ask the width-aware question — otherwise a narrow-pane echo collapsed by the width-aware
     /// default could never be expanded again.
-    pub fn toggle_fold_at(&mut self, content_width: u16) {
-        if self.is_foldable_at(content_width) {
+    pub fn toggle_fold_at(&mut self, content_width: u16, appearance: &AppearanceConfig) {
+        if self.is_foldable_at(content_width, appearance) {
             self.display_mode = self
                 .block
                 .next_fold_mode(self.display_mode, self.is_running);
@@ -534,8 +534,8 @@ impl ScrollbackEntry {
     }
 
     /// [`Self::is_foldable`] at a known content width.
-    pub fn is_foldable_at(&self, content_width: u16) -> bool {
-        self.block.is_foldable_at(content_width)
+    pub fn is_foldable_at(&self, content_width: u16, appearance: &AppearanceConfig) -> bool {
+        self.block.is_foldable_at(content_width, appearance)
     }
 
     /// True for a thinking block hidden by the Appearance toggle. Takes the flag as a param so hot layout loops can hoist the cache read.

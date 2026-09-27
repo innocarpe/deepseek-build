@@ -957,7 +957,7 @@ impl ScrollbackState {
         let respect_manual_folds = self.appearance.scrollback.scroll.respect_manual_folds;
         let content_width = self.prompt_content_width(self.last_width);
         if let Some((id, entry)) = self.entries.get_index_mut(entry_idx)
-            && entry.is_foldable_at(content_width)
+            && entry.is_foldable_at(content_width, &self.appearance)
             && entry.display_mode != DisplayMode::Expanded
         {
             entry.set_display_mode(DisplayMode::Expanded);

@@ -63,6 +63,17 @@ fn collapsed_max_lines(width: u16, mode: DisplayMode) -> Option<usize> {
 use crate::appearance::AppearanceConfig;
 use crate::theme::Theme;
 
+/// Whether the prompt echo draws its prefix (`❯ `, `$ `, `↻  `) under `appearance`. The renderer and the fold check
+/// both ask this, so they wrap at the same width.
+fn shows_prefix(appearance: &AppearanceConfig) -> bool {
+    appearance.scrollback.blocks.prompt.show_prefix && !appearance.prompt.compact
+}
+
+/// Columns the prompt's first row gives up to a wide pane's clock, for the renderer and the fold check alike.
+fn first_line_reserve(appearance: &AppearanceConfig) -> usize {
+    crate::scrollback::timestamp_layout::wide_first_line_reserve(appearance) as usize
+}
+
 /// Drop invalid token ranges (replayed session metadata is untrusted): out of bounds, not on char boundaries, or empty.
 /// Survivors are sorted; overlaps with an earlier kept range are dropped so span slicing never goes backwards.
 fn sanitize_token_ranges(text: &str, mut ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
@@ -533,16 +544,12 @@ impl BlockContent for UserPromptBlock {
     fn output(&self, ctx: &BlockContext) -> BlockOutput {
         let max_lines = collapsed_max_lines(ctx.width, ctx.mode);
 
-        let prompt_cfg = &ctx.appearance.scrollback.blocks.prompt;
-        let compact = ctx.appearance.prompt.compact;
-        let reserve =
-            crate::scrollback::timestamp_layout::wide_first_line_reserve(&ctx.appearance) as usize;
         let lines = self.wrap_prompt_lines_reserved(
             ctx.width,
             max_lines,
-            prompt_cfg.show_prefix && !compact,
+            shows_prefix(&ctx.appearance),
             ctx.is_selected,
-            reserve,
+            first_line_reserve(&ctx.appearance),
         );
 
         BlockOutput { lines }
@@ -619,18 +626,22 @@ impl BlockContent for UserPromptBlock {
     /// maps to `max_lines = None`, so the narrow budget [`collapsed_max_lines`] computes for that same width never got
     /// applied and the echo stayed at full body height.
     ///
-    /// The row count is the renderer's own: `wrap_prompt_lines` wraps at word boundaries, with the prefix
-    /// [`Self::prefix_for`] reports (the `❯ ` on a roomy pane, nothing on a narrow one, `$ ` / `↻  ` for bash and
-    /// cron either way). `ceil(line_width / wrap_width)` is only a lower bound on that wrap: three words that take a
-    /// row each at 52 columns scored two, so the phone echo stayed expanded at three rows over its two-row budget.
+    /// The row count is the renderer's own: `wrap_prompt_lines_reserved` wraps at word boundaries with the same
+    /// prefix ([`Self::prefix_for`] under [`shows_prefix`]: the `❯ ` on a roomy pane, nothing on a narrow one, `$ ` /
+    /// `↻  ` for bash and cron, nothing in compact mode) and the same first-row clock reserve. `ceil(line_width /
+    /// wrap_width)` is only a lower bound on that wrap: three words that take a row each at 52 columns scored two, so
+    /// the phone echo stayed expanded at three rows over its two-row budget. Assuming a prefix the renderer hides
+    /// folds a prompt that fits, and a tap then only unpins it.
+    ///
     /// That bound still answers first: past the budget it is already a fold, so the wrap only runs for text that
     /// fits the budget's rows by width — a few hundred columns at most, however long the prompt. This is asked on
     /// every layout pass and frame. A `None` budget means the mode never folds.
-    fn is_foldable_at(&self, content_width: u16) -> bool {
+    fn is_foldable_at(&self, content_width: u16, appearance: &AppearanceConfig) -> bool {
         let Some(budget) = collapsed_max_lines(content_width, DisplayMode::Collapsed) else {
             return false;
         };
-        let prefix_width = self.prefix_for(true, content_width).width();
+        let show_prefix = shows_prefix(appearance);
+        let prefix_width = self.prefix_for(show_prefix, content_width).width();
         let wrap_width = usize::from(content_width)
             .saturating_sub(prefix_width)
             .max(1);
@@ -642,8 +653,14 @@ impl BlockContent for UserPromptBlock {
                 return true;
             }
         }
-        self.wrap_prompt_lines(content_width, Some(budget + 1), true, false)
-            .len()
+        self.wrap_prompt_lines_reserved(
+            content_width,
+            Some(budget + 1),
+            show_prefix,
+            false,
+            first_line_reserve(appearance),
+        )
+        .len()
             > budget
     }
 
@@ -1413,6 +1430,13 @@ mod tests {
     }
 
     /// Text of each rendered line, styles dropped.
+    /// A phone pane's appearance: the narrow layout, whose clock takes no first-row columns.
+    fn phone_appearance() -> AppearanceConfig {
+        let mut appearance = AppearanceConfig::default();
+        appearance.scrollback.layout.narrow = true;
+        appearance
+    }
+
     fn rendered_lines(block: &UserPromptBlock, ctx: &BlockContext) -> Vec<String> {
         block
             .output(ctx)
@@ -1539,7 +1563,7 @@ mod tests {
     fn narrow_single_line_prompt_is_foldable_at_phone_width() {
         let block = hundred_column_prompt();
         assert!(
-            block.is_foldable_at(PHONE_CONTENT_WIDTH),
+            block.is_foldable_at(PHONE_CONTENT_WIDTH, &phone_appearance()),
             "a ~100-column prompt needs more than two rows at phone width"
         );
         assert!(
@@ -1587,11 +1611,11 @@ mod tests {
     fn wide_prompt_folds_at_phone_width_but_not_at_desktop_width() {
         let block = UserPromptBlock::new("x".repeat(200));
         assert!(
-            !block.is_foldable_at(80),
+            !block.is_foldable_at(80, &AppearanceConfig::default()),
             "200 columns fit inside the three-row desktop budget"
         );
         assert!(
-            block.is_foldable_at(PHONE_CONTENT_WIDTH),
+            block.is_foldable_at(PHONE_CONTENT_WIDTH, &phone_appearance()),
             "the same 200 columns exceed the two-row phone budget"
         );
     }
@@ -1599,8 +1623,8 @@ mod tests {
     #[test]
     fn short_prompt_is_unfoldable_at_both_widths() {
         let block = UserPromptBlock::new("hello");
-        assert!(!block.is_foldable_at(PHONE_CONTENT_WIDTH));
-        assert!(!block.is_foldable_at(80));
+        assert!(!block.is_foldable_at(PHONE_CONTENT_WIDTH, &phone_appearance()));
+        assert!(!block.is_foldable_at(80, &AppearanceConfig::default()));
     }
 
     #[test]
@@ -1608,11 +1632,11 @@ mod tests {
         let band = usize::from(PHONE_CONTENT_WIDTH);
         let two = UserPromptBlock::new(format!("{}\n{}", "y".repeat(band), "z".repeat(band)));
         assert!(
-            !two.is_foldable_at(PHONE_CONTENT_WIDTH),
+            !two.is_foldable_at(PHONE_CONTENT_WIDTH, &phone_appearance()),
             "two rows that each fit the band stay within the narrow budget"
         );
         assert!(
-            !two.is_foldable_at(80),
+            !two.is_foldable_at(80, &AppearanceConfig::default()),
             "the same two rows fit the three-row desktop budget"
         );
 
@@ -1623,11 +1647,11 @@ mod tests {
             "w".repeat(band),
         ));
         assert!(
-            three.is_foldable_at(PHONE_CONTENT_WIDTH),
+            three.is_foldable_at(PHONE_CONTENT_WIDTH, &phone_appearance()),
             "a third row exceeds the two-row narrow budget"
         );
         assert!(
-            !three.is_foldable_at(80),
+            !three.is_foldable_at(80, &AppearanceConfig::default()),
             "three short rows still fit the three-row desktop budget"
         );
 
@@ -1674,19 +1698,19 @@ mod tests {
         let band = usize::from(PHONE_CONTENT_WIDTH);
         let one_row = UserPromptBlock::new("x".repeat(band));
         assert!(
-            !one_row.is_foldable_at(PHONE_CONTENT_WIDTH),
+            !one_row.is_foldable_at(PHONE_CONTENT_WIDTH, &phone_appearance()),
             "text exactly as wide as the band fits its first row"
         );
 
         let two_rows = UserPromptBlock::new("x".repeat(band * 2));
         assert!(
-            !two_rows.is_foldable_at(PHONE_CONTENT_WIDTH),
+            !two_rows.is_foldable_at(PHONE_CONTENT_WIDTH, &phone_appearance()),
             "two rows exactly as wide as the band fit the narrow budget"
         );
 
         let over = UserPromptBlock::new("x".repeat(band * 2 + 1));
         assert!(
-            over.is_foldable_at(PHONE_CONTENT_WIDTH),
+            over.is_foldable_at(PHONE_CONTENT_WIDTH, &phone_appearance()),
             "one column past two rows needs a third row and must fold"
         );
     }
@@ -1712,7 +1736,7 @@ mod tests {
             "each word takes a row at {ECHO_WIDTH} columns"
         );
         assert!(
-            block.is_foldable_at(ECHO_WIDTH),
+            block.is_foldable_at(ECHO_WIDTH, &phone_appearance()),
             "three wrapped rows are past the two-row phone budget"
         );
         assert_eq!(
@@ -1725,8 +1749,40 @@ mod tests {
         // no two fit one 78-column row.
         let roomy = UserPromptBlock::new(vec!["w".repeat(40); 4].join(" "));
         assert!(
-            roomy.is_foldable_at(80),
+            roomy.is_foldable_at(80, &AppearanceConfig::default()),
             "four wrapped rows are past the three-row budget"
+        );
+    }
+
+    /// The fold check wraps with the prefix the renderer draws. Compact mode hides a bash prompt's `$ `, so its
+    /// two columns go back to the text: counting them anyway folded a prompt that fits, and a tap only unpinned it.
+    #[test]
+    fn fold_check_wraps_without_a_prefix_the_renderer_hides() {
+        const ECHO_WIDTH: u16 = 52;
+        let bash = UserPromptBlock::bash(format!(
+            "{} {} {}",
+            "A".repeat(26),
+            "B".repeat(25),
+            "C".repeat(25)
+        ));
+        let with_prefix = phone_appearance();
+        assert!(
+            bash.is_foldable_at(ECHO_WIDTH, &with_prefix),
+            "behind `$ ` the words wrap to three rows"
+        );
+
+        let mut compact = phone_appearance();
+        compact.prompt.compact = true;
+        let mut ctx = collapsed_ctx(ECHO_WIDTH);
+        ctx.appearance = compact.clone();
+        assert_eq!(
+            rendered_lines(&bash, &ctx).len(),
+            2,
+            "without the prefix the words fit two rows"
+        );
+        assert!(
+            !bash.is_foldable_at(ECHO_WIDTH, &compact),
+            "the fold check agrees with the two rows compact mode paints"
         );
     }
 

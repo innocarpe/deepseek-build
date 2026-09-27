@@ -723,7 +723,7 @@ impl ScrollbackState {
         if content_width == 0 {
             return;
         }
-        entry.display_mode = auto_prompt_display_mode(entry, content_width);
+        entry.display_mode = auto_prompt_display_mode(entry, content_width, &self.appearance);
     }
 
     /// Remove an entry by EntryId. No-op if the id is not present. Used by the cancel-with-restore flow to undo the
@@ -1780,18 +1780,23 @@ fn rederive_prompt_folds_for_width(state: &mut ScrollbackState, new_width: u16) 
         let old_default = if old_prompt_width == 0 {
             entry.block.default_display_mode()
         } else {
-            auto_prompt_display_mode(entry, old_prompt_width)
+            auto_prompt_display_mode(entry, old_prompt_width, &state.appearance)
         };
         if entry.display_mode == old_default {
-            entry.display_mode = auto_prompt_display_mode(entry, new_prompt_width);
+            entry.display_mode =
+                auto_prompt_display_mode(entry, new_prompt_width, &state.appearance);
         }
     }
 }
 
 /// The mode a prompt falls into on its own at `content_width`: collapsed when the echo needs more rows than its
 /// collapse budget allows there, expanded when it fits.
-fn auto_prompt_display_mode(entry: &ScrollbackEntry, content_width: u16) -> DisplayMode {
-    if entry.is_foldable_at(content_width) {
+fn auto_prompt_display_mode(
+    entry: &ScrollbackEntry,
+    content_width: u16,
+    appearance: &AppearanceConfig,
+) -> DisplayMode {
+    if entry.is_foldable_at(content_width, appearance) {
         DisplayMode::Collapsed
     } else {
         DisplayMode::Expanded

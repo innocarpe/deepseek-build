@@ -569,7 +569,10 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
     );
 }
 
-/// The status band reaches the measured PTY bottom at every phone height.
+/// The status band reaches the measured PTY bottom at every phone height, and
+/// it still paints its content there: a geometry-only check would pass on a
+/// blank band, so each height runs the same content assertions as the 55x41
+/// frame test.
 #[test]
 fn phone_status_band_reaches_pty_bottom_at_every_phone_height() {
     assert_eq!(
@@ -581,6 +584,13 @@ fn phone_status_band_reaches_pty_bottom_at_every_phone_height() {
         let mut agent = phone_agent();
         let buf = draw(&mut agent, PHONE_COLS, rows);
         let frame = frame_text(&buf);
+        assert_one_band(
+            &buf,
+            "$15.87",
+            "cache 88%",
+            "V4.1 Flash (max)",
+            Some("always-approve"),
+        );
         let status_y = border_row(&buf) + 1;
         assert_eq!(
             status_y + 1 + crate::views::agent::PHONE_BOTTOM_MARGIN_ROWS,

@@ -5,10 +5,11 @@ use ratatui::text::{Line, Span};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::render::wrapping::{RtOptions, word_wrap_line_with_joiners};
+use crate::render::wrapping::{RtOptions, blockquote_prefix_len, word_wrap_line_with_joiners};
 use crate::scrollback::block::BlockContent;
 use crate::scrollback::types::{
     AccentStyle, BlockBackground, BlockContext, BlockLine, BlockOutput, DisplayMode, Selectable,
+    str_display_cells,
 };
 
 const USER_PROMPT_BODY_RANGE: u16 = 0;
@@ -201,6 +202,29 @@ fn trim_line_end(line: &mut Line<'_>) {
         }
         break;
     }
+}
+
+/// A wrapped row's spans without its first `indent` bytes: the quote marker (`│ `) the wrapper
+/// repeats at the start of every continuation row of a quoted line. That marker is layout, not
+/// text, so it must not show up where a later row is joined onto the one before it.
+fn spans_after_indent<'a>(spans: &[Span<'a>], mut indent: usize) -> Vec<Span<'a>> {
+    let mut out = Vec::with_capacity(spans.len());
+    for span in spans {
+        if indent == 0 {
+            out.push(span.clone());
+            continue;
+        }
+        let len = span.content.len();
+        if len <= indent {
+            indent -= len;
+            continue;
+        }
+        if let Some(rest) = span.content.get(indent..) {
+            out.push(Span::styled(rest.to_string(), span.style));
+        }
+        indent = 0;
+    }
+    out
 }
 
 #[derive(Debug, Clone)]
@@ -497,9 +521,16 @@ impl UserPromptBlock {
             }
             let (wrapped, wrap_joiners) = word_wrap_line_with_joiners(&content_line, wrap_opts);
             let wrapped_count = wrapped.len();
+            // A quoted line (`│ …`) repeats its marker at the start of each continuation row; the
+            // same rule as the wrapper's says how many bytes of such a row are that marker.
+            let quote_indent = match blockquote_prefix_len(line_text) {
+                len if len < line_text.len() => len,
+                _ => 0,
+            };
 
-            for wrap_idx in 0..wrapped_count {
-                let wrapped_line = &wrapped[wrap_idx];
+            for (wrap_idx, (wrapped_line, wrap_joiner)) in
+                wrapped.iter().zip(&wrap_joiners).enumerate()
+            {
                 let is_first_line = logical_idx == 0 && wrap_idx == 0;
                 let indent: String = " ".repeat(prefix_width);
                 let line_prefix = if is_first_line { prefix } else { &indent };
@@ -516,7 +547,7 @@ impl UserPromptBlock {
                 let joiner = if is_first_line || wrap_idx == 0 {
                     None
                 } else {
-                    wrap_joiners[wrap_idx].clone()
+                    wrap_joiner.clone()
                 };
 
                 if will_be_last && has_more {
@@ -529,27 +560,35 @@ impl UserPromptBlock {
 
                     // The last visible row runs to `reduced_width` before the ellipsis: join this row
                     // with every later row of its logical line (each later row's joiner is the space
-                    // the base wrap skipped) and clip on grapheme boundaries. Re-wrapping only this
-                    // row left it short of the boundary and handed the leftover columns to the clock.
-                    // Building the tail from the wrapped rows keeps the styled spans (teal tokens)
-                    // crossing the cut intact.
+                    // the base wrap skipped, and its quote marker is dropped) and clip on grapheme
+                    // boundaries. Re-wrapping only this row left it short of the boundary and handed
+                    // the leftover columns to the clock. Building the tail from the wrapped rows keeps
+                    // the styled spans (teal tokens) crossing the cut intact.
                     // A cut that lands on a joiner drops the space, so the ellipsis's own space is
                     // the only one before it.
-                    let mut tail = Line::default();
-                    let mut tail_width = 0usize;
-                    for i in wrap_idx..wrapped_count {
-                        if tail_width >= reduced_width {
+                    let mut tail = wrapped_line.clone();
+                    let mut tail_cells: usize = tail
+                        .spans
+                        .iter()
+                        .map(|s| str_display_cells(&s.content))
+                        .sum();
+                    for (row, row_joiner) in wrapped.iter().zip(&wrap_joiners).skip(wrap_idx + 1) {
+                        // One cell past the budget is enough for the clip to see what follows the cut.
+                        if tail_cells > reduced_width {
                             break;
                         }
-                        if i > wrap_idx
-                            && let Some(space) = &wrap_joiners[i]
+                        if let Some(space) = row_joiner
                             && !space.is_empty()
                         {
-                            tail_width += space.width();
+                            tail_cells += str_display_cells(space);
                             tail.spans.push(Span::styled(space.clone(), text_style));
                         }
-                        tail_width += wrapped[i].width();
-                        tail.spans.extend(wrapped[i].spans.iter().cloned());
+                        let body = spans_after_indent(&row.spans, quote_indent);
+                        tail_cells += body
+                            .iter()
+                            .map(|s| str_display_cells(&s.content))
+                            .sum::<usize>();
+                        tail.spans.extend(body);
                     }
                     let mut final_content = clip_line_to_width(tail, reduced_width);
                     trim_line_end(&mut final_content);
@@ -1614,6 +1653,30 @@ mod tests {
         let last = line_text(&line_at(&lines, 1).content);
         assert_eq!(last, format!("{} \u{2026}", pair.repeat(4)));
         assert_eq!(str_display_cells(&last), 10);
+    }
+
+    /// A quoted prompt's continuation rows start with the `│ ` the wrapper repeats. Joining the hidden
+    /// rows onto the last visible one leaves that marker out, so it never lands mid-row.
+    #[test]
+    fn collapsed_last_line_leaves_the_repeated_quote_marker_out() {
+        let block = UserPromptBlock::new(format!(
+            "\u{2502} {} {} {}",
+            "A".repeat(27),
+            "B".repeat(27),
+            "C".repeat(40)
+        ));
+        let rows: Vec<String> = block
+            .wrap_prompt_lines(52, Some(2), false, false)
+            .iter()
+            .map(|l| line_text(&l.content))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                format!("\u{2502} {}", "A".repeat(27)),
+                format!("\u{2502} {} {} \u{2026}", "B".repeat(27), "C".repeat(20)),
+            ],
+        );
     }
 
     /// A combining mark right after a token is a span of its own but part of the token's last

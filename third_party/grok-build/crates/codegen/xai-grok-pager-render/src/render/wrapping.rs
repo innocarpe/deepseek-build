@@ -325,7 +325,8 @@ fn is_table_line(line: &Line<'_>) -> bool {
 }
 
 /// Leading `│ ` sequences, else 0. Must agree with the selection layer's style-aware twin, which depends on re-injected prefix spans.
-fn blockquote_prefix_len(flat: &str) -> usize {
+/// Public so a caller that rejoins wrapped rows can tell the repeated prefix from the text.
+pub fn blockquote_prefix_len(flat: &str) -> usize {
     const BAR_BYTES: usize = '\u{2502}'.len_utf8(); // 3
     let mut len = 0;
     let mut chars = flat.chars();

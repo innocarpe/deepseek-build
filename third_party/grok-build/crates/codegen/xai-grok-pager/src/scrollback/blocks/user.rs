@@ -139,47 +139,45 @@ fn token_styled_line(
     Line::from(spans)
 }
 
-/// Clip a styled line to `width` display columns on grapheme boundaries, without padding.
+/// Clip a styled line to `width` terminal cells on grapheme boundaries, without padding.
 ///
-/// A folded echo's last visible row ends in ` …`, so its content fills the columns it shows and
-/// leaves none for the clock. A line shorter than `width` keeps its own columns (the clock may
-/// still close the row), and a wide grapheme that would cross the boundary stays out whole.
+/// A folded echo's last visible row ends in ` …`, so its content fills the cells it shows and
+/// leaves none for the clock. A line narrower than `width` keeps its own cells (the clock may
+/// still close the row), and a grapheme that would cross the boundary stays out whole.
+///
+/// Graphemes come from the joined text, so a combining mark in the span after its base letter
+/// stays with it, and each one is measured the way the buffer paints it: one grapheme at a time.
+/// A whole-string width can be narrower (`"لا".width()` is 1, painted as 2 cells).
 fn clip_line_to_width(line: Line<'_>, width: usize) -> Line<'_> {
     let Line {
         style,
         alignment,
         spans,
     } = line;
-    let mut out: Vec<Span<'_>> = Vec::new();
+    let flat: String = spans.iter().map(|s| s.content.as_ref()).collect();
     let mut used = 0usize;
+    let mut cut = 0usize;
+    for (at, grapheme) in flat.grapheme_indices(true) {
+        let cells = grapheme.width();
+        if used + cells > width {
+            break;
+        }
+        used += cells;
+        cut = at + grapheme.len();
+    }
+    let mut out: Vec<Span<'_>> = Vec::new();
+    let mut start = 0usize;
     for span in spans {
-        let span_width = span.content.width();
-        if used + span_width <= width {
-            used += span_width;
-            let complete = used == width;
+        if start >= cut {
+            break;
+        }
+        let end = start + span.content.len();
+        if end <= cut {
             out.push(span);
-            if complete {
-                break;
-            }
-            continue;
+        } else if let Some(head) = span.content.get(..cut - start) {
+            out.push(Span::styled(head.to_string(), span.style));
         }
-        // This span straddles the boundary: take whole graphemes that fit, and drop a wide
-        // grapheme that would cross it so it never prints half a glyph.
-        let remaining = width - used;
-        let mut taken = String::new();
-        let mut taken_width = 0usize;
-        for grapheme in span.content.graphemes(true) {
-            let grapheme_width = grapheme.width();
-            if taken_width + grapheme_width > remaining {
-                break;
-            }
-            taken_width += grapheme_width;
-            taken.push_str(grapheme);
-        }
-        if !taken.is_empty() {
-            out.push(Span::styled(taken, span.style));
-        }
-        break;
+        start = end;
     }
     Line {
         style,
@@ -196,8 +194,10 @@ fn trim_line_end(line: &mut Line<'_>) {
             line.spans.pop();
             continue;
         }
-        if keep < last.content.len() {
-            last.content = last.content[..keep].to_string().into();
+        if keep < last.content.len()
+            && let Some(kept) = last.content.get(..keep)
+        {
+            last.content = kept.to_string().into();
         }
         break;
     }
@@ -1596,6 +1596,36 @@ mod tests {
             line_text(&line_at(&lines, 0).content),
             format!("{} \u{2026}", "가".repeat(9))
         );
+    }
+
+    /// The cut counts the cells the buffer paints, one grapheme at a time. `"لا".width()` is 1 (a
+    /// lam-alef ligature), but the buffer paints `ل` and `ا` in a cell each, so a whole-string measure
+    /// let the row run past the budget and pushed the ellipsis off it.
+    #[test]
+    fn collapsed_last_line_counts_painted_cells() {
+        use crate::scrollback::types::str_display_cells;
+        let pair = "\u{644}\u{627}";
+        assert!(
+            pair.width() < str_display_cells(pair),
+            "the premise: the pair measures narrower than it paints"
+        );
+        let block = UserPromptBlock::new(format!("head\n{}\ntail", pair.repeat(5)));
+        let lines = block.wrap_prompt_lines(10, Some(2), false, false);
+        let last = line_text(&line_at(&lines, 1).content);
+        assert_eq!(last, format!("{} \u{2026}", pair.repeat(4)));
+        assert_eq!(str_display_cells(&last), 10);
+    }
+
+    /// A combining mark right after a token is a span of its own but part of the token's last
+    /// grapheme, so a cut that lands at the token's end keeps it.
+    #[test]
+    fn collapsed_last_line_keeps_a_combining_mark_after_a_token() {
+        let _guard = crate::theme::cache::pin_theme();
+        let block = UserPromptBlock::with_skill_tokens("head\n/abcd\u{301}z\ntail", vec![5..10]);
+        let lines = block.wrap_prompt_lines(7, Some(2), false, false);
+        let last = &line_at(&lines, 1).content;
+        assert_eq!(teal_text(last, &Theme::current()), "/abcd");
+        assert_eq!(line_text(last), "/abcd\u{301} \u{2026}");
     }
 
     /// The other half of the contract: widths above the threshold keep the

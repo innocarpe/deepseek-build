@@ -747,13 +747,13 @@ pub(crate) fn paint_phone_scrollback_right_edge(
             continue;
         };
         let pad = matches!(source.symbol(), "\u{2582}" | "\u{2586}");
-        if source.bg != theme.bg_base || pad {
-            if let Some(edge) = buf.cell_mut((edge_x, y)) {
-                edge.bg = source.bg;
-                if pad {
-                    edge.set_symbol(source.symbol());
-                    edge.fg = source.fg;
-                }
+        if (source.bg != theme.bg_base || pad)
+            && let Some(edge) = buf.cell_mut((edge_x, y))
+        {
+            edge.bg = source.bg;
+            if pad {
+                edge.set_symbol(source.symbol());
+                edge.fg = source.fg;
             }
         }
     }

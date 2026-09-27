@@ -17,8 +17,9 @@ const COLLAPSED_MAX_LINES: usize = 3;
 /// Width (in columns) at or below which a collapsed prompt drops to
 /// [`COLLAPSED_NARROW_MAX_LINES`]. The measured iPhone Orca pane is 55 columns
 /// (the narrowest desktop pane on the same machine is 80). One row names the
-/// turn and cuts the rest of the prompt; two rows keep enough of it to read.
-/// Anything wider keeps [`COLLAPSED_MAX_LINES`], so the desktop layout
+/// turn and cuts the rest of the prompt; two rows keep enough of it to read,
+/// and the band's pad is a fraction of a row, so the extra row is one line of
+/// text. Anything wider keeps [`COLLAPSED_MAX_LINES`], so the desktop layout
 /// is untouched.
 ///
 /// [`NARROW_TERMINAL_COLS`](crate::appearance::NARROW_TERMINAL_COLS) is the same
@@ -304,6 +305,18 @@ impl UserPromptBlock {
         show_prefix: bool,
         is_selected: bool,
     ) -> Vec<BlockLine> {
+        self.wrap_prompt_lines_reserved(width, max_lines, show_prefix, is_selected, 0)
+    }
+
+    /// `first_line_reserve` narrows only the first visual line. Tests call [`Self::wrap_prompt_lines`], which passes 0.
+    fn wrap_prompt_lines_reserved(
+        &self,
+        width: u16,
+        max_lines: Option<usize>,
+        show_prefix: bool,
+        is_selected: bool,
+        first_line_reserve: usize,
+    ) -> Vec<BlockLine> {
         let theme = Theme::current();
         // Minimal mode engages this lock; read it here instead of app state.
         let terminal_native = crate::theme::cache::terminal_native_locked();
@@ -401,8 +414,12 @@ impl UserPromptBlock {
                     text_style,
                 )
             };
-            let (wrapped, wrap_joiners) =
-                word_wrap_line_with_joiners(&content_line, RtOptions::new(base_content_width));
+            let mut wrap_opts = RtOptions::new(base_content_width);
+            if logical_idx == 0 && first_line_reserve > 0 {
+                wrap_opts = wrap_opts
+                    .first_line_width(base_content_width.saturating_sub(first_line_reserve).max(1));
+            }
+            let (wrapped, wrap_joiners) = word_wrap_line_with_joiners(&content_line, wrap_opts);
             let wrapped_count = wrapped.len();
 
             for (wrap_idx, (wrapped_line, wrap_joiner)) in
@@ -430,7 +447,12 @@ impl UserPromptBlock {
                 if will_be_last && has_more {
                     // Re-wrap the current line's content with reduced width to make room for the ellipsis
                     // Re-wrapping the styled line (not flattened text) keeps token spans teal here
-                    let reduced_width = base_content_width.saturating_sub(ellipsis_width);
+                    let line_budget = if logical_idx == 0 && wrap_idx == 0 {
+                        base_content_width.saturating_sub(first_line_reserve).max(1)
+                    } else {
+                        base_content_width
+                    };
+                    let reduced_width = line_budget.saturating_sub(ellipsis_width).max(1);
                     let (re_wrapped_lines, _) =
                         word_wrap_line_with_joiners(&wrapped_line, RtOptions::new(reduced_width));
 
@@ -513,11 +535,14 @@ impl BlockContent for UserPromptBlock {
 
         let prompt_cfg = &ctx.appearance.scrollback.blocks.prompt;
         let compact = ctx.appearance.prompt.compact;
-        let lines = self.wrap_prompt_lines(
+        let reserve =
+            crate::scrollback::timestamp_layout::wide_first_line_reserve(&ctx.appearance) as usize;
+        let lines = self.wrap_prompt_lines_reserved(
             ctx.width,
             max_lines,
             prompt_cfg.show_prefix && !compact,
             ctx.is_selected,
+            reserve,
         );
 
         BlockOutput { lines }
@@ -539,14 +564,17 @@ impl BlockContent for UserPromptBlock {
         appearance.scrollback.blocks.prompt.vpad && !appearance.prompt.compact
     }
 
-    /// The echo's pad is width-independent: it follows the configured `vpad` on
-    /// every pane so the band keeps the same minimal inset on all four sides.
-    /// The phone pane used to drop the pad because two blank rows cost as much
-    /// as the two-row band; the four-equal-sides rule replaced that, and one
-    /// row top and bottom is the smallest inset that reads as padding at all.
+    /// The echo keeps a pad row above and below on every pane, and the renderer
+    /// paints those rows to the *visible* size of the side gutters: on a
+    /// phone-width pane each one carries a fraction of the band's color (see
+    /// `EntryRenderer::paint_narrow_pad_row`) instead of a full row, because a
+    /// terminal row is a little over two columns tall (55x41 measured: 16.5px
+    /// cells, 35.5px rows) and a whole pad row would read as 2.15 columns of
+    /// white against the one-column gutter the sides keep. Wider panes paint the
+    /// configured full-height pad, so the desktop rhythm is untouched.
     ///
-    /// This rule bypasses the trait default's narrow-pane drop (`layout.narrow`)
-    /// on purpose: the pad is the echo's own shape, not the frame's density.
+    /// This rule survives the trait default's narrow-pane drop (`layout.narrow`) because it is the stricter one on a
+    /// mid-width pane: there the pane is wide but the echo's own content column is not.
     fn has_vpad_for_width(&self, appearance: &AppearanceConfig, _content_width: u16) -> bool {
         self.has_vpad_for(appearance)
     }
@@ -1512,6 +1540,16 @@ mod tests {
         );
     }
 
+    /// The echo keeps its pad row above and below on every pane, and a
+    /// phone-width pane paints each one as a fraction of a row (the renderer's
+    /// `paint_narrow_pad_row`): at this font a whole pad row is ~2.15 columns of
+    /// white, where the left/right gutter the pad is matching is one column.
+    /// Wider panes paint the full-height pad, so the desktop rhythm is
+    /// untouched.
+    ///
+    /// The rule survives the trait default's narrow-pane drop (`layout.narrow`)
+    /// because it is the stricter one on a mid-width pane: there the pane is
+    /// wide but the echo's own content column is not.
     #[test]
     fn prompt_vpad_keeps_at_phone_width() {
         let block = UserPromptBlock::new("hello");
@@ -1522,7 +1560,8 @@ mod tests {
         );
         assert!(
             block.has_vpad_for_width(&appearance, PHONE_CONTENT_WIDTH),
-            "the echo keeps one pad row top and bottom at every width"
+            "the echo keeps a pad row top and bottom; the renderer shrinks it to \
+             the side gutter's size on a phone-width pane"
         );
     }
 

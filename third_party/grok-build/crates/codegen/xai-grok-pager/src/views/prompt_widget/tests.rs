@@ -498,7 +498,7 @@
             chrome: false,
             ..Default::default()
         };
-        assert_eq!(pw.desired_height(80, &style, true, 20), 4); // vpad(2)+text(1)+info(1)
+        assert_eq!(pw.desired_height(80, &style, true, 20), 3); // vpad(1)+text(1)+info(1)
     }
 
     #[test]
@@ -508,7 +508,7 @@
             chrome: false,
             ..Default::default()
         };
-        assert_eq!(pw.desired_height(80, &style, false, 20), 3); // vpad(2)+text(1)
+        assert_eq!(pw.desired_height(80, &style, false, 20), 2); // vpad(1)+text(1)
     }
 
     #[test]
@@ -519,7 +519,7 @@
             chrome: false,
             ..Default::default()
         };
-        assert_eq!(pw.desired_height(80, &style, true, 20), 6); // vpad(2)+text(3)+info(1)
+        assert_eq!(pw.desired_height(80, &style, true, 20), 5); // vpad(1)+text(3)+info(1)
     }
 
     /// While history BROWSE mode is active the composer height is frozen at one text row: stepping onto a multi-line entry must not resize the box.
@@ -540,12 +540,12 @@
         pw.set_text("line1\nline2\nline3"); // populated multi-line entry
         assert_eq!(
             pw.desired_height(80, &style, true, 20),
-            4, // frozen: vpad(2)+text(1)+info(1)
+            3, // frozen: vpad(1)+text(1)+info(1)
         );
 
         // Detach (deactivate), and the box resizes to fit the text
         pw.history_search.deactivate();
-        assert_eq!(pw.desired_height(80, &style, true, 20), 6);
+        assert_eq!(pw.desired_height(80, &style, true, 20), 5);
     }
 
     #[test]
@@ -5023,8 +5023,8 @@
         }
     }
 
-    /// Rows a bordered test prompt needs: border row + text inset + one text row
-    /// + text inset + divider (+ label row on a narrow pane).
+    /// The box is three text-frame rows — top border, one text row, the bottom
+    /// divider — and the buffer is taller so the text chunk has room to sit in.
     const BORDERED_TEST_HEIGHT: u16 = 6;
 
     /// Draw a bordered prompt into a fresh `width`×[`BORDERED_TEST_HEIGHT`] buffer and return it.
@@ -5034,6 +5034,12 @@
         let mut buf = Buffer::empty(area);
         pw.draw(&mut buf, area, None, style, None, None);
         buf
+    }
+
+    /// The box's first text row: the row after its top border, which owns the
+    /// first `vpad_top` row of the box.
+    fn first_text_row(style: &PromptStyle) -> u16 {
+        style.vpad_top
     }
 
     #[test]
@@ -5046,16 +5052,16 @@
         );
 
         // A 55-column pane. The box border already frames the input.
-        // The text row sits one inset row below the top border (row 2).
         let buf = draw_bordered(55, &style);
-        let text_row = buf_text_at(&buf, 0, 55, 2);
+        let row = first_text_row(&style);
+        let text_row = buf_text_at(&buf, 0, 55, row);
         assert!(
             !text_row.contains(crate::glyphs::prompt_arrow()),
             "a phone-width composer must not paint the arrow: {text_row:?}"
         );
 
         let wide = draw_bordered(179, &style);
-        let wide_row = buf_text_at(&wide, 0, 179, 2);
+        let wide_row = buf_text_at(&wide, 0, 179, row);
         assert!(
             wide_row.contains(crate::glyphs::prompt_arrow()),
             "desktop keeps the arrow: {wide_row:?}"
@@ -5070,7 +5076,7 @@
             ..Default::default()
         };
         let buf = draw_bordered(55, &style);
-        let text_row = buf_text_at(&buf, 0, 55, 2);
+        let text_row = buf_text_at(&buf, 0, 55, first_text_row(&style));
         assert!(
             text_row.contains("! "),
             "bash mode's `! ` must survive the narrow band: {text_row:?}"
@@ -5421,20 +5427,72 @@
         }
     }
 
-    /// The phone box is the same height as the desktop box — plus the box's
-    /// bottom text inset row. The model shares the status row under it, so
-    /// `info_block` adds no label row.
+    /// The box is its three text-frame rows on every pane: the top border, one
+    /// text row, the bottom divider. No blank inset row sits above or below the
+    /// text — at this font one pad row is ~2.15 columns of pitch, more white
+    /// than the one-column left/right inset it was meant to match. The model
+    /// shares the status row under the box, so `info_block` adds no label row.
     #[test]
-    fn phone_width_does_not_budget_a_second_info_row() {
+    fn composer_budgets_border_text_and_divider_only() {
         let pw = PromptWidget::new();
         let style = PromptStyle::default();
-        assert_eq!(style.info_block(true, true), 2, "text inset + divider");
-        assert_eq!(style.info_block(true, false), 2, "text inset + divider");
+        assert_eq!(style.vpad_top, 1, "the top border row, no text inset");
+        assert_eq!(style.info_block(true, true), 1, "the divider row only");
+        assert_eq!(style.info_block(true, false), 1, "the divider row only");
         assert_eq!(style.info_block(false, true), 0, "no info, no rows");
 
-        // vpad_top 2 (border row + text inset) + one text row + the info block.
-        assert_eq!(pw.desired_height(MEASURED_PHONE_COLS, &style, true, 99), 5);
-        assert_eq!(pw.desired_height(30, &style, true, 99), 5);
-        assert_eq!(pw.desired_height(61, &style, true, 99), 5);
-        assert_eq!(pw.desired_height(120, &style, true, 99), 5);
+        // vpad_top 1 (the border row) + one text row + the divider.
+        assert_eq!(pw.desired_height(MEASURED_PHONE_COLS, &style, true, 99), 3);
+        assert_eq!(pw.desired_height(30, &style, true, 99), 3);
+        assert_eq!(pw.desired_height(61, &style, true, 99), 3);
+        assert_eq!(pw.desired_height(120, &style, true, 99), 3);
+    }
+
+    /// The drawn box at the phone width: the top border on row 0, the draft text
+    /// on row 1, the divider on row 2 — the box is exactly those three rows, so
+    /// no blank row is spent above or below the text.
+    #[test]
+    fn phone_composer_box_is_border_text_and_divider() {
+        let _guard = crate::theme::cache::pin_theme();
+        let style = PromptStyle::default();
+        // The model label is what gives the box its divider row.
+        let info = PromptInfo {
+            model_name: PHONE_MODEL_LABEL,
+            ..Default::default()
+        };
+        let width = MEASURED_PHONE_COLS;
+        let height = PromptWidget::new().desired_height(width, &style, true, 99);
+
+        let mut pw = PromptWidget::new();
+        pw.textarea.insert_str("phone draft");
+        let area = Rect::new(0, 0, width, height);
+        let mut buf = Buffer::empty(area);
+        pw.draw(&mut buf, area, None, &style, Some(&info), None);
+        let frame = (0..height)
+            .map(|y| buf_text_at(&buf, 0, width, y))
+            .collect::<Vec<_>>()
+            .join("\n");
+        eprintln!("phone composer box {width}x{height}:\n{frame}");
+
+        assert_eq!(height, 3, "border + text + divider:\n{frame}");
+        let rows: Vec<String> = (0..height).map(|y| buf_text_at(&buf, 0, width, y)).collect();
+        assert_eq!(
+            rows[0].chars().next(),
+            Some('\u{256d}'),
+            "row 0 is the top border:\n{frame}"
+        );
+        assert!(
+            rows[1].contains("phone draft"),
+            "row 1 is the text row:\n{frame}"
+        );
+        assert_eq!(
+            rows[2].chars().next(),
+            Some('\u{2570}'),
+            "row 2 is the divider:\n{frame}"
+        );
+        assert_eq!(
+            rows[2].chars().next_back(),
+            Some('\u{256f}'),
+            "the divider closes the box:\n{frame}"
+        );
     }

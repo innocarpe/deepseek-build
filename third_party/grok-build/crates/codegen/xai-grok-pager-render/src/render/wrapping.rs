@@ -157,6 +157,9 @@ pub struct RtOptions<'a> {
     /// The line breaking algorithm to use.
     pub word_separator: textwrap::WordSeparator,
     pub word_splitter: textwrap::WordSplitter,
+    /// When set and smaller than [`Self::width`], the first produced line wraps here.
+    /// Continuation lines of the same input still use [`Self::width`].
+    pub first_line_width: Option<usize>,
 }
 
 impl From<usize> for RtOptions<'_> {
@@ -177,6 +180,15 @@ impl<'a> RtOptions<'a> {
             word_separator: textwrap::WordSeparator::new(),
             wrap_algorithm: textwrap::WrapAlgorithm::FirstFit,
             word_splitter: textwrap::WordSplitter::HyphenSplitter,
+            first_line_width: None,
+        }
+    }
+
+    /// Wrap only the first produced line at `width`. Later lines keep [`Self::width`].
+    pub fn first_line_width(self, width: usize) -> Self {
+        RtOptions {
+            first_line_width: Some(width),
+            ..self
         }
     }
 
@@ -365,8 +377,12 @@ where
     let mut joiners: Vec<Option<String>> = Vec::new();
 
     // The first output line uses the initial indent and a reduced available width.
-    let initial_width_available = opts
-        .width
+    // `first_line_width` narrows only that line; the remainder stays at `opts.width`.
+    let first_budget = rt_opts
+        .first_line_width
+        .unwrap_or(opts.width)
+        .min(opts.width);
+    let initial_width_available = first_budget
         .saturating_sub(rt_opts.initial_indent.width())
         .max(1);
     let initial_wrapped = wrap_ranges_trim(&flat, opts.clone().width(initial_width_available));
@@ -493,6 +509,8 @@ where
             base_opts.clone()
         } else {
             let mut o = base_opts.clone();
+            // Only the block's first visual line is narrower. Later source lines are full width.
+            o.first_line_width = None;
             let sub = o.subsequent_indent.clone();
             o = o.initial_indent(sub);
             o

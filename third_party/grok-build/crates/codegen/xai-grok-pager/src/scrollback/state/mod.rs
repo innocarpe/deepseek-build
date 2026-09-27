@@ -217,6 +217,10 @@ pub struct ScrollbackState {
 
     /// Session/worktree cwd (`AgentSession.cwd`) for Expanded tool paths.
     cwd: Option<std::path::PathBuf>,
+
+    /// Clock rects painted by the last frame. The click path reads them so a tap on the
+    /// clock does not fold the prompt echo. Interior mutability: render holds `&self`.
+    timestamp_hits: std::cell::RefCell<Vec<crate::scrollback::render::TimestampHit>>,
 }
 
 impl Default for ScrollbackState {
@@ -271,7 +275,45 @@ impl ScrollbackState {
             #[cfg(test)]
             layout_rebuilds: 0,
             cwd: None,
+            timestamp_hits: std::cell::RefCell::new(Vec::new()),
         }
+    }
+
+    pub(crate) fn clear_timestamp_hits(&self) {
+        self.timestamp_hits.borrow_mut().clear();
+    }
+
+    pub(crate) fn push_timestamp_hit(&self, entry_idx: usize, rect: ratatui::layout::Rect) {
+        self.timestamp_hits
+            .borrow_mut()
+            .push(crate::scrollback::render::TimestampHit { entry_idx, rect });
+    }
+
+    /// Entry whose painted clock contains `(col, row)`, if the last frame drew one there.
+    pub(crate) fn timestamp_hit_at(&self, col: u16, row: u16) -> Option<usize> {
+        self.timestamp_hits.borrow().iter().find_map(|hit| {
+            let rect = hit.rect;
+            (col >= rect.x
+                && row >= rect.y
+                && col < rect.x.saturating_add(rect.width)
+                && row < rect.y.saturating_add(rect.height))
+            .then_some(hit.entry_idx)
+        })
+    }
+
+    /// Toggle the long clock on `idx`. Height may grow by the meta row; the body is not rewrapped.
+    pub(crate) fn toggle_timestamp_expanded_at(&mut self, idx: usize) {
+        let Some((id, entry)) = self.entries.get_index_mut(idx) else {
+            return;
+        };
+        if !crate::scrollback::timestamp_layout::timestamp_gutter_applies(&entry.block) {
+            return;
+        }
+        entry.timestamp_expanded = !entry.timestamp_expanded;
+        let id = *id;
+        self.dirty_heights.insert(id);
+        self.gaps_may_be_dirty = true;
+        self.bump_generation();
     }
 
     pub fn cwd(&self) -> Option<&std::path::Path> {
@@ -656,11 +698,10 @@ impl ScrollbackState {
         }
         // The same entry-area → content-width chain the renderer and the pane use, so a prompt's fold cannot be
         // decided at another width than the one it is measured and painted at.
-        block_content_width_for(
-            &self.appearance,
-            &RenderBlock::UserPrompt(UserPromptBlock::new("")),
-            self.entry_area_width(pane_width),
-        )
+        // The same entry a push would build for a fresh prompt, so the echo's
+        // own chrome (its band's gutters) answers for the width here too.
+        let prompt = ScrollbackEntry::new(RenderBlock::UserPrompt(UserPromptBlock::new("")));
+        block_content_width_for(&prompt, &self.appearance, self.entry_area_width(pane_width))
     }
 
     /// A fresh prompt adopts the fold its width implies, so the submitted echo is a two-row band in a phone-width pane
@@ -1214,6 +1255,25 @@ impl ScrollbackState {
         }
         // Mark height dirty since collapsed mode has different height. display_mode may have changed, so gaps need recomputation.
         self.dirty_heights.insert(id);
+        // A narrow turn paints its clock only after it finishes, so every later meta row
+        // may gain or lose its line. Wide turns already painted while running.
+        if self.appearance.scrollback.layout.narrow
+            && self.entries.get(&id).is_some_and(|entry| {
+                crate::scrollback::timestamp_layout::timestamp_gutter_applies(&entry.block)
+            })
+            && let Some(idx) = self.entries.get_index_of(&id)
+        {
+            let later_ids: Vec<EntryId> = (idx.saturating_add(1)..self.entries.len())
+                .filter_map(|later| {
+                    let (later_id, later_entry) = self.entries.get_index(later)?;
+                    crate::scrollback::timestamp_layout::timestamp_gutter_applies(
+                        &later_entry.block,
+                    )
+                    .then_some(*later_id)
+                })
+                .collect();
+            self.dirty_heights.extend(later_ids);
+        }
         self.gaps_may_be_dirty = true;
 
         self.bump_content_generation();

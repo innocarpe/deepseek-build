@@ -13,7 +13,9 @@ use crate::scrollback::block::{BlockContent, RenderBlock};
 use crate::scrollback::entry::ScrollbackEntry;
 use crate::scrollback::layout::HorizontalLayout;
 use crate::scrollback::render::{ScratchBuffer, render_scrolled_entries_with_selection_boundaries};
-use crate::scrollback::selection::{RenderOutput, ScrollInfo, SelectionBox};
+use crate::scrollback::selection::{
+    RenderOutput, ScrollInfo, SelectionBox, area_below_clock_meta, hug_padded_band,
+};
 use crate::scrollback::state::{ScrollbackState, ViewMode};
 use crate::scrollback::sticky::{PromptDescriptor, StickyHeaderLayout, compute_sticky_layout};
 use crate::scrollback::text_selection::{
@@ -21,7 +23,8 @@ use crate::scrollback::text_selection::{
     VisibleBlockGeometry,
 };
 use crate::scrollback::types::{BlockContext, DisplayMode, derive_selection_text, selectable_cols};
-use crate::scrollback::wrappers::{block_content_width_for, timestamp_reserved_for};
+use crate::scrollback::wrappers::block_content_width_for;
+use crate::scrollback::wrappers::{entry_chrome, paint_pad_row};
 use crate::theme::Theme;
 
 /// Displays conversation entries with optional pinned header for the current turn's prompt. For efficiency, scratch
@@ -155,6 +158,7 @@ impl ScrollbackPane {
         state: &ScrollbackState,
         scratch: &mut ScratchBuffer,
     ) -> RenderOutputWithSelectionBoundaries {
+        state.clear_timestamp_hits();
         if area.width == 0 || area.height == 0 {
             return RenderOutputWithSelectionBoundaries::default();
         }
@@ -399,10 +403,23 @@ impl ScrollbackPane {
                     // When clip_top == 0, the full header is visible (just fading), so show full border
                     let top_clipped = pushed.clip_top > 0;
 
-                    let sel_box =
-                        SelectionBox::new(selection_area, Style::default().fg(border_color))
-                            .with_top_clipped(top_clipped)
-                            .with_bottom_clipped(false);
+                    // A sticky header is a prompt echo: pull the box onto the band's own pad rows, hugging the
+                    // top only while its pad row is still on screen (clip_top > 0 means it has scrolled out).
+                    let hugs_pad = state
+                        .entry(pushed.entry_idx)
+                        .is_some_and(|entry| entry.block.selection_hugs_vpad(state.appearance()));
+                    let box_area = echo_selection_area(
+                        state,
+                        pushed.entry_idx,
+                        selection_area,
+                        !top_clipped,
+                        hugs_pad && !top_clipped,
+                        hugs_pad,
+                    );
+
+                    let sel_box = SelectionBox::new(box_area, Style::default().fg(border_color))
+                        .with_top_clipped(top_clipped)
+                        .with_bottom_clipped(false);
 
                     pushed_header_selection_box = Some(sel_box);
                 }
@@ -457,10 +474,29 @@ impl ScrollbackPane {
             // Check if there's room for top corners
             let top_clipped = screen_row == 0 && area.y == 0;
 
-            let sel_box =
-                SelectionBox::new(selection_area, Style::default().fg(theme.selection_border))
-                    .with_top_clipped(top_clipped)
-                    .with_bottom_clipped(false);
+            // The pinned header is a prompt echo: pull the box onto the band's own pad rows. A pulled top gives
+            // the corner the header's own first row, so the "no room above" flag only stands while it stays
+            // un-pulled.
+            let hugs_pad = state
+                .entry(entry_idx)
+                .is_some_and(|entry| entry.block.selection_hugs_vpad(state.appearance()));
+            let meta_on_screen = sticky
+                .pinned
+                .as_ref()
+                .is_some_and(|pinned| pinned.clip_top == 0);
+            let box_area = echo_selection_area(
+                state,
+                entry_idx,
+                selection_area,
+                meta_on_screen,
+                hugs_pad,
+                hugs_pad,
+            );
+            let top_clipped = top_clipped && box_area.y == selection_area.y;
+
+            let sel_box = SelectionBox::new(box_area, Style::default().fg(theme.selection_border))
+                .with_top_clipped(top_clipped)
+                .with_bottom_clipped(false);
 
             pinned_header_selection_box = Some(sel_box);
         }
@@ -579,18 +615,28 @@ impl ScrollbackPane {
 
         let entry = state.entry(entry_idx)?;
 
-        let layout = HorizontalLayout::new(area, &appearance.scrollback.layout);
+        // The entry's own chrome: a pinned prompt must wrap its text and paint
+        // its band exactly as the entry does in the flow.
+        let layout = HorizontalLayout::new_with_chrome(
+            area,
+            &appearance.scrollback.layout,
+            entry_chrome(entry, appearance),
+        );
 
         // Compute content lines from render_height. Measured at the block's own content width (the same chain the
         // height passes use), not at the pane width: a prompt drops its pad on a narrow pane, and a wider pane width
         // here would reserve two rows that were never drawn.
         let cwd = state.cwd();
-        let block_content_width = block_content_width_for(appearance, &entry.block, area.width);
+        let block_content_width = block_content_width_for(entry, appearance, area.width);
         let has_vpad = entry
             .block
             .has_vpad_for_width(appearance, block_content_width);
         let vpad_rows = if has_vpad { 2 } else { 0 };
-        let content_lines = render_height.saturating_sub(vpad_rows);
+        entry.ensure_cached(block_content_width, appearance, is_selected, cwd);
+        let meta = sticky_clock_meta(entry, appearance, block_content_width);
+        let content_lines = render_height
+            .saturating_sub(vpad_rows)
+            .saturating_sub(u16::from(meta));
 
         // User prompts use their actual display mode so collapsed prompts stay truncated (3 lines and an ellipsis) in sticky headers
         // Other blocks use Expanded with a max_lines budget
@@ -600,13 +646,8 @@ impl ScrollbackPane {
             DisplayMode::Expanded
         };
 
-        // When timestamps are shown on message blocks, reserve right margin in the block's content width
-        // Wrapped text then doesn't collide with the overlaid timestamp (matches EntryRenderer for normal content)
-        let ts_reserved = timestamp_reserved_for(appearance, &entry.block);
-        let content_width_for_block = layout.content_width().saturating_sub(ts_reserved);
-
         let ctx = entry.context_with_mode_and_budget(
-            content_width_for_block,
+            block_content_width,
             mode,
             content_lines,
             appearance,
@@ -635,16 +676,30 @@ impl ScrollbackPane {
             let scratch_buf = scratch.prepared(area.width, render_height);
             let scratch_area = Rect::new(0, 0, area.width, render_height);
 
-            // Render full header to scratch
-            let mut lines = Self::render_entry_with_ctx_static(
+            // Render full header to scratch. Mouse coords are screen coords, so a pushed
+            // fragment keeps the short clock (the scratch origin is 0,0).
+            let (mut lines, clock) = Self::render_entry_with_ctx_static(
                 entry,
                 &ctx,
                 theme,
                 scratch_area,
                 scratch_buf,
-                mouse_pos,
+                None,
                 selection_entry_idx,
             );
+            if let Some(rect) = clock
+                && rect.y >= clip_top
+            {
+                state.push_timestamp_hit(
+                    entry_idx,
+                    Rect::new(
+                        rect.x.saturating_add(area.x),
+                        area.y + (rect.y - clip_top),
+                        rect.width,
+                        rect.height,
+                    ),
+                );
+            }
 
             // Copy visible rows (after clip_top) to output buffer
             for dy in 0..visible_height {
@@ -671,7 +726,7 @@ impl ScrollbackPane {
             lines
         } else {
             // No clipping needed; render directly with max_lines
-            Self::render_entry_with_ctx_static(
+            let (lines, clock) = Self::render_entry_with_ctx_static(
                 entry,
                 &ctx,
                 theme,
@@ -679,7 +734,11 @@ impl ScrollbackPane {
                 buf,
                 mouse_pos,
                 selection_entry_idx,
-            )
+            );
+            if let Some(rect) = clock {
+                state.push_timestamp_hit(entry_idx, rect);
+            }
+            lines
         };
 
         // Text reaching the last header row means more may be hidden below.
@@ -693,7 +752,7 @@ impl ScrollbackPane {
                 content_area: layout.content,
                 selection_area: layout.selection_area(),
                 // Copy re-renders the block at this width.
-                content_width: content_width_for_block,
+                content_width: block_content_width,
                 top_clipped: clip_top > 0,
                 bottom_clipped,
                 // Text selection only: a block drag anchored here would sweep in the off-screen entries the pinned prompt scrolled past.
@@ -712,10 +771,14 @@ impl ScrollbackPane {
         buf: &mut Buffer,
         mouse_pos: Option<(u16, u16)>,
         selection_entry_idx: usize,
-    ) -> Vec<ResolvedSelectableLine> {
+    ) -> (Vec<ResolvedSelectableLine>, Option<Rect>) {
         use crate::scrollback::types::BlockBackground;
 
-        let layout = HorizontalLayout::new(area, &ctx.appearance.scrollback.layout);
+        let layout = HorizontalLayout::new_with_chrome(
+            area,
+            &ctx.appearance.scrollback.layout,
+            entry_chrome(entry, &ctx.appearance),
+        );
 
         // Use the actual content area (not entry_content_area which includes accent)
         let content_area = layout.content;
@@ -735,20 +798,33 @@ impl ScrollbackPane {
             BlockBackground::Dark => Some(theme.bg_dark),
         };
 
-        // Only use vpad if there's enough room for vpad + at least 1 content line.
-        // Need at least 3 rows: vpad_top (1) + content (1) + vpad_bottom (1)
-        // If less space, skip vpad to prioritize content.
-        let use_vpad = block_has_vpad && content_area.height >= 3;
-
-        // Calculate actual content height
+        // Calculate actual content height, then the clock, so the fill covers a meta row.
         let content_height = output.len() as u16;
-        let total_height = content_height + if use_vpad { 2 } else { 0 };
+        let entry_right = area.x.saturating_add(area.width);
+        let row_span = content_area.width.saturating_add(right_pad.width);
+        let plan = sticky_clock_plan(
+            entry,
+            ctx,
+            &output,
+            row_span,
+            mouse_pos,
+            entry_right,
+            content_area.y,
+            block_has_vpad && content_area.height >= 3,
+        );
+        let meta_rows = u16::from(plan.meta);
+        // Only use vpad if there's enough room for the meta row, both pads, and one content line.
+        // If less space, skip vpad to prioritize content.
+        let use_vpad = block_has_vpad && content_area.height >= 3u16.saturating_add(meta_rows);
+        let total_height = content_height
+            .saturating_add(if use_vpad { 2 } else { 0 })
+            .saturating_add(meta_rows);
 
         // Fill the entire entry area with block background (if any)
-        // This includes vpad rows, content rows, and padding columns
+        // This includes the meta row, vpad rows, content rows, and padding columns
+        let fill_height = total_height.min(area.height);
         if let Some(bg) = bg_color {
             let bg_style = ratatui::style::Style::default().bg(bg);
-            let fill_height = total_height.min(area.height);
 
             for y in content_area.y..content_area.y + fill_height {
                 // Fill left padding
@@ -772,11 +848,55 @@ impl ScrollbackPane {
             }
         }
 
-        // Render vpad top if needed (skip 1 row)
+        let plan = sticky_clock_plan(
+            entry,
+            ctx,
+            &output,
+            row_span,
+            mouse_pos,
+            entry_right,
+            content_area.y,
+            use_vpad,
+        );
+        let mut clock_rect = None;
+        // [meta?] [vpad?] [content...]
         let mut y = content_area.y;
+        if plan.meta {
+            if let Some(text) = plan.text.as_deref()
+                && y < content_area.y + content_area.height
+            {
+                clock_rect = Some(paint_sticky_clock(buf, theme, entry_right, y, text));
+            }
+            y = y.saturating_add(1);
+        }
         if use_vpad {
+            // A phone-width pane keeps a fraction of the band's color on the pad
+            // rows instead of the whole row (see `paint_pad_row`); the pinned
+            // header must match the band the entry shows in the flow.
+            let narrow = ctx.appearance.scrollback.layout.narrow;
+            let flat = false;
+            if let Some(band) = bg_color {
+                // Under the meta clock when that row is present. Painting at
+                // `content_area.y` would cover the clock.
+                let pad_top_y = content_area.y.saturating_add(u16::from(plan.meta));
+                paint_pad_row(
+                    buf,
+                    area,
+                    pad_top_y,
+                    band,
+                    theme.bg_base,
+                    true,
+                    narrow,
+                    flat,
+                );
+                let bottom = content_area.y + fill_height.saturating_sub(1);
+                if bottom > pad_top_y {
+                    paint_pad_row(buf, area, bottom, band, theme.bg_base, false, narrow, flat);
+                }
+            }
             y += 1;
         }
+        let first_content_y = y;
 
         // `block_line_idx` counts every line, painted or not.
         let mut selection_lines = Vec::new();
@@ -808,37 +928,17 @@ impl ScrollbackPane {
             y += 1;
         }
 
-        // Overlay timestamp on the first content line for message blocks in sticky headers (pinned/pushed user prompts, agent messages, etc.)
-        // Mirrors the overlay in EntryRenderer but adapted for the header render path and the clip (scratch buffer) case
-        // Hover expansion works for pinned (absolute coords); pushed headers always get the short format
-        if ctx.appearance.show_timestamps
-            && !output.lines.is_empty()
-            && matches!(
-                &entry.block,
-                RenderBlock::UserPrompt(_) | RenderBlock::AgentMessage(_) | RenderBlock::Btw(_)
-            )
-            && let Some(ts) = entry.created_at
+        if !plan.meta
+            && first_content_y < content_area.y + content_area.height
+            && let Some(text) = plan.text.as_deref()
         {
-            let first_content_y = content_area.y + if use_vpad { 1 } else { 0 };
-            let timestamp_right = content_area.right();
-            let ts_hovered = mouse_pos.is_some_and(|(mx, my)| {
-                my == first_content_y
-                    && mx >= timestamp_right.saturating_sub(ts_reserved.max(1))
-                    && mx < timestamp_right
-            });
-            let ts_str = if ts_hovered {
-                ts.format("%H:%M:%S | %b %d").to_string()
-            } else {
-                ts.format("%-I:%M %p").to_string()
-            };
-            let ts_width = ts_str.len() as u16;
-            if content_area.width > ts_width + 1
-                && first_content_y < content_area.y + content_area.height
-            {
-                let ts_x = timestamp_right - ts_width;
-                let ts_style = Style::default().fg(theme.gray);
-                buf.set_string_safe(ts_x, first_content_y, &ts_str, ts_style);
-            }
+            clock_rect = Some(paint_sticky_clock(
+                buf,
+                theme,
+                entry_right,
+                first_content_y,
+                text,
+            ));
         }
 
         // vpad bottom is just empty space; no need to track y further
@@ -853,7 +953,7 @@ impl ScrollbackPane {
             }
         }
 
-        selection_lines
+        (selection_lines, clock_rect)
     }
 
     // Shared Rendering Helpers
@@ -935,6 +1035,9 @@ impl ScrollbackPane {
         );
         let result = rendered.result;
         let selection_boundaries = rendered.selection_boundaries;
+        for hit in &result.timestamp_hits {
+            state.push_timestamp_hit(visible_range.start + hit.entry_idx, hit.rect);
+        }
 
         // NOTE: total_height is computed by prepare_layout() before render, so we don't update it here
         // The result.total_height is only used locally if needed for debugging
@@ -1037,14 +1140,32 @@ impl ScrollbackPane {
             if sel_range.len() <= 1 {
                 // Singleton (non-groupable, or expanded in Mode B, or lone groupable):
                 // Use the individual entry's area directly
-                let top_clipped = selected.top_clipped
-                    || (selected.area.y == content_area.y && content_area.y == 0);
+                let top_cut_off = selected.top_clipped;
+                let top_clipped =
+                    top_cut_off || (selected.area.y == content_area.y && content_area.y == 0);
                 let bottom = selected.area.y + selected.area.height;
                 let bottom_clipped =
                     selected.bottom_clipped || bottom > content_area.y + content_area.height;
 
+                // The echo's pad rows are its own edges: pull the box in so the corners land on the pad
+                // rather than on the gap rows around the band. Clip flags still gate each side.
+                let hugs_pad = state
+                    .entry(selected_abs)
+                    .is_some_and(|entry| entry.block.selection_hugs_vpad(state.appearance()));
+                let box_area = echo_selection_area(
+                    state,
+                    selected_abs,
+                    selected.area,
+                    !top_cut_off,
+                    hugs_pad && !top_cut_off,
+                    hugs_pad && !bottom_clipped,
+                );
+                // A pulled top gives the corner the band's own first row, so the "no room above" flag stands
+                // only while the top edge stays un-pulled.
+                let top_clipped = top_clipped && box_area.y == selected.area.y;
+
                 let sel_box =
-                    SelectionBox::new(selected.area, Style::default().fg(theme.selection_border))
+                    SelectionBox::new(box_area, Style::default().fg(theme.selection_border))
                         .with_top_clipped(top_clipped)
                         .with_bottom_clipped(bottom_clipped);
 
@@ -1124,6 +1245,31 @@ impl ScrollbackPane {
     }
 }
 
+/// Hug an echo's pad rows, and keep a clock meta row above that box when the row is on screen.
+fn echo_selection_area(
+    state: &ScrollbackState,
+    entry_idx: usize,
+    area: Rect,
+    meta_on_screen: bool,
+    hug_top: bool,
+    hug_bottom: bool,
+) -> Rect {
+    let meta = if meta_on_screen {
+        state
+            .entry(entry_idx)
+            .map(|entry| {
+                crate::scrollback::timestamp_layout::selection_clock_meta_rows(
+                    entry,
+                    state.appearance(),
+                )
+            })
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    hug_padded_band(area_below_clock_meta(area, meta), hug_top, hug_bottom)
+}
+
 /// Screen row the selection caret belongs on within an entry's slot. The caret is the MEMBER's affordance, so it
 /// sits one row below the slot top.
 fn verb_member_indicator_row(slot_top: u16, verb_expanded: bool, header_clipped: bool) -> u16 {
@@ -1147,7 +1293,7 @@ fn paint_expandable_indicator(
     }
     // Width-aware so the chevron appears on a block that is folded at this width, including a prompt folded by the
     // narrow-pane default. Uses the same entry-area → content-width chain as the fold decision.
-    let content_width = block_content_width_for(appearance, &entry.block, content_area.width);
+    let content_width = block_content_width_for(entry, appearance, content_area.width);
     if !entry.block.is_foldable_at(content_width) {
         return;
     }
@@ -1190,6 +1336,108 @@ fn paint_expandable_indicator(
     }
 }
 
+fn sticky_row_span(
+    entry: &ScrollbackEntry,
+    appearance: &crate::appearance::AppearanceConfig,
+    content_width: u16,
+) -> u16 {
+    let pad = if entry.block.is_user_prompt() {
+        1
+    } else {
+        appearance.scrollback.layout.block_pad_right
+    };
+    content_width.saturating_add(pad)
+}
+
+fn sticky_clock_meta(
+    entry: &ScrollbackEntry,
+    appearance: &crate::appearance::AppearanceConfig,
+    content_width: u16,
+) -> bool {
+    use crate::scrollback::timestamp_layout::{ClockPlan, ClockQuery, line_cols};
+    let output = entry.cached_output_ref();
+    let first = output
+        .lines
+        .first()
+        .map(|line| line_cols(&line.content))
+        .unwrap_or(0);
+    let has_content = !output.lines.is_empty();
+    drop(output);
+    ClockPlan::decide(&ClockQuery {
+        entry,
+        appearance,
+        first_line_cols: first,
+        row_span: sticky_row_span(entry, appearance, content_width),
+        prev_clock: entry.clock_prev.get(),
+        hovered: false,
+        allow_long: true,
+        has_content,
+    })
+    .meta
+}
+
+fn sticky_clock_plan(
+    entry: &ScrollbackEntry,
+    ctx: &crate::scrollback::types::BlockContext,
+    output: &crate::scrollback::types::BlockOutput,
+    row_span: u16,
+    mouse_pos: Option<(u16, u16)>,
+    entry_right: u16,
+    content_top: u16,
+    vpad: bool,
+) -> crate::scrollback::timestamp_layout::ClockPlan {
+    use crate::scrollback::timestamp_layout::{
+        ClockPlan, ClockQuery, clock_cols, clock_origin, line_cols, point_in_clock,
+    };
+    let first = output
+        .lines
+        .first()
+        .map(|line| line_cols(&line.content))
+        .unwrap_or(0);
+    let query = |hovered| ClockQuery {
+        entry,
+        appearance: &ctx.appearance,
+        first_line_cols: first,
+        row_span,
+        prev_clock: entry.clock_prev.get(),
+        hovered,
+        allow_long: true,
+        has_content: !output.lines.is_empty(),
+    };
+    let stable = ClockPlan::decide(&query(false));
+    let clock_row = if stable.meta {
+        content_top
+    } else {
+        content_top.saturating_add(u16::from(vpad))
+    };
+    let hovered = stable.text.as_deref().is_some_and(|text| {
+        let x = clock_origin(entry_right, text);
+        mouse_pos.is_some_and(|(mx, my)| point_in_clock(mx, my, x, clock_row, clock_cols(text)))
+    });
+    if !hovered {
+        return stable;
+    }
+    let expanded = ClockPlan::decide(&query(true));
+    if expanded.meta == stable.meta {
+        expanded
+    } else {
+        stable
+    }
+}
+
+fn paint_sticky_clock(
+    buf: &mut ratatui::buffer::Buffer,
+    theme: &crate::theme::Theme,
+    entry_right: u16,
+    y: u16,
+    text: &str,
+) -> Rect {
+    use crate::scrollback::timestamp_layout::{clock_cols, clock_origin};
+    let x = clock_origin(entry_right, text);
+    buf.set_string_safe(x, y, text, Style::default().fg(theme.gray));
+    Rect::new(x, y, clock_cols(text), 1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::verb_member_indicator_row;
@@ -1212,6 +1460,56 @@ mod tests {
 
     // Pinned-header selectability is covered end to end by the sticky_header_drag_copy_pty e2e
     // Only the pushed/clip rebase branch needs a unit test (the PTY case never drags during a push)
+
+    /// A pinned prompt's band is the band the entry shows in the flow: a
+    /// phone-width pane keeps the fraction glyphs on its pad rows. Full-height
+    /// pads in the sticky path made the band grow the moment the header pinned,
+    /// so scrolling across that boundary flipped its height.
+    #[test]
+    fn pinned_phone_prompt_band_keeps_the_fraction_pads() {
+        // The fraction needs concrete colors: a `Reset` band keeps the plain row.
+        let _guard = crate::theme::cache::pin_theme();
+        let area = Rect::new(0, 0, 55, 20);
+        let mut state = ScrollbackState::new();
+        let mut appearance = AppearanceConfig::default();
+        appearance.scrollback.layout.narrow = true;
+        state.set_appearance(appearance);
+        state.push_block(RenderBlock::user_prompt("PINNEDPROMPT"));
+        for i in 0..40 {
+            state.push_block(RenderBlock::agent_message(format!("answer {i}")));
+        }
+        state.prepare_layout(area.width, area.height);
+        let max_scroll = state.scroll_info().2;
+        state.set_scroll_offset(max_scroll / 2);
+
+        let mut buf = Buffer::empty(area);
+        let mut scratch = ScratchBuffer::default();
+        let pane = ScrollbackPane::new().active(true);
+        pane.render_with_scratch(area, &mut buf, &mut state, &mut scratch);
+
+        let theme = Theme::current();
+        let band_rows: Vec<u16> = (0..area.height)
+            .filter(|&y| {
+                buf.cell((1, y))
+                    .is_some_and(|c| c.bg == theme.bg_light || c.fg == theme.bg_light)
+            })
+            .collect();
+        assert!(
+            !band_rows.is_empty(),
+            "the fixture must pin the prompt's band: {band_rows:?}"
+        );
+        let top = buf.cell((1, band_rows[0])).unwrap();
+        let bottom = buf.cell((1, *band_rows.last().unwrap())).unwrap();
+        assert_eq!(
+            top.symbol(),
+            "\u{2582}",
+            "the pinned band's top pad keeps the fraction glyph, not a full row"
+        );
+        assert_eq!(top.fg, theme.bg_light);
+        assert_eq!(top.bg, theme.bg_base);
+        assert_eq!(bottom.symbol(), "\u{2586}", "and the bottom pad does too");
+        assert_eq!(bottom.bg, theme.bg_light);
+    }
 
     /// A pushed header paints through a scratch buffer, so its lines must be rebased onto the rows that reached the screen; clipped rows are dropped.
     #[test]
@@ -1303,69 +1601,98 @@ mod tests {
     }
 
     #[test]
-    fn timestamped_sticky_prompt_wraps_like_its_inline_selection() {
-        let area = Rect::new(0, 0, 32, 14);
-        let mut state = ScrollbackState::new();
-        let mut appearance = AppearanceConfig::default();
-        appearance.show_timestamps = true;
-        appearance.scrollback.blocks.prompt.vpad = false;
-        appearance.scrollback.blocks.prompt.show_prefix = false;
-        state.set_appearance(appearance);
-        state.push_block(RenderBlock::user_prompt(
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
-        ));
-        state.prepare_layout(area.width, area.height);
-        state.set_scroll_offset(0);
-        let inline = render_model(&mut state, area);
-        let inline_first = inline
-            .ranges
-            .iter()
-            .filter(|range| range.entry_idx == 0)
-            .flat_map(|range| &range.lines)
-            .find(|line| line.block_line_idx == 0)
-            .expect("inline prompt first line")
-            .text
-            .clone();
-        assert!(
-            inline_first.len() > 10,
-            "fixture must wrap: {inline_first:?}"
-        );
+    fn timestamped_sticky_prompt_paints_the_same_selectable_text_as_the_flow() {
+        for narrow in [false, true] {
+            let area = Rect::new(0, 0, 32, 14);
+            let mut state = ScrollbackState::new();
+            let mut appearance = AppearanceConfig::default();
+            appearance.show_timestamps = true;
+            appearance.scrollback.layout.narrow = narrow;
+            appearance.scrollback.display.sticky_headers = false;
+            appearance.scrollback.blocks.prompt.vpad = false;
+            appearance.scrollback.blocks.prompt.show_prefix = false;
+            state.set_appearance(appearance);
+            state.push_block(RenderBlock::user_prompt(
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+            ));
+            state.prepare_layout(area.width, area.height);
+            state.set_scroll_offset(0);
 
-        let height = state.get_cached_entry_height(0).expect("prompt height");
-        let mut buf = Buffer::empty(area);
-        let mut scratch = ScratchBuffer::default();
-        let header = ScrollbackPane::new()
-            .render_sticky_header(
-                &mut buf,
-                area,
-                &state,
-                0,
-                0,
-                &crate::theme::Theme::default(),
-                height,
-                0,
-                &mut scratch,
-                false,
-                None,
-            )
-            .expect("sticky prompt selection");
-        let header_first = header
-            .lines
-            .iter()
-            .find(|line| line.block_line_idx == 0)
-            .expect("sticky prompt first line");
-        assert_eq!(header_first.text, inline_first);
-        let last_x = header_first.screen_x + header_first.text.len() as u16 - 1;
-        let last_y = header_first.screen_y;
-        assert_eq!(buf.cell((last_x - 1, last_y)).unwrap().symbol(), "T");
-        assert_eq!(buf.cell((last_x, last_y)).unwrap().symbol(), "U");
-        assert_eq!(buf.cell((area.width - 3, last_y)).unwrap().symbol(), "M");
+            let flow = render_model(&mut state, area);
+            let flow_first = flow
+                .ranges
+                .iter()
+                .filter(|range| range.entry_idx == 0)
+                .flat_map(|range| &range.lines)
+                .find(|line| line.block_line_idx == 0)
+                .expect("flow first line");
+            let expected = flow_first.text.clone();
+            let height = state.get_cached_entry_height(0).expect("prompt height");
+            let header_area = Rect::new(0, 0, area.width, height);
+            let mut buf = Buffer::empty(header_area);
+            let mut scratch = ScratchBuffer::default();
+            state.clear_timestamp_hits();
+            let header = ScrollbackPane::new()
+                .render_sticky_header(
+                    &mut buf,
+                    header_area,
+                    &state,
+                    0,
+                    0,
+                    &Theme::default(),
+                    height,
+                    0,
+                    &mut scratch,
+                    false,
+                    None,
+                )
+                .expect("sticky prompt");
+            let first = header
+                .lines
+                .iter()
+                .find(|line| line.block_line_idx == 0)
+                .expect("sticky first line");
+            assert_eq!(
+                first.text, expected,
+                "first-line wrap differs (narrow={narrow})"
+            );
+            for (col, ch) in first.text.chars().enumerate() {
+                assert_eq!(
+                    buf.cell((first.screen_x + col as u16, first.screen_y))
+                        .expect("painted text cell")
+                        .symbol(),
+                    ch.to_string(),
+                    "clock covers selectable text at column {col} (narrow={narrow})"
+                );
+            }
+
+            let mut clock_cells = Vec::new();
+            for y in 0..height {
+                for x in 0..area.width {
+                    if state.timestamp_hit_at(x, y) == Some(0) {
+                        clock_cells.push((x, y));
+                    }
+                }
+            }
+            assert!(
+                !clock_cells.is_empty(),
+                "clock must be painted (narrow={narrow})"
+            );
+            if narrow {
+                assert!(clock_cells.iter().all(|&(_, y)| y < first.screen_y));
+            } else {
+                assert!(clock_cells.iter().all(|&(x, y)| {
+                    y == first.screen_y && x > first.screen_x + first.text.len() as u16
+                }));
+            }
+        }
     }
 
-    /// A phone-width pane paints the collapsed echo as two selectable rows inside one pad row each side. The
-    /// layout height and the painted selection model have to agree, or a tap on the second line misses the prompt.
+    /// A phone-width pane paints the collapsed echo as two selectable text rows inside one pad row each side
+    /// (each pad is painted as a fraction of a row, the side gutters' own one column). The layout height and the
+    /// painted selection model have to agree, or a tap on the second line misses the prompt.
     #[test]
-    fn phone_width_collapsed_echo_paints_a_padded_two_row_band() {
+    fn phone_width_collapsed_echo_paints_the_padded_band() {
         let area = Rect::new(0, 0, 55, 41);
         let mut state = ScrollbackState::new();
         state.prepare_layout(area.width, area.height);
@@ -1386,6 +1713,167 @@ mod tests {
             state.get_cached_entry_height(0),
             Some(4),
             "the painted band is the two content rows plus one pad row each side"
+        );
+    }
+
+    /// Rows (screen y) carrying `symbol` anywhere in the buffer.
+    fn symbol_rows(buf: &Buffer, symbol: &str) -> Vec<u16> {
+        (buf.area.top()..buf.area.bottom())
+            .filter(|&y| {
+                (buf.area.left()..buf.area.right())
+                    .any(|x| buf.cell((x, y)).is_some_and(|cell| cell.symbol() == symbol))
+            })
+            .collect()
+    }
+
+    /// A selected echo hugs its own band: both corners land on the echo's pad rows instead of the gap rows the
+    /// box used to reach into, so no blank row sits inside the bracket ends.
+    #[test]
+    fn selected_expanded_echo_corners_hug_the_band() {
+        let area = Rect::new(0, 0, 55, 41);
+        let mut state = ScrollbackState::new();
+        state.push_block(RenderBlock::stub_non_groupable(
+            "above",
+            ratatui::style::Color::Blue,
+        ));
+        state.push_block(RenderBlock::user_prompt("x".repeat(200)));
+        {
+            let entry = state.entry_mut(1).expect("prompt entry");
+            entry.display_mode = DisplayMode::Expanded;
+            entry.invalidate_cache();
+        }
+        state.set_selected(Some(1));
+        state.prepare_layout(area.width, area.height);
+
+        let (band_y, band_height) = {
+            let layouts = state.get_cached_entry_layouts().expect("layout cache");
+            (layouts[0].height + layouts[0].gap_after, layouts[1].height)
+        };
+        assert!(
+            band_height > 2,
+            "the expanded echo has to be tall enough to hug, got {band_height} rows"
+        );
+
+        let mut buf = Buffer::empty(area);
+        let mut scratch = ScratchBuffer::default();
+        let pane = ScrollbackPane::new().active(true);
+        let output = pane.render_with_scratch(area, &mut buf, &mut state, &mut scratch);
+        // The frame paints the box the pane computes (`app/agent_view/render.rs`), so the test does the same.
+        output
+            .selection_box
+            .as_ref()
+            .expect("the selected echo publishes a selection box")
+            .render(&mut buf);
+
+        assert_eq!(
+            symbol_rows(&buf, "┌"),
+            vec![band_y],
+            "the top corner sits on the echo's own top pad row; the row above it is the gap"
+        );
+        assert_eq!(
+            symbol_rows(&buf, "└"),
+            vec![band_y + band_height - 1],
+            "the bottom corner sits on the echo's own bottom pad row"
+        );
+        let expected_verticals: Vec<u16> = ((band_y + 1)..(band_y + band_height - 1)).collect();
+        assert_eq!(
+            symbol_rows(&buf, "│"),
+            expected_verticals,
+            "the side borders stay between the two corners"
+        );
+    }
+
+    /// A full phone-width line puts the clock on a row above the band. The box still
+    /// hugs the pad rows; the top corner does not move up onto the clock.
+    #[test]
+    fn narrow_full_echo_selection_hugs_the_pad_under_the_clock() {
+        let area = Rect::new(0, 0, 55, 41);
+        let mut state = ScrollbackState::new();
+        let mut appearance = AppearanceConfig::default();
+        appearance.scrollback.layout.narrow = true;
+        state.set_appearance(appearance);
+        state.push_block(RenderBlock::stub_non_groupable(
+            "above",
+            ratatui::style::Color::Blue,
+        ));
+        state.push_block(RenderBlock::user_prompt("x".repeat(200)));
+        {
+            let entry = state.entry_mut(1).expect("prompt entry");
+            entry.display_mode = DisplayMode::Expanded;
+            entry.invalidate_cache();
+        }
+        state.set_selected(Some(1));
+        state.prepare_layout(area.width, area.height);
+
+        let (band_y, band_height) = {
+            let layouts = state.get_cached_entry_layouts().expect("layout cache");
+            (layouts[0].height + layouts[0].gap_after, layouts[1].height)
+        };
+        assert!(
+            band_height > 4,
+            "the echo needs a clock row plus the padded band, got {band_height}"
+        );
+
+        let mut buf = Buffer::empty(area);
+        let mut scratch = ScratchBuffer::default();
+        let pane = ScrollbackPane::new().active(true);
+        let output = pane.render_with_scratch(area, &mut buf, &mut state, &mut scratch);
+        output
+            .selection_box
+            .as_ref()
+            .expect("the selected echo publishes a selection box")
+            .render(&mut buf);
+
+        assert_eq!(
+            symbol_rows(&buf, "┌"),
+            vec![band_y + 1],
+            "the top corner sits on the pad under the clock, not on the clock row"
+        );
+        assert_eq!(
+            symbol_rows(&buf, "└"),
+            vec![band_y + band_height - 1],
+            "the bottom corner stays on the echo's own bottom pad row"
+        );
+    }
+
+    /// Blocks without a prompt echo's pad keep the box one row outside the entry, as they always have.
+    #[test]
+    fn selected_non_prompt_block_keeps_corners_one_row_outside() {
+        let area = Rect::new(0, 0, 55, 41);
+        let mut state = ScrollbackState::new();
+        state.push_block(RenderBlock::stub_non_groupable(
+            "above",
+            ratatui::style::Color::Blue,
+        ));
+        state.push_block(RenderBlock::tool_call("Execute", "git status", true));
+        state.set_selected(Some(1));
+        state.prepare_layout(area.width, area.height);
+
+        let (entry_y, entry_height) = {
+            let layouts = state.get_cached_entry_layouts().expect("layout cache");
+            (layouts[0].height + layouts[0].gap_after, layouts[1].height)
+        };
+        assert!(entry_y > 0, "the box needs a row above the entry");
+
+        let mut buf = Buffer::empty(area);
+        let mut scratch = ScratchBuffer::default();
+        let pane = ScrollbackPane::new().active(true);
+        let output = pane.render_with_scratch(area, &mut buf, &mut state, &mut scratch);
+        output
+            .selection_box
+            .as_ref()
+            .expect("the selected tool row publishes a selection box")
+            .render(&mut buf);
+
+        assert_eq!(
+            symbol_rows(&buf, "┌"),
+            vec![entry_y - 1],
+            "the top corner stays on the row above the entry"
+        );
+        assert_eq!(
+            symbol_rows(&buf, "└"),
+            vec![entry_y + entry_height],
+            "the bottom corner stays on the row below the entry"
         );
     }
 

@@ -859,19 +859,25 @@ mod tests {
         );
         let theme = Theme::current();
         let entry = agent.scrollback.get(0).unwrap();
+        // The lane that keeps a column of left chrome: one pad column more than
+        // the minimal one. A rail-less tool row spends no accent column in
+        // either lane (only a rail or a band does), so the fixture pairs the
+        // minimal look with a padded one to find a wrap-sensitive width.
+        let mut padded = appearance.clone();
+        padded.scrollback.layout.block_pad_left = 1;
         let (width, painted_height, visible_accent_height) = (10..=40)
             .find_map(|width| {
                 let painted =
                     live_tail_renderer(entry, &theme, &appearance, &cwd, 0).desired_height(width);
                 let visible_accent = EntryRenderer::new(entry, &theme)
-                    .with_appearance(appearance.clone())
+                    .with_appearance(padded.clone())
                     .with_cwd(Some(&cwd))
                     .with_tick(0)
                     .with_flat_background(true)
                     .desired_height(width);
                 (painted != visible_accent).then_some((width, painted, visible_accent))
             })
-            .expect("fixture must wrap differently when the accent column is reclaimed");
+            .expect("fixture must wrap differently when a column of chrome is reclaimed");
         assert_ne!(painted_height, visible_accent_height);
         assert_eq!(
             tail_height(&agent, width, &appearance),

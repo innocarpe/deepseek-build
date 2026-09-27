@@ -1,4 +1,4 @@
-use std::cell::{Ref, RefCell};
+use std::cell::{Cell, Ref, RefCell};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Local};
@@ -84,6 +84,14 @@ pub struct ScrollbackEntry {
 
     pub created_at: Option<DateTime<Local>>,
 
+    /// Tap on this entry's clock shows the long form until the next tap.
+    /// The body is not rewrapped; a long form that does not fit moves to the meta row.
+    pub timestamp_expanded: bool,
+
+    /// Minute anchor written by layout and read by the clock plan.
+    /// `None` means no earlier message painted a clock.
+    pub(crate) clock_prev: Cell<Option<DateTime<Local>>>,
+
     /// When this entry finished running (monotonic). Used by the renderer to flash the accent briefly after completion.
     pub finished_at: Option<std::time::Instant>,
 
@@ -163,6 +171,8 @@ impl ScrollbackEntry {
             display_mode_pinned: false,
             raw: false,
             created_at: Some(Local::now()),
+            timestamp_expanded: false,
+            clock_prev: Cell::new(None),
             finished_at: None,
             cached_output: RefCell::new(None),
             cached_truncated_height: RefCell::new(None),
@@ -193,12 +203,23 @@ impl ScrollbackEntry {
             display_mode_pinned: false,
             raw: false,
             created_at: Some(Local::now()),
+            timestamp_expanded: false,
+            clock_prev: Cell::new(None),
             finished_at: None,
             cached_output: RefCell::new(None),
             cached_truncated_height: RefCell::new(None),
             cached_estimate_lines: RefCell::new(None),
             cached_line_widths: RefCell::new(None),
         }
+    }
+
+    /// Display columns of the first source line, after [`Self::estimate_source_lines`] has filled the cache.
+    pub(crate) fn first_cached_source_cols(&self) -> Option<u16> {
+        self.cached_line_widths
+            .borrow()
+            .as_ref()
+            .and_then(|widths| widths.first().copied())
+            .map(|width| width.min(u32::from(u16::MAX)) as u16)
     }
 
     /// Set the display mode (builder pattern).

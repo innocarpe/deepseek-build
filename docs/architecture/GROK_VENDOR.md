@@ -274,7 +274,7 @@ Path filter for **product** Rust jobs remains root `crates/**`, root `Cargo.toml
 |------|------|
 | Trigger | Path filter: `third_party/grok-build/**`, `scripts/build-grok-pager.sh`, this doc |
 | Job | Install `protoc` + `dotslash`; run `./scripts/build-grok-pager.sh check` |
-| Timeout | Long (30–60+ min cold; cache `third_party/grok-build/target` when practical) |
+| Timeout | Long (30–60+ min cold; cache the checkout's own `third_party/grok-build/target` when practical — one worktree, one target, see `AGENTS.md`) |
 | Gate | Optional separate check name `grok-vendor-check` — enable as required once stable on ubuntu-latest |
 
 Until the dedicated workflow is green on GitHub-hosted runners, **local** `./scripts/build-grok-pager.sh check` is the merge evidence for vendor PRs, recorded in the PR Testing section.

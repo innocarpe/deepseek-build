@@ -442,8 +442,8 @@ fn top_border_row(buf: &Buffer) -> u16 {
 /// The frame the report's screenshots show, at the measured iPhone size: the
 /// echo's band is its meta clock row, its text rows and one pad row each side,
 /// the composer box is the top border, one text row and the divider, the turn
-/// time stops one column inside the echo's band, and the status band keeps its
-/// single floor row.
+/// time stops one column inside the echo's band, and the status band reaches
+/// the frame edge.
 #[test]
 fn phone_frame_pads_the_prompt_areas_by_one_cell() {
     let _guard = crate::theme::cache::pin_theme();
@@ -528,24 +528,23 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
         "the time stops one column inside the band's right edge: ink {last_ink}, band {band_right}\n{frame}"
     );
 
-    // (d) One blank floor row under the status band: the smallest step the grid
-    // has at the frame's edge, so the bottom text never sits on it.
+    // (d) No blank floor row under the status band: it reaches the frame edge.
     let status_y = divider + 1;
     assert_eq!(
         status_y + 1 + crate::views::agent::BOTTOM_MARGIN_ROWS,
         PHONE_ROWS,
-        "the status band keeps one blank floor row under it:\n{frame}"
-    );
-    assert!(
-        row_text(&buf, status_y + 1).trim().is_empty(),
-        "the floor row is blank:\n{frame}"
+        "the status band reaches the frame edge:\n{frame}"
     );
 }
 
-/// The floor row is one blank row — never two, never none — at every phone
-/// height the app runs at.
+/// The status band reaches the frame edge at every phone height the app runs at.
 #[test]
-fn phone_status_band_keeps_one_floor_row_at_every_phone_height() {
+fn phone_status_band_reaches_frame_edge_at_every_phone_height() {
+    assert_eq!(
+        crate::views::agent::BOTTOM_MARGIN_ROWS,
+        0,
+        "the phone layout has no blank floor row"
+    );
     for rows in [PHONE_ROWS, 36, 33, 30, 26, 24, 20] {
         let mut agent = phone_agent();
         let buf = draw(&mut agent, PHONE_COLS, rows);
@@ -554,11 +553,7 @@ fn phone_status_band_keeps_one_floor_row_at_every_phone_height() {
         assert_eq!(
             status_y + 1 + crate::views::agent::BOTTOM_MARGIN_ROWS,
             rows,
-            "{PHONE_COLS}x{rows}: the status band keeps one blank floor row\n{frame}"
-        );
-        assert!(
-            row_text(&buf, status_y + 1).trim().is_empty(),
-            "{PHONE_COLS}x{rows}: the floor row is blank\n{frame}"
+            "{PHONE_COLS}x{rows}: the status band reaches the frame edge\n{frame}"
         );
     }
 }

@@ -5,7 +5,8 @@ Codex loads about the first 160 characters of a skill description (measured
 2026-09-23, 163–166). Grok loads about the first 400 UTF-8 bytes. On
 2026-09-26 the session-unit description was 188 characters and its first 160
 ended at "through the PR, then hand". The body already said to merge. Sessions
-stopped at the window.
+stopped at the window. On 2026-09-27 the same lock covers the debrief step:
+the close ends at the report only after the WC recording ran.
 
 This module locks the phrases that have to sit inside that 160-character
 window, and it rejects a handoff brief whose prohibition contradicts the
@@ -28,7 +29,14 @@ DESCRIPTION_WINDOW = {
         "the PR",
         "CI",
         "merge commit",
+        "WC debrief",
         "the report",
+    ),
+    "skills/session-debrief/SKILL.md": (
+        "every unit close",
+        "before the report",
+        "w-conatus",
+        "without asking again",
     ),
     "skills/release/SKILL.md": (
         "ship a version",
@@ -55,6 +63,16 @@ BODY_NEEDLES = {
         "Close now",
         "More in this session",
         "To hand off",
+        "session-debrief",
+        "no record needed",
+    ),
+    "skills/session-debrief/SKILL.md": (
+        "not a summary of the final answer",
+        "before the final report",
+        "no company HQ record",
+        "do not ask again",
+        "no record needed",
+        "write nowhere else",
     ),
     "skills/release/SKILL.md": (
         "An empty `## Unreleased` is not evidence that a version ask is finished.",
@@ -85,6 +103,10 @@ AGENTS_SECTION_NEEDLES = (
     "scripts/check-pr-merged.sh",
     "scripts/check-session-close.sh brief",
     "Session disposition",
+    "skills/session-debrief",
+    "w-conatus",
+    "no record needed",
+    "company HQ",
 )
 AGENTS_CLAIM_NEEDLE = "do not end the unit"
 

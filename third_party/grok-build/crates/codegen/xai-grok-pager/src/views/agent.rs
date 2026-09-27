@@ -89,10 +89,12 @@ pub const SHORT_TERMINAL_ROWS: u16 = 16;
 pub const SCROLLBACK_MIN_ROWS: u16 = 5;
 /// Rows the frame keeps under the bottom status row.
 ///
-/// One: the smallest step the grid has at the frame's edge — the bottom text
-/// would otherwise sit on the screen edge, and so would zero. A row is ~2.15
-/// columns at the phone's font, which is why nothing larger.
-pub const BOTTOM_MARGIN_ROWS: u16 = 1;
+/// Zero: the grid's smallest non-zero step there is a whole row (~2.15 columns
+/// at the phone's font), which the reader measured as larger than the prompt
+/// box's own bottom margin (~0.6 row). With no blank row the two margins read
+/// closest to each other, and the screen's bottom edge gives the eye its
+/// separation.
+pub const BOTTOM_MARGIN_ROWS: u16 = 0;
 /// Auto-compact threshold: at or below this height the compact flag handed to rendering is forced on.
 /// Deliberately above [`SHORT_TERMINAL_ROWS`], which still gates the harder cuts (tip-row rendering, dropping the CTA and follow-up rows).
 pub const AUTO_COMPACT_MAX_ROWS: u16 = 20;
@@ -175,8 +177,8 @@ pub struct AgentViewLayout {
     /// Bottom status row (DeepSeek balance + cache hit rate). Always
     /// present as a row; renders blank when no DeepSeek status is known.
     pub deepseek_status: Rect,
-    /// The blank row below the bottom status row ([`BOTTOM_MARGIN_ROWS`]): the
-    /// frame's floor. Renders empty; the renderer paints its background.
+    /// Rows reserved below the bottom status row ([`BOTTOM_MARGIN_ROWS`]).
+    /// Zero keeps the status row at the screen edge.
     pub bottom_margin: Rect,
     /// Bottom status_line row; zero-area when disabled.
     pub status_line: Rect,
@@ -312,9 +314,8 @@ impl AgentViewLayout {
         // DeepSeek bottom status row: always present so the row count is
         // stable; renders blank when no status data has landed.
         constraints.push(Constraint::Length(1));
-        // One blank row under the last text row: the frame's floor keeps the
-        // smallest step the grid has, so the bottom text never sits on the
-        // screen edge.
+        // Optional blank rows under the last text row. The phone layout keeps
+        // none so the bottom status row sits at the screen edge.
         constraints.push(Constraint::Length(BOTTOM_MARGIN_ROWS));
         let chunks = Layout::vertical(constraints).split(inner_area);
         let mut chunks = chunks.iter().copied();
@@ -396,7 +397,7 @@ impl AgentViewLayout {
         // DeepSeek bottom status row: always present as a row; renders blank
         // when no DeepSeek status is known.
         let deepseek_status = chunks.next().unwrap_or_default();
-        // The blank floor row under the status row.
+        // Optional floor rows under the status row.
         let bottom_margin = chunks.next().unwrap_or_default();
         let scrollbar_x = area.right().saturating_sub(scrollbar_cfg.gap_right + 1);
         let timeline_width = if scrollbar_cfg.enabled {
@@ -2145,8 +2146,8 @@ mod tests {
 
     /// The frame spends no rows on margins at any width: the status bar lands
     /// on row 0 (no outer vpad, no status gap), the outer pads are the
-    /// selection-border floor, and the only air below the content is the one
-    /// blank floor row under the bottom status row ([`BOTTOM_MARGIN_ROWS`]).
+    /// selection-border floor, and the reserved space below the content is
+    /// [`BOTTOM_MARGIN_ROWS`].
     #[test]
     fn layout_spends_no_rows_on_margins_at_any_width() {
         for (cols, rows) in [(55u16, 41u16), (120, 40), (180, 50)] {
@@ -2220,7 +2221,7 @@ mod tests {
         assert_eq!(
             AgentViewLayout::rows_available_for_prompt(plain),
             25 - 8 - BOTTOM_MARGIN_ROWS,
-            "a frame with no optional row gives everything else to the prompt, minus the floor row"
+            "a frame with no optional row gives everything else to the prompt, minus any reserved floor rows"
         );
         let with_rows = AgentViewLayoutParams {
             banner_height: 1,

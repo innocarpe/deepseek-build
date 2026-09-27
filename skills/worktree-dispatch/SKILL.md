@@ -272,6 +272,9 @@ harder to misread than a TUI. Use the screen to confirm, not to decide.
 checks pass and the body meets the bar, merge and clean up in the same session —
 do not leave a green PR for a later prompt.
 
+**Order: merge, then `session-unit`'s debrief, then this cleanup block.** The
+debrief counts with `git -C "$WT"` and fails on a removed tree.
+
 ```sh
 GH_TOKEN="$(gh auth token --user <account>)" gh pr merge <n> --repo innocarpe/deepseek-build --merge --delete-branch
 gh pr view <n> --repo innocarpe/deepseek-build --json state,mergeCommit   # state must read MERGED

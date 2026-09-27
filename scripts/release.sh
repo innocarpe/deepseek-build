@@ -4,7 +4,7 @@
 #
 # The standard change cycle (see docs/contributing/release-cycle.md):
 #   fix -> PR (pr-authoring skill) -> merge -> ./scripts/release.sh <ver>
-#   -> npm i -g @innocarpe/deepseek-build@<ver>
+#   -> npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build@<ver>
 #
 # Usage:
 #   ./scripts/release.sh 4.0.4 [--desc "one-line note"]
@@ -330,7 +330,10 @@ echo "== registry reports @innocarpe/deepseek-build@$LIVE =="
 
 echo
 echo "== done. User verification: =="
-echo "  npm i -g @innocarpe/deepseek-build@$VERSION"
+echo "  npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build@$VERSION"
 echo "  dsb --version"
 echo "  dsb --resume                    # resumes most-recent TUI session (if any)"
 echo "  (quit hint shows 'dsb --resume <id>' for full-screen sessions)"
+echo
+echo "  npm 12 blocks the install script without --allow-scripts, and the install"
+echo "  still exits 0: the agent binary keeps the previous version."

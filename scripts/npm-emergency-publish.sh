@@ -272,5 +272,8 @@ fi
 echo "registry confirms @innocarpe/deepseek-build@${LIVE}"
 echo
 echo "Verify like a user:"
-echo "  npm i -g @innocarpe/deepseek-build@${VERSION}"
+echo "  npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build@${VERSION}"
 echo "  dsb --version"
+echo
+echo "  npm 12 blocks the install script without --allow-scripts, and the install"
+echo "  still exits 0: the agent binary keeps the previous version."

@@ -103,8 +103,9 @@ log) is silently skipped.
 # 2. Bump + release orchestrator, with cwd = that worktree
 (cd <path> && ./scripts/release.sh 4.0.4 --desc "one-line release note")
 
-# 3. Human verification
-npm i -g @innocarpe/deepseek-build@4.0.4
+# 3. Human verification — on npm 12 the flag is required: a blocked
+#    postinstall still exits 0 and leaves the previous agent binary
+npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build@4.0.4
 dsb --version
 ```
 
@@ -193,7 +194,8 @@ gh workflow run publish-npm.yml --ref v4.0.4
 
 ## Post-publish verification checklist
 
-- [ ] `npm i -g @innocarpe/deepseek-build@<ver>` succeeds
+- [ ] `npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build@<ver>`
+      succeeds (npm 12: the flag is required; a blocked `postinstall` still exits 0)
 - [ ] `dsb --version` prints `<ver>`
 - [ ] `strings $(command -v dsb)` (or the agent binary) shows the release's
       behavior markers — e.g. for the image-fix release, the DeepSeek

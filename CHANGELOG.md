@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The release verification guidance asks npm 12 for the install script it blocks. `scripts/release.sh`'s "User verification" block, `scripts/npm-emergency-publish.sh`'s final hint, `skills/release`'s standard cycle and post-publish checklist, and `docs/contributing/release-cycle.md` now print `npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build@<ver>`; the plain `npm i -g` form is denied the `postinstall` on npm 12.0.0+ and still exits 0, leaving the previous agent binary in place (measured 2026-09-27 on npm 12.1.0: `npm warn install-scripts` for the package, then `npm package 6.1.8 and deepseek-build-agent 6.1.7 differ.` from the CLI; the flagged form installed 6.1.8 with all three binaries matching the release tarball). npm 11 and older accept the flag unchanged.
+
 ## 6.1.8 — 2026-09-27
 
 - On a phone-width pane the prompt echo's clock closes its last text row at the band's bottom-right, like a chat bubble, and only when that row leaves room for it; otherwise the echo shows no clock. The clock no longer takes a row of its own above the text (it did whenever the first row was full, the usual case on a phone), so a folded echo stays two text rows. Agent messages, `/btw` replies and wider panes keep their clock where it was.

@@ -1763,17 +1763,26 @@ impl ScrollbackState {
 /// Called from both width-change paths before the width field is updated, so the old width is still readable.
 /// Comparing an entry's current mode against the default it had at the old width tells "still sitting on the
 /// automatic default" apart from "the user folded this by hand". Only the former is re-derived.
+///
+/// The first width has no old width: a prompt pushed before the first frame (a resumed or replayed session) holds
+/// the block's width-blind `default_display_mode()`, so that is the default it is compared against. Skipping this
+/// case left such a prompt expanded at every row its words wrap to, past the phone echo's two-row budget.
 fn rederive_prompt_folds_for_width(state: &mut ScrollbackState, new_width: u16) {
-    let old_prompt_width = state.prompt_content_width(state.last_width);
-    if old_prompt_width == 0 {
+    let new_prompt_width = state.prompt_content_width(new_width);
+    if new_prompt_width == 0 {
         return;
     }
-    let new_prompt_width = state.prompt_content_width(new_width);
+    let old_prompt_width = state.prompt_content_width(state.last_width);
     for entry in state.entries.values_mut() {
         if entry.display_mode_pinned || !matches!(entry.block, RenderBlock::UserPrompt(_)) {
             continue;
         }
-        if entry.display_mode == auto_prompt_display_mode(entry, old_prompt_width) {
+        let old_default = if old_prompt_width == 0 {
+            entry.block.default_display_mode()
+        } else {
+            auto_prompt_display_mode(entry, old_prompt_width)
+        };
+        if entry.display_mode == old_default {
             entry.display_mode = auto_prompt_display_mode(entry, new_prompt_width);
         }
     }

@@ -120,14 +120,21 @@ jobs:
               - 'npm/**'
               - 'package.json'
               - '.github/workflows/ci.yml'
-            # The shared-target queue: status reads cargo lock holders and
-            # waiters, clone copies the warm target copy-on-write instead of
-            # waiting on them. Hermetic (a fixture tree + python3 flock
-            # holders); no cargo and no network. Not a rule lint.
+            # One worktree, one vendored target: the queue reader over every
+            # worktree's target, the per-worktree cargo wrapper (pin, one seed,
+            # job cap, memory gate), the pin the vendored-cargo scripts call,
+            # and the three hermetic tests behind them (fixture trees, a stub
+            # cargo, python3 flock holders; local target dirs under a temp
+            # root, no network). Not a rule lint.
             vendor_build:
               - 'scripts/vendor-build.sh'
               - 'scripts/lib/vendor_build.py'
               - 'scripts/test-vendor-build.sh'
+              - 'scripts/vendor-cargo.sh'
+              - 'scripts/lib/vendor_cargo.py'
+              - 'scripts/test-vendor-cargo.sh'
+              - 'scripts/lib/vendor-target.sh'
+              - 'scripts/test-vendor-target.sh'
               - '.github/workflows/ci.yml'
             grok:
               - 'third_party/grok-build/**'
@@ -268,18 +275,24 @@ jobs:
       - uses: actions/checkout@v4
       - run: python3 ./scripts/test-session-close.py
 
-  # The shared vendored-target queue. Hermetic: a fixture target tree plus
-  # python3 flock holders (one with a fake rustc child), so it pins the
-  # holder/waiter contract, the clone fail-close, the copy retry and prune
-  # without cargo, network, or ~/.cache writes.
+  # One worktree, one vendored target. Hermetic: fixture target trees and a
+  # three-worktree fixture repo plus python3 flock holders (one with a fake
+  # rustc child), a stub cargo, and real cargo only inside a temp fixture — so
+  # it pins the holder/waiter contract, the per-worktree queue, the wrapper's
+  # pin and memory gate, prune, and the shared-target hazard itself, without
+  # network or writes outside a temp dir. The seed cases need APFS clonefile
+  # and skip themselves on other platforms.
   vendor_build:
     name: vendor build queue
     needs: changes
     if: needs.changes.outputs.vendor_build == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.94.0"   # the wrapper fixture builds four path crates
       - name: Install lsof
         run: |
           if ! command -v lsof >/dev/null 2>&1; then
@@ -287,6 +300,8 @@ jobs:
             sudo apt-get install -y -qq lsof
           fi
       - run: ./scripts/test-vendor-build.sh
+      - run: ./scripts/test-vendor-target.sh
+      - run: ./scripts/test-vendor-cargo.sh
 
   # Hermetic. The rule that create and the owning session are one action, and
   # the live check that reads it: fixture worktrees over a throwaway git repo

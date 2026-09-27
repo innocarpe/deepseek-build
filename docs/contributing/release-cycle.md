@@ -386,7 +386,10 @@ peer of the CI path.
 
 1. **Build from the tag tree** (never from a worktree HEAD that differs from
    the tag): `git -C <wt> fetch origin && git -C <wt> checkout v<version>`
-   then `./scripts/build-grok-pager.sh release` in that worktree.
+   then `./scripts/build-grok-pager.sh release` in that worktree. That script
+   builds into the worktree's own `third_party/grok-build/target` (it pins the
+   path itself; one shared `CARGO_TARGET_DIR` would let a second worktree's
+   build overwrite these artifacts — measured 2026-09-27).
 2. **Stage the agent binary:** copy
    `third_party/grok-build/target/release/xai-grok-pager-bin` to
    `~/.deepseek-build/bin/deepseek-build-agent` (replace the stale copy) and

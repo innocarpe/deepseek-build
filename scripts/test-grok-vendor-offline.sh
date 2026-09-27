@@ -61,6 +61,9 @@ if ! command -v protoc >/dev/null && ! command -v dotslash >/dev/null; then
   fail "need protoc or dotslash for vendor builds"
 fi
 
+# shellcheck source=lib/vendor-target.sh
+source "${ROOT}/scripts/lib/vendor-target.sh"
+vendor_target_pin "$ROOT"
 cd "$VENDOR"
 
 THREADS="${PRE3X_TEST_THREADS:-4}"

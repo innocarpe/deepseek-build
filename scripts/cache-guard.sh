@@ -57,5 +57,11 @@ if [[ -z "$vendor_artifact" ]]; then
   echo "cache-guard: vendored Path A guard skipped (xai-grok-shell has not been compiled under third_party/grok-build/target; this gate does not start a cold vendor build)"
 else
   echo "cache-guard: vendored Path A guard (${vendor_artifact})"
-  (cd "$ROOT/third_party/grok-build" && cargo test -p xai-grok-shell --lib cache_guard_path_a -- --nocapture)
+  # shellcheck source=lib/vendor-target.sh
+  source "$ROOT/scripts/lib/vendor-target.sh"
+  (
+    cd "$ROOT/third_party/grok-build"
+    vendor_target_pin "$ROOT"
+    cargo test -p xai-grok-shell --lib cache_guard_path_a -- --nocapture
+  )
 fi

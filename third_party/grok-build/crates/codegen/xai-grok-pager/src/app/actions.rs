@@ -38,8 +38,6 @@ pub enum Action {
     Quit,
     /// Restart the binary to pick up a downloaded update.
     QuitForUpdate,
-    /// Resume the recent foreign session offered on the launch welcome screen.
-    ResumeForeignSession,
     /// Re-exec into the other screen mode (`true` means minimal).
     RelaunchInScreenMode {
         minimal: bool,
@@ -1460,18 +1458,6 @@ pub enum Effect {
         coordinator: crate::app::ForeignScanCoordinator,
         seq: u64,
     },
-    /// Canonicalize the launch cwd off the event-loop thread before store access.
-    CanonicalizeForeignResumeCwd {
-        requested_cwd: std::path::PathBuf,
-        launch_token: u64,
-    },
-    /// Detect the newest resumable foreign session without delaying first paint.
-    DetectForeignResumeHint {
-        canonical_cwd: std::path::PathBuf,
-        compat: xai_grok_foreign_sessions::EnabledForeignSessionSources,
-        grok_home: std::path::PathBuf,
-        launch_token: u64,
-    },
     /// Fetch a picker session list.
     FetchSessionList {
         /// The picker this fetch was issued for; the result routes back to this host's storage only.
@@ -2492,18 +2478,6 @@ pub enum TaskResult {
     ForeignSessionsScanned {
         entries: Vec<crate::app::app_view::SessionPickerEntry>,
         seq: u64,
-    },
-    /// Launch cwd canonicalization completed before foreign store access.
-    ForeignResumeCwdCanonicalized {
-        requested_cwd: std::path::PathBuf,
-        canonical_cwd: Option<std::path::PathBuf>,
-        launch_token: u64,
-    },
-    /// Launch-time foreign resume detection completed.
-    ForeignResumeHintDetected {
-        canonical_cwd: std::path::PathBuf,
-        launch_token: u64,
-        hint: Option<xai_grok_foreign_sessions::RecentForeignSession>,
     },
     /// Session list fetch failed.
     SessionListFailed {

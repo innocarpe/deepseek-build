@@ -96,9 +96,7 @@ use crossterm::event;
 use crossterm::execute;
 use crossterm::terminal::{self, Clear, ClearType, EnterAlternateScreen, SetTitle};
 pub use foreign_sessions::ForeignScanCoordinator;
-pub(crate) use foreign_sessions::{
-    badge_for_picker_source, foreign_tool_display_label, is_foreign_picker_source,
-};
+pub(crate) use foreign_sessions::{badge_for_picker_source, is_foreign_picker_source};
 use ratatui::backend::CrosstermBackend;
 pub use startup_failure::StartupFailure;
 use std::io::{self, IsTerminal, Write};

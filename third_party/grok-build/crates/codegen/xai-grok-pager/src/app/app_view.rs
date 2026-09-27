@@ -1102,9 +1102,6 @@ pub struct AppView {
     pub quit_for_update: bool,
     /// Printed to stderr after terminal restore when Welcome yes could not save trust.
     pub trust_quit_error: Option<String>,
-    /// Generation and state for detecting a foreign session to resume, run once per launch.
-    pub(crate) foreign_resume_launch_generation: u64,
-    pub(crate) foreign_resume_launch: Option<crate::app::foreign_sessions::ForeignResumeLaunch>,
     /// When set, the event loop should exit and the process re-exec into the other screen mode.
     /// Driven by `/minimal` and `/fullscreen`.
     /// Captures the session id at action time so a later teardown cannot drop `--resume`.
@@ -1642,8 +1639,6 @@ impl AppView {
             startup_warnings: Vec::new(),
             is_api_key_auth: false,
             pending_update_version: None,
-            foreign_resume_launch_generation: 0,
-            foreign_resume_launch: None,
             quit_for_update: false,
             trust_quit_error: None,
             relaunch: None,
@@ -2491,7 +2486,6 @@ impl AppView {
             &self.hidden_announcement_ids,
         )
         .is_some_and(|(owner, _, _)| !crate::views::announcements::is_dismissible(owner));
-        let has_foreign_resume = self.foreign_resume_hint().is_some();
         let sp_loading = crate::views::session_picker::loading_spinner_active(
             self.session_picker_entries.as_deref(),
             self.session_picker_source_filter,
@@ -2564,7 +2558,6 @@ impl AppView {
                     changelog_markdown: &self.changelog_markdown,
                     show_changelog_action: self.welcome_show_changelog_action,
                     has_pending_update: self.pending_update_version.is_some(),
-                    has_foreign_resume,
                     cwd_has_git_ancestor: self.cwd_has_git_ancestor,
                     session_picker_grouped: self.session_picker_grouped,
                     sp_source_filter: &mut self.session_picker_source_filter,
@@ -3226,8 +3219,6 @@ struct WelcomeInputCtx<'a> {
     /// Whether the welcome menu currently includes a "Changelog" row (above Quit), so index-to-action mapping accounts for it.
     show_changelog_action: bool,
     has_pending_update: bool,
-    /// A recent foreign session is available to resume when no update is pending.
-    has_foreign_resume: bool,
     cwd_has_git_ancestor: bool,
     session_picker_grouped: bool,
     sp_source_filter: &'a mut crate::views::session_picker::SourceFilter,
@@ -3786,9 +3777,6 @@ fn handle_welcome_input(ev: &Event, ctx: &mut WelcomeInputCtx<'_>) -> InputOutco
             }
             if ctx.has_pending_update && key!('u', CONTROL).matches(key) {
                 return InputOutcome::Action(Action::QuitForUpdate);
-            }
-            if ctx.has_foreign_resume && key!('u', CONTROL).matches(key) {
-                return InputOutcome::Action(Action::ResumeForeignSession);
             }
             if ctx.has_claude_import && key!('i', CONTROL).matches(key) {
                 return InputOutcome::Action(Action::ImportClaudeSettings);
@@ -4449,7 +4437,6 @@ impl AppView {
         let scroll_debug_panel = self.scroll_debug_panel();
         let dev_fps_rows = self.dev_fps_rows();
         let fps_overlay = self.fps_hud.overlay(dev_fps_rows);
-        let foreign_resume_hint = self.foreign_resume_hint().cloned();
         let privacy_banner_agent = self.privacy_banner_should_show()
             && !crate::views::announcements::has_critical_session_announcement(
                 &self.active_announcements,
@@ -4619,7 +4606,6 @@ impl AppView {
                                 pending_hint,
                                 startup_warnings: &self.startup_warnings,
                                 pending_update_version: self.pending_update_version.as_deref(),
-                                foreign_resume_hint: foreign_resume_hint.as_ref(),
                                 session_picker_content_results: self
                                     .session_picker_content_results
                                     .as_deref(),

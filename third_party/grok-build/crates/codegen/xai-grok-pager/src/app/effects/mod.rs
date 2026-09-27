@@ -631,59 +631,6 @@ pub(crate) fn execute(
                 });
             coordinator.install_abort_handle(seq, abort_handle);
         }
-        Effect::CanonicalizeForeignResumeCwd { requested_cwd, launch_token } => {
-            tasks
-                .spawn(async move {
-                    let cwd_for_task = requested_cwd.clone();
-                    let canonical_cwd = tokio::task::spawn_blocking(move || {
-                            dunce::canonicalize(cwd_for_task).ok()
-                        })
-                        .await
-                        .unwrap_or_else(|error| {
-                            tracing::warn!(%error, "foreign resume cwd canonicalization task failed");
-                            None
-                        });
-                    TaskResult::ForeignResumeCwdCanonicalized {
-                        requested_cwd,
-                        canonical_cwd,
-                        launch_token,
-                    }
-                });
-        }
-        Effect::DetectForeignResumeHint {
-            canonical_cwd,
-            compat,
-            grok_home,
-            launch_token,
-        } => {
-            tasks
-                .spawn(async move {
-                    let cwd_for_scan = canonical_cwd.clone();
-                    let recent = crate::app::foreign_sessions::with_gated_sources_async(
-                            compat,
-                            &grok_home,
-                            |enabled| async move {
-                                tokio::task::spawn_blocking(move || xai_grok_foreign_sessions::most_recent_foreign_session(
-                                        &cwd_for_scan,
-                                        enabled,
-                                        crate::app::foreign_sessions::RESUME_HINT_WINDOW,
-                                    ))
-                                    .await
-                                    .unwrap_or_else(|error| {
-                                        tracing::warn!(%error, "foreign resume detection task failed");
-                                        None
-                                    })
-                            },
-                        )
-                        .await
-                        .flatten();
-                    TaskResult::ForeignResumeHintDetected {
-                        canonical_cwd,
-                        launch_token,
-                        hint: recent,
-                    }
-                });
-        }
         Effect::FetchSessionList {
             host,
             cwd_override,

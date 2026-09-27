@@ -384,25 +384,6 @@ fn dashboard_new_agent_abandons_unused_home() {
 }
 
 #[test]
-fn foreign_resume_still_detects_after_home_session_create() {
-    let mut app = test_app();
-    maybe_create_home_session(&mut app);
-    assert!(
-        app.only_unused_home_or_empty(),
-        "unused home must still count as a cold Welcome launch"
-    );
-    app.foreign_session_compat = xai_grok_foreign_sessions::EnabledForeignSessionSources {
-        claude: true,
-        ..Default::default()
-    };
-    let effect = app.begin_foreign_resume_detection();
-    assert!(
-        effect.is_some(),
-        "Claude/Codex/Cursor continue hint must still run after optimistic home create"
-    );
-}
-
-#[test]
 fn attaching_home_husk_promotes_it_so_new_session_does_not_delete_it() {
     let mut app = test_app();
     maybe_create_home_session(&mut app);

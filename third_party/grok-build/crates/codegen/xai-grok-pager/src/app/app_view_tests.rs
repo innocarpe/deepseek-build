@@ -271,8 +271,6 @@ pub(crate) fn test_app() -> AppView {
         startup_warnings: Vec::new(),
         is_api_key_auth: false,
         pending_update_version: None,
-        foreign_resume_launch_generation: 0,
-        foreign_resume_launch: None,
         quit_for_update: false,
         trust_quit_error: None,
         relaunch: None,
@@ -2334,45 +2332,16 @@ fn welcome_ctrl_q_requires_confirmation() {
     );
 }
 #[test]
-fn welcome_ctrl_u_update_keeps_priority_over_foreign_resume() {
+fn welcome_ctrl_u_restarts_pending_update() {
     let mut app = test_app();
-    app.foreign_session_compat = xai_grok_foreign_sessions::EnabledForeignSessionSources {
-        cursor: true,
-        ..Default::default()
-    };
-    let crate::app::actions::Effect::CanonicalizeForeignResumeCwd {
-        requested_cwd,
-        launch_token,
-    } = app.begin_foreign_resume_detection().unwrap()
-    else {
-        panic!("expected canonicalization effect");
-    };
-    let canonical_cwd = dunce::canonicalize(&requested_cwd).unwrap();
-    assert!(app.accept_foreign_resume_canonical_cwd(
-        launch_token,
-        &requested_cwd,
-        Some(canonical_cwd.clone()),
-    ));
-    app.apply_foreign_resume_detection(
-        launch_token,
-        &canonical_cwd,
-        Some(xai_grok_foreign_sessions::RecentForeignSession {
-            tool: xai_grok_foreign_sessions::ForeignSessionTool::Cursor,
-            native_id: "cursor-session".into(),
-            age: std::time::Duration::from_secs(30),
-        }),
-    );
-    let key = key_event(KeyCode::Char('u'), KeyModifiers::CONTROL);
-    assert!(matches!(
-        app.handle_input(&key),
-        InputOutcome::Action(Action::ResumeForeignSession)
-    ));
     app.pending_update_version = Some("9.9.9".into());
+    let key = key_event(KeyCode::Char('u'), KeyModifiers::CONTROL);
     assert!(matches!(
         app.handle_input(&key),
         InputOutcome::Action(Action::QuitForUpdate)
     ));
 }
+
 #[test]
 fn minimal_ctrl_g_edits_prompt_while_full_tui_keeps_tasks() {
     let event = key_event(KeyCode::Char('g'), KeyModifiers::CONTROL);

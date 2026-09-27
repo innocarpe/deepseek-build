@@ -692,33 +692,6 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
         TaskResult::ForeignSessionsScanned { entries, seq } => {
             handle_foreign_sessions_scanned(app, entries, seq)
         }
-        TaskResult::ForeignResumeCwdCanonicalized {
-            requested_cwd,
-            canonical_cwd,
-            launch_token,
-        } => {
-            let accepted_cwd = canonical_cwd.clone();
-            if app.accept_foreign_resume_canonical_cwd(launch_token, &requested_cwd, canonical_cwd)
-                && let Some(canonical_cwd) = accepted_cwd
-            {
-                vec![Effect::DetectForeignResumeHint {
-                    canonical_cwd,
-                    compat: app.foreign_session_compat,
-                    grok_home: xai_grok_tools::util::grok_home::grok_home(),
-                    launch_token,
-                }]
-            } else {
-                vec![]
-            }
-        }
-        TaskResult::ForeignResumeHintDetected {
-            canonical_cwd,
-            launch_token,
-            hint,
-        } => {
-            app.apply_foreign_resume_detection(launch_token, &canonical_cwd, hint);
-            vec![]
-        }
         TaskResult::SessionListFailed {
             host,
             generation,

@@ -1,5 +1,5 @@
 use super::actions::Effect;
-use super::app_view::{ActiveView, AppView, SessionPickerEntry};
+use super::app_view::SessionPickerEntry;
 use parking_lot::Mutex;
 use std::collections::HashSet;
 use std::future::Future;
@@ -8,143 +8,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Semaphore;
 use xai_grok_foreign_sessions::{
-    EnabledForeignSessionSources, ForeignSessionSummary, ForeignSessionTool, RecentForeignSession,
+    EnabledForeignSessionSources, ForeignSessionSummary, ForeignSessionTool,
 };
-pub(crate) const RESUME_HINT_WINDOW: std::time::Duration = std::time::Duration::from_secs(10 * 60);
-#[derive(Debug, Clone)]
-pub(crate) struct ForeignResumeLaunch {
-    token: u64,
-    requested_cwd: PathBuf,
-    canonical_cwd: Option<PathBuf>,
-    hint: Option<RecentForeignSession>,
-}
-impl AppView {
-    fn has_foreign_resume_startup_conflict(&self) -> bool {
-        !self.deferred_startup.is_empty()
-    }
-    fn foreign_resume_launch_welcome(&self) -> bool {
-        self.active_view == ActiveView::Welcome
-            && self.auth_return_view.is_none()
-            && self.only_unused_home_or_empty()
-            && !self.chat_mode
-            && !self.is_zdr_blocked()
-            && self.pending_update_version.is_none()
-    }
-    fn pristine_foreign_resume_welcome(&self) -> bool {
-        self.foreign_resume_launch_welcome() && !self.has_foreign_resume_startup_conflict()
-    }
-    fn foreign_resume_context_matches(&self, launch: &ForeignResumeLaunch) -> bool {
-        self.foreign_resume_launch_welcome() && self.cwd == launch.requested_cwd
-    }
-    fn invalidate_foreign_resume_launch(&mut self) {
-        self.foreign_resume_launch_generation =
-            self.foreign_resume_launch_generation.wrapping_add(1);
-        self.foreign_resume_launch = None;
-    }
-    pub(crate) fn begin_foreign_resume_detection(&mut self) -> Option<Effect> {
-        let compat = self.foreign_session_compat;
-        if self.foreign_resume_launch.is_some()
-            || !(compat.claude || compat.codex || compat.cursor)
-            || !self.pristine_foreign_resume_welcome()
-        {
-            return None;
-        }
-        self.foreign_resume_launch_generation =
-            self.foreign_resume_launch_generation.wrapping_add(1);
-        let token = self.foreign_resume_launch_generation;
-        let requested_cwd = self.cwd.clone();
-        self.foreign_resume_launch = Some(ForeignResumeLaunch {
-            token,
-            requested_cwd: requested_cwd.clone(),
-            canonical_cwd: None,
-            hint: None,
-        });
-        Some(Effect::CanonicalizeForeignResumeCwd {
-            requested_cwd,
-            launch_token: token,
-        })
-    }
-    pub(crate) fn accept_foreign_resume_canonical_cwd(
-        &mut self,
-        token: u64,
-        requested_cwd: &Path,
-        canonical_cwd: Option<PathBuf>,
-    ) -> bool {
-        let matches_launch = self
-            .foreign_resume_launch
-            .as_ref()
-            .is_some_and(|launch| launch.token == token && launch.requested_cwd == requested_cwd);
-        if !matches_launch {
-            return false;
-        }
-        let Some(canonical_cwd) = canonical_cwd.filter(|_| {
-            self.pristine_foreign_resume_welcome()
-                && self
-                    .foreign_resume_launch
-                    .as_ref()
-                    .is_some_and(|launch| self.foreign_resume_context_matches(launch))
-        }) else {
-            self.invalidate_foreign_resume_launch();
-            return false;
-        };
-        if let Some(launch) = self.foreign_resume_launch.as_mut() {
-            launch.canonical_cwd = Some(canonical_cwd);
-            true
-        } else {
-            false
-        }
-    }
-    pub(crate) fn apply_foreign_resume_detection(
-        &mut self,
-        token: u64,
-        canonical_cwd: &Path,
-        hint: Option<RecentForeignSession>,
-    ) {
-        let matches_launch = self.foreign_resume_launch.as_ref().is_some_and(|launch| {
-            launch.token == token && launch.canonical_cwd.as_deref() == Some(canonical_cwd)
-        });
-        if !matches_launch {
-            return;
-        }
-        let Some(hint) = hint.filter(|_| {
-            self.pristine_foreign_resume_welcome()
-                && self
-                    .foreign_resume_launch
-                    .as_ref()
-                    .is_some_and(|launch| self.foreign_resume_context_matches(launch))
-        }) else {
-            self.invalidate_foreign_resume_launch();
-            return;
-        };
-        if let Some(launch) = self.foreign_resume_launch.as_mut() {
-            launch.hint = Some(hint);
-        }
-    }
-    pub(crate) fn foreign_resume_hint(&self) -> Option<&RecentForeignSession> {
-        self.foreign_resume_launch
-            .as_ref()
-            .filter(|launch| self.foreign_resume_context_matches(launch))
-            .and_then(|launch| launch.hint.as_ref())
-    }
-    pub(crate) fn take_foreign_resume_hint(&mut self) -> Option<RecentForeignSession> {
-        let hint = self
-            .foreign_resume_launch
-            .as_ref()
-            .filter(|launch| self.foreign_resume_context_matches(launch))
-            .and_then(|launch| launch.hint.clone())?;
-        self.invalidate_foreign_resume_launch();
-        Some(hint)
-    }
-    pub(crate) fn reconcile_foreign_resume_launch(&mut self) {
-        let invalid = self.foreign_resume_launch.as_ref().is_some_and(|launch| {
-            !self.foreign_resume_context_matches(launch)
-                || (launch.hint.is_none() && self.has_foreign_resume_startup_conflict())
-        });
-        if invalid {
-            self.invalidate_foreign_resume_launch();
-        }
-    }
-}
 /// Opaque per-application coordinator for foreign session scans.
 #[derive(Debug, Clone)]
 pub struct ForeignScanCoordinator {
@@ -237,13 +102,6 @@ impl ForeignPickerSource {
             Self::Cursor => "cursor",
         }
     }
-    pub(crate) const fn display_label(self) -> &'static str {
-        match self {
-            Self::Claude => "Claude Code",
-            Self::Codex => "Codex",
-            Self::Cursor => "Cursor",
-        }
-    }
     const fn skill_name(self) -> &'static str {
         match self {
             Self::Claude => "resume-claude",
@@ -290,9 +148,6 @@ pub(crate) fn badge_for_picker_source(source: &str) -> &'static str {
             .map(ForeignPickerSource::picker_source)
             .unwrap_or(""),
     }
-}
-pub(crate) fn foreign_tool_display_label(tool: ForeignSessionTool) -> &'static str {
-    ForeignPickerSource::from_tool(tool).display_label()
 }
 pub(crate) async fn gated_sources_async_with<F, Fut>(
     compat: EnabledForeignSessionSources,
@@ -570,37 +425,6 @@ mod tests {
                 cursor: true,
             }
         );
-    }
-    #[test]
-    fn launch_detection_schedules_once_only_for_pristine_welcome() {
-        let mut app = crate::app::app_view::tests::test_app();
-        app.foreign_session_compat = EnabledForeignSessionSources {
-            cursor: true,
-            ..Default::default()
-        };
-        app.deferred_startup.prompt = Some("explicit startup".into());
-        assert!(app.begin_foreign_resume_detection().is_none());
-        app.deferred_startup.prompt = None;
-        let Some(Effect::CanonicalizeForeignResumeCwd {
-            requested_cwd,
-            launch_token,
-        }) = app.begin_foreign_resume_detection()
-        else {
-            panic!("expected canonicalization effect");
-        };
-        assert!(
-            app.begin_foreign_resume_detection().is_none(),
-            "one launch must schedule at most one detection"
-        );
-        app.active_view = crate::app::app_view::ActiveView::AgentDashboard;
-        app.reconcile_foreign_resume_launch();
-        app.active_view = crate::app::app_view::ActiveView::Welcome;
-        assert!(!app.accept_foreign_resume_canonical_cwd(
-            launch_token,
-            &requested_cwd,
-            dunce::canonicalize(&requested_cwd).ok(),
-        ));
-        assert!(app.foreign_resume_hint().is_none());
     }
     #[test]
     fn scan_effect_defers_skill_gate_to_background_lane() {

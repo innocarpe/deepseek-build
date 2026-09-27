@@ -325,38 +325,6 @@ fn config_editor_action_still_uses_typed_request() {
         }) if queued == &path
     ));
 }
-fn seed_foreign_resume_hint(
-    app: &mut AppView,
-    tool: xai_grok_foreign_sessions::ForeignSessionTool,
-) {
-    app.foreign_session_compat = xai_grok_foreign_sessions::EnabledForeignSessionSources {
-        claude: true,
-        codex: true,
-        cursor: true,
-    };
-    let Effect::CanonicalizeForeignResumeCwd {
-        requested_cwd,
-        launch_token,
-    } = app.begin_foreign_resume_detection().unwrap()
-    else {
-        panic!("expected canonicalization effect");
-    };
-    let canonical_cwd = dunce::canonicalize(&requested_cwd).unwrap();
-    assert!(app.accept_foreign_resume_canonical_cwd(
-        launch_token,
-        &requested_cwd,
-        Some(canonical_cwd.clone()),
-    ));
-    app.apply_foreign_resume_detection(
-        launch_token,
-        &canonical_cwd,
-        Some(xai_grok_foreign_sessions::RecentForeignSession {
-            tool,
-            native_id: "native-id".into(),
-            age: std::time::Duration::from_secs(60),
-        }),
-    );
-}
 /// Sending feedback is a submit: it retires the active ephemeral tip.
 #[test]
 fn send_feedback_clears_active_ephemeral_tip() {
@@ -403,89 +371,6 @@ fn quit_returns_quit_effect() {
     let mut app = test_app();
     let effects = dispatch(Action::Quit, &mut app);
     assert!(matches!(effects.as_slice(), [Effect::Quit]));
-}
-#[test]
-fn resume_foreign_session_consumes_hint_and_uses_each_tools_prompt() {
-    use xai_grok_foreign_sessions::ForeignSessionTool;
-    for (tool, prompt) in [
-        (ForeignSessionTool::Claude, "/resume-claude native-id"),
-        (ForeignSessionTool::Codex, "/resume-codex native-id"),
-        (ForeignSessionTool::Cursor, "/resume-cursor native-id"),
-    ] {
-        let mut app = test_app();
-        seed_foreign_resume_hint(&mut app, tool);
-        let effects = dispatch(Action::ResumeForeignSession, &mut app);
-        assert!(app.foreign_resume_hint().is_none());
-        assert!(
-            effects
-                .iter()
-                .any(|effect| matches!(effect, Effect::CreateSession { .. }))
-        );
-        assert_eq!(
-            agent_ref(&app, AgentId(0))
-                .session
-                .pending_prompts
-                .front()
-                .map(|pending| pending.text.as_str()),
-            Some(prompt)
-        );
-    }
-}
-#[test]
-fn resume_foreign_session_without_hint_is_noop() {
-    let mut app = test_app();
-    assert!(app.foreign_resume_hint().is_none());
-    let effects = dispatch(Action::ResumeForeignSession, &mut app);
-    assert!(effects.is_empty(), "no hint → no effects");
-    assert!(app.foreign_resume_hint().is_none());
-}
-#[test]
-fn resume_foreign_session_stashes_prompt_behind_trust_and_auth() {
-    use xai_grok_foreign_sessions::ForeignSessionTool;
-    for (tool, prompt, auth_pending) in [
-        (ForeignSessionTool::Codex, "/resume-codex native-id", false),
-        (ForeignSessionTool::Cursor, "/resume-cursor native-id", true),
-    ] {
-        let mut app = test_app();
-        if auth_pending {
-            app.auth_state = AuthState::Pending { error: None };
-        } else {
-            app.trust_state = TrustState::Pending {
-                workspace: std::path::PathBuf::from("/work/proj"),
-            };
-        }
-        seed_foreign_resume_hint(&mut app, tool);
-        app.deferred_startup.session =
-            Some(crate::app::session_startup::DeferredSessionStartup::Load {
-                session_id: "must-not-load".into(),
-                session_cwd: Some(std::path::PathBuf::from("/other")),
-                chat_kind: true,
-            });
-        app.deferred_startup.worktree = true;
-        app.deferred_startup.worktree_label = Some("stale".into());
-        app.deferred_startup.worktree_ref = Some("stale-ref".into());
-        app.deferred_startup.preferred_session_id = Some("stale-id".into());
-        app.deferred_startup.new_session = true;
-        app.deferred_startup.prompt = Some("stale prompt".into());
-        app.deferred_startup.open_dashboard = true;
-        app.deferred_startup.pending_chat = true;
-        assert!(
-            app.foreign_resume_hint().is_some(),
-            "the explicit nudge remains available to supersede deferred intents"
-        );
-        let effects = dispatch(Action::ResumeForeignSession, &mut app);
-        assert!(effects.is_empty());
-        assert!(app.foreign_resume_hint().is_none());
-        assert_eq!(app.deferred_startup.prompt.as_deref(), Some(prompt));
-        assert!(app.deferred_startup.session.is_none());
-        assert!(!app.deferred_startup.worktree);
-        assert!(app.deferred_startup.worktree_label.is_none());
-        assert!(app.deferred_startup.worktree_ref.is_none());
-        assert!(app.deferred_startup.preferred_session_id.is_none());
-        assert!(!app.deferred_startup.new_session);
-        assert!(!app.deferred_startup.open_dashboard);
-        assert!(!app.deferred_startup.pending_chat);
-    }
 }
 #[test]
 fn follow_up_chip_does_not_execute_slash_command() {

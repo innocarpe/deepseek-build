@@ -164,7 +164,6 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
     effects
 }
 fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
-    app.reconcile_foreign_resume_launch();
     let effects = match action {
         Action::Quit | Action::QuitConfirmed => confirmed_quit(app),
         Action::QuitForUpdate => {
@@ -172,24 +171,6 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
             app.quit_for_update = true;
             effects.push(Effect::Quit);
             effects
-        }
-        Action::ResumeForeignSession => {
-            let Some(hint) = app.take_foreign_resume_hint() else {
-                return vec![];
-            };
-            clear_startup_actions(app);
-            let source = crate::app::foreign_sessions::ForeignPickerSource::from_tool(hint.tool);
-            tracing::info!(
-                tool = source.picker_source(),
-                age_secs = hint.age.as_secs(),
-                "foreign_resume accepted"
-            );
-            let prompt = source.resume_prompt(&hint.native_id);
-            if !app.session_startup_allowed() {
-                app.deferred_startup.prompt = Some(prompt);
-                return vec![];
-            }
-            super::dispatch_initial_prompt(app, prompt)
         }
         Action::RelaunchInScreenMode { minimal } => {
             if !crate::app::screen_mode_relaunch::exec_switch_forced() {
@@ -1613,7 +1594,6 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::JumpDismiss => dispatch_jump_dismiss(app),
     };
     restore_stash_where_the_draft_was_consumed(app);
-    app.reconcile_foreign_resume_launch();
     sync_sleep_inhibitor(app);
     effects
 }

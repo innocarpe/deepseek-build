@@ -1855,11 +1855,6 @@ pub(crate) async fn run(
         }
         presenter.request_presentation(&mut app, terminal, false);
     }
-    if let Some(effect) = app.begin_foreign_resume_detection()
-        && process_effects(vec![effect], &mut tasks, &mut app, &progress_tx)
-    {
-        return Ok(finish_run(&mut app));
-    }
     schedule_tick(&mut animation_tick_at, &app, tick_interval);
     let mut resize_debounce_at: Option<Instant> = None;
     app.scroll_state.set_redraw_cadence(scroll_cadence);

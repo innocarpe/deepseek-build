@@ -111,9 +111,6 @@ const H_MARGIN: u16 = 2;
 /// Horizontal margin in compact mode.
 const H_MARGIN_COMPACT: u16 = 1;
 
-/// Keep the foreign resume hint inside the prompt text, including on compact terminals.
-const FOREIGN_RESUME_INSET: u16 = 2;
-
 /// Minimum width for the menu and changelog sections so they don't resize when the import row toggles.
 /// Derivation: "[ " (2) + import-claude label (22) + gap (4) + "ctrl+i  [x]" (11) + " ]" (2) = 41.
 /// The extra 10 columns leave breathing room.
@@ -713,8 +710,6 @@ pub struct WelcomeRenderParams<'a> {
     pub pending_hint: Option<crate::views::shortcuts_bar::PendingHint>,
     pub startup_warnings: &'a [StartupWarning],
     pub pending_update_version: Option<&'a str>,
-    /// Recent foreign session offered on ctrl+u, suppressed by a pending update.
-    pub foreign_resume_hint: Option<&'a xai_grok_foreign_sessions::RecentForeignSession>,
     pub is_api_key_auth: bool,
     pub session_picker_content_results:
         Option<&'a [xai_grok_shell::extensions::session_search::SearchSessionHit]>,
@@ -1592,35 +1587,6 @@ fn inset_horizontal(rect: Rect, inset: u16) -> Rect {
     }
 }
 
-/// The measured and painted hint share one paragraph so narrow terminals reserve every wrapped row.
-fn foreign_resume_tip(
-    hint: &xai_grok_foreign_sessions::RecentForeignSession,
-    theme: &Theme,
-) -> Paragraph<'static> {
-    let mins = hint.age.as_secs() / 60;
-    let when = if mins == 0 {
-        "moments ago".to_string()
-    } else {
-        format!("{mins}m ago")
-    };
-    let accent = Style::default().fg(theme.accent_user);
-    let accent_bold = accent.add_modifier(Modifier::BOLD);
-    let tool = crate::app::foreign_tool_display_label(hint.tool);
-    Paragraph::new(vec![
-        Line::from(vec![
-            Span::styled("Resume ", accent),
-            Span::styled(tool, accent_bold),
-            Span::styled(" in DeepSeek Build", accent),
-        ]),
-        Line::from(vec![
-            Span::styled(format!("{when} · press "), accent),
-            Span::styled("ctrl+u", accent_bold),
-        ]),
-    ])
-    .style(Style::default().bg(theme.bg_base))
-    .wrap(Wrap { trim: true })
-}
-
 /// Render the changelog section (header and bullets), centered to the menu width.
 /// When `clickable` (full notes exist) the whole block opens the notes on click and brightens while hovered; returns that clickable rect.
 #[allow(clippy::too_many_arguments)]
@@ -1772,8 +1738,7 @@ fn render_welcome_done(
         msg_lines + action_line + 1 // +1 for buffer spacing
     });
     let has_update_tip = p.pending_update_version.is_some();
-    let has_resume_tip = !has_update_tip && p.foreign_resume_hint.is_some();
-    // Tip slot precedence: pending update, then privacy banner (wraps, so its height depends on width), then resume hint, then random tip
+    // Tip slot precedence: pending update, then privacy banner (wraps, so its height depends on width), then random tip
     // The update outranks the upsell so a ready update is never invisible; the banner takes the slot back once it's applied
     let tip_height = if !show_picker {
         if has_update_tip {
@@ -1782,11 +1747,6 @@ fn render_welcome_done(
             // Same inset the banner paint below uses, so the reserved rows and the wrapped row count can't drift
             let inset = prompt::prompt_inset(p.compact);
             crate::views::privacy_banner::height(content_area.width.saturating_sub(inset * 2))
-        } else if has_resume_tip {
-            let width = content_area.width.saturating_sub(FOREIGN_RESUME_INSET * 2);
-            p.foreign_resume_hint
-                .map(|hint| foreign_resume_tip(hint, theme).line_count(width) as u16)
-                .unwrap_or(0)
         } else if let Some(tip_text) = p.tip {
             let inset = prompt::prompt_inset(welcome_compact);
             let tip_width = content_area.width.saturating_sub(inset * 2);
@@ -2222,16 +2182,6 @@ fn render_welcome_done(
                 .render(tip_inset, buf);
         }
 
-        // Recent foreign session: offer a one-click resume in the tip area (only when no update is pending; the update shares ctrl+u and wins)
-        if !p.privacy_banner
-            && p.pending_update_version.is_none()
-            && let Some(hint) = p.foreign_resume_hint
-            && layout.tip.height > 0
-        {
-            foreign_resume_tip(hint, theme)
-                .render(inset_horizontal(layout.tip, FOREIGN_RESUME_INSET), buf);
-        }
-
         let warning = p.credit_balance.and_then(|bal| {
             crate::views::credit_bar::usage_warning(bal, p.auto_topup, p.usage_visible)
         });
@@ -2255,11 +2205,8 @@ fn render_welcome_done(
             p.prompt_focus,
             prompt,
             &usage_info,
-            if p.privacy_banner
-                || p.pending_update_version.is_some()
-                || p.foreign_resume_hint.is_some()
-            {
-                // Banner/update/resume tip already rendered above with custom styling.
+            if p.privacy_banner || p.pending_update_version.is_some() {
+                // Banner/update tip already rendered above with custom styling.
                 None
             } else {
                 p.tip
@@ -2896,7 +2843,6 @@ mod tests {
             pending_hint: None,
             startup_warnings: &[],
             pending_update_version: None,
-            foreign_resume_hint: None,
             is_api_key_auth: false,
             session_picker_content_results: None,
             session_picker_content_loading: false,
@@ -2926,8 +2872,8 @@ mod tests {
         }
     }
 
-    fn render_done_text_at_width(params: &WelcomeRenderParams<'_>, width: u16) -> String {
-        let area = Rect::new(0, 0, width, 40);
+    fn render_done_text(params: &WelcomeRenderParams<'_>) -> String {
+        let area = Rect::new(0, 0, 100, 40);
         let mut buf = Buffer::empty(area);
         let mut prompt = PromptWidget::new();
         let mut picker = PickerState::default();
@@ -2935,108 +2881,38 @@ mod tests {
         buffer_text(&buf)
     }
 
-    fn render_done_text(params: &WelcomeRenderParams<'_>) -> String {
-        render_done_text_at_width(params, 100)
-    }
-
     #[test]
-    fn foreign_resume_tip_names_each_tool_and_age() {
-        use xai_grok_foreign_sessions::ForeignSessionTool;
-
+    fn narrow_welcome_keeps_the_normal_tip_above_the_prompt() {
         let auth = AuthState::Done;
         let trust = TrustState::Done;
-        for (tool, label) in [
-            (ForeignSessionTool::Claude, "Claude Code"),
-            (ForeignSessionTool::Codex, "Codex"),
-            (ForeignSessionTool::Cursor, "Cursor"),
-        ] {
-            let hint = xai_grok_foreign_sessions::RecentForeignSession {
-                tool,
-                native_id: "native-id".into(),
-                age: std::time::Duration::from_secs(125),
-            };
-            let mut params = render_params(&auth, &trust, None);
-            params.foreign_resume_hint = Some(&hint);
-            let text = render_done_text(&params);
-            assert!(
-                text.contains(&format!("Resume {label} in DeepSeek Build")),
-                "{text}"
-            );
-            assert!(text.contains("2m ago"), "{text}");
-            assert!(text.contains("press ctrl+u"), "{text}");
-        }
-    }
-
-    #[test]
-    fn foreign_resume_tip_wraps_without_losing_source_action_or_side_padding() {
-        use xai_grok_foreign_sessions::ForeignSessionTool;
-
-        let auth = AuthState::Done;
-        let trust = TrustState::Done;
-        for (tool, label) in [
-            (ForeignSessionTool::Claude, "Claude Code"),
-            (ForeignSessionTool::Codex, "Codex"),
-            (ForeignSessionTool::Cursor, "Cursor"),
-        ] {
-            let hint = xai_grok_foreign_sessions::RecentForeignSession {
-                tool,
-                native_id: "native-id".into(),
-                age: std::time::Duration::from_secs(125),
-            };
+        for width in [20, 24, 40] {
             for compact in [false, true] {
-                for width in [20, 24, 40, 52, 100] {
-                    let mut params = render_params(&auth, &trust, None);
-                    params.compact = compact;
-                    params.foreign_resume_hint = Some(&hint);
-                    let text = render_done_text_at_width(&params, width);
-                    let lines: Vec<_> = text.lines().collect();
-                    let last = lines
-                        .iter()
-                        .position(|line| line.contains("ctrl+u"))
-                        .unwrap_or_else(|| panic!("missing action at width {width}: {text}"));
-                    let first = lines[..last]
-                        .iter()
-                        .rposition(|line| line.trim_start().starts_with("Resume "))
-                        .unwrap_or_else(|| panic!("missing hint at width {width}: {text}"));
-                    assert!(first < last, "width {width}: {text}");
-                    let tip = lines[first..=last]
-                        .iter()
-                        .map(|line| line.trim())
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    assert_eq!(
-                        tip,
-                        format!("Resume {label} in DeepSeek Build 2m ago · press ctrl+u"),
-                        "width {width}, compact={compact}"
-                    );
-                    for line in &lines[first..=last] {
-                        assert!(
-                            line.starts_with("  "),
-                            "left inset at width {width}: {text}"
-                        );
-                        assert!(line.ends_with("  "), "right inset at width {width}: {text}");
-                    }
-                }
+                let mut params = render_params(&auth, &trust, None);
+                params.tip = Some("Use /help");
+                params.compact = compact;
+                let area = Rect::new(0, 0, width, 22);
+                let mut buf = Buffer::empty(area);
+                let mut prompt = PromptWidget::new();
+                let mut picker = PickerState::default();
+                let result = render_welcome(area, &mut buf, &params, &mut prompt, &mut picker);
+                let text = buffer_text(&buf);
+                let tip_row = text
+                    .lines()
+                    .position(|line| line.contains("Tip: Use /help"))
+                    .unwrap_or_else(|| {
+                        panic!("tip missing at {width} columns, compact={compact}: {text}")
+                    });
+                let prompt_y = result.prompt_rect.expect("welcome prompt").y as usize;
+                assert_eq!(
+                    tip_row + 2,
+                    prompt_y,
+                    "{width} columns, compact={compact}: {text}"
+                );
+                assert!(!text.contains("Resume Claude Code"), "{text}");
+                assert!(!text.contains("Resume Codex"), "{text}");
+                assert!(!text.contains("Resume Cursor"), "{text}");
             }
         }
-    }
-
-    #[test]
-    fn pending_update_suppresses_foreign_resume_tip() {
-        let auth = AuthState::Done;
-        let trust = TrustState::Done;
-        let hint = xai_grok_foreign_sessions::RecentForeignSession {
-            tool: xai_grok_foreign_sessions::ForeignSessionTool::Cursor,
-            native_id: "native-id".into(),
-            age: std::time::Duration::from_secs(30),
-        };
-        let mut params = render_params(&auth, &trust, None);
-        params.foreign_resume_hint = Some(&hint);
-        params.pending_update_version = Some("9.9.9");
-
-        let text = render_done_text(&params);
-        assert!(text.contains("v9.9.9 available"), "{text}");
-        assert!(!text.contains("Resume Cursor in DeepSeek Build"), "{text}");
     }
 
     fn png() -> [u8; 8] {

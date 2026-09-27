@@ -1659,63 +1659,6 @@ async fn foreign_scan_task_echoes_sequence_without_enabled_sources() {
     }
     drop(app_coordinator);
 }
-#[tokio::test]
-async fn foreign_resume_detection_runs_as_task_result() {
-    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let (progress_tx, _progress_rx) = tokio::sync::mpsc::unbounded_channel();
-    let mut tasks = JoinSet::new();
-    let (quit, _) = execute(
-        Effect::CanonicalizeForeignResumeCwd {
-            requested_cwd: PathBuf::from("/path/that/does-not-exist"),
-            launch_token: 7,
-        },
-        &mut tasks,
-        &tx,
-        Path::new("."),
-        &SessionFlags::default(),
-        &progress_tx,
-    );
-    assert!(!quit);
-    match tasks.join_next().await.expect("task").expect("no panic") {
-        TaskResult::ForeignResumeCwdCanonicalized {
-            canonical_cwd,
-            launch_token,
-            ..
-        } => {
-            assert!(canonical_cwd.is_none());
-            assert_eq!(launch_token, 7);
-        }
-        other => panic!("expected ForeignResumeCwdCanonicalized, got {other:?}"),
-    }
-    let canonical_cwd = dunce::canonicalize(tempfile::tempdir().unwrap().path())
-        .unwrap();
-    let (quit, _) = execute(
-        Effect::DetectForeignResumeHint {
-            canonical_cwd: canonical_cwd.clone(),
-            compat: xai_grok_foreign_sessions::EnabledForeignSessionSources::default(),
-            grok_home: PathBuf::from("/path/that/must/not-be-read"),
-            launch_token: 8,
-        },
-        &mut tasks,
-        &tx,
-        Path::new("."),
-        &SessionFlags::default(),
-        &progress_tx,
-    );
-    assert!(!quit);
-    match tasks.join_next().await.expect("task").expect("no panic") {
-        TaskResult::ForeignResumeHintDetected {
-            canonical_cwd: result_cwd,
-            launch_token,
-            hint,
-        } => {
-            assert_eq!(result_cwd, canonical_cwd);
-            assert_eq!(launch_token, 8);
-            assert!(hint.is_none());
-        }
-        other => panic!("expected ForeignResumeHintDetected, got {other:?}"),
-    }
-}
 /// `FetchSessionList` wire shape: search sends `query` (no `allowRelax`); browse opts into `allowRelax` and parses `x.ai/listScope`.
 /// All outcomes echo `seq` and `query`.
 #[tokio::test]

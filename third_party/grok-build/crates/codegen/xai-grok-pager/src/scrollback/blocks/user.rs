@@ -146,39 +146,40 @@ fn token_styled_line(
 /// leaves none for the clock. A line narrower than `width` keeps its own cells (the clock may
 /// still close the row), and a grapheme that would cross the boundary stays out whole.
 ///
-/// Graphemes come from the joined text, so a combining mark in the span after its base letter
-/// stays with it, and each one is measured the way the buffer paints it: one grapheme at a time.
-/// A whole-string width can be narrower (`"لا".width()` is 1, painted as 2 cells).
+/// Cells are counted the way the buffer paints them (`Buffer::set_stringn`): span by span, one
+/// grapheme of that span at a time. A whole-string width can be narrower (`"لا".width()` is 1,
+/// painted as 2 cells), and graphemes of the joined text can straddle spans (an emoji sequence the
+/// wrapper split across rows) that the buffer still paints apart. Zero-width graphemes paint no
+/// cell, so the ones right after the cut stay: a combining mark in the span after its base letter
+/// is not dropped.
 fn clip_line_to_width(line: Line<'_>, width: usize) -> Line<'_> {
     let Line {
         style,
         alignment,
         spans,
     } = line;
-    let flat: String = spans.iter().map(|s| s.content.as_ref()).collect();
-    let mut used = 0usize;
-    let mut cut = 0usize;
-    for (at, grapheme) in flat.grapheme_indices(true) {
-        let cells = grapheme.width();
-        if used + cells > width {
-            break;
-        }
-        used += cells;
-        cut = at + grapheme.len();
-    }
     let mut out: Vec<Span<'_>> = Vec::new();
-    let mut start = 0usize;
+    let mut used = 0usize;
     for span in spans {
-        if start >= cut {
-            break;
+        let mut cut = None;
+        for (at, grapheme) in span.content.grapheme_indices(true) {
+            let cells = grapheme.width();
+            if used + cells > width {
+                cut = Some(at);
+                break;
+            }
+            used += cells;
         }
-        let end = start + span.content.len();
-        if end <= cut {
+        let Some(cut) = cut else {
             out.push(span);
-        } else if let Some(head) = span.content.get(..cut - start) {
+            continue;
+        };
+        if let Some(head) = span.content.get(..cut)
+            && !head.is_empty()
+        {
             out.push(Span::styled(head.to_string(), span.style));
         }
-        start = end;
+        break;
     }
     Line {
         style,
@@ -1653,6 +1654,33 @@ mod tests {
         let last = line_text(&line_at(&lines, 1).content);
         assert_eq!(last, format!("{} \u{2026}", pair.repeat(4)));
         assert_eq!(str_display_cells(&last), 10);
+    }
+
+    /// The cut counts cells span by span, as the buffer paints them. The wrapper splits a family emoji
+    /// across two rows; joined, its pieces are one grapheme of the text but still two spans, which the
+    /// buffer paints apart. Measuring the joined grapheme let the row run past the budget, and the
+    /// ellipsis was not painted.
+    #[test]
+    fn collapsed_last_line_counts_cells_span_by_span() {
+        const WIDTH: u16 = 6;
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}";
+        let block = UserPromptBlock::new(format!("head\n{family}ab\nend"));
+        assert_eq!(
+            block.wrap_prompt_lines(WIDTH, None, false, false).len(),
+            4,
+            "the premise: the wrapper splits the emoji line into two rows"
+        );
+        let lines = block.wrap_prompt_lines(WIDTH, Some(2), false, false);
+        let last = &line_at(&lines, 1).content;
+        let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, WIDTH, 1));
+        buf.set_line(0, 0, last, WIDTH);
+        let painted: String = (0..WIDTH)
+            .map(|x| buf.cell((x, 0)).unwrap().symbol().to_string())
+            .collect();
+        assert!(
+            painted.trim_end().ends_with('\u{2026}'),
+            "the ellipsis is painted: {painted:?} from {last:?}"
+        );
     }
 
     /// A quoted prompt's continuation rows start with the `│ ` the wrapper repeats. Joining the hidden

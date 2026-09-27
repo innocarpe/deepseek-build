@@ -8,8 +8,9 @@ ended at "through the PR, then hand". The body already said to merge. Sessions
 stopped at the window. On 2026-09-27 the same lock covers the debrief step:
 the close ends at the report only after the WC recording ran, and what that
 report has to say — the result and why, a source on every measured sentence,
-the owned worktree by exact path, a reason per not-done item, the checked
-range as the clean scope.
+the owned worktree by exact path with its removal state, a reason per not-done
+item, the checked range with what it showed, and runtime state only when it
+matters to the outcome.
 
 This module locks the phrases that have to sit inside that 160-character
 window, and it rejects a handoff brief whose prohibition contradicts the
@@ -75,8 +76,12 @@ BODY_NEEDLES = {
         "a reason per item",
         "left alone",
         "exact path",
-        "the checked range is clean",
+        "removed: false",
+        "retained on purpose",
+        "clean or dirty",
+        "not called clean",
         "deployed state",
+        "matters to the outcome",
     ),
     "skills/session-debrief/SKILL.md": (
         "not a summary of the final answer",
@@ -102,8 +107,15 @@ BODY_NEEDLES = {
 BODY_FORBIDDEN = {
     "skills/session-unit/SKILL.md": (
         "The PR is open, or the opening explicitly stopped earlier",
+        "a tree left in place names the condition that did not stand",
+        "Say the checked range is clean",
+        "when the turn asked for it and the session measured it",
     ),
-    "AGENTS.md": ("then the PR. Stop short of push or PR only when the",),
+    "AGENTS.md": (
+        "then the PR. Stop short of push or PR only when the",
+        "named by exact path with whether it was removed",
+        "it calls the checked range clean",
+    ),
 }
 
 AGENTS_SECTION = "## One session, one unit"
@@ -124,7 +136,11 @@ AGENTS_SECTION_NEEDLES = (
     "inference marked",
     "a reason per item",
     "exact path",
-    "the checked range clean",
+    "removed: false",
+    "retained on purpose",
+    "clean or dirty",
+    "nothing wider is called clean",
+    "matters to the outcome",
 )
 AGENTS_CLAIM_NEEDLE = "do not end the unit"
 

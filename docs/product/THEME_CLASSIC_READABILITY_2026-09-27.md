@@ -3,8 +3,9 @@
 > **What this file pins.** The classic `deepseeknight` skin keeps its dark-navy
 > ground; legibility is carried by the glyph ramp. The invariants a later
 > touch-up must hold: the WCAG floors on `bg_base`, the emphasis/body/tool-row
-> CIE L\* gaps, the blue cast of `bg_base`, the scrollbar Σ gap and
-> `bg_visual != bg_highlight`. The first two are pinned by tests in
+> CIE L\* gaps, the blue cast of `bg_base`, the scrollbar Σ gap,
+> `bg_visual != bg_highlight` and the focused composer-border tone `#3248BE`
+> (the follow-up below). The first two are pinned by tests in
 > `third_party/grok-build/crates/codegen/xai-grok-pager-render/src/theme/deepseeknight.rs`;
 > the rest by the tests listed below.
 
@@ -14,7 +15,7 @@
 | Theme | `/config` → **DeepSeek Night (classic)** — `Theme::deepseeknight()` |
 | Changed | `deepseeknight.rs` `mod palette` — the 17 blue-ramp constants |
 | Adopted | **E1** |
-| Evidence | [`evidence/theme-classic-2026-09-27/`](evidence/theme-classic-2026-09-27/) — 9 lossless WebP + 11 palette JSON |
+| Evidence | [`evidence/theme-classic-2026-09-27/`](evidence/theme-classic-2026-09-27/) — 12 lossless WebP + 11 palette JSON |
 | Full archive | private WC vault, `assets/images/dsb-classic-theme-2026-09-27/` — original captures, every round, per-screen composites, the preview tools |
 | Short version | background stays dark navy, glyphs lift, hierarchy stays |
 
@@ -104,6 +105,10 @@ Only the blue-tinted classic ramp changes. The neutral ramp, the shared accents,
 `DEEPSEEK_BLUE` / `_BRIGHT` / `_DIM`, and `deepseeknight_inner`'s field wiring
 are untouched.
 
+> A same-day follow-up re-pointed **one** field at an existing token — the
+> focused composer border moved from `DEEPSEEK_BLUE` to `DEEPSEEK_BLUE_DIM`.
+> See *Follow-up — the focused composer border* below.
+
 | Constant | Role | Old | E1 |
 |----------|------|-----|----|
 | `BG_STORM` | `bg_base` — the painted ground | `#12141C` | **`#0E1425`** |
@@ -131,6 +136,41 @@ tool rows 5.60 (Lc 41 — a blue gray) · `gray_dim` 2.19.
 
 ![E1 — Tasks and user block](evidence/theme-classic-2026-09-27/4-final-E1/2_s4_current-vs-E1.webp)
 
+## Follow-up — the focused composer border (`#4D6BFE` → `#3248BE`, 2026-09-27)
+
+On the E1 ground the one element that still read loud was the focused composer
+border. With the ramp lifted the official blue border was the only fully
+saturated element left on screen (S 99%, 4.2:1 against the ground) and pulled
+the eye ahead of the text inside the box.
+
+Three candidates were composited on the phone capture with the preview pipeline
+— A `#4763EB`, B `#3951C6`, C `#293659` — and reviewed by `claude-opus-5-5`
+(xhigh, restricted): A stays indistinguishable from the current colour, C loses
+the focus step and reads disabled, B passes. The review recommended reusing the
+palette's existing `DEEPSEEK_BLUE_DIM` `#3248BE` over adding a near-equal second
+blue (the two differ by 1.13 contrast; hue 230.6°, S 58% against B's 55%),
+because the dim token keeps the focus step over the idle border (2.45 against
+1.54) and unifies the focused frame with `selection_border`, which the dashboard
+dispatch box and the peek reply already use. The maintainer confirmed `#3248BE`.
+
+![Composer border — A / B / C round](evidence/theme-classic-2026-09-27/5-composer-border/composer-ABC-3up.webp)
+
+![Composer border — current vs B vs `#3248BE`](evidence/theme-classic-2026-09-27/5-composer-border/composer-B-vs-D.webp)
+
+![Composer border `#3248BE` on the full screen](evidence/theme-classic-2026-09-27/5-composer-border/composer_D_3248BE.webp)
+
+`prompt_border_active` now points at `DEEPSEEK_BLUE_DIM` in
+`deepseeknight_inner`, so the composer's focused border and the extensions
+modal's focused input box share it in both DeepSeek Night skins. The idle
+border `#293659`, `DEEPSEEK_BLUE` / `_BRIGHT` and the accent fields are
+unchanged — the official blue stays on `accent_user`, `accent_system`,
+`accent_skill`, `fuzzy_accent` and the markdown headings. Two test assertions
+moved from `rgb(77, 107, 254)` to `rgb(50, 72, 190)`.
+
+The three images are recompositions of the phone capture under the candidate
+border colour (same pipeline and limits as the E1 previews above), not rendered
+builds.
+
 ## Invariants — what a later touch-up must not break
 
 | Check | Pinned by | E1 |
@@ -145,6 +185,7 @@ tool rows 5.60 (Lc 41 — a blue gray) · `gray_dim` 2.19.
 | `bg_base` blue-tinted (`b > r + 5`, `b > g + 5`) | `blue_theme_ramp_is_blue_tinted` | 37 vs 14 / 20 |
 | scrollbar thumb − track Σ ≥ 30 | `scrollbar_thumb_contrasts_with_track_in_all_themes` (`theme/mod.rs`) | 64 |
 | `bg_visual != bg_highlight` | theme-preview test in `xai-grok-pager/src/views/settings_modal/tests.rs` | distinct |
+| focused composer border = `#3248BE`, both skins | `deepseek_blue_is_official` · `neutral_theme_keeps_official_blue_accent` (updated) | `#3248BE` |
 
 The two L\* gaps are the direct answer to round 1's rejection — the moment
 emphasis and body share one white, the tests fail.
@@ -202,6 +243,11 @@ wrong in daily use, start here.
 - [ ] phone brightness conditions (outdoors, bright room); the verdict is one
       person's phone.
 - [ ] the seam between Orca's own edge strip (`#282C34`) and the new background.
+- [ ] the composer-border follow-up's surfaces beyond the main composer: the
+      extensions modal's focused box over content, the welcome prompt (it
+      shares the token when focused), and the dashboard peek, where the
+      composer and the dispatch box now both read `#3248BE` and cannot be told
+      apart by colour alone.
 
 ## Trade-offs, stated
 

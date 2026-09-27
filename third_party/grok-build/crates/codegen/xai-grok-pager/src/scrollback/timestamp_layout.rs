@@ -12,7 +12,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::block::RenderBlock;
 use super::entry::ScrollbackEntry;
-use super::types::BlockLine;
+use super::types::{BlockLine, str_display_cells};
 use crate::appearance::AppearanceConfig;
 
 /// Widest short clock (`"12:59 PM"`).
@@ -101,10 +101,13 @@ pub(crate) fn clock_cols(text: &str) -> u16 {
     UnicodeWidthStr::width(text).min(u16::MAX as usize) as u16
 }
 
+/// Cells the line paints: each span's graphemes one at a time, as the buffer paints them. A span's
+/// whole-string width can be narrower (`"لا".width()` is 1, painted as 2 cells), which read a full
+/// row as short and put the clock over its text.
 pub(crate) fn line_cols(line: &ratatui::text::Line<'_>) -> u16 {
     line.spans
         .iter()
-        .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+        .map(|span| str_display_cells(&span.content))
         .sum::<usize>()
         .min(u16::MAX as usize) as u16
 }

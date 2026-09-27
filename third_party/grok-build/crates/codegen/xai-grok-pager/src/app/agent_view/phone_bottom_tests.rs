@@ -770,6 +770,13 @@ fn phone_pinned_echo_keeps_its_band_and_closes_on_its_clock() {
     // `ceil(96 / 52) = 2` rows once kept this prompt expanded at three rows; the
     // fold check counts the wrapped rows, so it folds to two and the ellipsis.
     let three_rows = format!("{} {} {}", "A".repeat(27), "B".repeat(27), "C".repeat(40));
+    // Folded, the second row fills with Arabic lam-alef pairs. `UnicodeWidthStr`
+    // reads each pair as one column; the buffer paints a cell per letter.
+    let ligature_rows = format!(
+        "head\n{} {}\ntail",
+        "A".repeat(20),
+        "\u{644}\u{627}".repeat(16)
+    );
     for (label, prompt, head, tail, text_rows, clock) in [
         // The prompt from the report: its second row leaves room.
         (
@@ -796,6 +803,15 @@ fn phone_pinned_echo_keeps_its_band_and_closes_on_its_clock() {
             three_rows.as_str(),
             "AAAA",
             "C \u{2026}",
+            2,
+            false,
+        ),
+        // The same full row, measured by the cells it paints: no clock over it.
+        (
+            "full ligature row",
+            ligature_rows.as_str(),
+            "head",
+            "\u{644} \u{2026}",
             2,
             false,
         ),
@@ -845,7 +861,9 @@ fn phone_pinned_echo_keeps_its_band_and_closes_on_its_clock() {
         );
 
         let first_text = rows_with(&buf, head)[0];
-        let last_text = *rows_with(&buf, tail).last().unwrap();
+        let last_text = *rows_with(&buf, tail)
+            .last()
+            .unwrap_or_else(|| panic!("{label}: no row shows {tail:?}\n{frame}"));
         let top_pad = first_text - 1;
         let bottom_pad = top_pad + full_height - 1;
         assert_eq!(

@@ -1544,16 +1544,8 @@ impl AgentView {
         // and leaves the row blank until that status lands. A phone pane skips
         // this pass and paints cost and model together later, once the label exists.
         buf.set_style(layout.deepseek_status, Style::default().bg(theme.bg_base));
-        // Clear a configured floor row so a former status-line character cannot
-        // survive there. Both phone and desktop currently configure zero rows.
-        buf.set_style(layout.bottom_margin, Style::default().bg(theme.bg_base));
-        for y in layout.bottom_margin.y..layout.bottom_margin.bottom() {
-            for x in layout.bottom_margin.x..layout.bottom_margin.right() {
-                if let Some(cell) = buf.cell_mut((x, y)) {
-                    cell.set_char(' ');
-                }
-            }
-        }
+        // The frame's floor: a row of the frame under the status text.
+        agent::paint_bottom_margin(buf, layout.bottom_margin, theme.bg_base);
         if !narrow
             && self.deepseek_status_session_id.as_ref() == self.session.session_id.as_ref()
             && let Some(ds) = self.deepseek_status.as_ref().filter(|s| s.is_deepseek)
@@ -5254,24 +5246,64 @@ mod status_line_draw_tests {
     const FIVE_ROW_SCRIPT: &str = "row-1\nrow-2\nrow-3\nrow-4\nrow-5";
     #[test]
     fn short_terminal_fits_all_five_script_rows_and_keeps_the_prompt() {
-        // Height 17 for a frame with no blank floor row under the status row:
-        // all five script rows fit and the prompt keeps its own three. The row
-        // the fifth used to need was the frame's floor row, not the prompt's.
+        let _guard = crate::theme::cache::pin_theme();
+        let script_rows = |buf: &Buffer| -> Vec<u16> {
+            (1..=5)
+                .filter_map(|i| find(buf, &format!("row-{i}")).map(|(_, y)| y))
+                .collect()
+        };
+        // Height 17 fits the stack without the frame's floor: the status bar,
+        // five scrollback rows, the prompt gap, the prompt's three, five script
+        // rows, the shortcuts bar and the status row. The floor is reserved only
+        // in rows the rest leaves free, so it is the row that yields: all five
+        // script rows fit and the prompt keeps its own three.
         let buf = draw_script(FIVE_ROW_SCRIPT, 17);
         let screen = dump(&buf);
+        let rows = script_rows(&buf);
         assert!(
-            find(&buf, "row-5").is_some(),
-            "all five rows fit once the floor row is gone\n{screen}"
+            rows.len() == 5,
+            "all five rows fit once the floor yields, got rows at {rows:?}\n{screen}"
         );
+        let prompt_rows: Vec<u16> = ["╭", "❯", "╰"]
+            .iter()
+            .filter_map(|marker| find(&buf, marker).map(|(_, y)| y))
+            .collect();
         assert!(
-            find(&buf, "\u{2570}").is_some(),
-            "the prompt keeps its bottom rule\n{screen}"
+            prompt_rows.len() == 3
+                && prompt_rows[0] < prompt_rows[1]
+                && prompt_rows[1] < prompt_rows[2],
+            "the prompt keeps its top, input, and bottom rows, got {prompt_rows:?}\n{screen}"
         );
         assert!(
             // The label, not the binding: a terminal that cannot send `Ctrl+.` draws `Ctrl+x` for the same cheatsheet
             find(&buf, ":shortcuts").is_some(),
             "the shortcuts bar keeps its row\n{screen}"
         );
+        // The shortcuts bar sits right above the status row, which is the last row.
+        assert_eq!(
+            find(&buf, ":shortcuts").map(|(_, y)| y),
+            Some(15),
+            "no floor row at 17\n{screen}"
+        );
+
+        // One row taller, the floor takes the free row under the status row.
+        let buf = draw_script(FIVE_ROW_SCRIPT, 18);
+        let screen = dump(&buf);
+        let rows = script_rows(&buf);
+        assert_eq!(rows.len(), 5, "{screen}");
+        assert_eq!(
+            find(&buf, ":shortcuts").map(|(_, y)| y),
+            Some(15),
+            "the status row moves up one row for the floor\n{screen}"
+        );
+        let base = crate::theme::Theme::current().bg_base;
+        for x in 0..80 {
+            assert_eq!(
+                buf.cell((x, 17)).map(|c| (c.symbol(), c.bg)),
+                Some((" ", base)),
+                "the floor is the last row, blank in the frame's background (cell {x})\n{screen}"
+            );
+        }
     }
 
     const ONE_ROW_SCRIPT: &str = "solo-row";

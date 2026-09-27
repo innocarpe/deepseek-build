@@ -17,6 +17,7 @@
 | `test-npm-verify-retry.sh` | Hermetic regression test for that retry (local mock registry; no network, no credentials) |
 | `lib/mock_npm_registry.py` | Mock npm packument server used by the test above |
 | `check-pr-title.sh` | **Optional** local Conventional Commits title check (not CI) |
+| `adversarial-review.sh` | Run and track pinned, read-only `gpt-6-astra` and `claude-opus-5-5` xhigh reviews, including per-attempt status and evidence |
 | `sync-labels.sh` | Push `.github/labels.json` to GitHub labels |
 | `smoke-dogfood.sh` | Quick offline smoke (+ optional thin live if key set) |
 | **`test-pre3x-baseline.sh`** | **Pre-3.0.0 orchestrator** (T0–T4) — see matrix doc |

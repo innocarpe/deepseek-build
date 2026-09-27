@@ -4,6 +4,7 @@ Agent-loadable skills (`SKILL.md` directories) live here.
 
 | Skill | When |
 |-------|------|
+| [`adversarial-review/`](./adversarial-review/SKILL.md) | Run a bounded GPT-6 Astra or Claude Opus adversarial review and inspect attempt evidence |
 | [`grok-sync/`](./grok-sync/SKILL.md) | Syncing the vendored Grok Build tree forward: pin vs upstream, adoption matrix, three-way merge, gates, ledger + changelist |
 | [`pr-authoring/`](./pr-authoring/SKILL.md) | Writing or opening a PR body. Opening the PR is not the end of the unit; the close stays in `session-unit` |
 | [`release/`](./release/SKILL.md) | The user asked to ship a version. A child brief cannot drop this skill. Then bump, CHANGELOG, tag, assets, npm |

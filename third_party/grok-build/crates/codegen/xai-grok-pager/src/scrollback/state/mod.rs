@@ -159,6 +159,11 @@ pub struct ScrollbackState {
     // events are debounced at the event-loop level so only the final width triggers a rebuild.
     last_width: u16,
 
+    /// Prompt content width the unpinned prompts' automatic folds were last derived at; 0 until the first known
+    /// width. Unlike `last_width` it does not follow the pane to width 0, so a round trip through 0 still tells a
+    /// prompt on its automatic fold from one the user folded by hand.
+    prompt_fold_width: u16,
+
     /// Layout cache for navigation (entry heights, prompt descriptors).
     layout_cache: Option<LayoutCache>,
 
@@ -259,6 +264,7 @@ impl ScrollbackState {
             current_turn: None,
             view_mode: ViewMode::AllTurns,
             last_width: 0,
+            prompt_fold_width: 0,
             layout_cache: None,
             structural_scroll_anchor: None,
             thinking_display_mode: DisplayMode::Collapsed,
@@ -713,13 +719,14 @@ impl ScrollbackState {
     /// default, because `ScrollbackEntry::new` derives that default from the block and leaves no record of an explicit
     /// choice — the same caveat [`Self::apply_edit_default_display_mode`]'s materialize policy carries.
     ///
-    /// No-op before the first frame: with no width there is nothing to decide, and the resize path re-derives the
-    /// default once a previous width exists.
+    /// It folds at `prompt_fold_width`, the width every other unpinned prompt's fold was derived at, so the next
+    /// width change finds it on the same default as they are — including a prompt pushed while the pane sits at
+    /// width 0. No-op before the first real width: the first width change derives it from the width-blind default.
     fn apply_prompt_default_display_mode(&self, entry: &mut ScrollbackEntry) {
         if entry.display_mode_pinned || !matches!(entry.block, RenderBlock::UserPrompt(_)) {
             return;
         }
-        let content_width = self.prompt_content_width(self.last_width);
+        let content_width = self.prompt_fold_width;
         if content_width == 0 {
             return;
         }
@@ -1760,19 +1767,21 @@ impl ScrollbackState {
 
 /// Re-derive every unpinned prompt's automatic fold for `new_width`.
 ///
-/// Called from both width-change paths before the width field is updated, so the old width is still readable.
-/// Comparing an entry's current mode against the default it had at the old width tells "still sitting on the
-/// automatic default" apart from "the user folded this by hand". Only the former is re-derived.
+/// Called from both width-change paths. Comparing an entry's current mode against the default it had at the width
+/// the folds were last derived at (`prompt_fold_width`) tells "still sitting on the automatic default" apart from
+/// "the user folded this by hand". Only the former is re-derived.
 ///
-/// The first width has no old width: a prompt pushed before the first frame (a resumed or replayed session) holds
-/// the block's width-blind `default_display_mode()`, so that is the default it is compared against. Skipping this
-/// case left such a prompt expanded at every row its words wrap to, past the phone echo's two-row budget.
+/// A width of 0 is not a width: folds are left alone and `prompt_fold_width` keeps the last real one, so a pane
+/// that passes through 0 compares against the width its folds were made at. Before any real width, a prompt pushed
+/// before the first frame (a resumed or replayed session) holds the block's width-blind `default_display_mode()`,
+/// so that is the default it is compared against. Skipping that case left such a prompt expanded at every row its
+/// words wrap to, past the phone echo's two-row budget.
 fn rederive_prompt_folds_for_width(state: &mut ScrollbackState, new_width: u16) {
     let new_prompt_width = state.prompt_content_width(new_width);
     if new_prompt_width == 0 {
         return;
     }
-    let old_prompt_width = state.prompt_content_width(state.last_width);
+    let old_prompt_width = state.prompt_fold_width;
     for entry in state.entries.values_mut() {
         if entry.display_mode_pinned || !matches!(entry.block, RenderBlock::UserPrompt(_)) {
             continue;
@@ -1787,6 +1796,7 @@ fn rederive_prompt_folds_for_width(state: &mut ScrollbackState, new_width: u16) 
                 auto_prompt_display_mode(entry, new_prompt_width, &state.appearance);
         }
     }
+    state.prompt_fold_width = new_prompt_width;
 }
 
 /// The mode a prompt falls into on its own at `content_width`: collapsed when the echo needs more rows than its
@@ -3723,6 +3733,61 @@ mod tests {
             state.get_by_id(id).unwrap().display_mode,
             DisplayMode::Expanded,
             "widening back to a desktop pane unfolds the prompt again"
+        );
+    }
+
+    /// A resumed or replayed session pushes its prompts before the first frame. The first width used to be skipped,
+    /// so such a prompt kept the width-blind default (`ceil(130 / 60) = 3` rows: expanded) at a phone width.
+    #[test]
+    fn prompt_pushed_before_first_frame_folds_at_the_first_width() {
+        let mut state = ScrollbackState::new();
+        let id = state.push_block(user_block(&phone_overflowing_prompt()));
+        assert_eq!(
+            state.get_by_id(id).unwrap().display_mode,
+            DisplayMode::Expanded
+        );
+
+        state.prepare_layout(PHONE_PANE, 20);
+
+        assert_eq!(
+            state.get_by_id(id).unwrap().display_mode,
+            DisplayMode::Collapsed,
+            "the first width gives the prompt the fold that width implies"
+        );
+    }
+
+    /// Width 0 is not a width. Passing through it must neither lose the automatic fold nor re-fold a prompt the user
+    /// opened by hand (unpinned, as with `respect_manual_folds` off).
+    #[test]
+    fn a_round_trip_through_width_zero_keeps_automatic_and_manual_folds() {
+        let mut state = ScrollbackState::new();
+        state.prepare_layout(DESKTOP_PANE, 20);
+        // Width-blind default Collapsed (`ceil(200 / 60) = 4` rows), expanded on its own at the desktop width.
+        let automatic = state.push_block(user_block(&"M".repeat(200)));
+        assert_eq!(
+            state.get_by_id(automatic).unwrap().display_mode,
+            DisplayMode::Expanded
+        );
+        state.prepare_layout(0, 20);
+        state.prepare_layout(PHONE_PANE, 20);
+        assert_eq!(
+            state.get_by_id(automatic).unwrap().display_mode,
+            DisplayMode::Collapsed,
+            "the automatic prompt folds at the phone width after the pane passed through 0"
+        );
+
+        let opened = state.push_block(user_block(&phone_overflowing_prompt()));
+        assert_eq!(
+            state.get_by_id(opened).unwrap().display_mode,
+            DisplayMode::Collapsed
+        );
+        state.get_by_id_mut(opened).unwrap().display_mode = DisplayMode::Expanded;
+        state.prepare_layout(0, 20);
+        state.prepare_layout(PHONE_PANE, 20);
+        assert_eq!(
+            state.get_by_id(opened).unwrap().display_mode,
+            DisplayMode::Expanded,
+            "a prompt the user opened stays open across the round trip"
         );
     }
 

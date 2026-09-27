@@ -1504,9 +1504,16 @@ impl AgentView {
         // and leaves the row blank until that status lands. A phone pane skips
         // this pass and paints cost and model together later, once the label exists.
         buf.set_style(layout.deepseek_status, Style::default().bg(theme.bg_base));
-        // The frame's floor row: owned by the render so a stale glyph from an
-        // earlier frame cannot survive in it.
+        // The frame's floor row: clear both glyph and style so a former
+        // status-line character cannot survive when a phone frame gains it.
         buf.set_style(layout.bottom_margin, Style::default().bg(theme.bg_base));
+        for y in layout.bottom_margin.y..layout.bottom_margin.bottom() {
+            for x in layout.bottom_margin.x..layout.bottom_margin.right() {
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    cell.set_char(' ');
+                }
+            }
+        }
         if !narrow
             && self.deepseek_status_session_id.as_ref() == self.session.session_id.as_ref()
             && let Some(ds) = self.deepseek_status.as_ref().filter(|s| s.is_deepseek)

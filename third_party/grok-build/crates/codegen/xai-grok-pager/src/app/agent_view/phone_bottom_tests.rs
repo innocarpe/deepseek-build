@@ -541,6 +541,10 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
         PHONE_ROWS,
         "the status band keeps its bottom gap:\n{frame}"
     );
+    assert!(
+        row_text(&buf, PHONE_ROWS - 1).trim().is_empty(),
+        "the final phone row is blank:\n{frame}"
+    );
 }
 
 #[test]

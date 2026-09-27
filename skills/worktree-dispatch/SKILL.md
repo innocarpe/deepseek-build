@@ -77,24 +77,33 @@ Variables used below:
 - **Does this unit build vendored Grok?** It does if anything it runs calls
   `cargo` in `third_party/grok-build` — directly, or through a script
   (`rg -l grok-build scripts/` lists them: `build-grok-pager.sh`,
-  `install.sh`, `test-grok-vendor-offline.sh`, the `test-path-a-*` scripts, …).
+  `cache-guard.sh`, `test-grok-vendor-offline.sh`, the `test-path-a-*` scripts, …).
   Those units run **one at a time across all worktrees** (cold build 30–60+ min
   per tree). A quick check for a build in
   flight: `pgrep -fl 'grok-build/target'` (the rustc and build-script
   processes carry that output path; the parent `cargo` does not). It is a
-  hint, not a lock — when in doubt, ask the other sessions.
-- **Don't warm a per-worktree vendor target — share the tower's.** Measured
-  2026-09-26: with the export below, the pager bin debug build in a fresh
-  worktree took **2 min 56 s**, against 30–60+ min cold.
+  hint, not a lock — `./scripts/vendor-build.sh status` reads every worktree's
+  target and exits 1 while any of them is building; when in doubt, ask the
+  other sessions.
+- **Warm this worktree's target, never another's.** Each worktree builds
+  `third_party/grok-build` in its own `target/`. One `CARGO_TARGET_DIR` shared
+  by two worktrees makes them write the same artifact names, and cargo decides
+  freshness by mtime alone, so the worktree with the older sources gets the
+  other's code from a no-op build — measured 2026-09-27, worktree B's
+  `cargo test` finished in 0.35 s and ran worktree A's binary. Run vendored
+  cargo through the wrapper, which pins this worktree's target and seeds a cold
+  one once from the sibling whose recorded sources differ least:
 
   ```sh
-  TOWER="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
-  export CARGO_TARGET_DIR="$TOWER/third_party/grok-build/target"
+  ./scripts/vendor-cargo.sh test -p xai-grok-pager --lib
+  ./scripts/vendor-cargo.sh check -p xai-grok-shell --all-targets
   ```
 
-  Cargo's file lock **serializes** concurrent builds: one heavy `cargo` per
-  session, and a job queued behind another session's compile waits for it —
-  stacking more queued jobs does not make them run in parallel.
+  It ignores a `CARGO_TARGET_DIR` the environment carries, caps jobs at 4, and
+  refuses to start while another worktree's vendored build is in flight
+  (`--allow-concurrent` goes through the memory gate as a second build at
+  `-j 2`). The scripts that build under `third_party/grok-build` pin the same
+  target themselves, so exporting the old shared path cannot reintroduce it.
 - **Compile gate before the full test build.** `cargo check -p <pkg>
   --all-targets` skips codegen and link. Measured 2026-09-26: one
   `cargo test -p xai-grok-pager --lib` round spent **~17 min** to reach an
@@ -107,17 +116,15 @@ Variables used below:
 - **`cargo` on PATH.** The dsb tool shell can lack it (measured 2026-09-26,
   this workspace): `export PATH="$HOME/.cargo/bin:$PATH"` first.
   `scripts/build-grok-pager.sh` exports that itself.
-- **Queue tools for the shared target.** `./scripts/vendor-build.sh status`
-  reads that queue — holders, waiters, elapsed, command, worktree, plus host
+- **Queue tools.** `./scripts/vendor-build.sh status` reads every worktree's
+  queue — holders, waiters, elapsed, command, worktree, plus host
   free / swap / load5m and the memory-gate verdict (exit 1 while busy).
-  `./scripts/vendor-build.sh clone <slug>` copies the target copy-on-write to
-  `~/.cache/dsb-vendor-targets/<slug>` and prints the one line to eval
-  (registry deps stay fresh, workspace crates rebuild; `prune` frees idle
-  clones). `./scripts/vendor-build.sh run -- <cmd>` passes a free queue
-  through as-is and otherwise starts only when the memory gate passes — in a
-  clone with `CARGO_BUILD_JOBS=2`; denied, status is printed and nothing
-  starts. Never call cargo from inside a cargo build or test on a shared
-  target — that is a real lock cycle, and nothing under
+  `./scripts/vendor-build.sh run -- <cmd>` passes a free queue through as-is
+  and otherwise starts only when the memory gate passes, with
+  `CARGO_BUILD_JOBS=2`; denied, status is printed and nothing starts
+  (`prune` clears old `~/.cache/dsb-vendor-targets` copies from the retired
+  shared-target escape hatch). Never call cargo from inside a cargo build or
+  test on one target — that is a real lock cycle, and nothing under
   `third_party/grok-build` does it today.
 
 ## 1. Open the worktree with the agent already in it
@@ -331,6 +338,7 @@ worktree whose agent was mid-build (2026-09-25).
 | `cd "$WT"` and keep working | The next command meant for the tower runs in the tree, or the reverse |
 | `gh auth switch` | Flips the active account for every session on the machine |
 | Two vendored Grok builds at once | 30–60+ min cold each; parallel builds starve each other |
+| `export CARGO_TARGET_DIR=<another worktree>/third_party/grok-build/target` | One target, two worktrees: cargo writes the same artifact names and its mtime-only freshness hands the older-sourced tree the other's code (measured 2026-09-27). Use `scripts/vendor-cargo.sh` |
 | `--name feat/x` | Becomes `feat-x`; name the worktree by slug and rename the branch |
 | Report a worktree as "no active session" from `orca terminal list` alone | It returned 0 for a live, mid-build worktree (§0); that report tells the owner to abandon in-flight work |
 | `worktree rm --force` on a tree you did not read | Deletes uncommitted work with no undo |

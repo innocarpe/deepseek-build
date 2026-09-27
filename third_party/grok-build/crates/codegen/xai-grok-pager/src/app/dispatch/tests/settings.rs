@@ -415,10 +415,11 @@ fn auto_compact_threshold_boundary() {
     );
 }
 
-/// The width side of the same derivation: a 55-column pane turns the phone-width
-/// density on, the boundary sits at the shared constant, and widening restores the
-/// desktop layout. The height is held at a desktop value so only the width can
-/// decide, and the derived flag never writes the persisted layout config.
+/// The density side of the same derivation: the measured phone pane turns the
+/// phone-width density on, a smaller text size keeps it (the pinch doubles both
+/// grid axes, so the pane's shape does not move), and a desktop grid restores
+/// the desktop layout. The derived flag never writes the persisted layout
+/// config.
 #[test]
 fn resize_to_phone_width_derives_narrow_density() {
     use crossterm::event::Event;
@@ -438,24 +439,23 @@ fn resize_to_phone_width_derives_narrow_density() {
         "41 rows is not short enough for auto-compact: the two derivations are independent"
     );
 
-    let _ = app.handle_input(&Event::Resize(crate::appearance::NARROW_TERMINAL_COLS, 41));
+    // Pinching the text to 50% roughly doubles both grid axes. The pane width
+    // alone flipped the layout to desktop here; the phone's portrait grid keeps
+    // the density.
+    let _ = app.handle_input(&Event::Resize(110, 82));
     assert!(
         app.appearance.scrollback.layout.narrow,
-        "the shared threshold itself is narrow"
+        "the same phone pane at 50% text keeps the phone density"
     );
-    let _ = app.handle_input(&Event::Resize(
-        crate::appearance::NARROW_TERMINAL_COLS + 1,
-        41,
-    ));
     assert!(
-        !app.appearance.scrollback.layout.narrow,
-        "one column past the threshold is a desktop pane"
+        !app.appearance.prompt.compact,
+        "82 rows is not short enough for auto-compact either"
     );
 
     let _ = app.handle_input(&Event::Resize(120, 40));
     assert!(
         !app.appearance.scrollback.layout.narrow,
-        "widening restores the desktop layout"
+        "a desktop grid restores the desktop layout"
     );
 }
 /// The resize derivation never writes the thread-local user cache; the cache (like `current_ui` and disk) holds the USER value only.

@@ -1304,14 +1304,15 @@ fn test_selected_entry_output_divergence_uses_selected_branch() {
     assert_eq!(at(&result.selection_model.visible_blocks, 0).entry_idx, 0);
 }
 
-/// `VisibleBlockGeometry.content_width` must report the same reduced width that was used to populate the cache.
+/// `VisibleBlockGeometry.content_width` must report the same width that was used to populate the cache.
 /// Otherwise code that re-derives the wrapped lines from the model (notably `finish_text_drag`) would call
 /// `effective_output` at the wrong width.
 #[test]
-fn message_block_content_width_subtracts_timestamp_reservation() {
-    // Picked so the message wraps to a different line count at `content_width - 10` than at `content_width`
-    // With a 30-wide viewport and the accent column as the only chrome, pane_content_width is 29 and per-block
-    // content_width is 21; the message below needs 5 rows at 21 and 3 at 29.
+fn message_block_content_width_matches_the_cached_wrap_width() {
+    // The clock no longer narrows the block: a wide pane takes its columns inside the
+    // first line's own wrap, so the cached width is the entry's full content column.
+    // The retired 10-column gutter is the negative control below: at 20 columns this
+    // message wraps into a different line count than the cache's width does.
     let entries = vec![make_markdown_entry(
         "hello world foo bar baz qux quux corge grault garply waldo fred plugh xyzzy thud",
     )];
@@ -1321,36 +1322,38 @@ fn message_block_content_width_subtracts_timestamp_reservation() {
     let entry_content_width = entry_content_rect(&entries[0], viewport).width;
     let block = &at(&result.selection_model.visible_blocks, 0);
     assert_eq!(
-        block.content_width,
-        entry_content_width.saturating_sub(10),
-        "AgentMessage should reserve 10 cols for the timestamp (8 + 2 of air)"
+        block.content_width, entry_content_width,
+        "AgentMessage wraps and caches at the entry's own content width; the clock no longer reserves a gutter"
     );
 
     // The lines registered in the resolved model came from the cached output computed at `block.content_width`
     // Re-deriving them at the same width must produce the same line count so block_line_idx values remain valid
-    // Deriving at the wider `pane_content_width` produces a different wrapping (the bug `finish_text_drag` previously triggered)
+    // Deriving at the retired gutter width produces a different wrapping (the bug `finish_text_drag` previously triggered)
     let appearance = AppearanceConfig::default();
-    // The pane's default columns (no per-entry chrome) are the "wrong width" here.
-    let pane_content_width = result.selection_model.content_area.width;
     let model_lines = at(&result.selection_model.ranges, 0).lines.len();
-    let entry_lines_narrow = at(&entries, 0)
+    let entry_lines_cached = at(&entries, 0)
         .effective_output(block.content_width, &appearance, false, None)
         .output()
         .lines
         .len();
-    let entry_lines_wide = at(&entries, 0)
-        .effective_output(pane_content_width, &appearance, false, None)
+    let entry_lines_old_gutter = at(&entries, 0)
+        .effective_output(
+            block.content_width.saturating_sub(10),
+            &appearance,
+            false,
+            None,
+        )
         .output()
         .lines
         .len();
     assert_eq!(
-        entry_lines_narrow, model_lines,
-        "model lines must match a re-derivation at the per-block content_width"
+        entry_lines_cached, model_lines,
+        "model lines must match a re-derivation at the block's content_width"
     );
     assert_ne!(
-        entry_lines_wide, model_lines,
-        "wider width must wrap differently — proves passing content_area.width \
-         to effective_output would break block_line_idx alignment"
+        entry_lines_old_gutter, model_lines,
+        "10 columns narrower must wrap differently — proves the retired gutter width \
+         would break block_line_idx alignment"
     );
 }
 

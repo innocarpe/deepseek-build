@@ -95,17 +95,29 @@ pub const SCROLLBACK_MIN_ROWS: u16 = 5;
 /// inset the host keeps outside the PTY. A whole blank row is twice the air the
 /// composer keeps under its text, and no row leaves the status text on the
 /// frame edge. Short terminals ([`SHORT_TERMINAL_ROWS`]) drop it with the other
-/// margins, like the dashboard's floor.
+/// margins, like the dashboard's floor, and the layout reserves it only in rows
+/// the rest of the stack leaves free, so it is the first row to yield.
 pub const BOTTOM_MARGIN_ROWS: u16 = 1;
 
 /// Rows [`AgentViewLayout::compute`] reserves under the status row for a frame
-/// `area_height` rows tall.
+/// `area_height` rows tall when the rest of its stack fits.
 pub fn bottom_margin_rows(area_height: u16) -> u16 {
     if area_height <= SHORT_TERMINAL_ROWS {
         0
     } else {
         BOTTOM_MARGIN_ROWS
     }
+}
+
+/// Rows a vertical stack of constraints asks for (a `Min` counts its minimum).
+fn constraint_rows(constraints: &[Constraint]) -> u16 {
+    constraints
+        .iter()
+        .map(|c| match c {
+            Constraint::Length(n) | Constraint::Min(n) | Constraint::Max(n) => *n,
+            Constraint::Percentage(_) | Constraint::Ratio(_, _) | Constraint::Fill(_) => 0,
+        })
+        .fold(0u16, u16::saturating_add)
 }
 
 /// Paint the frame's floor ([`BOTTOM_MARGIN_ROWS`]). A theme whose background
@@ -349,13 +361,7 @@ impl AgentViewLayout {
             constraints.push(Constraint::Length(voice_recording_height));
         }
         constraints.push(Constraint::Length(prompt_height));
-        let pushed = constraints
-            .iter()
-            .map(|c| match c {
-                Constraint::Length(n) | Constraint::Min(n) | Constraint::Max(n) => *n,
-                Constraint::Percentage(_) | Constraint::Ratio(_, _) | Constraint::Fill(_) => 0,
-            })
-            .fold(0u16, u16::saturating_add);
+        let pushed = constraint_rows(&constraints);
         let reserved = pushed.saturating_add(shortcuts_height);
         let status_line_height = status_line_height.min(inner_area.height.saturating_sub(reserved));
         let shortcuts_gap = u16::from(bottom_vpad > 0 && status_line_height == 0);
@@ -369,8 +375,16 @@ impl AgentViewLayout {
         // DeepSeek bottom status row: always present so the row count is
         // stable; renders blank when no status data has landed.
         constraints.push(Constraint::Length(1));
-        // The frame's floor under the status row (see `BOTTOM_MARGIN_ROWS`).
-        constraints.push(Constraint::Length(bottom_margin_rows(area.height)));
+        // The frame's floor under the status row (see `BOTTOM_MARGIN_ROWS`),
+        // only in rows every other row leaves free: the first row to yield.
+        let floor_rows = bottom_margin_rows(area.height);
+        let floor_rows =
+            if constraint_rows(&constraints).saturating_add(floor_rows) <= inner_area.height {
+                floor_rows
+            } else {
+                0
+            };
+        constraints.push(Constraint::Length(floor_rows));
         let chunks = Layout::vertical(constraints).split(inner_area);
         let mut chunks = chunks.iter().copied();
         let mut status_bar = chunks.next().unwrap_or_default();
@@ -2425,6 +2439,10 @@ mod tests {
         );
         assert_eq!(at_budget.shortcuts.height, 1);
         assert_eq!(
+            at_budget.bottom_margin.height, BOTTOM_MARGIN_ROWS,
+            "a prompt at its budget leaves the floor its row"
+        );
+        assert_eq!(
             at_budget.scrollback.height, SCROLLBACK_MIN_ROWS,
             "the budget is the surplus over the scrollback minimum, got {:?}",
             at_budget.scrollback,
@@ -2439,6 +2457,10 @@ mod tests {
             over_budget.status_line,
         );
         assert_eq!(over_budget.scrollback.height, SCROLLBACK_MIN_ROWS);
+        assert_eq!(
+            over_budget.bottom_margin.height, 0,
+            "the floor is the row that yields to the extra line"
+        );
     }
     fn layout_with_rail(
         area: Rect,

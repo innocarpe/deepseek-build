@@ -5247,53 +5247,53 @@ mod status_line_draw_tests {
     #[test]
     fn short_terminal_fits_all_five_script_rows_and_keeps_the_prompt() {
         let _guard = crate::theme::cache::pin_theme();
-        // Height 18 holds the whole stack: the status bar, five scrollback rows,
-        // the prompt gap, the prompt's three, five script rows, the shortcuts
-        // bar, the status row and the frame's floor as the last row.
-        let buf = draw_script(FIVE_ROW_SCRIPT, 18);
-        let screen = dump(&buf);
         let script_rows = |buf: &Buffer| -> Vec<u16> {
             (1..=5)
                 .filter_map(|i| find(buf, &format!("row-{i}")).map(|(_, y)| y))
                 .collect()
         };
-        let prompt_rows = |buf: &Buffer| -> Vec<u16> {
-            ["╭", "❯", "╰"]
-                .iter()
-                .filter_map(|marker| find(buf, marker).map(|(_, y)| y))
-                .collect()
-        };
-        let rows = script_rows(&buf);
-        assert_eq!(
-            rows.len(),
-            5,
-            "all five rows fit, got rows at {rows:?}\n{screen}"
-        );
-        assert_eq!(
-            buf.cell((0, 17)).map(|c| c.symbol()),
-            Some("\u{2580}"),
-            "the floor is the last row\n{screen}"
-        );
-
-        // One row shorter, the script gives up its own row: the prompt keeps its
-        // three and the shortcuts bar keeps its row.
+        // Height 17 fits the stack without the frame's floor: the status bar,
+        // five scrollback rows, the prompt gap, the prompt's three, five script
+        // rows, the shortcuts bar and the status row. The floor is reserved only
+        // in rows the rest leaves free, so it is the row that yields: all five
+        // script rows fit and the prompt keeps its own three.
         let buf = draw_script(FIVE_ROW_SCRIPT, 17);
         let screen = dump(&buf);
         let rows = script_rows(&buf);
-        assert_eq!(
-            rows.len(),
-            4,
-            "the script yields a row, got rows at {rows:?}\n{screen}"
-        );
-        let prompt = prompt_rows(&buf);
         assert!(
-            prompt.len() == 3 && prompt[0] < prompt[1] && prompt[1] < prompt[2],
-            "the prompt keeps its top, input, and bottom rows, got {prompt:?}\n{screen}"
+            rows.len() == 5,
+            "all five rows fit once the floor yields, got rows at {rows:?}\n{screen}"
+        );
+        let prompt_rows: Vec<u16> = ["╭", "❯", "╰"]
+            .iter()
+            .filter_map(|marker| find(&buf, marker).map(|(_, y)| y))
+            .collect();
+        assert!(
+            prompt_rows.len() == 3
+                && prompt_rows[0] < prompt_rows[1]
+                && prompt_rows[1] < prompt_rows[2],
+            "the prompt keeps its top, input, and bottom rows, got {prompt_rows:?}\n{screen}"
         );
         assert!(
             // The label, not the binding: a terminal that cannot send `Ctrl+.` draws `Ctrl+x` for the same cheatsheet
             find(&buf, ":shortcuts").is_some(),
             "the shortcuts bar keeps its row\n{screen}"
+        );
+        assert_ne!(
+            buf.cell((0, 16)).map(|c| c.symbol()),
+            Some("\u{2580}"),
+            "no floor row at 17\n{screen}"
+        );
+
+        // One row taller, the floor takes the free row under the status row.
+        let buf = draw_script(FIVE_ROW_SCRIPT, 18);
+        let screen = dump(&buf);
+        let rows = script_rows(&buf);
+        assert_eq!(rows.len(), 5, "{screen}");
+        assert_eq!(
+            buf.cell((0, 17)).map(|c| c.symbol()),
+            Some("\u{2580}"),
+            "the floor is the last row\n{screen}"
         );
     }
 

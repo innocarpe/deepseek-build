@@ -5249,21 +5249,15 @@ mod status_line_draw_tests {
     }
     const FIVE_ROW_SCRIPT: &str = "row-1\nrow-2\nrow-3\nrow-4\nrow-5";
     #[test]
-    fn short_terminal_leaves_the_row_four_of_its_five_rows() {
-        // Height 16 for the flush frame (no blank floor row under the status
-        // row): the status line's panel gets the four rows the frame can spare
-        // of its script's five. At 17 all five fit now that the floor row is
-        // gone; the fifth would come out of the prompt, which is a priority
-        // question of its own, not this golden's.
-        let buf = draw_script(FIVE_ROW_SCRIPT, 16);
+    fn short_terminal_fits_all_five_script_rows_and_keeps_the_prompt() {
+        // Height 17 for a frame with no blank floor row under the status row:
+        // all five script rows fit and the prompt keeps its own three. The row
+        // the fifth used to need was the frame's floor row, not the prompt's.
+        let buf = draw_script(FIVE_ROW_SCRIPT, 17);
         let screen = dump(&buf);
         assert!(
-            find(&buf, "row-4").is_some(),
-            "four rows are left over at height 17\n{screen}"
-        );
-        assert!(
-            find(&buf, "row-5").is_none(),
-            "a fifth row could only come out of the prompt\n{screen}"
+            find(&buf, "row-5").is_some(),
+            "all five rows fit once the floor row is gone\n{screen}"
         );
         assert!(
             find(&buf, "\u{2570}").is_some(),
@@ -5275,6 +5269,7 @@ mod status_line_draw_tests {
             "the shortcuts bar keeps its row\n{screen}"
         );
     }
+
     const ONE_ROW_SCRIPT: &str = "solo-row";
     #[test]
     fn fullscreen_question_panel_leaves_the_row_its_rows() {

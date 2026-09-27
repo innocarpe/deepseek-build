@@ -44,7 +44,9 @@ Night v2**, and the hue-neutral ramp as **DeepSeek Night Neutral**.
 
 All three themes are DeepSeek blue (`#4D6BFE`) based; v2 tunes the palette ramp for
 legibility, neutral trades the blue-tinted grays for a hue-neutral ramp, classic
-keeps the original tinted signature.
+keeps the original tinted signature with its glyph ramp lifted for phone legibility
+(2026-09-27 — background, candidates and the edge-case list:
+`docs/product/THEME_CLASSIC_READABILITY_2026-09-27.md`).
 
 ## Terminal tab (iTerm2)
 

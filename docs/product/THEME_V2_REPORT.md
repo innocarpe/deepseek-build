@@ -10,6 +10,10 @@
 > `DeepSeekNightNeutral`과 `GrokNight`은 parser/config 호환성만 유지하고
 > picker에서는 숨깁니다. 아래의 v2 기본값 및 classic picker 제거 내용은
 > 당시의 설계 의도와 기준선을 기록한 **superseded historical** 내용입니다.
+>
+> classic 램프의 가독성 조정(2026-09-27, E1)은
+> [`THEME_CLASSIC_READABILITY_2026-09-27.md`](THEME_CLASSIC_READABILITY_2026-09-27.md)
+> 에 값·후보·엣지 케이스와 함께 기록했습니다.
 
 ---
 

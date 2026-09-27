@@ -345,7 +345,7 @@ impl AgentViewLayout {
         constraints.push(Constraint::Length(bottom_margin_rows));
         let chunks = Layout::vertical(constraints).split(inner_area);
         let mut chunks = chunks.iter().copied();
-        let status_bar = chunks.next().unwrap_or_default();
+        let mut status_bar = chunks.next().unwrap_or_default();
         let mut tasks = if tasks_height > 0 {
             chunks.next();
             chunks.next().unwrap_or_default()
@@ -360,9 +360,13 @@ impl AgentViewLayout {
         };
         chunks.next();
         let mut scrollback = chunks.next().unwrap_or_default();
-        // A phone's task list and transcript own the whole width. The prompt
-        // composer and other panes keep their configured outer text inset.
+        // A phone's status bar, task list and transcript own the whole width.
+        // The prompt composer and other panes keep their configured outer text
+        // inset. The status bar's hit rects come from the rect it renders into,
+        // so they move with it.
         if layout_cfg.narrow {
+            status_bar.x = area.x;
+            status_bar.width = area.width;
             if tasks.height > 0 {
                 tasks.x = area.x;
                 tasks.width = area.width;
@@ -2244,10 +2248,11 @@ mod tests {
         );
     }
 
-    /// The phone transcript reaches both frame edges while the composer keeps
-    /// its own inset. The status reaches the measured PTY bottom at every width.
+    /// The phone status bar and transcript reach both frame edges while the
+    /// composer keeps its own inset. The status reaches the measured PTY bottom
+    /// at every width.
     #[test]
-    fn layout_uses_full_width_phone_transcript_and_flush_pty_bottom() {
+    fn layout_uses_full_width_phone_bars_and_flush_pty_bottom() {
         for (cols, rows) in [(55u16, 41u16), (120, 40), (180, 50)] {
             let area = Rect::new(0, 0, cols, rows);
             let narrow = effective_narrow(cols, rows);
@@ -2262,6 +2267,13 @@ mod tests {
             assert_eq!(
                 layout.status_bar.y, area.y,
                 "{cols}x{rows}: the status bar starts on the first row, got {:?}",
+                layout.status_bar,
+            );
+            let status_inset = if narrow { 0 } else { LayoutConfig::MIN_HPAD };
+            assert_eq!(
+                (layout.status_bar.x, layout.status_bar.right()),
+                (area.x + status_inset, area.right() - status_inset),
+                "{cols}x{rows}: a phone status bar spans the frame, got {:?}",
                 layout.status_bar,
             );
             assert_eq!(

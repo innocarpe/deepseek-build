@@ -17,8 +17,9 @@ pub struct HorizontalLayout {
 ///
 /// Left: the accent column when the block paints a rail there or fills it with
 /// its own band (the prompt echo's left gutter), plus the one column of air a
-/// rail keeps before its body — and nothing at all for a block with neither, so
-/// its text starts on the accent column: the minimum left unit. Right: the
+/// rail keeps before its body — and nothing for a block with neither. A phone
+/// pane spends its former outer column inside each entry, keeping text at its
+/// old position. Right: the
 /// band's own gutter where a block paints a band, nothing elsewhere, so text
 /// runs to the entry area's last column, one column inside the frame.
 ///

@@ -662,10 +662,10 @@ impl<'a> EntryRenderer<'a> {
 /// The columns an entry spends left and right of its text (see [`EntryChrome`]).
 ///
 /// Left: the accent column when the block paints a rail there or fills it with
-/// its own band (the prompt echo's left gutter), plus the former outer inset
-/// inside the full-width phone band; two columns when it paints a rail — the
-/// rail and the one column of air its body keeps — and none for a
-/// block with neither, so its text starts on that column. Right: one column
+/// its own band (the prompt echo's left gutter), two columns when it paints a
+/// rail — the rail and the one column of air its body keeps — and none for a
+/// block with neither. A phone pane moves its former outer inset inside every
+/// entry so text columns and wrap widths stay fixed. Right: one column
 /// where a block paints a band (its own gutter), none elsewhere.
 pub(crate) fn entry_chrome(entry: &ScrollbackEntry, appearance: &AppearanceConfig) -> EntryChrome {
     let rail_w = HorizontalLayout::ACCENT;
@@ -681,21 +681,25 @@ pub(crate) fn entry_chrome(entry: &ScrollbackEntry, appearance: &AppearanceConfi
         );
     let rail = entry.display_mode != DisplayMode::Collapsed
         && (recently_finished || entry.block.accent(&ctx).is_some());
+    let phone_inset = if appearance.scrollback.layout.narrow {
+        crate::appearance::LayoutConfig::MIN_HPAD
+    } else {
+        0
+    };
     let band_edge = if band && appearance.scrollback.layout.narrow {
-        // The phone transcript starts at the frame edge. Keep the prompt's
-        // text at its old column by moving that outer inset inside its band.
-        crate::appearance::LayoutConfig::MIN_HPAD * 2
+        crate::appearance::LayoutConfig::MIN_HPAD
     } else {
         0
     };
     EntryChrome {
-        accent: if band {
-            rail_w + band_edge
-        } else if rail {
-            rail_w + 1
-        } else {
-            0
-        },
+        accent: phone_inset
+            + if band {
+                rail_w + band_edge
+            } else if rail {
+                rail_w + 1
+            } else {
+                0
+            },
         right_pad: u16::from(band),
     }
 }
@@ -1201,6 +1205,20 @@ mod tests {
         // One content line plus two vpad rows
         // Width 80 minus chrome 4 leaves 76 for content
         assert_eq!(renderer.desired_height(80), 3);
+    }
+
+    #[test]
+    fn phone_full_width_keeps_plain_and_echo_text_columns() {
+        let mut appearance = AppearanceConfig::default();
+        appearance.scrollback.layout.narrow = true;
+        let plain = ScrollbackEntry::new(RenderBlock::agent_message("answer"));
+        let echo = ScrollbackEntry::new(RenderBlock::user_prompt("question"));
+        assert_eq!(entry_chrome(&plain, &appearance).accent, 1);
+        assert_eq!(entry_chrome(&echo, &appearance).accent, 3);
+        // The phone content viewport gains one column at the left, which each
+        // entry spends on its former outer gutter rather than on rewrapping.
+        assert_eq!(block_content_width_for(&plain, &appearance, 54), 53);
+        assert_eq!(block_content_width_for(&echo, &appearance, 54), 50);
     }
 
     #[test]

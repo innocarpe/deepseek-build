@@ -276,18 +276,19 @@ stays in [`skills/release`](skills/release/SKILL.md); the debrief stays in
 - **Carry the unit through without waiting for another prompt** when the user
   asked for the work. The default end is one line: implement, run the checks
   the change needs, one-concern commits, open the PR, read CI, merge with a
-  merge commit, run the debrief, and report. Stop earlier only when that turn
-  said so — a review-only unit, a stacked child whose parent is unmerged, or a
-  PR the user asked to look at first.
+  merge commit, run the debrief, clean up the worktree, and report. Stop
+  earlier only when that turn said so — a review-only unit, a stacked child
+  whose parent is unmerged, or a PR the user asked to look at first.
 - **Every completed unit runs the debrief before its report.** After the end
-  conditions stand — the merge, or the earlier stop the turn named —
+  conditions stand — the merge, or the earlier stop the turn named — and while
+  the unit's worktree still exists,
   [`skills/session-debrief`](skills/session-debrief/SKILL.md) counts what the
   unit produced and records the WC-worthy parts with the global `w-conatus`
-  skill. The close authorizes those writes; do not ask again. Nothing
-  transferable reports `no record needed` with the reason, and the report
-  carries what was recorded or why nothing was. If the WC root cannot be
-  resolved and verified, write nowhere else and do not report the unit done.
-  This repository's personal work creates no company HQ records.
+  skill; the cleanup follows the debrief. The close authorizes those writes; do
+  not ask again. Nothing transferable reports `no record needed` with the
+  reason, and the report carries what was recorded or why nothing was. If the
+  WC root cannot be resolved and verified, write nowhere else and do not report
+  the unit done. This repository's personal work creates no company HQ records.
 - **A merge is a fact only after `scripts/check-pr-merged.sh` prints `pass`.**
   That output is `MERGED`, a non-empty `mergedAt`, a `mergeCommit`, and two
   parents. Saying merged before that is not a fact.

@@ -6,9 +6,10 @@ description: "Use when a session starts or is told to finish work: the default e
 # Session unit
 
 This file owns the close of one unit: open the PR, read CI, merge with a
-merge commit, run the WC debrief, and report. [`AGENTS.md`](../../AGENTS.md)
-§One session, one unit wins if they disagree. Do not copy the close into
-`pr-authoring`, `worktree-dispatch`, `release`, or `orca-tab`. Point here.
+merge commit, run the WC debrief, clean up the worktree, and report.
+[`AGENTS.md`](../../AGENTS.md) §One session, one unit wins if they disagree.
+Do not copy the close into `pr-authoring`, `worktree-dispatch`, `release`, or
+`orca-tab`. Point here.
 
 Worktree commands stay in `worktree-dispatch`. The tab stays in `orca-tab`.
 The PR body stays in `pr-authoring`. A version the user asked for stays in
@@ -51,7 +52,7 @@ description ended at the PR.
    unit, stop and name it.
 3. **Change** only what the done-condition needs. A defect in a file this
    unit is already changing, unowned by another session, is its own commit
-   and still this unit. Anything the opening did not name waits for step 6.
+   and still this unit. Anything the opening did not name waits for step 7.
 4. **Ship,** unless that turn said to stop earlier.
    - Run the checks the change needs. The report names the command and what
      it printed.
@@ -71,21 +72,24 @@ description ended at the PR.
      short of the merge only when that turn said so — a review-only unit, a
      stacked child whose parent is unmerged, or a PR the user asked to look
      at first.
-   - Clean up the worktree with `worktree-dispatch` §4.
 5. **Debrief** with [`session-debrief`](../session-debrief/SKILL.md). After
    the end conditions above stand (or the earlier stop this turn named) and
    before the report, count what the unit produced and record the WC-worthy
-   parts with the global `w-conatus` skill. The close authorizes those writes
-   — do not ask again. A unit with nothing transferable reports
-   `no record needed` with the reason; if the WC root cannot be resolved and
-   verified, write nowhere else and do not report the unit done.
-6. **Hand off** each next unit the opening already named, with
+   parts with the global `w-conatus` skill. The owned worktree still exists
+   here — the count reads it, and cleanup follows this step. The close
+   authorizes those writes — do not ask again. A unit with nothing
+   transferable reports `no record needed` with the reason; if the WC root
+   cannot be resolved and verified, write nowhere else and do not report the
+   unit done.
+6. **Clean up** the worktree with `worktree-dispatch` §4, after the debrief
+   has read it.
+7. **Hand off** each next unit the opening already named, with
    `worktree-dispatch` §1–§3b. The tab itself is `orca-tab`. The brief file
    lives outside the repo. Its first line is `user-turn:`. Do not ask first.
    After the receipt shows `turn_started`, report the handle and that
    sentence, then leave the unit alone.
-7. **Close.** The report below. What you did not do is a separate list. That
-   list does not open the next unit, and it is not step 6.
+8. **Close.** The report below. What you did not do is a separate list. That
+   list does not open the next unit, and it is not step 7.
 
 When the user turn asks to ship a version, `skills/release` is this unit. A
 brief that bans the release lane does not remove it. An empty `## Unreleased`
@@ -136,6 +140,7 @@ block replaces. A hand-off is a statement in the block, never a question.
 | Offer another unit after you are done | The offer is the next task, and it lands in this session |
 | Finish without the Session disposition block | The human has to ask "그래서 끝난 거야?", and the silence or the offer becomes the next task |
 | Skip the debrief when the unit looks small | Its legal answers are records or `no record needed`; skipping loses both, and the reason |
+| Clean up the worktree before the debrief | The debrief counts with `git -C "$WT"` and fails on a removed tree |
 | Ask "shall I record this to WC?" | The close authorizes the debrief's writes; the question is the round-trip the step removes |
 | `git commit` with no path | A shared index takes another session's files with it |
 
@@ -144,7 +149,7 @@ block replaces. A hand-off is a statement in the block, never a question.
 - [ ] The done-condition was written before editing, from `user-turn:` when a brief exists, and it was not swapped for a smaller one
 - [ ] `scripts/check-session-close.sh brief` passed, or this session had no handoff brief
 - [ ] Every check the report cites was run, and the report quotes what it printed
-- [ ] The debrief ran after the end conditions stood and before the report; the report names WC paths and SHAs, or `no record needed` with its reason
+- [ ] The debrief ran while the worktree still existed — before the cleanup and before the report; the report names WC paths and SHAs, or `no record needed` with its reason
 - [ ] `scripts/check-pr-merged.sh` printed `pass` (`MERGED`, `mergedAt`, `mergeCommit`, two parents, CI `/ required` passed), or that turn said to stop before the merge and the first line names that clause
 - [ ] The first line says whether the done-condition holds, and names the clause if it does not
 - [ ] What was not done is a separate list and was not opened as the next unit

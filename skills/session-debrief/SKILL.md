@@ -22,8 +22,10 @@ creates **no company HQ record** — no worklog, plan, graph, or decision entry.
 
 After the unit's end conditions stand — the merge that `session-unit`
 requires, or the earlier stop the `user-turn:` named — and **before the final report**.
-The session runs it itself, on every completed unit, without the
-user asking for it and without a new turn.
+The owned worktree still exists at this point: the count below reads it, and
+`session-unit` cleans the tree up after this step. The session runs it itself,
+on every completed unit, without the user asking for it and without a new
+turn.
 
 A unit that produced nothing worth keeping still runs it: `no record needed`
 with the reason it was decided is a legal result, and a better one than a

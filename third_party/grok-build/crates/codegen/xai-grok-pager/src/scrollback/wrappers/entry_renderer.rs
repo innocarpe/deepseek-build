@@ -651,7 +651,7 @@ impl<'a> EntryRenderer<'a> {
 
     fn paint_clock(&self, buf: &mut Buffer, entry_right: u16, y: u16, text: &str) {
         use crate::scrollback::timestamp_layout::{clock_cols, clock_origin};
-        let x = clock_origin(entry_right, text);
+        let x = clock_origin(entry_right, text, self.appearance());
         let style = Style::default().fg(self.theme.gray);
         buf.set_string_safe(x, y, text, style);
         self.clock_rect
@@ -1059,7 +1059,7 @@ impl Renderable for EntryRenderer<'_> {
                 use crate::scrollback::timestamp_layout::{
                     clock_cols, clock_origin, point_in_clock,
                 };
-                let x = clock_origin(area.right(), text);
+                let x = clock_origin(area.right(), text, self.appearance());
                 self.mouse_pos
                     .is_some_and(|(mx, my)| point_in_clock(mx, my, x, clock_row, clock_cols(text)))
             });
@@ -1479,8 +1479,8 @@ mod tests {
     }
 
     /// Columns the entry keeps between the time and its own right edge.
-    fn ts_right_inset(_renderer: &EntryRenderer) -> u16 {
-        crate::scrollback::timestamp_layout::CLOCK_EDGE_INSET
+    fn ts_right_inset(renderer: &EntryRenderer) -> u16 {
+        crate::scrollback::timestamp_layout::clock_edge_inset(renderer.appearance())
     }
 
     /// The wide pane's first-line clock columns, ending one column inside the edge.
@@ -2017,14 +2017,10 @@ mod tests {
             expected,
             "the time is the meta row, {inset} column(s) inside the right edge:\n{frame}"
         );
-        assert!(
-            inset >= 1,
-            "the clock stops one column inside the pane edge"
-        );
         assert_eq!(
-            buf.cell((width - 1, 1)).unwrap().symbol(),
-            " ",
-            "the meta row's last column stays blank:\n{frame}"
+            inset, 0,
+            "on a phone pane the held-copy gutter outside the entry is the clock's column of air, \
+             so the clock closes on the entry's last column:\n{frame}"
         );
 
         // A desktop pane keeps the full-height pad: no fraction glyphs, the band

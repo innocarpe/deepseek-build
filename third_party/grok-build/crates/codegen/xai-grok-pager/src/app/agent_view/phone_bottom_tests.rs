@@ -562,12 +562,11 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
         "the box's middle row is the text row:\n{frame}"
     );
 
-    // (c) The turn time closes one column inside the transcript's right edge
-    // (the clock's edge inset), and the band runs on from there to the frame
-    // edge: the echo's own pad column, the held-copy gutter the transcript
-    // leaves blank, and the scrollbar's column while no bar is drawn. The
-    // echo's first content row is full, so the clock sits on the meta row; that
-    // row is still part of the band.
+    // (c) The turn time closes on the transcript's last column: the held-copy
+    // gutter the transcript leaves blank is its column of air, as tight as the
+    // text's one column on the left, and the scrollbar's column follows (band
+    // while no bar is drawn). The echo's first content row is full, so the
+    // clock sits on the meta row; that row is still part of the band.
     let echo_y = meta;
     let last_ink = (0..PHONE_COLS)
         .rev()
@@ -582,8 +581,8 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
     }
     assert_eq!(
         PHONE_COLS - 1 - last_ink,
-        3,
-        "the time's pad, the copy gutter and the bar's column follow the ink\n{frame}"
+        2,
+        "the copy gutter and the bar's column follow the ink\n{frame}"
     );
 
     // (d) The status band reaches the PTY bottom; the host adds pixel space below.

@@ -888,7 +888,14 @@ impl ScrollbackPane {
             if let Some(text) = plan.text.as_deref()
                 && clock_y < content_area.y + content_area.height
             {
-                clock_rect = Some(paint_sticky_clock(buf, theme, entry_right, clock_y, text));
+                clock_rect = Some(paint_sticky_clock(
+                    buf,
+                    theme,
+                    &ctx.appearance,
+                    entry_right,
+                    clock_y,
+                    text,
+                ));
             }
             y = y.saturating_add(1);
         }
@@ -976,6 +983,7 @@ impl ScrollbackPane {
             clock_rect = Some(paint_sticky_clock(
                 buf,
                 theme,
+                &ctx.appearance,
                 entry_right,
                 first_content_y,
                 text,
@@ -1444,7 +1452,7 @@ fn sticky_clock_plan(
         content_top.saturating_add(u16::from(vpad))
     };
     let hovered = stable.text.as_deref().is_some_and(|text| {
-        let x = clock_origin(entry_right, text);
+        let x = clock_origin(entry_right, text, &ctx.appearance);
         mouse_pos.is_some_and(|(mx, my)| point_in_clock(mx, my, x, clock_row, clock_cols(text)))
     });
     if !hovered {
@@ -1461,12 +1469,13 @@ fn sticky_clock_plan(
 fn paint_sticky_clock(
     buf: &mut ratatui::buffer::Buffer,
     theme: &crate::theme::Theme,
+    appearance: &crate::appearance::AppearanceConfig,
     entry_right: u16,
     y: u16,
     text: &str,
 ) -> Rect {
     use crate::scrollback::timestamp_layout::{clock_cols, clock_origin};
-    let x = clock_origin(entry_right, text);
+    let x = clock_origin(entry_right, text, appearance);
     buf.set_string_safe(x, y, text, Style::default().fg(theme.gray));
     Rect::new(x, y, clock_cols(text), 1)
 }

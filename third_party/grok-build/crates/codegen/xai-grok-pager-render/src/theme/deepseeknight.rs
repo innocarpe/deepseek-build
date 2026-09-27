@@ -172,7 +172,10 @@ impl Theme {
             } else {
                 PROMPT_BORDER
             },
-            prompt_border_active: DEEPSEEK_BLUE,
+            // Focused composer border: one step below the official blue so the
+            // box sits behind the content (2026-09-27 tone decision, see
+            // docs/product/THEME_CLASSIC_READABILITY_2026-09-27.md).
+            prompt_border_active: DEEPSEEK_BLUE_DIM,
 
             accent_model: TEAL,
 
@@ -237,7 +240,9 @@ mod tests {
         let t = Theme::deepseeknight();
         assert!(matches!(t.accent_user, Color::Rgb(77, 107, 254)));
         assert!(matches!(t.accent_system, Color::Rgb(77, 107, 254)));
-        assert!(matches!(t.prompt_border_active, Color::Rgb(77, 107, 254)));
+        // The focused composer border reuses the dim token (tone decision
+        // 2026-09-27); the official blue stays on the accents above.
+        assert!(matches!(t.prompt_border_active, Color::Rgb(50, 72, 190)));
     }
 
     #[test]
@@ -245,7 +250,7 @@ mod tests {
         let t = Theme::deepseeknight_neutral();
         assert!(matches!(t.accent_user, Color::Rgb(77, 107, 254)));
         assert!(matches!(t.accent_system, Color::Rgb(77, 107, 254)));
-        assert!(matches!(t.prompt_border_active, Color::Rgb(77, 107, 254)));
+        assert!(matches!(t.prompt_border_active, Color::Rgb(50, 72, 190)));
         assert!(matches!(t.selection_border, Color::Rgb(50, 72, 190)));
     }
 

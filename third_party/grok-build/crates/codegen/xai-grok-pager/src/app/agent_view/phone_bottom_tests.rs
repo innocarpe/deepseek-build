@@ -563,7 +563,7 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
         "the time's pad, the copy gutter and the bar's column follow the ink\n{frame}"
     );
 
-    // (d) The status band sits on the frame's half-row floor at the PTY bottom.
+    // (d) The status band sits on the frame's floor row at the PTY bottom.
     let status_y = divider + 1;
     assert_eq!(
         status_y + 1 + crate::views::agent::BOTTOM_MARGIN_ROWS,
@@ -575,12 +575,11 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
 /// The status band sits on the frame's floor at every phone height, and it
 /// still paints its content there: a geometry-only check would pass on a blank
 /// band, so each height runs the same content assertions as the 55x41 frame
-/// test. The floor is one row of upper half blocks — the frame's background on
-/// the top half, the terminal's on the bottom — so the frame ends half a row
-/// under the status text whatever inset the host keeps outside the PTY. A
-/// short terminal drops the floor with the other margins.
+/// test. The floor is one row in the frame's own background, so the air under
+/// the status text is the frame's whatever inset the host keeps outside the
+/// PTY. A short terminal drops the floor with the other margins.
 #[test]
-fn phone_frame_keeps_a_half_row_floor_at_every_phone_height() {
+fn phone_frame_keeps_a_floor_row_at_every_phone_height() {
     let _guard = crate::theme::cache::pin_theme();
     let theme = Theme::current();
     assert_eq!(crate::views::agent::BOTTOM_MARGIN_ROWS, 1);
@@ -605,9 +604,9 @@ fn phone_frame_keeps_a_half_row_floor_at_every_phone_height() {
         for x in 0..PHONE_COLS {
             let cell = buf.cell((x, floor)).unwrap();
             assert_eq!(
-                (cell.symbol(), cell.fg, cell.bg),
-                ("\u{2580}", theme.bg_base, ratatui::style::Color::Reset),
-                "{PHONE_COLS}x{rows}: floor cell {x} is the frame's top half over the terminal's own background\n{frame}"
+                (cell.symbol(), cell.bg),
+                (" ", theme.bg_base),
+                "{PHONE_COLS}x{rows}: floor cell {x} is the frame's own background\n{frame}"
             );
         }
     }

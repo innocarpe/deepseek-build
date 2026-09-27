@@ -89,12 +89,10 @@ pub const SHORT_TERMINAL_ROWS: u16 = 16;
 pub const SCROLLBACK_MIN_ROWS: u16 = 5;
 /// The frame's floor: the row under the bottom status row, at every width.
 ///
-/// [`paint_bottom_margin`] fills it with an upper half block (`▀`) — the
-/// frame's background on the top half, the terminal's own background on the
-/// bottom half — so the frame ends half a row under the status text whatever
-/// inset the host keeps outside the PTY. A whole blank row is twice the air the
-/// composer keeps under its text, and no row leaves the status text on the
-/// frame edge. Short terminals ([`SHORT_TERMINAL_ROWS`]) drop it with the other
+/// [`paint_bottom_margin`] paints it in the frame's own background, so the
+/// frame keeps its air under the status text inside itself whatever inset the
+/// host keeps outside the PTY; without it the status text sits on the frame
+/// edge. Short terminals ([`SHORT_TERMINAL_ROWS`]) drop it with the other
 /// margins, like the dashboard's floor, and the layout reserves it only in rows
 /// the rest of the stack leaves free, so it is the first row to yield.
 pub const BOTTOM_MARGIN_ROWS: u16 = 1;
@@ -120,18 +118,13 @@ fn constraint_rows(constraints: &[Constraint]) -> u16 {
         .fold(0u16, u16::saturating_add)
 }
 
-/// Paint the frame's floor ([`BOTTOM_MARGIN_ROWS`]). A theme whose background
-/// is the terminal's own (`Reset`) has no edge to draw, so the row stays blank:
-/// a `Reset` foreground would paint the half block in the text colour.
+/// Paint the frame's floor ([`BOTTOM_MARGIN_ROWS`]) in the frame's background.
 pub(crate) fn paint_bottom_margin(buf: &mut Buffer, rect: Rect, base: Color) {
     for y in rect.y..rect.bottom() {
         for x in rect.x..rect.right() {
             if let Some(cell) = buf.cell_mut((x, y)) {
                 cell.reset();
-                if !matches!(base, Color::Reset) {
-                    cell.set_symbol("\u{2580}");
-                    cell.fg = base;
-                }
+                cell.bg = base;
             }
         }
     }

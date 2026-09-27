@@ -5279,10 +5279,11 @@ mod status_line_draw_tests {
             find(&buf, ":shortcuts").is_some(),
             "the shortcuts bar keeps its row\n{screen}"
         );
-        assert_ne!(
-            buf.cell((0, 16)).map(|c| c.symbol()),
-            Some("\u{2580}"),
-            "no floor row at 17\n{screen}"
+        let shortcuts_y = find(&buf, ":shortcuts").map(|(_, y)| y);
+        assert_eq!(
+            shortcuts_y,
+            Some(17 - 2),
+            "no floor row at 17: only the status row sits under the shortcuts bar\n{screen}"
         );
 
         // One row taller, the floor takes the free row under the status row.
@@ -5291,9 +5292,9 @@ mod status_line_draw_tests {
         let rows = script_rows(&buf);
         assert_eq!(rows.len(), 5, "{screen}");
         assert_eq!(
-            buf.cell((0, 17)).map(|c| c.symbol()),
-            Some("\u{2580}"),
-            "the floor is the last row\n{screen}"
+            find(&buf, ":shortcuts").map(|(_, y)| y),
+            Some(18 - 3),
+            "the status row and the floor sit under the shortcuts bar\n{screen}"
         );
     }
 

@@ -9,8 +9,6 @@ mod common;
 
 #[path = "pty_e2e/agent_response.rs"]
 mod agent_response;
-#[path = "pty_e2e/bottom_band_one_line.rs"]
-mod bottom_band_one_line;
 #[path = "pty_e2e/connect_ui_timeout_env_override.rs"]
 mod connect_ui_timeout_env_override;
 #[path = "pty_e2e/dock_crowded_sections.rs"]
@@ -31,6 +29,8 @@ mod fullscreen_external_editor_round_trip;
 mod initial_prompt_positional_auto_submits;
 #[path = "pty_e2e/input_echoes_at_idle_prompt.rs"]
 mod input_echoes_at_idle_prompt;
+#[path = "pty_e2e/phone_footer_two_rows.rs"]
+mod phone_footer_two_rows;
 #[path = "pty_e2e/plan_overlay_slash_runs_command.rs"]
 mod plan_overlay_slash_runs_command;
 #[path = "pty_e2e/plan_revise_empty_enter_does_not_approve.rs"]

@@ -25,13 +25,26 @@ fn is_plain_rule(line: &str) -> bool {
         && chars[1..chars.len() - 1].iter().all(|c| *c == '\u{2500}')
 }
 
-/// Phone frame: the box rule is plain and exactly one row follows it. Desktop
-/// frames put the model back on that rule.
+/// The composer band's bottom pad: the last row made only of `▂`.
+fn band_bottom_row(screen: &str) -> usize {
+    let lines: Vec<&str> = screen.lines().collect();
+    lines
+        .iter()
+        .rposition(|line| {
+            let line = line.trim_end();
+            !line.is_empty() && line.chars().all(|c| c == '\u{2582}')
+        })
+        .unwrap_or_else(|| panic!("no composer band in the frame\nscreen:\n{screen}"))
+}
+
+/// Phone frame: the composer is a band with no box rule, and exactly two rows
+/// (the footer) follow it. Desktop frames keep the box with the model on its
+/// rule.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore]
-async fn bottom_band_is_one_row_on_the_phone_frame() {
+async fn phone_frame_ends_on_a_two_row_footer_under_the_composer_band() {
     let content = ContentController::start().await.expect("start content");
-    content.set_response(format!("{MOCK_RESPONSE_SENTINEL} bottom band."));
+    content.set_response(format!("{MOCK_RESPONSE_SENTINEL} phone footer."));
 
     let binary = pager_binary().expect("resolve pager binary");
     let mut harness =
@@ -50,33 +63,30 @@ async fn bottom_band_is_one_row_on_the_phone_frame() {
     harness.update(Duration::from_millis(900));
 
     let screen = harness.screen_contents();
-    eprintln!("--- {PHONE_COLS}x{PHONE_ROWS} bottom band ---\n{screen}");
-    let lines: Vec<&str> = screen.lines().collect();
-    let (div_at, divider) = divider_row(&screen);
+    eprintln!("--- {PHONE_COLS}x{PHONE_ROWS} phone footer ---\n{screen}");
     assert!(
-        is_plain_rule(divider.trim_start()),
-        "the phone divider is a plain rule\nrow: {divider:?}"
+        !screen.contains('\u{2570}') && !screen.contains('\u{256d}'),
+        "the phone composer draws no box\nscreen:\n{screen}"
     );
+    let lines: Vec<&str> = screen.lines().collect();
+    let band_at = band_bottom_row(&screen);
     let after: Vec<&str> = lines
         .iter()
-        .skip(div_at + 1)
+        .skip(band_at + 1)
         .copied()
         .filter(|line| !line.trim().is_empty())
         .collect();
     assert_eq!(
         after.len(),
-        1,
-        "exactly one row follows the phone box\nrows: {after:?}\nscreen:\n{screen}"
+        2,
+        "exactly the two footer rows follow the phone composer\nrows: {after:?}\nscreen:\n{screen}"
     );
-    let band = after.first().copied().unwrap_or("");
-    assert!(
-        !band.contains('\u{2570}'),
-        "the band is not a second box\nrow: {band:?}"
-    );
-    assert!(
-        !band.contains("Enter:send") && !band.contains("Shift+Tab"),
-        "the phone band is not the hint row\nrow: {band:?}"
-    );
+    for row in &after {
+        assert!(
+            !row.contains("Enter:send") && !row.contains("Shift+Tab"),
+            "the phone footer is not the hint row\nrow: {row:?}"
+        );
+    }
 
     for (rows, cols) in [(40u16, 80u16), (50, 180)] {
         harness.resize(rows, cols).expect("resize to desktop");

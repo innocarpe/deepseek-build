@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- On a phone-width pane the composer is a band across the frame in the prompt echo's colour (`bg_light`) instead of a rounded box: no rules, its top and bottom rows cut to three quarters of a row (`▆` above the text, `▂` below), and the text keeps the box's inset. The frame now ends on a two-row footer under it, each row split left and right: balance and cache against the model's full name (`$15.70 cache 24%` · `DeepSeek V4.1 Flash (max)`), then this session's tokens against the permission mode (`48.6k in · 236 out` · `always-approve`). The phone keeps no floor row: the footer's text sits the cell's own leading above the grid's edge. The welcome screen draws the same band and footer (its first row names the build), so the first keystroke's switch to the conversation view moves nothing. Desktop panes keep the boxed composer, the status row and the floor row.
+
 ## 6.1.9 — 2026-09-28
 
 - On a phone-width pane a prompt echo opens folded to two rows whenever its words wrap past two. The fold check counted `ceil(width / columns)` rows per line, a lower bound on word wrapping, so a prompt that word-wraps to three rows (a long English prompt, say) opened expanded at three; it now counts the rows the echo actually wraps to, with the renderer's own prefix and wrap. A prompt pushed before the first frame (a resumed or replayed session), a pass through width 0, and an appearance change such as compact mode keep or re-derive the fold the same way. Tapping still opens the echo, and a second tap folds it back to two rows.

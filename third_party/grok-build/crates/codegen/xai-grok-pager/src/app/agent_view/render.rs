@@ -1544,14 +1544,8 @@ impl AgentView {
         // and leaves the row blank until that status lands. A phone pane skips
         // this pass and paints cost and model together later, once the label exists.
         buf.set_style(layout.deepseek_status, Style::default().bg(theme.bg_base));
-        // The frame's floor: half a row of the frame under the status text. On
-        // a phone pane the lower half takes the host's key bar colour.
-        let floor_under = if narrow {
-            agent::PHONE_FLOOR_UNDER
-        } else {
-            ratatui::style::Color::Reset
-        };
-        agent::paint_bottom_margin(buf, layout.bottom_margin, theme.bg_base, floor_under);
+        // The frame's floor: a row of the frame under the status text.
+        agent::paint_bottom_margin(buf, layout.bottom_margin, theme.bg_base);
         if !narrow
             && self.deepseek_status_session_id.as_ref() == self.session.session_id.as_ref()
             && let Some(ds) = self.deepseek_status.as_ref().filter(|s| s.is_deepseek)
@@ -5285,9 +5279,10 @@ mod status_line_draw_tests {
             find(&buf, ":shortcuts").is_some(),
             "the shortcuts bar keeps its row\n{screen}"
         );
-        assert_ne!(
-            buf.cell((0, 16)).map(|c| c.symbol()),
-            Some("\u{2580}"),
+        // The shortcuts bar sits right above the status row, which is the last row.
+        assert_eq!(
+            find(&buf, ":shortcuts").map(|(_, y)| y),
+            Some(15),
             "no floor row at 17\n{screen}"
         );
 
@@ -5297,16 +5292,18 @@ mod status_line_draw_tests {
         let rows = script_rows(&buf);
         assert_eq!(rows.len(), 5, "{screen}");
         assert_eq!(
-            buf.cell((0, 17)).map(|c| c.symbol()),
-            Some("\u{2580}"),
-            "the floor is the last row\n{screen}"
+            find(&buf, ":shortcuts").map(|(_, y)| y),
+            Some(15),
+            "the status row moves up one row for the floor\n{screen}"
         );
-        // Only a phone pane paints the host's key bar under the half block.
-        assert_eq!(
-            buf.cell((0, 17)).map(|c| c.bg),
-            Some(ratatui::style::Color::Reset),
-            "an 80-column floor keeps the terminal's own background\n{screen}"
-        );
+        let base = crate::theme::Theme::current().bg_base;
+        for x in 0..80 {
+            assert_eq!(
+                buf.cell((x, 17)).map(|c| (c.symbol(), c.bg)),
+                Some((" ", base)),
+                "the floor is the last row, blank in the frame's background (cell {x})\n{screen}"
+            );
+        }
     }
 
     const ONE_ROW_SCRIPT: &str = "solo-row";

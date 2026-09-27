@@ -89,14 +89,16 @@ pub const SHORT_TERMINAL_ROWS: u16 = 16;
 pub const SCROLLBACK_MIN_ROWS: u16 = 5;
 /// The frame's floor: the row under the bottom status row, at every width.
 ///
-/// [`paint_bottom_margin`] fills it with an upper half block (`▀`) — the
-/// frame's background on the top half, the terminal's own background on the
-/// bottom half — so the frame ends half a row under the status text whatever
-/// inset the host keeps outside the PTY. A whole blank row is twice the air the
-/// composer keeps under its text, and no row leaves the status text on the
-/// frame edge. Short terminals ([`SHORT_TERMINAL_ROWS`]) drop it with the other
-/// margins, like the dashboard's floor, and the layout reserves it only in rows
-/// the rest of the stack leaves free, so it is the first row to yield.
+/// [`paint_bottom_margin`] fills it with the frame's background, so the frame
+/// ends a row under the status text in its own colour. A cell is the smallest
+/// unit the frame can colour on its own: an upper half block (`▀`) ends the
+/// frame half a row lower, but its bottom half is the terminal's background or
+/// a guess at the host's chrome, and on the phone (Orca iOS) that half read as
+/// a grey strip, with more of the host's grey under it whenever the host sized
+/// the grid a row short. No row leaves the status text on the frame edge.
+/// Short terminals ([`SHORT_TERMINAL_ROWS`]) drop it with the other margins,
+/// like the dashboard's floor, and the layout reserves it only in rows the rest
+/// of the stack leaves free, so it is the first row to yield.
 pub const BOTTOM_MARGIN_ROWS: u16 = 1;
 
 /// Rows [`AgentViewLayout::compute`] reserves under the status row for a frame
@@ -120,34 +122,14 @@ fn constraint_rows(constraints: &[Constraint]) -> u16 {
         .fold(0u16, u16::saturating_add)
 }
 
-/// What a phone pane paints under the floor's half block: the background of the
-/// key bar Orca iOS draws right under the terminal.
-///
-/// The grid ends on the key bar's top edge (measured 2026-09-27 on a 1320x2868
-/// capture of a 55x41 pane: rows 51 px, grid bottom at y 2524, the bar's 3 px
-/// `(42,42,42)` rule at 2525, the bar `(26,26,26)` under it). With the
-/// terminal's own background, `(40,44,52)` there, the half block's lower half
-/// reads as a grey strip between the frame and the bar. In the bar's colour it
-/// reads as the bar, so the frame ends half a row under the status text and
-/// the host's chrome starts there. Another phone terminal shows a near-black
-/// strip instead of its own background.
-pub const PHONE_FLOOR_UNDER: Color = Color::Rgb(26, 26, 26);
-
-/// Paint the frame's floor ([`BOTTOM_MARGIN_ROWS`]): the frame's background
-/// `base` on the top half, `under` on the bottom half (`Reset` is the
-/// terminal's own). A theme whose background is the terminal's own (`Reset`)
-/// has no edge to draw, so the row stays blank: a `Reset` foreground would
-/// paint the half block in the text colour.
-pub(crate) fn paint_bottom_margin(buf: &mut Buffer, rect: Rect, base: Color, under: Color) {
+/// Paint the frame's floor ([`BOTTOM_MARGIN_ROWS`]) in the frame's background.
+/// A theme whose background is the terminal's own (`Reset`) leaves the row blank.
+pub(crate) fn paint_bottom_margin(buf: &mut Buffer, rect: Rect, base: Color) {
     for y in rect.y..rect.bottom() {
         for x in rect.x..rect.right() {
             if let Some(cell) = buf.cell_mut((x, y)) {
                 cell.reset();
-                if !matches!(base, Color::Reset) {
-                    cell.set_symbol("\u{2580}");
-                    cell.fg = base;
-                    cell.bg = under;
-                }
+                cell.bg = base;
             }
         }
     }

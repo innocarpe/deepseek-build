@@ -597,13 +597,11 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
 /// The status band sits on the frame's floor at every phone height, and it
 /// still paints its content there: a geometry-only check would pass on a blank
 /// band, so each height runs the same content assertions as the 55x41 frame
-/// test. The floor is one row of upper half blocks — the frame's background on
-/// the top half, the host key bar's colour on the bottom — so the frame ends
-/// half a row under the status text and the lower half reads as the bar Orca
-/// iOS draws under the grid. A short terminal drops the floor with the other
-/// margins.
+/// test. The floor is one blank row in the frame's background, so the frame
+/// ends a row under the status text in its own colour. A short terminal drops
+/// the floor with the other margins.
 #[test]
-fn phone_frame_keeps_a_half_row_floor_at_every_phone_height() {
+fn phone_frame_keeps_a_one_row_floor_at_every_phone_height() {
     let _guard = crate::theme::cache::pin_theme();
     let theme = Theme::current();
     assert_eq!(crate::views::agent::BOTTOM_MARGIN_ROWS, 1);
@@ -628,13 +626,9 @@ fn phone_frame_keeps_a_half_row_floor_at_every_phone_height() {
         for x in 0..PHONE_COLS {
             let cell = buf.cell((x, floor)).unwrap();
             assert_eq!(
-                (cell.symbol(), cell.fg, cell.bg),
-                (
-                    "\u{2580}",
-                    theme.bg_base,
-                    crate::views::agent::PHONE_FLOOR_UNDER
-                ),
-                "{PHONE_COLS}x{rows}: floor cell {x} is the frame's top half over the key bar's colour\n{frame}"
+                (cell.symbol(), cell.bg),
+                (" ", theme.bg_base),
+                "{PHONE_COLS}x{rows}: floor cell {x} is blank in the frame's background\n{frame}"
             );
         }
     }

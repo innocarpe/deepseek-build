@@ -176,20 +176,56 @@ def check_body(body):
     failures = []
     if chars < MIN_CHARS:
         failures.append(f"review body is too short ({chars} characters; minimum {MIN_CHARS})")
-    required = {
-        "verdict": r"^\s*#{1,6}\s+verdict\b|^\s*verdict\s*:",
-        "findings": r"(?im)^\s*#{1,6}\s+findings\b",
-        "invariant/boundary analysis": r"(?im)^\s*#{1,6}\s+invariant and boundary analysis\b",
-        "CI/environment evidence": r"(?im)^\s*#{1,6}\s+CI and environment evidence\b",
-        "closure answer": r"(?im)^\s*#{1,6}\s+closure answer\b",
+    if re.search(r"\bBLOCKED\s*:", body, re.I):
+        failures.append("review body contains a BLOCKED disposition")
+
+    section_titles = {
+        "verdict": "verdict",
+        "findings": "findings",
+        "invariant/boundary analysis": "invariant and boundary analysis",
+        "CI/environment evidence": "CI and environment evidence",
+        "closure answer": "closure answer",
     }
-    missing = [label for label, pattern in required.items() if not re.search(pattern, body, re.I | re.M)]
+
+    def section_body(title):
+        heading = re.search(
+            rf"(?im)^\s*(?P<marks>#+)\s+{re.escape(title)}\b[^\r\n]*(?:\r?\n|$)",
+            body,
+        )
+        if heading:
+            level = len(heading.group("marks"))
+            tail = body[heading.end():]
+            next_heading = re.search(
+                rf"(?m)^\s*#{{1,{level}}}\s+[^\r\n]*(?:\r?\n|$)", tail
+            )
+            section = tail[:next_heading.start()] if next_heading else tail
+            return section.strip()
+        if title == "verdict":
+            label = re.search(r"(?im)^\s*verdict\s*:\s*[^\r\n]*(?:\r?\n|$)", body)
+            if label:
+                tail = body[label.end():]
+                next_heading = re.search(r"(?m)^\s*#{1,6}\s+[^\r\n]*(?:\r?\n|$)", tail)
+                remainder = tail[:next_heading.start()] if next_heading else tail
+                inline = label.group(0).split(":", 1)[1].strip()
+                return "\n".join(part for part in (inline, remainder.strip()) if part).strip()
+        return None
+
+    sections = {label: section_body(title) for label, title in section_titles.items()}
+    missing = [label for label, content in sections.items() if content is None]
     if missing:
         failures.append("not a complete review; missing sections: " + ", ".join(missing))
-    match = re.search(r"^#{1,6}\s+findings\b(.*?)(?=^#{1,2}\s+|\Z)", body, re.I | re.M | re.S)
-    findings = match.group(1).strip() if match else ""
+    empty = [
+        label for label, content in sections.items()
+        if content is not None and not re.sub(r"(?m)^\s*#+\s+[^\r\n]*$", "", content).strip()
+    ]
+    if empty:
+        failures.append("required sections have empty bodies: " + ", ".join(empty))
+
+    findings = sections.get("findings") or ""
     no_findings_only = findings.strip().casefold() in {"no findings", "no findings."}
-    if findings and not no_findings_only:
+    if not findings.strip():
+        failures.append("findings section is empty")
+    elif not no_findings_only:
         blocks = re.split(r"(?im)(?=^#{1,6}\s+finding\s*#?\d+\b)", findings)
         blocks = [b for b in blocks if re.search(r"(?im)^#{1,6}\s+finding\s*#?\d+\b", b)]
         if not blocks:

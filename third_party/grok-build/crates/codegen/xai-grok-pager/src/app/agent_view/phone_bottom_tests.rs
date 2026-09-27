@@ -205,7 +205,7 @@ fn assert_one_band(buf: &Buffer, balance: &str, cache: &str, model: &str, mode: 
         );
     }
     assert_eq!(
-        band_y + 1 + crate::views::agent::BOTTOM_MARGIN_ROWS,
+        band_y + 1 + crate::views::agent::PHONE_BOTTOM_MARGIN_ROWS,
         buf.area.height,
         "the band keeps the frame's floor row(s) under it, got {band_y} in {}",
         buf.area.height
@@ -439,10 +439,8 @@ fn top_border_row(buf: &Buffer) -> u16 {
         .unwrap_or_else(|| panic!("prompt box top border not found in\n{}", frame_text(buf)))
 }
 
-/// The frame the report's screenshots show, at the measured iPhone size: the
-/// echo's band is its text rows and no pad row, the composer box is the top
-/// border, one text row and the divider, the turn time stops one column inside
-/// the echo's right edge, and the status band reaches the frame edge.
+/// The measured iPhone frame: the echo band reaches both edges while its text
+/// keeps its inset, and the status row has one floor row below it.
 #[test]
 fn phone_frame_pads_the_prompt_areas_by_one_cell() {
     let _guard = crate::theme::cache::pin_theme();
@@ -482,12 +480,27 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
         "the bottom pad row keeps the band on its upper two eighths:\n{frame}"
     );
     assert_eq!(bottom_pad.bg, theme.bg_light, "{frame}");
+    for x in [0, PHONE_COLS - 1] {
+        assert_eq!(
+            buf.cell((x, first)).unwrap().symbol(),
+            "\u{2582}",
+            "{frame}"
+        );
+        assert_eq!(buf.cell((x, last)).unwrap().symbol(), "\u{2586}", "{frame}");
+    }
     for y in [band[1], band[2]] {
         assert!(
             row_text(&buf, y).contains('M'),
             "text row {y} carries the prompt:\n{frame}"
         );
+        assert_eq!(buf.cell((0, y)).unwrap().bg, theme.bg_light, "{frame}");
+        assert_eq!(
+            buf.cell((PHONE_COLS - 1, y)).unwrap().bg,
+            theme.bg_light,
+            "{frame}"
+        );
     }
+    assert_eq!(buf.cell((3, band[1])).unwrap().symbol(), "M", "{frame}");
 
     // (b) The composer box is exactly the border, text and divider rows.
     let top = top_border_row(&buf);
@@ -511,32 +524,63 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
                 .is_some_and(|c| c.bg == theme.bg_light)
         })
         .expect("the echo's band must have a right edge");
-    let last_ink = (0..PHONE_COLS)
+    let last_ink = (0..PHONE_COLS - 1)
         .rev()
         .find(|&x| buf.cell((x, echo_y)).is_some_and(|c| c.symbol() != " "))
         .expect("the echo's first row must carry text");
     assert_eq!(
         band_right - last_ink,
-        1,
-        "the time stops one column inside the band's right edge: ink {last_ink}, band {band_right}\n{frame}"
+        2,
+        "the time keeps its original inset inside the full-width band: ink {last_ink}, band {band_right}\n{frame}"
     );
 
-    // (d) No blank floor row under the status band: it reaches the frame edge.
+    // (d) The status band has one floor row below it on the phone.
     let status_y = divider + 1;
     assert_eq!(
-        status_y + 1 + crate::views::agent::BOTTOM_MARGIN_ROWS,
+        status_y + 1 + crate::views::agent::PHONE_BOTTOM_MARGIN_ROWS,
         PHONE_ROWS,
-        "the status band reaches the frame edge:\n{frame}"
+        "the status band keeps its bottom gap:\n{frame}"
     );
 }
 
-/// The status band reaches the frame edge at every phone height the app runs at.
 #[test]
-fn phone_status_band_reaches_frame_edge_at_every_phone_height() {
+fn phone_prompt_band_keeps_both_edges_while_scrolling() {
+    let _guard = crate::theme::cache::pin_theme();
+    let theme = Theme::current();
+    let mut agent = phone_agent();
+    seed_prompt_echo(&mut agent, &"M".repeat(60));
+    for i in 0..30 {
+        agent
+            .scrollback
+            .push_block(RenderBlock::agent_message(format!("answer {i}")));
+    }
+    let _ = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    for offset in 0..4 {
+        agent.scrollback.set_scroll_offset(offset);
+        let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+        let band_rows = echo_band_rows(&buf, theme.bg_light);
+        assert!(
+            !band_rows.is_empty(),
+            "offset {offset}: pinned prompt is visible"
+        );
+        for y in band_rows {
+            let left = buf.cell((0, y)).unwrap();
+            let right = buf.cell((PHONE_COLS - 1, y)).unwrap();
+            assert_eq!(left.bg, right.bg, "offset {offset}, row {y}");
+            if matches!(left.symbol(), "\u{2582}" | "\u{2586}") {
+                assert_eq!(left.symbol(), right.symbol(), "offset {offset}, row {y}");
+            }
+        }
+    }
+}
+
+/// The status band keeps the same bottom gap at every phone height.
+#[test]
+fn phone_status_band_keeps_bottom_gap_at_every_phone_height() {
     assert_eq!(
-        crate::views::agent::BOTTOM_MARGIN_ROWS,
-        0,
-        "the phone layout has no blank floor row"
+        crate::views::agent::PHONE_BOTTOM_MARGIN_ROWS,
+        1,
+        "the phone layout has one bottom row"
     );
     for rows in [PHONE_ROWS, 36, 33, 30, 26, 24, 20] {
         let mut agent = phone_agent();
@@ -544,9 +588,9 @@ fn phone_status_band_reaches_frame_edge_at_every_phone_height() {
         let frame = frame_text(&buf);
         let status_y = border_row(&buf) + 1;
         assert_eq!(
-            status_y + 1 + crate::views::agent::BOTTOM_MARGIN_ROWS,
+            status_y + 1 + crate::views::agent::PHONE_BOTTOM_MARGIN_ROWS,
             rows,
-            "{PHONE_COLS}x{rows}: the status band reaches the frame edge\n{frame}"
+            "{PHONE_COLS}x{rows}: the status band keeps a bottom gap\n{frame}"
         );
     }
 }

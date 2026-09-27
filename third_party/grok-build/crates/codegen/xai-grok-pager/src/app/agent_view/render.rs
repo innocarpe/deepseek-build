@@ -1690,23 +1690,6 @@ impl AgentView {
                     buf,
                 );
             }
-            let any_drag_active =
-                self.drag_selection.is_some() || self.block_drag_selection.is_some();
-            if !any_drag_active
-                && !overlay_focused
-                && let Some(ref selection_box) = sb_output.selection_box
-            {
-                selection_box.render(buf);
-                self.render_selection_buttons(
-                    buf,
-                    selection_box,
-                    sb_output.selected_entry_area,
-                    &theme,
-                );
-            } else {
-                self.hit_sb_copy.clear();
-                self.hit_sb_view.clear();
-            }
             let rail_shown = self.timeline_rail.is_some();
             if !rail_shown {
                 agent::render_scrollbar(
@@ -1750,6 +1733,31 @@ impl AgentView {
                         );
                     }
                 }
+            }
+            if narrow && !rail_shown {
+                agent::paint_phone_scrollback_right_edge(
+                    buf,
+                    layout.scrollback_content,
+                    layout.scrollback,
+                    &theme,
+                );
+            }
+            let any_drag_active =
+                self.drag_selection.is_some() || self.block_drag_selection.is_some();
+            if !any_drag_active
+                && !overlay_focused
+                && let Some(ref selection_box) = sb_output.selection_box
+            {
+                selection_box.render(buf);
+                self.render_selection_buttons(
+                    buf,
+                    selection_box,
+                    sb_output.selected_entry_area,
+                    &theme,
+                );
+            } else {
+                self.hit_sb_copy.clear();
+                self.hit_sb_view.clear();
             }
         }
         let mut jump_to_bottom_visible = false;

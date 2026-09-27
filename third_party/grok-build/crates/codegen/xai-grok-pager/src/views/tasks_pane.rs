@@ -1260,6 +1260,26 @@ impl TasksPane {
             ..list_area
         };
         self.render_overlay(overlay_area, buf, bg_tasks, subagents, scheduled);
+        if layout_cfg.narrow && inner.width > 0 {
+            // The task pane spans the phone frame, while its labels retain
+            // their text inset. Carry each row's background through that inset
+            // so a selected task has no dark strips at either screen edge.
+            for y in area.y..area.bottom() {
+                let row_bg = buf.cell((inner.x, y)).map(|cell| cell.bg);
+                for x in area.x..inner.x {
+                    if let (Some(bg), Some(cell)) = (row_bg, buf.cell_mut((x, y))) {
+                        cell.set_char(' ');
+                        cell.bg = bg;
+                    }
+                }
+                for x in inner.right()..area.right() {
+                    if let (Some(bg), Some(cell)) = (row_bg, buf.cell_mut((x, y))) {
+                        cell.set_char(' ');
+                        cell.bg = bg;
+                    }
+                }
+            }
+        }
     }
 
     fn render_overlay(
@@ -2398,6 +2418,37 @@ mod tests {
             joined.contains('\u{25BC}'),
             "expected centered ▼ when the list overflows, got:\n{joined}"
         );
+    }
+
+    #[test]
+    fn phone_selected_task_background_reaches_both_frame_edges() {
+        let mut pane = TasksPane::new();
+        pane.overlay.show();
+        let mut tasks = BTreeMap::new();
+        tasks.insert(
+            "t1".to_string(),
+            make_bg_task("t1", "echo ready", BgTaskStatus::Running),
+        );
+        pane.sync(&tasks, &HashMap::new(), &HashMap::new(), &[]);
+        let area = Rect::new(0, 0, 55, 6);
+        let mut buf = Buffer::empty(area);
+        let mut layout = LayoutConfig::default();
+        layout.narrow = true;
+        pane.render(
+            area,
+            &mut buf,
+            true,
+            &layout,
+            &tasks,
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+        let selected_bg = pane.list_style.selection_bg;
+        let selected_y = (area.y..area.bottom())
+            .find(|&y| buf.cell((1, y)).is_some_and(|cell| cell.bg == selected_bg))
+            .expect("focused task paints a selected row");
+        assert_eq!(buf.cell((0, selected_y)).unwrap().bg, selected_bg);
+        assert_eq!(buf.cell((54, selected_y)).unwrap().bg, selected_bg);
     }
 
     #[test]

@@ -2,8 +2,9 @@ use ratatui::layout::{Constraint, Layout, Rect};
 
 use crate::appearance::LayoutConfig;
 
-/// Horizontal layout columns for scrollback entries. Selection borders are drawn INTO the outer viewport padding,
-/// not as part of this layout. Scrollbar is handled separately.
+/// Horizontal layout columns for scrollback entries. Selection borders use the
+/// outer viewport padding where it exists and the frame edge on phone panes.
+/// Scrollbar is handled separately.
 #[derive(Debug, Clone)]
 pub struct HorizontalLayout {
     pub accent: Rect,
@@ -109,12 +110,13 @@ impl HorizontalLayout {
         self.entry_content_area()
     }
 
-    /// Get the selection area (extends 1 column into outer padding on both sides). The selection border is drawn INTO
-    /// the padding areas.
+    /// Get the selection area. Extend into the outer padding where it exists;
+    /// at the left frame edge, stay inside the terminal width.
     pub fn selection_area(&self) -> Rect {
         // Selection extends 1 column left of accent into outer padding and 1 column right of entry into gap_left area
-        let x = self.accent.x.saturating_sub(1);
-        let width = self.entry_content_area().width + 2; // One column on each side
+        let left = self.accent.x.min(1);
+        let x = self.accent.x - left;
+        let width = self.entry_content_area().width + left + 1;
 
         Rect {
             x,
@@ -310,6 +312,6 @@ mod tests {
 
         // Selection at the edge saturates at x=0 (no underflow)
         assert_eq!(selection.x, 0);
-        assert_eq!(selection.width, layout.entry_content_area().width + 2);
+        assert_eq!(selection.width, layout.entry_content_area().width + 1);
     }
 }

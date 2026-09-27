@@ -41,6 +41,18 @@ pub(crate) fn timestamp_gutter_applies(block: &RenderBlock) -> bool {
     )
 }
 
+/// Columns a wide pane leaves empty on a block's first content line for the clock.
+///
+/// Zero unless the appearance asks for timestamps AND the block carries a clock: a tool header,
+/// thought or system row uses the full first line, so its columns must not be cleared.
+pub(crate) fn first_line_clock_reserve(appearance: &AppearanceConfig, block: &RenderBlock) -> u16 {
+    if timestamp_gutter_applies(block) {
+        wide_first_line_reserve(appearance)
+    } else {
+        0
+    }
+}
+
 pub(crate) fn short_clock(ts: DateTime<Local>) -> String {
     ts.format("%-I:%M %p").to_string()
 }

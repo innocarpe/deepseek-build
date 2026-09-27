@@ -101,15 +101,39 @@ first line names it when it did not stand.
 The first line is whether the done-condition holds. If it does not, name the
 clause. Do not write that the unit is done when a clause failed.
 
-Then paste the output, not a paraphrase:
+The report says what the evidence means, so a reader can close the session
+without having watched it run. Command-output dumps and file lists push the
+interpretation back to the reader; these elements carry it:
 
-- PR URL
-- CI, from `scripts/check-pr-merged.sh` (the `check` lines) or `gh pr checks`
-- `state`, `mergedAt`, `mergeCommit`, `parents` from the same script. Until
-  it prints `pass`, the merge is not a fact
-- the checks this change needed, and what they printed
-- the debrief, from [`session-debrief`](../session-debrief/SKILL.md): WC paths
-  and commit SHAs, or `no record needed` with the reason it was decided
+- **What changed, and why.** One short paragraph: the unit's result as the
+  user meets it, and the defect or gap that motivated it. The PR body argued
+  this to reviewers; this paragraph survives the conversation.
+- **Observation and inference are separated.** A measured sentence carries
+  the command, `file:line`, or SHA that showed it; a conclusion drawn rather
+  than measured says so. When a before → after number was measured, give both
+  sides; a number that was not measured stays out.
+- **Evidence.** Paste the output, not a paraphrase:
+  - PR URL
+  - CI, from `scripts/check-pr-merged.sh` (the `check` lines) or `gh pr checks`
+  - `state`, `mergedAt`, `mergeCommit`, `parents` from the same script. Until
+    it prints `pass`, the merge is not a fact
+  - the checks this change needed, and what they printed
+- **Records.** The debrief, from [`session-debrief`](../session-debrief/SKILL.md):
+  WC paths and commit SHAs, or `no record needed` with the reason it was
+  decided. The branch's commits, hash and one line each, when the PR carries
+  more than one concern.
+- **The owned worktree** by exact path with `removed: true` or
+  `removed: false`. When it was left in place, say which case it is: the
+  removal condition did not stand, or the tree was retained on purpose — the
+  user asked, or the tree is kept as evidence — with the reason.
+- **What you did not do** — a separate list with a reason per item: left
+  untouched, unfinished, or out of scope. Another session's dirty file or
+  worktree goes here with the reason it was left alone. Name the exact range
+  the unit checked and what it showed there — clean or dirty; a tree wider
+  than that range is not called clean.
+- **Runtime or deployed state** when it matters to the outcome and was
+  measured — the turn need not have asked. Name the measurement and when it
+  was taken; state that is irrelevant or was not measured stays out.
 
 Close with the **Session disposition** block — three labelled lines, not an
 offer. The measured waste at this seat is a session that finished and did not
@@ -134,13 +158,16 @@ block replaces. A hand-off is a statement in the block, never a question.
 | Treat the brief's prohibition as the user turn | At `e914dfb` a copied release-lane ban outranked the user |
 | Stop because `## Unreleased` is empty | That means the named work is not in the version |
 | End the report at an open PR | The old checklist said that, and sessions stopped there |
+| Dump command output or a file list and call it the report | The reader is left to derive the meaning; the report is that meaning |
 | Hold the PR for local polish | `grok fmt` / `grok clippy` are the longest polls and run on GitHub; commit → push → PR first |
 | Say merged without `scripts/check-pr-merged.sh` printing `pass` | The sentence is not the fact |
+| Report a number with no command behind it | A number without its source reads as measured |
 | Start the next unit from the "not done" list | That sentence opens work the opening did not name |
 | Offer another unit after you are done | The offer is the next task, and it lands in this session |
 | Finish without the Session disposition block | The human has to ask "그래서 끝난 거야?", and the silence or the offer becomes the next task |
 | Skip the debrief when the unit looks small | Its legal answers are records or `no record needed`; skipping loses both, and the reason |
 | Clean up the worktree before the debrief | The debrief counts with `git -C "$WT"` and fails on a removed tree |
+| Call a tree clean beyond the range the unit read | The claim outruns the check; the rest of the tree was not read |
 | Ask "shall I record this to WC?" | The close authorizes the debrief's writes; the question is the round-trip the step removes |
 | `git commit` with no path | A shared index takes another session's files with it |
 
@@ -152,6 +179,8 @@ block replaces. A hand-off is a statement in the block, never a question.
 - [ ] The debrief ran while the worktree still existed — before the cleanup and before the report; the report names WC paths and SHAs, or `no record needed` with its reason
 - [ ] `scripts/check-pr-merged.sh` printed `pass` (`MERGED`, `mergedAt`, `mergeCommit`, two parents, CI `/ required` passed), or that turn said to stop before the merge and the first line names that clause
 - [ ] The first line says whether the done-condition holds, and names the clause if it does not
+- [ ] The report says what changed and why, with observation separated from inference and a source on every measured sentence
+- [ ] The owned worktree is named by exact path with `removed: true`/`false` — a tree kept in place says why — and the not-done list carries a reason per item; the checked range is named with what it showed, clean or dirty, and nothing wider is called clean
 - [ ] What was not done is a separate list and was not opened as the next unit
 - [ ] The report carries the Session disposition block (close now / more in this session / to hand off)
 - [ ] Next units the opening already named have their own tab

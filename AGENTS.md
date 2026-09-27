@@ -293,12 +293,21 @@ stays in [`skills/release`](skills/release/SKILL.md); the debrief stays in
   That output is `MERGED`, a non-empty `mergedAt`, a `mergeCommit`, and two
   parents. Saying merged before that is not a fact.
 - **The report's first line is whether the done-condition holds, and if not,
-  which clause does not.** Then the PR URL, the CI conclusion, the merge
-  fields, the checks with what they printed, and the debrief (WC paths and
-  commit SHAs, or `no record needed` with the reason). What you did not do is
-  a separate list. That list does not open the next unit. The report closes
-  with the **Session disposition** block (`skills/session-unit`): close now ·
-  more in this session · to hand off.
+  which clause does not.** The report says what the evidence means — what
+  changed and why — with each measured sentence carrying its source
+  (command, `file:line`, SHA) and inference marked as such. Then the PR URL,
+  the CI conclusion, the merge fields, the checks with what they printed,
+  and the debrief (WC paths and commit SHAs, or `no record needed` with the
+  reason). The owned worktree is named by exact path with `removed: true` or
+  `removed: false` — a tree left in place says whether the removal condition
+  did not stand or it was retained on purpose, with the reason. What you did
+  not do is a separate list with a reason per item — left untouched,
+  unfinished, out of scope, or another session's, left alone; the checked
+  range is named with what it showed, clean or dirty, and nothing wider is
+  called clean. Runtime or deployed state is reported when it matters to the
+  outcome and was measured, with its source and time. That list does not open
+  the next unit. The report closes with the **Session disposition** block
+  (`skills/session-unit`): close now · more in this session · to hand off.
 - **A defect in a file this unit is already changing**, which no other
   session is editing, is part of finishing — its own commit, same unit.
   Anything the opening did not name (a new behavior, a fresh investigation,

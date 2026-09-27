@@ -1072,8 +1072,13 @@ impl Renderable for EntryRenderer<'_> {
 
         let cached_ref = self.entry.cached_output_ref();
         let output: &BlockOutput = &cached_ref;
-        let reserve =
-            crate::scrollback::timestamp_layout::wide_first_line_reserve(self.appearance());
+        // Only clock-bearing blocks leave the first line's tail empty for the clock.
+        // A tool header, thought or system row wraps to the full width there, so
+        // clearing those columns would erase text.
+        let reserve = crate::scrollback::timestamp_layout::first_line_clock_reserve(
+            self.appearance(),
+            &self.entry.block,
+        );
         let mut painted_content = 0u16;
         let first_content_y = row;
 

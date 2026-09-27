@@ -599,3 +599,110 @@ fn phone_status_band_reaches_pty_bottom_at_every_phone_height() {
         );
     }
 }
+
+// ── Scrolled transcript: the pinned echo, the band's right edge, the scrollbar column ──
+
+/// Three turns, each a prompt with a unique marker and an answer long enough to
+/// scroll the phone pane, with a fenced code block whose shading reaches the
+/// transcript's right edge.
+fn seed_scrolling_turns(agent: &mut AgentView) {
+    for turn in 0..3 {
+        seed_prompt_echo(
+            agent,
+            &format!("prompt-{turn} 지금 얼마나 완벽하게 다 개선되었나 테스트 좀 해보자."),
+        );
+        let mut body: String = (0..8)
+            .map(|i| format!("answer {turn} line {i}\n\n"))
+            .collect();
+        body.push_str("```rust\nfn main() {\n    println!(\"a line long enough to reach the pane edge\");\n}\n```\n\n");
+        body.extend((8..30).map(|i| format!("answer {turn} line {i}\n\n")));
+        agent
+            .scrollback
+            .push_block(RenderBlock::agent_message(body));
+    }
+}
+
+fn set_compact(agent: &mut AgentView, compact: bool) {
+    let mut appearance = agent.scrollback.appearance().clone();
+    appearance.prompt.compact = compact;
+    agent.scrollback.set_appearance(appearance);
+}
+
+/// Scroll so the middle turn's prompt sits wholly above the viewport (its answer
+/// fills the pane) and redraw. Returns the frame.
+fn scroll_into_middle_answer(agent: &mut AgentView, cols: u16, rows: u16) -> Buffer {
+    let _ = draw(agent, cols, rows);
+    let prompt = agent
+        .scrollback
+        .get_cached_prompt_descriptors()
+        .and_then(|d| d.get(1).copied())
+        .expect("the middle prompt's descriptor");
+    let past = prompt.y_virtual + usize::from(prompt.full_height) + 6;
+    agent.scrollback.set_scroll_offset(past);
+    let buf = draw(agent, cols, rows);
+    assert_eq!(
+        agent.scrollback.scroll_offset(),
+        past,
+        "the middle answer is tall enough to scroll into"
+    );
+    buf
+}
+
+fn rows_with(buf: &Buffer, needle: &str) -> Vec<u16> {
+    (0..buf.area.height)
+        .filter(|&y| row_text(buf, y).contains(needle))
+        .collect()
+}
+
+/// A phone pane pins the prompt echo a scrolled-up reader is inside, in compact
+/// mode too: a `/compact-mode` taken from the small-screen tip, or auto-compact
+/// while the keyboard shrinks the pane, used to drop the pinned echo, so the
+/// echo scrolled away. A desktop pane keeps compact's own rule.
+#[test]
+fn phone_pins_the_echo_in_compact_mode_too() {
+    let _guard = crate::theme::cache::pin_theme();
+    let theme = Theme::current();
+    for (rows, compact) in [(PHONE_ROWS, false), (PHONE_ROWS, true), (20, true)] {
+        let mut agent = phone_agent();
+        seed_scrolling_turns(&mut agent);
+        set_compact(&mut agent, compact);
+        let buf = scroll_into_middle_answer(&mut agent, PHONE_COLS, rows);
+        let frame = frame_text(&buf);
+        let pinned = agent
+            .scrollback
+            .sticky_layout()
+            .and_then(|sticky| sticky.pinned)
+            .unwrap_or_else(|| {
+                panic!("{PHONE_COLS}x{rows} compact={compact}: no pinned echo\n{frame}")
+            });
+        assert_eq!(pinned.entry_idx, 2, "the middle prompt is pinned\n{frame}");
+        let marker = rows_with(&buf, "prompt-1");
+        assert_eq!(
+            marker.len(),
+            1,
+            "{PHONE_COLS}x{rows} compact={compact}: the pinned echo shows its prompt once\n{frame}"
+        );
+        assert!(
+            marker[0] <= 3,
+            "{PHONE_COLS}x{rows} compact={compact}: the echo is pinned under the status bar, got row {}\n{frame}",
+            marker[0]
+        );
+        // The band's own right pad column never holds text.
+        assert_eq!(
+            buf.cell((PHONE_COLS - 3, marker[0])).unwrap().bg,
+            theme.bg_light,
+            "the pinned echo paints its band\n{frame}"
+        );
+    }
+
+    let mut desktop = phone_agent();
+    seed_scrolling_turns(&mut desktop);
+    set_compact(&mut desktop, true);
+    let buf = scroll_into_middle_answer(&mut desktop, DESKTOP_COLS, DESKTOP_ROWS);
+    assert!(
+        rows_with(&buf, "prompt-1").is_empty(),
+        "a desktop pane keeps compact mode's scrolling echo\n{}",
+        frame_text(&buf)
+    );
+}
+

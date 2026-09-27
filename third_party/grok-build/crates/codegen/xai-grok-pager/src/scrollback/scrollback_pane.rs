@@ -319,10 +319,8 @@ impl ScrollbackPane {
             entry_range.clone(),
         );
 
-        // Compute sticky header layout (disabled in compact mode).
-        let use_sticky = state.appearance().scrollback.display.sticky_headers
-            && !state.appearance().prompt.compact;
-        let sticky = if use_sticky {
+        // Compute sticky header layout (see `sticky_headers_active` for when compact mode drops it).
+        let sticky = if state.sticky_headers_active() {
             compute_sticky_layout(state.scroll_offset(), area.height, &prompts)
         } else {
             StickyHeaderLayout::default()

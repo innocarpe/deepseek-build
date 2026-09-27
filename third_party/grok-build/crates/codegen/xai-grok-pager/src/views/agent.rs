@@ -814,6 +814,11 @@ pub fn render_scrollbar(
 /// then owns its column, and the band reaches the frame edge only while no bar
 /// is drawn. A pad row keeps its fractional glyph; a text or clock row carries
 /// the band's colour, never the glyph at the edge.
+///
+/// The colour comes from the cell that owns the last column. A row whose text
+/// ends on a wide glyph (Hangul, CJK) has that glyph's trailing half there,
+/// which the buffer resets to the default style; copying it painted the
+/// terminal's own background into the gutter, a grey dot beside the band.
 pub(crate) fn extend_phone_band_rows(
     buf: &mut Buffer,
     content: Rect,
@@ -823,11 +828,20 @@ pub(crate) fn extend_phone_band_rows(
     if content.width == 0 || content.right() >= right_edge {
         return;
     }
-    let source_x = content.right() - 1;
+    let last_x = content.right() - 1;
     for &y in band_rows {
         if y < content.y || y >= content.bottom() {
             continue;
         }
+        let source_x = if last_x > content.x
+            && buf
+                .cell((last_x - 1, y))
+                .is_some_and(|cell| unicode_width::UnicodeWidthStr::width(cell.symbol()) > 1)
+        {
+            last_x - 1
+        } else {
+            last_x
+        };
         let Some(source) = buf.cell((source_x, y)).cloned() else {
             continue;
         };

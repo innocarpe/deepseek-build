@@ -1087,12 +1087,11 @@ impl ScrollbackState {
             if let Some((_, entry)) = self.entries.get_index(idx)
                 && entry.block.is_user_prompt()
             {
-                let truncated_height = cache
-                    .entry_truncated_heights
-                    .get(idx)
-                    .copied()
-                    .unwrap_or(MAX_TRUNCATED_HEADER_HEIGHT);
-                let min_height = truncated_height.min(MAX_TRUNCATED_HEADER_HEIGHT);
+                // A pinned prompt paints its whole output: a prompt ignores the header's line budget, which is why only
+                // prompts may be sticky. Its floor is therefore its own height. A lower floor (its Truncated height,
+                // capped at `MAX_TRUNCATED_HEADER_HEIGHT`) left out a clock row, or the rows a prompt the fold check keeps
+                // expanded wraps past the fold budget, and the header painted its bottom pad on the last text row.
+                let min_height = layout.height;
                 // Expanded foldable prompts participate in push calculations but don't stick themselves; they scroll away
                 // normally. Foldability is asked at this width: a prompt that only folds in a narrow pane still counts.
                 let sticky = !(entry.block.is_foldable_at(prompt_width)
@@ -1287,7 +1286,8 @@ impl ScrollbackState {
         cache.virtual_y.push(new_y);
 
         if is_prompt {
-            let min_height = truncated_height.min(MAX_TRUNCATED_HEADER_HEIGHT);
+            // A pinned prompt paints its whole output, so its floor is its own height (see `rebuild_virtual_y_from_heights`).
+            let min_height = height;
             // Expanded foldable prompts participate in push calculations but don't stick themselves; they scroll away normally
             let sticky = !(is_foldable && new_display_mode == DisplayMode::Expanded);
             cache.prompt_descriptors.push(PromptDescriptor {
@@ -1364,12 +1364,8 @@ impl ScrollbackState {
             if let Some((_, entry)) = self.entries.get_index(idx)
                 && entry.block.is_user_prompt()
             {
-                let truncated_height = cache
-                    .entry_truncated_heights
-                    .get(idx)
-                    .copied()
-                    .unwrap_or(MAX_TRUNCATED_HEADER_HEIGHT);
-                let min_height = truncated_height.min(MAX_TRUNCATED_HEADER_HEIGHT);
+                // A pinned prompt paints its whole output, so its floor is its own height (see `rebuild_virtual_y_from_heights`).
+                let min_height = entry_layout.height;
                 let sticky = !(entry.block.is_foldable_at(prompt_width)
                     && entry.display_mode == DisplayMode::Expanded);
                 cache.prompt_descriptors.push(PromptDescriptor {

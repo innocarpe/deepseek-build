@@ -877,26 +877,12 @@ impl ScrollbackPane {
             content_area.y,
             use_vpad,
         );
-        let mut clock_rect = None;
-        // [meta?] [vpad?] [content...], or on a phone pane [vpad?] [meta?] [content...] (see `pad_above_meta`),
-        // exactly as the entry paints in the flow.
-        let pad_first =
-            use_vpad && crate::scrollback::timestamp_layout::pad_above_meta(&ctx.appearance);
+        // [meta?] [vpad?] [content...], exactly as the entry paints in the flow. A clock that
+        // trails the body (a phone echo) shares the last content line or is not painted.
+        let trails =
+            crate::scrollback::timestamp_layout::clock_trails_body(&ctx.appearance, &entry.block);
         let mut y = content_area.y;
         if plan.meta {
-            let clock_y = y.saturating_add(u16::from(pad_first));
-            if let Some(text) = plan.text.as_deref()
-                && clock_y < content_area.y + content_area.height
-            {
-                clock_rect = Some(paint_sticky_clock(
-                    buf,
-                    theme,
-                    &ctx.appearance,
-                    entry_right,
-                    clock_y,
-                    text,
-                ));
-            }
             y = y.saturating_add(1);
         }
         // Clear every accent column before painting the fractional pad rows.
@@ -919,14 +905,9 @@ impl ScrollbackPane {
             let narrow = ctx.appearance.scrollback.layout.narrow;
             let flat = false;
             if let Some(band) = bg_color {
-                // Under the meta clock when that row is present, unless the pad
-                // leads the band (a phone pane). Painting a pad on the clock's
-                // row would cover the clock.
-                let pad_top_y = if pad_first {
-                    content_area.y
-                } else {
-                    content_area.y.saturating_add(u16::from(plan.meta))
-                };
+                // Under the meta clock when that row is present. Painting at
+                // `content_area.y` would cover the clock.
+                let pad_top_y = content_area.y.saturating_add(u16::from(plan.meta));
                 paint_pad_row(
                     buf,
                     area,
@@ -944,7 +925,6 @@ impl ScrollbackPane {
             }
             y += 1;
         }
-        let first_content_y = y;
 
         // `block_line_idx` counts every line, painted or not.
         let mut selection_lines = Vec::new();
@@ -976,8 +956,19 @@ impl ScrollbackPane {
             y += 1;
         }
 
-        if !plan.meta
-            && first_content_y < content_area.y + content_area.height
+        // After the text, so an inline clock is not painted over.
+        let clock_y =
+            content_area
+                .y
+                .saturating_add(crate::scrollback::timestamp_layout::clock_row_offset(
+                    plan.meta,
+                    trails,
+                    u16::from(use_vpad),
+                    content_height,
+                ));
+        let mut clock_rect = None;
+        if clock_y < content_area.y + content_area.height
+            && clock_y < content_area.y + fill_height
             && let Some(text) = plan.text.as_deref()
         {
             clock_rect = Some(paint_sticky_clock(
@@ -985,7 +976,7 @@ impl ScrollbackPane {
                 theme,
                 &ctx.appearance,
                 entry_right,
-                first_content_y,
+                clock_y,
                 text,
             ));
         }
@@ -1394,19 +1385,18 @@ fn sticky_clock_meta(
     appearance: &crate::appearance::AppearanceConfig,
     content_width: u16,
 ) -> bool {
-    use crate::scrollback::timestamp_layout::{ClockPlan, ClockQuery, line_cols};
+    use crate::scrollback::timestamp_layout::{
+        ClockPlan, ClockQuery, clock_line_cols, clock_trails_body,
+    };
+    let trails = clock_trails_body(appearance, &entry.block);
     let output = entry.cached_output_ref();
-    let first = output
-        .lines
-        .first()
-        .map(|line| line_cols(&line.content))
-        .unwrap_or(0);
+    let line_cols = clock_line_cols(&output.lines, trails);
     let has_content = !output.lines.is_empty();
     drop(output);
     ClockPlan::decide(&ClockQuery {
         entry,
         appearance,
-        first_line_cols: first,
+        line_cols,
         row_span: sticky_row_span(entry, appearance, content_width),
         prev_clock: entry.clock_prev.get(),
         hovered: false,
@@ -1427,17 +1417,15 @@ fn sticky_clock_plan(
     vpad: bool,
 ) -> crate::scrollback::timestamp_layout::ClockPlan {
     use crate::scrollback::timestamp_layout::{
-        ClockPlan, ClockQuery, clock_cols, clock_origin, line_cols, point_in_clock,
+        ClockPlan, ClockQuery, clock_cols, clock_line_cols, clock_origin, clock_row_offset,
+        clock_trails_body, point_in_clock,
     };
-    let first = output
-        .lines
-        .first()
-        .map(|line| line_cols(&line.content))
-        .unwrap_or(0);
+    let trails = clock_trails_body(&ctx.appearance, &entry.block);
+    let line_cols = clock_line_cols(&output.lines, trails);
     let query = |hovered| ClockQuery {
         entry,
         appearance: &ctx.appearance,
-        first_line_cols: first,
+        line_cols,
         row_span,
         prev_clock: entry.clock_prev.get(),
         hovered,
@@ -1445,12 +1433,13 @@ fn sticky_clock_plan(
         has_content: !output.lines.is_empty(),
     };
     let stable = ClockPlan::decide(&query(false));
-    let pad_first = vpad && crate::scrollback::timestamp_layout::pad_above_meta(&ctx.appearance);
-    let clock_row = if stable.meta && !pad_first {
-        content_top
-    } else {
-        content_top.saturating_add(u16::from(vpad))
-    };
+    let content_lines = u16::try_from(output.lines.len()).unwrap_or(u16::MAX);
+    let clock_row = content_top.saturating_add(clock_row_offset(
+        stable.meta,
+        trails,
+        u16::from(vpad),
+        content_lines,
+    ));
     let hovered = stable.text.as_deref().is_some_and(|text| {
         let x = clock_origin(entry_right, text, &ctx.appearance);
         mouse_pos.is_some_and(|(mx, my)| point_in_clock(mx, my, x, clock_row, clock_cols(text)))
@@ -1721,7 +1710,19 @@ mod tests {
                 "clock must be painted (narrow={narrow})"
             );
             if narrow {
-                assert!(clock_cells.iter().all(|&(_, y)| y < first.screen_y));
+                // A phone echo closes on its clock: the last text row, right of its text.
+                let last = header
+                    .lines
+                    .iter()
+                    .max_by_key(|line| line.block_line_idx)
+                    .expect("sticky last line");
+                assert!(
+                    clock_cells.iter().all(|&(x, y)| {
+                        y == last.screen_y && x > last.screen_x + last.text.len() as u16
+                    }),
+                    "the clock trails the last text row: {clock_cells:?} (last row {})",
+                    last.screen_y
+                );
             } else {
                 assert!(clock_cells.iter().all(|&(x, y)| {
                     y == first.screen_y && x > first.screen_x + first.text.len() as u16

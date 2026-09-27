@@ -70,7 +70,9 @@ done
 if [[ "$SKIP_BUMP" -eq 0 ]]; then
   B_ARGS=()
   [[ -n "$DESC" ]] && B_ARGS+=(--desc "$DESC")
-  ./scripts/bump-version.sh "$VERSION" "${B_ARGS[@]}"
+  # macOS /bin/bash 3.2 reads an empty "${B_ARGS[@]}" as unbound under set -u;
+  # the +"..." guard expands to zero words instead.
+  ./scripts/bump-version.sh "$VERSION" "${B_ARGS[@]+"${B_ARGS[@]}"}"
 fi
 
 # --- 1b. MAJOR bump: version-log announcement gate ---------------------------

@@ -820,21 +820,22 @@ impl ScrollbackPane {
             && let Some(ts) = entry.created_at
         {
             let first_content_y = content_area.y + if use_vpad { 1 } else { 0 };
+            let timestamp_right = content_area.right();
             let ts_hovered = mouse_pos.is_some_and(|(mx, my)| {
                 my == first_content_y
-                    && mx >= content_area.x + content_area.width.saturating_sub(10)
-                    && mx < content_area.x + content_area.width
+                    && mx >= timestamp_right.saturating_sub(ts_reserved.max(1))
+                    && mx < timestamp_right
             });
             let ts_str = if ts_hovered {
-                ts.format("  %H:%M:%S | %b %d").to_string()
+                ts.format("%H:%M:%S | %b %d").to_string()
             } else {
-                ts.format("  %-I:%M %p").to_string()
+                ts.format("%-I:%M %p").to_string()
             };
             let ts_width = ts_str.len() as u16;
             if content_area.width > ts_width + 1
                 && first_content_y < content_area.y + content_area.height
             {
-                let ts_x = content_area.x + content_area.width - ts_width;
+                let ts_x = timestamp_right - ts_width;
                 let ts_style = Style::default().fg(theme.gray);
                 buf.set_string_safe(ts_x, first_content_y, &ts_str, ts_style);
             }
@@ -1354,6 +1355,11 @@ mod tests {
             .find(|line| line.block_line_idx == 0)
             .expect("sticky prompt first line");
         assert_eq!(header_first.text, inline_first);
+        let last_x = header_first.screen_x + header_first.text.len() as u16 - 1;
+        let last_y = header_first.screen_y;
+        assert_eq!(buf.cell((last_x - 1, last_y)).unwrap().symbol(), "T");
+        assert_eq!(buf.cell((last_x, last_y)).unwrap().symbol(), "U");
+        assert_eq!(buf.cell((area.width - 3, last_y)).unwrap().symbol(), "M");
     }
 
     /// A phone-width pane paints the collapsed echo as two selectable rows inside one pad row each side. The

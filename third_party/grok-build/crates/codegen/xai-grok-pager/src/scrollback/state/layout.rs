@@ -1094,7 +1094,7 @@ impl ScrollbackState {
                 let min_height = layout.height;
                 // Expanded foldable prompts participate in push calculations but don't stick themselves; they scroll away
                 // normally. Foldability is asked at this width: a prompt that only folds in a narrow pane still counts.
-                let sticky = !(entry.block.is_foldable_at(prompt_width)
+                let sticky = !(entry.block.is_foldable_at(prompt_width, &self.appearance)
                     && entry.display_mode == DisplayMode::Expanded);
                 cache.prompt_descriptors.push(PromptDescriptor {
                     entry_idx: idx,
@@ -1245,7 +1245,9 @@ impl ScrollbackState {
             MAX_TRUNCATED_HEADER_HEIGHT
         };
         // At the width this entry is laid out at: a prompt that only folds in a narrow pane is still foldable here.
-        let is_foldable = new_entry.block.is_foldable_at(prompt_width);
+        let is_foldable = new_entry
+            .block
+            .is_foldable_at(prompt_width, &self.appearance);
         let new_display_mode = new_entry.display_mode;
 
         // Recompute the previous entry's gap_after now that it's no longer the trailing entry
@@ -1366,7 +1368,7 @@ impl ScrollbackState {
             {
                 // A pinned prompt paints its whole output, so its floor is its own height (see `rebuild_virtual_y_from_heights`).
                 let min_height = entry_layout.height;
-                let sticky = !(entry.block.is_foldable_at(prompt_width)
+                let sticky = !(entry.block.is_foldable_at(prompt_width, &self.appearance)
                     && entry.display_mode == DisplayMode::Expanded);
                 cache.prompt_descriptors.push(PromptDescriptor {
                     entry_idx: idx,

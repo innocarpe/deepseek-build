@@ -442,7 +442,7 @@ impl<'a> EntryRenderer<'a> {
         // A tool or thought header is one row. A prompt asks [`BlockContent::collapsed_row_budget`]: two rows in a
         // phone-width pane, three on a wider one. Assuming one row under-counted the phone echo.
         let lines = if self.entry.display_mode != DisplayMode::Expanded
-            && self.entry.is_foldable_at(content_width)
+            && self.entry.is_foldable_at(content_width, self.appearance())
         {
             self.entry.block.collapsed_row_budget(content_width)
         } else if self.entry.block.is_user_prompt() {

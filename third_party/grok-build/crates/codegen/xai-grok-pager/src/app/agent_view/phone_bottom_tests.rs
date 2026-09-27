@@ -766,8 +766,9 @@ fn phone_pinned_echo_keeps_its_band_and_closes_on_its_clock() {
     let theme = Theme::current();
     let band = theme.bg_light;
     let full_rows = "M".repeat(104);
-    // Three words that wrap one to a row at the echo's 52-column text width,
-    // while the fold check's `ceil(96 / 52) = 2` rows keeps the prompt expanded.
+    // Three words that wrap one to a row at the echo's 52-column text width.
+    // `ceil(96 / 52) = 2` rows once kept this prompt expanded at three rows; the
+    // fold check counts the wrapped rows, so it folds to two and the ellipsis.
     let three_rows = format!("{} {} {}", "A".repeat(27), "B".repeat(27), "C".repeat(40));
     for (label, prompt, head, tail, text_rows, clock) in [
         // The prompt from the report: its second row leaves room.
@@ -789,11 +790,11 @@ fn phone_pinned_echo_keeps_its_band_and_closes_on_its_clock() {
             false,
         ),
         (
-            "wraps past the fold check",
+            "word wrap past the budget folds",
             three_rows.as_str(),
             "AAAA",
-            "CCCC",
-            3,
+            "B \u{2026}",
+            2,
             true,
         ),
     ] {
@@ -907,11 +908,12 @@ fn phone_pinned_echo_keeps_its_band_and_closes_on_its_clock() {
     }
 }
 
-/// A pinned prompt's floor is its own height on a wide pane too: a prompt the
-/// fold check keeps expanded while its words wrap to four rows, with its long
-/// clock tapped open on the row above its text, is seven rows. The floor was
-/// its Truncated height capped at six, so the pinned header lost its last text
-/// row and its bottom pad.
+/// A pinned prompt's floor is its own height on a wide pane too. A prompt whose
+/// words wrap to four rows, with its long clock tapped open on the row above
+/// its text, once stayed expanded (the fold check's `ceil` bound said three
+/// rows) and painted seven rows under a floor capped at six. The fold check now
+/// counts the wrapped rows, so the prompt folds to its three-row budget and
+/// the pinned header keeps all six rows it paints.
 #[test]
 fn a_wide_pinned_prompt_keeps_every_row_it_paints() {
     let _guard = crate::theme::cache::pin_theme();
@@ -959,8 +961,8 @@ fn a_wide_pinned_prompt_keeps_every_row_it_paints() {
         .expect("the middle prompt's descriptor")
         .full_height;
     assert_eq!(
-        full_height, 7,
-        "the long clock's row, a pad row each side and four text rows\n{frame}"
+        full_height, 6,
+        "the long clock's row, a pad row each side and the three folded text rows\n{frame}"
     );
     let pinned = agent
         .scrollback
@@ -972,13 +974,17 @@ fn a_wide_pinned_prompt_keeps_every_row_it_paints() {
         pinned.render_height, full_height,
         "the pinned prompt keeps every row it paints\n{frame}"
     );
-    for word in ["AAAA", "BBBB", "CCCC", "DDDD"] {
+    for word in ["AAAA", "BBBB", "CCCC \u{2026}"] {
         assert_eq!(
             rows_with(&buf, word).len(),
             1,
             "the pinned header shows the {word} row\n{frame}"
         );
     }
+    assert!(
+        rows_with(&buf, "DDDD").is_empty(),
+        "the fourth wrapped row is folded away\n{frame}"
+    );
 }
 
 /// A phone echo row that ends on a wide glyph carries the band into the copy

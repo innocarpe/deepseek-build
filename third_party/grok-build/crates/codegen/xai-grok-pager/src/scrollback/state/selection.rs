@@ -234,7 +234,7 @@ impl ScrollbackState {
         let content_width = self.prompt_content_width(self.last_width);
         if let Some(i) = self.selected
             && let Some((_, entry)) = self.entries.get_index(i)
-            && entry.is_foldable_at(content_width)
+            && entry.is_foldable_at(content_width, &self.appearance)
         {
             let target_mode = entry.block.collapse_mode(entry.is_running);
             if entry.display_mode != target_mode {
@@ -251,7 +251,7 @@ impl ScrollbackState {
         let content_width = self.prompt_content_width(self.last_width);
         if let Some(i) = self.selected
             && let Some((_, entry)) = self.entries.get_index(i)
-            && entry.is_foldable_at(content_width)
+            && entry.is_foldable_at(content_width, &self.appearance)
             && entry.display_mode != DisplayMode::Expanded
         {
             self.fold_selected_impl(|entry| entry.set_display_mode(DisplayMode::Expanded));
@@ -262,9 +262,10 @@ impl ScrollbackState {
         let content_width = self.prompt_content_width(self.last_width);
         if let Some(i) = self.selected
             && let Some((_, entry)) = self.entries.get_index(i)
-            && entry.is_foldable_at(content_width)
+            && entry.is_foldable_at(content_width, &self.appearance)
         {
-            self.fold_selected_impl(move |entry| entry.toggle_fold_at(content_width));
+            let appearance = self.appearance.clone();
+            self.fold_selected_impl(move |entry| entry.toggle_fold_at(content_width, &appearance));
         }
     }
 
@@ -305,7 +306,7 @@ impl ScrollbackState {
             return None;
         }
         let width = self.prompt_content_width(self.last_width);
-        if !entry.is_foldable_at(width) {
+        if !entry.is_foldable_at(width, &self.appearance) {
             return None;
         }
         if !self.prompt_echo_contains_row(idx, click_row, scrollback_area) {
@@ -539,7 +540,7 @@ impl ScrollbackState {
         let mut changed_ids = Vec::new();
         for (id, entry) in &mut self.entries {
             entry.display_mode_pinned = false;
-            if entry.is_foldable_at(content_width) {
+            if entry.is_foldable_at(content_width, &self.appearance) {
                 entry.display_mode = DisplayMode::Collapsed;
                 entry.invalidate_cache();
                 changed_ids.push(*id);
@@ -560,7 +561,7 @@ impl ScrollbackState {
         let mut changed_ids = Vec::new();
         for (id, entry) in &mut self.entries {
             entry.display_mode_pinned = false;
-            if entry.is_foldable_at(content_width) {
+            if entry.is_foldable_at(content_width, &self.appearance) {
                 entry.display_mode = DisplayMode::Expanded;
                 entry.invalidate_cache();
                 changed_ids.push(*id);
@@ -580,7 +581,8 @@ impl ScrollbackState {
     pub fn toggle_expand_all(&mut self) {
         let content_width = self.prompt_content_width(self.last_width);
         let any_collapsed = self.entries.values().any(|entry| {
-            entry.is_foldable_at(content_width) && entry.display_mode == DisplayMode::Collapsed
+            entry.is_foldable_at(content_width, &self.appearance)
+                && entry.display_mode == DisplayMode::Collapsed
         });
         if any_collapsed {
             self.expand_all();

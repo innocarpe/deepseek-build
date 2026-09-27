@@ -1325,7 +1325,7 @@ fn paint_expandable_indicator(
     // Width-aware so the chevron appears on a block that is folded at this width, including a prompt folded by the
     // narrow-pane default. Uses the same entry-area → content-width chain as the fold decision.
     let content_width = block_content_width_for(entry, appearance, content_area.width);
-    if !entry.block.is_foldable_at(content_width) {
+    if !entry.block.is_foldable_at(content_width, appearance) {
         return;
     }
     let at_min_fold = entry.display_mode == DisplayMode::Collapsed

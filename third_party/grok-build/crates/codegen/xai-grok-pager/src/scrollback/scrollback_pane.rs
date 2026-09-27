@@ -426,6 +426,9 @@ impl ScrollbackPane {
                         hugs_pad,
                     );
 
+                    // A box whose top is the pane's first row has no row of its own above it:
+                    // that row belongs to the status bar.
+                    let top_clipped = top_clipped || box_area.y <= area.y;
                     let sel_box = SelectionBox::new(box_area, Style::default().fg(border_color))
                         .with_top_clipped(top_clipped)
                         .with_bottom_clipped(false);
@@ -481,8 +484,9 @@ impl ScrollbackPane {
             // bottom_clipped = false since there's always a gap row between header and content.
             let screen_row = sticky.pinned_screen_row().unwrap_or(0);
 
-            // Check if there's room for top corners
-            let top_clipped = screen_row == 0 && area.y == 0;
+            // Room for the top corners: the row above the box must be the pane's own, not the
+            // status bar's. A compact echo carries no pad row to pull the box onto.
+            let top_clipped = screen_row == 0;
 
             // The pinned header is a prompt echo: pull the box onto the band's own pad rows. A pulled top gives
             // the corner the header's own first row, so the "no room above" flag only stands while it stays
@@ -502,7 +506,7 @@ impl ScrollbackPane {
                 hugs_pad,
                 hugs_pad,
             );
-            let top_clipped = top_clipped && box_area.y == selection_area.y;
+            let top_clipped = top_clipped && box_area.y <= area.y;
 
             let sel_box = SelectionBox::new(box_area, Style::default().fg(theme.selection_border))
                 .with_top_clipped(top_clipped)

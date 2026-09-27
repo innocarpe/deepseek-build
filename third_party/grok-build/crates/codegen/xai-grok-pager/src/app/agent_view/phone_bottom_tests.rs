@@ -728,6 +728,37 @@ fn phone_pins_the_echo_in_compact_mode_too() {
     );
 }
 
+/// Selecting the pinned echo in compact mode keeps its box inside the pane. A
+/// compact echo has no pad row to pull the box onto, so an unclipped top would
+/// draw its corners on the status bar's row.
+#[test]
+fn phone_compact_pinned_echo_selection_leaves_the_status_bar_alone() {
+    let _guard = crate::theme::cache::pin_theme();
+    let mut agent = phone_agent();
+    seed_scrolling_turns(&mut agent);
+    set_compact(&mut agent, true);
+    let plain = scroll_into_middle_answer(&mut agent, PHONE_COLS, PHONE_ROWS);
+    agent.active_pane = super::ActivePane::Scrollback;
+    agent.scrollback.set_selected(Some(2));
+    let selected = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    assert_eq!(
+        agent
+            .scrollback
+            .sticky_layout()
+            .and_then(|sticky| sticky.pinned)
+            .map(|pinned| pinned.entry_idx),
+        Some(2),
+        "the selected echo is the pinned one\n{}",
+        frame_text(&selected)
+    );
+    assert_eq!(
+        row_text(&selected, 0),
+        row_text(&plain, 0),
+        "the status bar row keeps its text\n{}",
+        frame_text(&selected)
+    );
+}
+
 /// With the scrollbar drawn, the echo's band fills every column up to the bar —
 /// the transcript's own width plus the held-copy gutter the transcript leaves
 /// blank — in the flow and pinned alike, and the bar keeps its own column.

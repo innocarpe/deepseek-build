@@ -87,14 +87,9 @@ pub const SHORT_TERMINAL_ROWS: u16 = 16;
 /// The scrollback's floor, pushed as the layout's only `Min`.
 /// The solver ranks it above every `Length`, so an over-committed layout shrinks another row.
 pub const SCROLLBACK_MIN_ROWS: u16 = 5;
-/// Rows the frame keeps under the bottom status row.
-///
-/// Zero: the grid's smallest non-zero step there is a whole row (~2.15 columns
-/// at the phone's font), which the reader measured as larger than the prompt
-/// box's own bottom margin (~0.6 row). With no blank row the two margins read
-/// closest to each other, and the screen's bottom edge gives the eye its
-/// separation.
-pub const BOTTOM_MARGIN_ROWS: u16 = 0;
+/// The terminal reserves no whole row below the status; the iOS host applies
+/// the smaller pixel inset outside the measured PTY viewport.
+pub const PHONE_BOTTOM_MARGIN_ROWS: u16 = 0;
 /// Auto-compact threshold: at or below this height the compact flag handed to rendering is forced on.
 /// Deliberately above [`SHORT_TERMINAL_ROWS`], which still gates the harder cuts (tip-row rendering, dropping the CTA and follow-up rows).
 pub const AUTO_COMPACT_MAX_ROWS: u16 = 20;
@@ -130,8 +125,8 @@ fn is_phone_grid(terminal_cols: u16, terminal_rows: u16) -> bool {
 
 /// Whether a pane `terminal_cols` × `terminal_rows` renders the phone-width density
 /// ([`NARROW_TERMINAL_COLS`](xai_grok_pager_render::appearance::NARROW_TERMINAL_COLS)):
-/// no blank outer margin rows, one-column outer pads, block pads collapsed, and
-/// the default block vpad dropped.
+/// no blank outer margin rows, a full-width transcript and task pane, and the
+/// default block vpad dropped. The composer keeps its one-column outer pads.
 ///
 /// Narrow by width, or a phone grid at a smaller text size ([`is_phone_grid`]).
 /// Like the compact derivation this is a render value: it never reaches the
@@ -204,8 +199,7 @@ pub struct AgentViewLayout {
     /// Bottom status row (DeepSeek balance + cache hit rate). Always
     /// present as a row; renders blank when no DeepSeek status is known.
     pub deepseek_status: Rect,
-    /// Rows reserved below the bottom status row ([`BOTTOM_MARGIN_ROWS`]).
-    /// Zero keeps the status row at the screen edge.
+    /// Rows reserved below the bottom status row on a phone pane.
     pub bottom_margin: Rect,
     /// Bottom status_line row; zero-area when disabled.
     pub status_line: Rect,
@@ -341,13 +335,18 @@ impl AgentViewLayout {
         // DeepSeek bottom status row: always present so the row count is
         // stable; renders blank when no status data has landed.
         constraints.push(Constraint::Length(1));
-        // Optional blank rows under the last text row. The phone layout keeps
-        // none so the bottom status row sits at the screen edge.
-        constraints.push(Constraint::Length(BOTTOM_MARGIN_ROWS));
+        // The iOS host owns the fractional bottom inset outside the PTY.
+        // The composer and status remain adjacent at every width.
+        let bottom_margin_rows = if layout_cfg.narrow {
+            PHONE_BOTTOM_MARGIN_ROWS
+        } else {
+            0
+        };
+        constraints.push(Constraint::Length(bottom_margin_rows));
         let chunks = Layout::vertical(constraints).split(inner_area);
         let mut chunks = chunks.iter().copied();
         let status_bar = chunks.next().unwrap_or_default();
-        let tasks = if tasks_height > 0 {
+        let mut tasks = if tasks_height > 0 {
             chunks.next();
             chunks.next().unwrap_or_default()
         } else {
@@ -360,7 +359,17 @@ impl AgentViewLayout {
             Rect::default()
         };
         chunks.next();
-        let scrollback = chunks.next().unwrap_or_default();
+        let mut scrollback = chunks.next().unwrap_or_default();
+        // A phone's task list and transcript own the whole width. The prompt
+        // composer and other panes keep their configured outer text inset.
+        if layout_cfg.narrow {
+            if tasks.height > 0 {
+                tasks.x = area.x;
+                tasks.width = area.width;
+            }
+            scrollback.x = area.x;
+            scrollback.width = area.width;
+        }
         let btw = if btw_height > 0 {
             chunks.next();
             chunks.next().unwrap_or_default()
@@ -685,7 +694,11 @@ pub fn render_todo_chrome_with_close_label(
         return None;
     };
     let layout = HorizontalLayout::new(todo_area, layout_cfg);
-    let mut sel = SelectionBox::new(layout.selection_area(), Style::default().fg(color))
+    let mut selection_area = layout.selection_area();
+    selection_area.width = selection_area
+        .width
+        .min(buf.area.right().saturating_sub(selection_area.x));
+    let mut sel = SelectionBox::new(selection_area, Style::default().fg(color))
         .with_closable(focused, close_hovered);
     if focused && let Some(label) = close_label {
         sel = sel.with_close_label(Some(label));
@@ -740,6 +753,36 @@ pub fn render_scrollbar(
             track_style,
             thumb_style,
         );
+    }
+}
+
+/// The scrollbar owns the phone frame's last column. Keep the prompt echo's
+/// band visible behind it, including the fractional top and bottom pad rows.
+pub(crate) fn paint_phone_scrollback_right_edge(
+    buf: &mut Buffer,
+    content: Rect,
+    frame: Rect,
+    theme: &Theme,
+) {
+    if content.width == 0 || content.right() >= frame.right() {
+        return;
+    }
+    let source_x = content.right() - 1;
+    let edge_x = frame.right() - 1;
+    for y in content.y..content.bottom() {
+        let Some(source) = buf.cell((source_x, y)).cloned() else {
+            continue;
+        };
+        let pad = matches!(source.symbol(), "\u{2582}" | "\u{2586}");
+        if (source.bg != theme.bg_base || pad)
+            && let Some(edge) = buf.cell_mut((edge_x, y))
+        {
+            edge.bg = source.bg;
+            if pad {
+                edge.set_symbol(source.symbol());
+                edge.fg = source.fg;
+            }
+        }
     }
 }
 /// The scrollback's default focus hint: `Space` leaves for the prompt.
@@ -2192,16 +2235,18 @@ mod tests {
         );
     }
 
-    /// The frame spends no rows on margins at any width: the status bar lands
-    /// on row 0 (no outer vpad, no status gap), the outer pads are the
-    /// selection-border floor, and the reserved space below the content is
-    /// [`BOTTOM_MARGIN_ROWS`].
+    /// The phone transcript reaches both frame edges while the composer keeps
+    /// its own inset. The status reaches the measured PTY bottom at every width.
     #[test]
-    fn layout_spends_no_rows_on_margins_at_any_width() {
+    fn layout_uses_full_width_phone_transcript_and_flush_pty_bottom() {
         for (cols, rows) in [(55u16, 41u16), (120, 40), (180, 50)] {
             let area = Rect::new(0, 0, cols, rows);
+            let narrow = effective_narrow(cols);
+            let mut layout_cfg = LayoutConfig::default();
+            layout_cfg.narrow = narrow;
+            let bottom_margin_rows = if narrow { PHONE_BOTTOM_MARGIN_ROWS } else { 0 };
             let layout = AgentViewLayout::compute(AgentViewLayoutParams {
-                layout_cfg: LayoutConfig::default(),
+                layout_cfg,
                 ..base_params(area)
             });
 
@@ -2219,28 +2264,28 @@ mod tests {
             );
             assert_eq!(
                 layout.scrollback.x,
-                area.x + LayoutConfig::MIN_HPAD,
-                "{cols}x{rows}: the outer left margin is the selection border's column"
+                area.x + if narrow { 0 } else { LayoutConfig::MIN_HPAD },
+                "{cols}x{rows}: the phone transcript starts at the frame edge"
             );
             assert_eq!(
                 layout.scrollback.right(),
-                area.right() - LayoutConfig::MIN_HPAD,
-                "{cols}x{rows}: and so is the right one"
+                area.right() - if narrow { 0 } else { LayoutConfig::MIN_HPAD },
+                "{cols}x{rows}: the phone transcript ends at the frame edge"
             );
             assert_eq!(
-                layout.deepseek_status.bottom() + BOTTOM_MARGIN_ROWS,
+                layout.deepseek_status.bottom() + bottom_margin_rows,
                 area.bottom(),
-                "{cols}x{rows}: the status row keeps {BOTTOM_MARGIN_ROWS} row(s) under it, got {:?}",
+                "{cols}x{rows}: the status row keeps {bottom_margin_rows} row(s) under it, got {:?}",
                 layout.deepseek_status,
             );
             assert_eq!(
-                layout.bottom_margin.height, BOTTOM_MARGIN_ROWS,
-                "{cols}x{rows}: the rows under the status row are zero-area by default, got {:?}",
+                layout.bottom_margin.height, bottom_margin_rows,
+                "{cols}x{rows}: the rows under the status row, got {:?}",
                 layout.bottom_margin,
             );
             assert_eq!(
                 layout.scrollback.height,
-                rows - 5 - BOTTOM_MARGIN_ROWS,
+                rows - 5 - bottom_margin_rows,
                 "{cols}x{rows}: every row but the status bar, prompt, shortcuts, \
                  DeepSeek status and bottom-margin rows is scrollback, got {:?}",
                 layout.scrollback,
@@ -2268,7 +2313,7 @@ mod tests {
         let plain = base_params(area);
         assert_eq!(
             AgentViewLayout::rows_available_for_prompt(plain),
-            25 - 8 - BOTTOM_MARGIN_ROWS,
+            25 - 8,
             "a frame with no optional row gives everything else to the prompt, minus any reserved floor rows"
         );
         let with_rows = AgentViewLayoutParams {
@@ -2278,7 +2323,7 @@ mod tests {
         };
         assert_eq!(
             AgentViewLayout::rows_available_for_prompt(with_rows),
-            25 - 8 - 3 - BOTTOM_MARGIN_ROWS,
+            25 - 8 - 3,
             "the banner takes its own height plus the gap above it; the turn \
              status row sits flush, so it takes only its own row"
         );

@@ -1544,9 +1544,16 @@ impl AgentView {
         // and leaves the row blank until that status lands. A phone pane skips
         // this pass and paints cost and model together later, once the label exists.
         buf.set_style(layout.deepseek_status, Style::default().bg(theme.bg_base));
-        // The frame's floor row: owned by the render so a stale glyph from an
-        // earlier frame cannot survive in it.
+        // Clear a configured floor row so a former status-line character cannot
+        // survive there. Both phone and desktop currently configure zero rows.
         buf.set_style(layout.bottom_margin, Style::default().bg(theme.bg_base));
+        for y in layout.bottom_margin.y..layout.bottom_margin.bottom() {
+            for x in layout.bottom_margin.x..layout.bottom_margin.right() {
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    cell.set_char(' ');
+                }
+            }
+        }
         if !narrow
             && self.deepseek_status_session_id.as_ref() == self.session.session_id.as_ref()
             && let Some(ds) = self.deepseek_status.as_ref().filter(|s| s.is_deepseek)
@@ -1730,47 +1737,6 @@ impl AgentView {
                     buf,
                 );
             }
-            let any_drag_active =
-                self.drag_selection.is_some() || self.block_drag_selection.is_some();
-            let held_copy_row = (!any_drag_active && !overlay_focused && held_copy_gutter)
-                .then(|| self.held_copy_chip_row())
-                .flatten();
-            let held_copy_row = held_copy_row.map(|row| {
-                let toast_on_last_row = self
-                    .active_toast_message()
-                    .and_then(|msg| fit_toast_text(msg, layout.scrollback.width))
-                    .is_some();
-                if toast_on_last_row
-                    && row == layout.scrollback.bottom().saturating_sub(1)
-                    && row > layout.scrollback.y
-                {
-                    row - 1
-                } else {
-                    row
-                }
-            });
-            if !any_drag_active
-                && !overlay_focused
-                && let Some(ref selection_box) = sb_output.selection_box
-            {
-                selection_box.render(buf);
-                self.render_selection_buttons(
-                    buf,
-                    selection_box,
-                    sb_output.selected_entry_area,
-                    held_copy_row.is_some(),
-                    &theme,
-                );
-            } else {
-                self.hit_sb_copy.clear();
-                self.hit_sb_view.clear();
-            }
-            self.render_held_copy_chip(
-                buf,
-                held_copy_row,
-                layout.scrollback_content.right(),
-                &theme,
-            );
             let rail_shown = self.timeline_rail.is_some();
             if !rail_shown {
                 agent::render_scrollbar(
@@ -1815,6 +1781,55 @@ impl AgentView {
                     }
                 }
             }
+            if narrow && !rail_shown {
+                agent::paint_phone_scrollback_right_edge(
+                    buf,
+                    layout.scrollback_content,
+                    layout.scrollback,
+                    &theme,
+                );
+            }
+            let any_drag_active =
+                self.drag_selection.is_some() || self.block_drag_selection.is_some();
+            let held_copy_row = (!any_drag_active && !overlay_focused && held_copy_gutter)
+                .then(|| self.held_copy_chip_row())
+                .flatten();
+            let held_copy_row = held_copy_row.map(|row| {
+                let toast_on_last_row = self
+                    .active_toast_message()
+                    .and_then(|msg| fit_toast_text(msg, layout.scrollback.width))
+                    .is_some();
+                if toast_on_last_row
+                    && row == layout.scrollback.bottom().saturating_sub(1)
+                    && row > layout.scrollback.y
+                {
+                    row - 1
+                } else {
+                    row
+                }
+            });
+            if !any_drag_active
+                && !overlay_focused
+                && let Some(ref selection_box) = sb_output.selection_box
+            {
+                selection_box.render(buf);
+                self.render_selection_buttons(
+                    buf,
+                    selection_box,
+                    sb_output.selected_entry_area,
+                    held_copy_row.is_some(),
+                    &theme,
+                );
+            } else {
+                self.hit_sb_copy.clear();
+                self.hit_sb_view.clear();
+            }
+            self.render_held_copy_chip(
+                buf,
+                held_copy_row,
+                layout.scrollback_content.right(),
+                &theme,
+            );
         }
         let mut jump_to_bottom_visible = false;
         let mut response_top_indicator_y: Option<u16> = None;
@@ -1858,7 +1873,7 @@ impl AgentView {
         }
         // The chip owns the scrollback's last row. The ▼ it replaces sat in the gap row below the
         // scrollback, which on a phone-width pane (`prompt_gap == 0`) belongs to the next chrome
-        // row; the last scrollback row is above the prompt, the bottom band and the floor row.
+        // row; the last scrollback row is above the prompt and the bottom band.
         match draw_jump_to_bottom_chip(
             buf,
             &theme,
@@ -5224,11 +5239,12 @@ mod status_line_draw_tests {
     const FIVE_ROW_SCRIPT: &str = "row-1\nrow-2\nrow-3\nrow-4\nrow-5";
     #[test]
     fn short_terminal_leaves_the_row_four_of_its_five_rows() {
-        // Height 17 for the flush frame (one blank floor row under the status
+        // Height 16 for the flush frame (no blank floor row under the status
         // row): the status line's panel gets the four rows the frame can spare
-        // of its script's five. The fifth would have to come out of the prompt,
-        // which is a priority question of its own, not this golden's.
-        let buf = draw_script(FIVE_ROW_SCRIPT, 17);
+        // of its script's five. At 17 all five fit now that the floor row is
+        // gone; the fifth would come out of the prompt, which is a priority
+        // question of its own, not this golden's.
+        let buf = draw_script(FIVE_ROW_SCRIPT, 16);
         let screen = dump(&buf);
         assert!(
             find(&buf, "row-4").is_some(),

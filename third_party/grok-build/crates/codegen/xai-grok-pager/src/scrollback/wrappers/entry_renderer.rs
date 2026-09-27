@@ -664,7 +664,8 @@ impl<'a> EntryRenderer<'a> {
 /// Left: the accent column when the block paints a rail there or fills it with
 /// its own band (the prompt echo's left gutter), two columns when it paints a
 /// rail — the rail and the one column of air its body keeps — and none for a
-/// block with neither, so its text starts on that column. Right: one column
+/// block with neither. A phone pane moves its former outer inset inside every
+/// entry so text columns and wrap widths stay fixed. Right: one column
 /// where a block paints a band (its own gutter), none elsewhere.
 pub(crate) fn entry_chrome(entry: &ScrollbackEntry, appearance: &AppearanceConfig) -> EntryChrome {
     let rail_w = HorizontalLayout::ACCENT;
@@ -680,19 +681,25 @@ pub(crate) fn entry_chrome(entry: &ScrollbackEntry, appearance: &AppearanceConfi
         );
     let rail = entry.display_mode != DisplayMode::Collapsed
         && (recently_finished || entry.block.accent(&ctx).is_some());
+    let phone_inset = if appearance.scrollback.layout.narrow {
+        crate::appearance::LayoutConfig::MIN_HPAD
+    } else {
+        0
+    };
     let band_edge = if band && appearance.scrollback.layout.narrow {
         crate::appearance::LayoutConfig::MIN_HPAD
     } else {
         0
     };
     EntryChrome {
-        accent: if band {
-            rail_w + band_edge
-        } else if rail {
-            rail_w + 1
-        } else {
-            0
-        },
+        accent: phone_inset
+            + if band {
+                rail_w + band_edge
+            } else if rail {
+                rail_w + 1
+            } else {
+                0
+            },
         right_pad: u16::from(band),
     }
 }
@@ -1897,19 +1904,19 @@ mod tests {
         assert_eq!(bottom_pad.symbol(), NARROW_PAD_UPPER, "{frame}");
         assert_eq!(bottom_pad.fg, base, "{frame}");
         assert_eq!(bottom_pad.bg, band, "{frame}");
-        // The text rows stay full band, and the text keeps one column of air
-        // inside it (the band spans the pane, so that air is column 1). The
+        // The text rows stay full band, and the text keeps the former outer
+        // inset inside it. The
         // first text row is under the meta row and the top pad.
         let text_row = 2u16;
-        assert_eq!(buf.cell((2, text_row)).unwrap().bg, band, "{frame}");
+        assert_eq!(buf.cell((3, text_row)).unwrap().bg, band, "{frame}");
         assert_eq!(
-            buf.cell((2, text_row)).unwrap().symbol(),
+            buf.cell((3, text_row)).unwrap().symbol(),
             "x",
             "the text opens the first text row, under the meta row and one column in:\n{frame}"
         );
         let wrap = r.block_content_width(width);
         assert!(
-            (2..2 + wrap).all(|x| buf.cell((x, text_row)).unwrap().symbol() == "x"),
+            (3..3 + wrap).all(|x| buf.cell((x, text_row)).unwrap().symbol() == "x"),
             "the first text row is {wrap} contiguous text cells (no clock gap):\n{frame}"
         );
         assert!(

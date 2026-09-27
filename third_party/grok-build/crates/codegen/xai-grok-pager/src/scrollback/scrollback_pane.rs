@@ -872,6 +872,19 @@ impl ScrollbackPane {
             }
             y = y.saturating_add(1);
         }
+        // Clear every accent column before painting the fractional pad rows.
+        // Clearing just the first column, or clearing after the pad, leaves
+        // stale cells and a full-height notch as the prompt becomes sticky.
+        let accent_area = layout.accent;
+        let clear_style = ratatui::style::Style::default().bg(bg_color.unwrap_or(theme.bg_base));
+        for y in accent_area.y..accent_area.y + total_height.min(area.height) {
+            for x in accent_area.x..accent_area.right() {
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    cell.set_char(' ');
+                    cell.set_style(clear_style);
+                }
+            }
+        }
         if use_vpad {
             // A phone-width pane keeps a fraction of the band's color on the pad
             // rows instead of the whole row (see `paint_pad_row`); the pinned
@@ -945,16 +958,6 @@ impl ScrollbackPane {
         }
 
         // vpad bottom is just empty space; no need to track y further
-
-        // The accent column is kept for alignment but never painted. Clear it so content from a previous frame cannot bleed through.
-        let accent_area = layout.accent;
-        let clear_style = ratatui::style::Style::default().bg(bg_color.unwrap_or(theme.bg_base));
-        for y in accent_area.y..accent_area.y + total_height.min(area.height) {
-            if let Some(cell) = buf.cell_mut((accent_area.x, y)) {
-                cell.set_char(' ');
-                cell.set_style(clear_style);
-            }
-        }
 
         (selection_lines, clock_rect)
     }

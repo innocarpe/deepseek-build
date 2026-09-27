@@ -1260,6 +1260,26 @@ impl TasksPane {
             ..list_area
         };
         self.render_overlay(overlay_area, buf, bg_tasks, subagents, scheduled);
+        if layout_cfg.narrow && inner.width > 0 {
+            // The task pane spans the phone frame, while its labels retain
+            // their text inset. Carry each row's background through that inset
+            // so a selected task has no dark strips at either screen edge.
+            for y in area.y..area.bottom() {
+                let row_bg = buf.cell((inner.x, y)).map(|cell| cell.bg);
+                for x in area.x..inner.x {
+                    if let (Some(bg), Some(cell)) = (row_bg, buf.cell_mut((x, y))) {
+                        cell.set_char(' ');
+                        cell.bg = bg;
+                    }
+                }
+                for x in inner.right()..area.right() {
+                    if let (Some(bg), Some(cell)) = (row_bg, buf.cell_mut((x, y))) {
+                        cell.set_char(' ');
+                        cell.bg = bg;
+                    }
+                }
+            }
+        }
     }
 
     fn render_overlay(

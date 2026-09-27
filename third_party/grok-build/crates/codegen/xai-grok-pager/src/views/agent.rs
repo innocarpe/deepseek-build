@@ -101,16 +101,43 @@ pub fn effective_compact(user_compact: bool, terminal_rows: u16) -> bool {
     user_compact || (terminal_rows > 0 && terminal_rows <= AUTO_COMPACT_MAX_ROWS)
 }
 
-/// Whether a pane `terminal_cols` wide renders the phone-width density
+/// Widest grid a phone client shows while its pane still reads as a phone.
+///
+/// The measured iPhone Orca pane is 55 columns at 100% text and 110 at 50%
+/// (a pinch zoom scales both grid axes), so twice the 100% pane leaves the 50%
+/// step room while a wide portrait desktop pane (a rotated monitor, e.g.
+/// 160×134) stays on the desktop side.
+const PHONE_GRID_MAX_COLS: u16 = crate::appearance::NARROW_TERMINAL_COLS * 2;
+
+/// Whether a `cols × rows` grid is a phone's.
+///
+/// A phone viewport is portrait and a pinch zoom scales both grid axes
+/// together, so the grid's shape outlives the text size: the measured panes are
+/// 55×41, 55×40 and 73×53 (1.34–1.38 columns per row) and 110×82 at 50% text.
+/// Desktop panes on the same machine are landscape — 80×24, 120×40 and 179×60
+/// sit at 2.7–3.3 — and a grid at two columns per row or flatter is desktop
+/// too. The pane width alone cannot separate them once the text shrinks: it
+/// drops the phone density at 61 columns, while this shape holds at every text
+/// size.
+fn is_phone_grid(terminal_cols: u16, terminal_rows: u16) -> bool {
+    terminal_cols <= PHONE_GRID_MAX_COLS && terminal_cols < terminal_rows.saturating_mul(2)
+}
+
+/// Whether a pane `terminal_cols` × `terminal_rows` renders the phone-width density
 /// ([`NARROW_TERMINAL_COLS`](xai_grok_pager_render::appearance::NARROW_TERMINAL_COLS)):
 /// no blank outer margin rows, a full-width transcript and task pane, and the
 /// default block vpad dropped. The composer keeps its one-column outer pads.
 ///
+/// Narrow by width, or a phone grid at a smaller text size ([`is_phone_grid`]).
 /// Like the compact derivation this is a render value: it never reaches the
 /// persisted layout config, so widening the pane restores the desktop rhythm.
-/// `terminal_cols == 0` means "not yet measured" and never forces narrow.
-pub fn effective_narrow(terminal_cols: u16) -> bool {
-    terminal_cols > 0 && terminal_cols <= crate::appearance::NARROW_TERMINAL_COLS
+/// `terminal_cols == 0` means "not yet measured" and never forces narrow. The
+/// wrap width and the block fit keep following the real column count, so a
+/// phone at 50% text wraps at its 110 columns.
+pub fn effective_narrow(terminal_cols: u16, terminal_rows: u16) -> bool {
+    terminal_cols > 0
+        && (terminal_cols <= crate::appearance::NARROW_TERMINAL_COLS
+            || is_phone_grid(terminal_cols, terminal_rows))
 }
 /// Every input [`AgentViewLayout::compute`] reads: the screen area, the appearance config, and the
 /// requested height of each row it stacks.
@@ -2169,22 +2196,43 @@ mod tests {
             layout.scrollback,
         );
     }
-    /// The width the phone density keys off: the measured iPhone Orca pane (55) and
-    /// the shared threshold are narrow, a desktop pane (80) is not, and 0 means the
-    /// terminal has not been measured yet.
+    /// The phone density keys off the pane's grid, not its width alone: the
+    /// measured phone panes (55×41 at 100% text, 110×82 at 50%, 73×53 at a
+    /// smaller size) stay narrow, the desktop examples (80×24, 120×40) do not,
+    /// and 0 means the terminal has not been measured yet.
     #[test]
-    fn effective_narrow_keys_off_pane_width() {
-        assert!(!effective_narrow(0), "0 means not yet measured");
-        assert!(effective_narrow(55), "the measured iPhone Orca pane");
+    fn effective_narrow_keeps_the_phone_grid_at_a_smaller_text_size() {
+        assert!(!effective_narrow(0, 0), "0 means not yet measured");
+        assert!(effective_narrow(55, 41), "the measured iPhone Orca pane");
         assert!(
-            effective_narrow(crate::appearance::NARROW_TERMINAL_COLS),
+            effective_narrow(crate::appearance::NARROW_TERMINAL_COLS, 41),
             "the threshold itself is inside"
         );
-        assert!(!effective_narrow(
-            crate::appearance::NARROW_TERMINAL_COLS + 1
-        ));
-        assert!(!effective_narrow(80), "the narrowest desktop pane");
-        assert!(!effective_narrow(120));
+        assert!(effective_narrow(55, 20), "short panes stay narrow by width");
+        assert!(
+            effective_narrow(110, 82),
+            "the same phone pane at 50% text: both grid axes double, the shape does not"
+        );
+        assert!(
+            effective_narrow(73, 53),
+            "the 73×53 phone pane on this machine (a smaller text size)"
+        );
+        assert!(
+            !effective_narrow(80, 24),
+            "the narrowest desktop pane stays desktop"
+        );
+        assert!(
+            !effective_narrow(120, 40),
+            "a full desktop pane stays desktop"
+        );
+        assert!(
+            !effective_narrow(80, 40),
+            "two columns per row is the desktop side of the boundary"
+        );
+        assert!(
+            !effective_narrow(160, 134),
+            "a wide portrait desktop pane (a rotated monitor) stays desktop"
+        );
     }
 
     /// The phone transcript reaches both frame edges while the composer keeps

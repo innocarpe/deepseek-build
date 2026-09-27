@@ -376,6 +376,7 @@ impl FeedbackModalState {
             placeholder_override: Some("Tell us what happened"),
             // Chips only: the fullscreen preview overlay would paint over the modal.
             image_preview: false,
+            band: false,
             ..PromptStyle::overlay()
         }
     }

@@ -5304,6 +5304,74 @@
         );
     }
 
+    /// With `band` set the chrome is a fill, not a box: the top border row is
+    /// `▆` in the band colour over the frame's, the divider row is `▂` in the
+    /// frame's colour over the band, and the text rows' edge columns are blank
+    /// band. Neither border row carries the label.
+    #[test]
+    fn band_style_fills_the_chrome_instead_of_drawing_the_box() {
+        let _guard = crate::theme::cache::pin_theme();
+        let theme = Theme::current();
+        let band = composer_band_color(&theme).expect("the pinned theme has an RGB band");
+        let flags = [PromptFlag {
+            text: "always-approve",
+            color: None,
+            bold: false,
+        }];
+        let info = PromptInfo {
+            model_name: PHONE_MODEL_LABEL,
+            flags: &flags,
+            multiline: false,
+            usage_warning: None,
+            usage_warning_critical: false,
+        };
+        let style = PromptStyle {
+            band: true,
+            ..PromptStyle::default()
+        };
+        for width in [MEASURED_PHONE_COLS, 120] {
+            let mut pw = PromptWidget::new();
+            let area = Rect::new(0, 0, width, BORDERED_TEST_HEIGHT);
+            let mut buf = Buffer::empty(area);
+            pw.draw(&mut buf, area, None, &style, Some(&info), None);
+            let (top, bottom) = (area.y, area.bottom() - 1);
+            for x in 0..width {
+                let cell = buf.cell((x, top)).unwrap();
+                assert_eq!(
+                    (cell.symbol(), cell.fg, cell.bg),
+                    ("\u{2586}", band, theme.bg_base),
+                    "{width}: top border cell {x}"
+                );
+                let cell = buf.cell((x, bottom)).unwrap();
+                assert_eq!(
+                    (cell.symbol(), cell.fg, cell.bg),
+                    ("\u{2582}", theme.bg_base, band),
+                    "{width}: divider cell {x}"
+                );
+            }
+            for y in top + 1..bottom {
+                for x in [0, width - 1] {
+                    let cell = buf.cell((x, y)).unwrap();
+                    assert_eq!(
+                        (cell.symbol(), cell.bg),
+                        (" ", band),
+                        "{width}: edge cell {x},{y} is band, not a rule"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A theme on the terminal's own colours has no band to paint: the border
+    /// rows' block glyphs would take the text colour, so the box stays.
+    #[test]
+    fn band_needs_an_rgb_band_and_frame_colour() {
+        assert_eq!(composer_band_color(&Theme::terminal_default()), None);
+        let _guard = crate::theme::cache::pin_theme();
+        let theme = Theme::current();
+        assert_eq!(composer_band_color(&theme), Some(theme.bg_light));
+    }
+
     /// The same label at a width where it fits stays on the divider row and is
     /// right-aligned against the rule. Pins that the move above is for phone
     /// panes only, and that the rule legitimately runs up to the label.

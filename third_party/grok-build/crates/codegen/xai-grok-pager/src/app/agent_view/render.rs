@@ -797,6 +797,7 @@ impl AgentView {
             show_borders: true,
             title: self.prompt_caption(),
             image_preview: !self.resize_hides_prompt_preview(),
+            band: false,
         };
         let next = crate::views::session_title::rename_source_title_raw(self)
             .map(crate::views::session_title::sanitize_display_text);
@@ -935,6 +936,7 @@ impl AgentView {
             show_borders: false,
             title: None,
             image_preview: !self.resize_hides_prompt_preview(),
+            band: false,
         };
         let inline_prompt_max = ((area.height as u32) / 3).clamp(3, 15) as u16;
         let question_prompt_body_h = if question_view_h == 0 || !is_question_input_mode {
@@ -965,6 +967,7 @@ impl AgentView {
                 show_borders: false,
                 title: None,
                 image_preview: !self.resize_hides_prompt_preview(),
+                band: false,
             };
             let perm_text_w = crate::views::permission_view::inline_text_width(inner_width);
             self.prompt
@@ -2535,6 +2538,7 @@ impl AgentView {
                         show_borders: false,
                         title: None,
                         image_preview: !self.resize_hides_prompt_preview(),
+                        band: false,
                     };
                     let prompt_h = remaining_h.saturating_sub(1).max(1);
                     let prompt_draw_area = Rect {

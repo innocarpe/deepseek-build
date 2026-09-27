@@ -41,6 +41,9 @@ if ! command -v protoc >/dev/null 2>&1 && ! command -v dotslash >/dev/null 2>&1;
   exit 1
 fi
 
+# shellcheck source=lib/vendor-target.sh
+source "${ROOT}/scripts/lib/vendor-target.sh"
+vendor_target_pin "$ROOT"
 cd "$VENDOR"
 
 # Product SemVer from monorepo root (not vendor crate 0.2.x).

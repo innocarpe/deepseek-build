@@ -114,6 +114,9 @@ if [[ "${SKIP_BUILD}" -eq 0 ]]; then
   unset RUSTC_WRAPPER || true
   (
     cd "${GROK_ROOT}"
+    # shellcheck source=lib/vendor-target.sh
+    source "${ROOT}/scripts/lib/vendor-target.sh"
+    vendor_target_pin "${ROOT}"
     cargo build --release -p xai-grok-pager-bin 2>&1 | tail -40
   )
   if ! agent_runs "${AGENT_BUILD}"; then

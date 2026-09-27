@@ -2226,7 +2226,10 @@ impl AppView {
             self.current_ui.compact_mode,
             self.last_known_terminal_rows,
         );
-        let narrow = crate::views::agent::effective_narrow(self.last_known_terminal_cols);
+        let narrow = crate::views::agent::effective_narrow(
+            self.last_known_terminal_cols,
+            self.last_known_terminal_rows,
+        );
         if self.appearance.prompt.compact == derived
             && self.appearance.scrollback.layout.narrow == narrow
         {

@@ -59,11 +59,11 @@ fn agent_with(model: &str, balance: &str, cached: u64, input: u64) -> AgentView 
 
 fn draw(agent: &mut AgentView, cols: u16, rows: u16) -> Buffer {
     agent.last_terminal_size = (cols, rows);
-    // The app derives the pane's density flag from the terminal width
+    // The app derives the pane's density flag from the terminal grid
     // (`AppView::apply_effective_density`); the fixture sets the same value, so
     // a frame test draws the frame the pane draws.
     let mut appearance = agent.scrollback.appearance().clone();
-    appearance.scrollback.layout.narrow = crate::views::agent::effective_narrow(cols);
+    appearance.scrollback.layout.narrow = crate::views::agent::effective_narrow(cols, rows);
     agent.scrollback.set_appearance(appearance);
     let area = Rect::new(0, 0, cols, rows);
     let mut buf = Buffer::empty(area);

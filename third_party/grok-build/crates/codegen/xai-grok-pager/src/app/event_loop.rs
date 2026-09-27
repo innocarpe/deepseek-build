@@ -1531,8 +1531,10 @@ pub(crate) async fn run(
         crate::appearance::cache::load(),
         app.last_known_terminal_rows,
     );
-    initial_config.scrollback.layout.narrow =
-        crate::views::agent::effective_narrow(app.last_known_terminal_cols);
+    initial_config.scrollback.layout.narrow = crate::views::agent::effective_narrow(
+        app.last_known_terminal_cols,
+        app.last_known_terminal_rows,
+    );
     initial_config.show_timestamps = crate::appearance::cache::load_timestamps();
     initial_config.show_timeline = crate::appearance::cache::load_show_timeline();
     let tick_interval = initial_config.animation.tick_interval();

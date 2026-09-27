@@ -122,14 +122,18 @@ interpretation back to the reader; these elements carry it:
   WC paths and commit SHAs, or `no record needed` with the reason it was
   decided. The branch's commits, hash and one line each, when the PR carries
   more than one concern.
-- **The owned worktree** by exact path, with whether it was removed; a tree
-  left in place names the condition that did not stand.
+- **The owned worktree** by exact path with `removed: true` or
+  `removed: false`. When it was left in place, say which case it is: the
+  removal condition did not stand, or the tree was retained on purpose — the
+  user asked, or the tree is kept as evidence — with the reason.
 - **What you did not do** — a separate list with a reason per item: left
   untouched, unfinished, or out of scope. Another session's dirty file or
-  worktree goes here with the reason it was left alone. Say the checked range
-  is clean.
-- **Runtime or deployed state** when the turn asked for it and the session
-  measured it.
+  worktree goes here with the reason it was left alone. Name the exact range
+  the unit checked and what it showed there — clean or dirty; a tree wider
+  than that range is not called clean.
+- **Runtime or deployed state** when it matters to the outcome and was
+  measured — the turn need not have asked. Name the measurement and when it
+  was taken; state that is irrelevant or was not measured stays out.
 
 Close with the **Session disposition** block — three labelled lines, not an
 offer. The measured waste at this seat is a session that finished and did not
@@ -163,7 +167,7 @@ block replaces. A hand-off is a statement in the block, never a question.
 | Finish without the Session disposition block | The human has to ask "그래서 끝난 거야?", and the silence or the offer becomes the next task |
 | Skip the debrief when the unit looks small | Its legal answers are records or `no record needed`; skipping loses both, and the reason |
 | Clean up the worktree before the debrief | The debrief counts with `git -C "$WT"` and fails on a removed tree |
-| Call the tree clean after checking this unit's paths | The claim outruns the check; the rest of the tree was not read |
+| Call a tree clean beyond the range the unit read | The claim outruns the check; the rest of the tree was not read |
 | Ask "shall I record this to WC?" | The close authorizes the debrief's writes; the question is the round-trip the step removes |
 | `git commit` with no path | A shared index takes another session's files with it |
 
@@ -176,7 +180,7 @@ block replaces. A hand-off is a statement in the block, never a question.
 - [ ] `scripts/check-pr-merged.sh` printed `pass` (`MERGED`, `mergedAt`, `mergeCommit`, two parents, CI `/ required` passed), or that turn said to stop before the merge and the first line names that clause
 - [ ] The first line says whether the done-condition holds, and names the clause if it does not
 - [ ] The report says what changed and why, with observation separated from inference and a source on every measured sentence
-- [ ] The owned worktree is named by exact path with whether it was removed, and the not-done list carries a reason per item; only the checked range is called clean
+- [ ] The owned worktree is named by exact path with `removed: true`/`false` — a tree kept in place says why — and the not-done list carries a reason per item; the checked range is named with what it showed, clean or dirty, and nothing wider is called clean
 - [ ] What was not done is a separate list and was not opened as the next unit
 - [ ] The report carries the Session disposition block (close now / more in this session / to hand off)
 - [ ] Next units the opening already named have their own tab

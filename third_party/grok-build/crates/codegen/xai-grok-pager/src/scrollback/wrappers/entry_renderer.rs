@@ -445,6 +445,14 @@ impl<'a> EntryRenderer<'a> {
             && self.entry.is_foldable_at(content_width)
         {
             self.entry.block.collapsed_row_budget(content_width)
+        } else if self.entry.block.is_user_prompt() {
+            // `ceil(width / columns)` is only a lower bound on word-boundary wrapping, and a prompt pinned
+            // above the viewport keeps this estimate as its header's height: a row short, the header
+            // painted its bottom pad on the last text row. A prompt's wrap is plain text, so count it.
+            let ctx = self
+                .entry
+                .context(content_width, self.appearance(), self.cwd);
+            u16::try_from(self.entry.block.output(&ctx).len()).unwrap_or(u16::MAX)
         } else {
             self.entry.estimate_source_lines(content_width)
         };

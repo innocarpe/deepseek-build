@@ -3,6 +3,7 @@
 ## Unreleased
 
 - On a phone-width pane the prompt echo's clock closes its last text row at the band's bottom-right, like a chat bubble, and only when that row leaves room for it; otherwise the echo shows no clock. The clock no longer takes a row of its own above the text (it did whenever the first row was full, the usual case on a phone), so a folded echo stays two text rows. Agent messages, `/btw` replies and wider panes keep their clock where it was.
+- A pinned prompt echo no longer loses its last row while you scroll. The pinned header shrinks to a floor as you scroll on, and that floor was the prompt's Truncated height, capped at six rows: it left out a tapped clock's own row, and for a prompt the width-blind fold check keeps expanded while its words wrap past the fold budget, the extra text rows. A pinned prompt paints its whole output, so the header painted more rows than it had: its bottom pad landed on the last text row, and the band showed only under that row's glyphs. The floor is now the prompt's own height, and a prompt's off-screen height estimate counts the rows its text actually wraps to, so a prompt pinned before it was ever on screen gets the same height.
 
 ## 6.1.7 — 2026-09-27
 

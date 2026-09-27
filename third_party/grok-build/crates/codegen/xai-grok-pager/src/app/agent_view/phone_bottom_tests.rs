@@ -753,6 +753,234 @@ fn phone_pins_the_echo_in_compact_mode_too() {
     );
 }
 
+/// A pinned phone echo keeps every row it paints, and its clock only closes a
+/// last text row that leaves room: it never takes a row of its own. A pinned
+/// header shrinks to its floor as the reader scrolls on; that floor was the
+/// prompt's Truncated height, which left out a clock row and, for a prompt the
+/// width-blind fold check keeps expanded, the rows it wraps past the fold
+/// budget. The header then painted a row more than it had: its bottom pad
+/// landed on the last text row, and the band showed only under its glyphs.
+#[test]
+fn phone_pinned_echo_keeps_its_band_and_closes_on_its_clock() {
+    let _guard = crate::theme::cache::pin_theme();
+    let theme = Theme::current();
+    let band = theme.bg_light;
+    let full_rows = "M".repeat(104);
+    // Three words that wrap one to a row at the echo's 52-column text width,
+    // while the fold check's `ceil(96 / 52) = 2` rows keeps the prompt expanded.
+    let three_rows = format!("{} {} {}", "A".repeat(27), "B".repeat(27), "C".repeat(40));
+    for (label, prompt, head, tail, text_rows, clock) in [
+        // The prompt from the report: its second row leaves room.
+        (
+            "short last row",
+            "지금 6.1.6 배포중인데. 관련해서 모든 이슈들 다 고쳤어??",
+            "6.1.6",
+            "??",
+            2u16,
+            true,
+        ),
+        // Both rows full: no room, so no clock.
+        (
+            "full last row",
+            full_rows.as_str(),
+            "MMMM",
+            "MMMM",
+            2,
+            false,
+        ),
+        (
+            "wraps past the fold check",
+            three_rows.as_str(),
+            "AAAA",
+            "CCCC",
+            3,
+            true,
+        ),
+    ] {
+        let mut agent = phone_agent();
+        for turn in 0..3 {
+            let text = if turn == 1 {
+                prompt.to_owned()
+            } else {
+                format!("prompt-{turn} 지금 얼마나 완벽하게 다 개선되었나 테스트 좀 해보자.")
+            };
+            seed_prompt_echo(&mut agent, &text);
+            let body: String = (0..30)
+                .map(|i| format!("answer {turn} line {i}\n\n"))
+                .collect();
+            agent
+                .scrollback
+                .push_block(RenderBlock::agent_message(body));
+        }
+        // The echo sits above the viewport from the first frame, so its height
+        // is the off-screen estimate, as after a resume or a layout rebuild.
+        let buf = scroll_into_middle_answer(&mut agent, PHONE_COLS, PHONE_ROWS);
+        let frame = frame_text(&buf);
+        let full_height = agent
+            .scrollback
+            .get_cached_prompt_descriptors()
+            .and_then(|d| d.get(1).copied())
+            .expect("the middle prompt's descriptor")
+            .full_height;
+        let pinned = agent
+            .scrollback
+            .sticky_layout()
+            .and_then(|sticky| sticky.pinned)
+            .unwrap_or_else(|| panic!("{label}: no pinned echo\n{frame}"));
+        assert_eq!(
+            pinned.entry_idx, 2,
+            "{label}: the middle prompt is pinned\n{frame}"
+        );
+        assert_eq!(
+            full_height,
+            text_rows + 2,
+            "{label}: the echo is its text rows and a pad row each side, no clock row\n{frame}"
+        );
+        assert_eq!(
+            pinned.render_height, full_height,
+            "{label}: the pinned echo keeps every row it paints\n{frame}"
+        );
+
+        let first_text = rows_with(&buf, head)[0];
+        let last_text = *rows_with(&buf, tail).last().unwrap();
+        let top_pad = first_text - 1;
+        let bottom_pad = top_pad + full_height - 1;
+        assert_eq!(
+            last_text,
+            bottom_pad - 1,
+            "{label}: the last text row sits right above the bottom pad\n{frame}"
+        );
+        assert_eq!(
+            buf.cell((1, top_pad)).unwrap().symbol(),
+            "\u{2582}",
+            "{label}\n{frame}"
+        );
+        assert_eq!(
+            buf.cell((1, bottom_pad)).unwrap().symbol(),
+            "\u{2586}",
+            "{label}: the bottom pad closes the band\n{frame}"
+        );
+        let bar = PHONE_COLS - 1;
+        for y in first_text..bottom_pad {
+            for x in 0..bar {
+                let cell = buf.cell((x, y)).unwrap();
+                assert!(
+                    cell.symbol() != "\u{2582}" && cell.symbol() != "\u{2586}",
+                    "{label}: no pad glyph on the band's row {y} (column {x})\n{frame}"
+                );
+            }
+        }
+        // Right of the last text row's glyphs the band reaches the scrollbar:
+        // no cell of that row shows the pane's background.
+        let tail_glyph = tail.chars().last().unwrap().to_string();
+        let tail_end = (0..bar)
+            .rev()
+            .find(|&x| buf.cell((x, last_text)).unwrap().symbol() == tail_glyph)
+            .unwrap()
+            + 1;
+        for x in tail_end..bar {
+            assert_eq!(
+                buf.cell((x, last_text)).unwrap().bg,
+                band,
+                "{label}: band column {x} of the last text row {last_text}\n{frame}"
+            );
+        }
+
+        let clock_rows: Vec<u16> = (top_pad..=bottom_pad)
+            .filter(|&y| {
+                let text = row_text(&buf, y);
+                text.contains(" AM") || text.contains(" PM")
+            })
+            .collect();
+        let expected = if clock { vec![last_text] } else { Vec::new() };
+        assert_eq!(
+            clock_rows, expected,
+            "{label}: the clock closes the last text row when it fits, and is absent otherwise\n{frame}"
+        );
+        if clock {
+            let row = row_text(&buf, last_text);
+            assert!(
+                row.trim_end().ends_with('M'),
+                "{label}: the clock is right-aligned at the band's bottom-right: {row:?}\n{frame}"
+            );
+        }
+    }
+}
+
+/// A pinned prompt's floor is its own height on a wide pane too: a prompt the
+/// fold check keeps expanded while its words wrap to four rows, with its long
+/// clock tapped open on the row above its text, is seven rows. The floor was
+/// its Truncated height capped at six, so the pinned header lost its last text
+/// row and its bottom pad.
+#[test]
+fn a_wide_pinned_prompt_keeps_every_row_it_paints() {
+    let _guard = crate::theme::cache::pin_theme();
+    const COLS: u16 = 72;
+    const ROWS: u16 = 24;
+    let mut agent = phone_agent();
+    // One word to a row; the first fills its row, so the long clock does not fit
+    // beside it.
+    let prompt = format!(
+        "{} {} {} {}",
+        "A".repeat(50),
+        "B".repeat(37),
+        "C".repeat(37),
+        "D".repeat(37)
+    );
+    for turn in 0..3 {
+        let text = if turn == 1 {
+            prompt.clone()
+        } else {
+            format!("prompt-{turn}")
+        };
+        seed_prompt_echo(&mut agent, &text);
+        let body: String = (0..30)
+            .map(|i| format!("answer {turn} line {i}\n\n"))
+            .collect();
+        agent
+            .scrollback
+            .push_block(RenderBlock::agent_message(body));
+    }
+    agent
+        .scrollback
+        .entry_mut(2)
+        .expect("the middle echo")
+        .timestamp_expanded = true;
+    let buf = scroll_into_middle_answer(&mut agent, COLS, ROWS);
+    let frame = frame_text(&buf);
+    assert!(
+        !agent.scrollback.appearance().scrollback.layout.narrow,
+        "a {COLS}x{ROWS} pane is wide\n{frame}"
+    );
+    let full_height = agent
+        .scrollback
+        .get_cached_prompt_descriptors()
+        .and_then(|d| d.get(1).copied())
+        .expect("the middle prompt's descriptor")
+        .full_height;
+    assert_eq!(
+        full_height, 7,
+        "the long clock's row, a pad row each side and four text rows\n{frame}"
+    );
+    let pinned = agent
+        .scrollback
+        .sticky_layout()
+        .and_then(|sticky| sticky.pinned)
+        .unwrap_or_else(|| panic!("no pinned echo\n{frame}"));
+    assert_eq!(pinned.entry_idx, 2, "the middle prompt is pinned\n{frame}");
+    assert_eq!(
+        pinned.render_height, full_height,
+        "the pinned prompt keeps every row it paints\n{frame}"
+    );
+    for word in ["AAAA", "BBBB", "CCCC", "DDDD"] {
+        assert_eq!(
+            rows_with(&buf, word).len(),
+            1,
+            "the pinned header shows the {word} row\n{frame}"
+        );
+    }
+}
+
 /// Compact prompt mode keeps the echo's fractional pad rows on a phone pane:
 /// without them the text sits on the band's top and bottom edges.
 #[test]

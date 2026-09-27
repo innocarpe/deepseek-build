@@ -159,10 +159,11 @@ pub struct ScrollbackState {
     // events are debounced at the event-loop level so only the final width triggers a rebuild.
     last_width: u16,
 
-    /// Prompt content width the unpinned prompts' automatic folds were last derived at; 0 until the first known
-    /// width. Unlike `last_width` it does not follow the pane to width 0, so a round trip through 0 still tells a
-    /// prompt on its automatic fold from one the user folded by hand.
-    prompt_fold_width: u16,
+    /// What the unpinned prompts' automatic folds were last derived at: the prompt content width and the appearance
+    /// (prefix, clock reserve) the fold check wrapped under. `None` until the first known width. Unlike `last_width`
+    /// it does not follow the pane to width 0, and it keeps the appearance of that derivation, so a prompt on its
+    /// automatic fold is still told apart from one the user folded by hand after either one changes.
+    prompt_fold_basis: Option<PromptFoldBasis>,
 
     /// Layout cache for navigation (entry heights, prompt descriptors).
     layout_cache: Option<LayoutCache>,
@@ -264,7 +265,7 @@ impl ScrollbackState {
             current_turn: None,
             view_mode: ViewMode::AllTurns,
             last_width: 0,
-            prompt_fold_width: 0,
+            prompt_fold_basis: None,
             layout_cache: None,
             structural_scroll_anchor: None,
             thinking_display_mode: DisplayMode::Collapsed,
@@ -417,6 +418,8 @@ impl ScrollbackState {
     pub fn set_appearance(&mut self, appearance: AppearanceConfig) {
         crate::render::bidi::set_enabled(appearance.scrollback.display.rtl_bidi);
         self.appearance = appearance;
+        // The prompt fold check wraps under the appearance (compact hides the prefix), so the automatic folds follow it.
+        rederive_prompt_folds_for_width(self, self.last_width);
         // Invalidate caches since appearance affects rendering
         self.layout_cache = None;
         self.gaps_may_be_dirty = true;
@@ -719,18 +722,18 @@ impl ScrollbackState {
     /// default, because `ScrollbackEntry::new` derives that default from the block and leaves no record of an explicit
     /// choice — the same caveat [`Self::apply_edit_default_display_mode`]'s materialize policy carries.
     ///
-    /// It folds at `prompt_fold_width`, the width every other unpinned prompt's fold was derived at, so the next
-    /// width change finds it on the same default as they are — including a prompt pushed while the pane sits at
-    /// width 0. No-op before the first real width: the first width change derives it from the width-blind default.
+    /// It folds at `prompt_fold_basis`, what every other unpinned prompt's fold was derived at, so the next width
+    /// or appearance change finds it on the same default as they are — including a prompt pushed while the pane sits
+    /// at width 0. No-op before the first real width: the first width change derives it from the width-blind default.
     fn apply_prompt_default_display_mode(&self, entry: &mut ScrollbackEntry) {
         if entry.display_mode_pinned || !matches!(entry.block, RenderBlock::UserPrompt(_)) {
             return;
         }
-        let content_width = self.prompt_fold_width;
-        if content_width == 0 {
+        let Some(basis) = &self.prompt_fold_basis else {
             return;
-        }
-        entry.display_mode = auto_prompt_display_mode(entry, content_width, &self.appearance);
+        };
+        entry.display_mode =
+            auto_prompt_display_mode(entry, basis.content_width, &basis.appearance);
     }
 
     /// Remove an entry by EntryId. No-op if the id is not present. Used by the cancel-with-restore flow to undo the
@@ -1765,38 +1768,49 @@ impl ScrollbackState {
     }
 }
 
-/// Re-derive every unpinned prompt's automatic fold for `new_width`.
+/// What a prompt's automatic fold was derived at; see `ScrollbackState::prompt_fold_basis`.
+#[derive(Debug)]
+struct PromptFoldBasis {
+    content_width: u16,
+    appearance: AppearanceConfig,
+}
+
+/// Re-derive every unpinned prompt's automatic fold for `new_width` under the current appearance.
 ///
-/// Called from both width-change paths. Comparing an entry's current mode against the default it had at the width
-/// the folds were last derived at (`prompt_fold_width`) tells "still sitting on the automatic default" apart from
-/// "the user folded this by hand". Only the former is re-derived.
+/// Called from both width-change paths and from `set_appearance`. Comparing an entry's current mode against the
+/// default it had under `prompt_fold_basis` (the width and appearance the folds were last derived at) tells "still
+/// sitting on the automatic default" apart from "the user folded this by hand". Only the former is re-derived.
+/// Rebuilding that old default under the current appearance would misread a hand-opened prompt after a compact
+/// toggle, and leave an automatic one expanded past its budget.
 ///
-/// A width of 0 is not a width: folds are left alone and `prompt_fold_width` keeps the last real one, so a pane
-/// that passes through 0 compares against the width its folds were made at. Before any real width, a prompt pushed
-/// before the first frame (a resumed or replayed session) holds the block's width-blind `default_display_mode()`,
-/// so that is the default it is compared against. Skipping that case left such a prompt expanded at every row its
-/// words wrap to, past the phone echo's two-row budget.
+/// A width of 0 is not a width: folds and the basis are left alone, so a pane that passes through 0 compares
+/// against what its folds were made at. Before any real width, a prompt pushed before the first frame (a resumed or
+/// replayed session) holds the block's width-blind `default_display_mode()`, so that is the default it is compared
+/// against. Skipping that case left such a prompt expanded at every row its words wrap to, past the phone echo's
+/// two-row budget.
 fn rederive_prompt_folds_for_width(state: &mut ScrollbackState, new_width: u16) {
     let new_prompt_width = state.prompt_content_width(new_width);
     if new_prompt_width == 0 {
         return;
     }
-    let old_prompt_width = state.prompt_fold_width;
+    let old_basis = state.prompt_fold_basis.take();
     for entry in state.entries.values_mut() {
         if entry.display_mode_pinned || !matches!(entry.block, RenderBlock::UserPrompt(_)) {
             continue;
         }
-        let old_default = if old_prompt_width == 0 {
-            entry.block.default_display_mode()
-        } else {
-            auto_prompt_display_mode(entry, old_prompt_width, &state.appearance)
+        let old_default = match &old_basis {
+            None => entry.block.default_display_mode(),
+            Some(basis) => auto_prompt_display_mode(entry, basis.content_width, &basis.appearance),
         };
         if entry.display_mode == old_default {
             entry.display_mode =
                 auto_prompt_display_mode(entry, new_prompt_width, &state.appearance);
         }
     }
-    state.prompt_fold_width = new_prompt_width;
+    state.prompt_fold_basis = Some(PromptFoldBasis {
+        content_width: new_prompt_width,
+        appearance: state.appearance.clone(),
+    });
 }
 
 /// The mode a prompt falls into on its own at `content_width`: collapsed when the echo needs more rows than its
@@ -3753,6 +3767,57 @@ mod tests {
             state.get_by_id(id).unwrap().display_mode,
             DisplayMode::Collapsed,
             "the first width gives the prompt the fold that width implies"
+        );
+    }
+
+    /// A phone pane's appearance with compact mode set as given.
+    fn phone_appearance(compact: bool) -> AppearanceConfig {
+        let mut appearance = AppearanceConfig::default();
+        appearance.scrollback.layout.narrow = true;
+        appearance.prompt.compact = compact;
+        appearance
+    }
+
+    /// Compact mode hides a bash prompt's `$ `, so the fold follows the appearance, not only the width. Text one
+    /// column short of two rows fits without the prefix and needs a third row behind it.
+    #[test]
+    fn a_compact_toggle_refolds_the_automatic_prompt_and_keeps_a_hand_opened_one() {
+        let mut state = ScrollbackState::new();
+        state.set_appearance(phone_appearance(true));
+        state.prepare_layout(PHONE_PANE, 20);
+        let width = usize::from(state.prompt_content_width(PHONE_PANE));
+        let text = "X".repeat(width * 2 - 1);
+        let automatic =
+            state.push_block(RenderBlock::UserPrompt(UserPromptBlock::bash(text.clone())));
+        assert_eq!(
+            state.get_by_id(automatic).unwrap().display_mode,
+            DisplayMode::Expanded,
+            "without the prefix the prompt fits two rows"
+        );
+
+        state.set_appearance(phone_appearance(false));
+        assert_eq!(
+            state.get_by_id(automatic).unwrap().display_mode,
+            DisplayMode::Collapsed,
+            "behind `$ ` it needs a third row, so it folds to the two-row budget"
+        );
+
+        let opened = state.push_block(RenderBlock::UserPrompt(UserPromptBlock::bash(text)));
+        assert_eq!(
+            state.get_by_id(opened).unwrap().display_mode,
+            DisplayMode::Collapsed
+        );
+        state.get_by_id_mut(opened).unwrap().display_mode = DisplayMode::Expanded;
+        state.set_appearance(phone_appearance(true));
+        assert_eq!(
+            state.get_by_id(opened).unwrap().display_mode,
+            DisplayMode::Expanded,
+            "a prompt the user opened is not taken for the automatic default of the new appearance"
+        );
+        assert_eq!(
+            state.get_by_id(automatic).unwrap().display_mode,
+            DisplayMode::Expanded,
+            "the automatic prompt follows compact mode back to its two rows"
         );
     }
 

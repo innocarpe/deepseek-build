@@ -3,50 +3,63 @@
 use super::ctx::with_active_agent;
 use crate::app::actions::Effect;
 use crate::app::agent::AgentId;
+use crate::app::agent_view::AgentView;
 use crate::app::app_view::{ActiveView, AppView};
 use crate::scrollback::block::{BlockContent, RenderBlock};
 use crate::scrollback::blocks::ToolCallBlock;
 use agent_client_protocol as acp;
 use xai_grok_telemetry::session_ctx::log_event;
 
-/// Copy the selected block's content to the system clipboard.
-///
-/// Respects the block's raw/pretty mode for markdown content.
+/// Copy the selected block's content, respecting its raw/pretty mode.
 pub(super) fn dispatch_copy_block_content(app: &mut AppView) {
     with_active_agent(app, |agent| {
-        let Some(idx) = agent.scrollback.selected() else {
-            return;
-        };
-        if agent.scrollback.entry_content_hidden_by_group(idx) {
-            return;
+        if let Some(text) = text_for_copy_block_content(agent) {
+            agent.copy_to_clipboard(&text);
         }
-        let Some(entry) = agent.scrollback.entry(idx) else {
-            return;
-        };
+    });
+}
 
-        // BgTask blocks: copy stdout from the shared `bg_tasks` store
-        let text = if let RenderBlock::BgTask(block) = &entry.block {
-            let stdout = agent
-                .session
-                .bg_tasks
-                .get(&block.task_id)
-                .map(|t| t.stdout.clone())
-                .unwrap_or_default();
-            if stdout.is_empty() {
-                None
-            } else {
-                Some(stdout)
-            }
-        } else {
-            entry.block.copy_text(entry.raw)
-        };
-
-        if let Some(text) = text
-            && !text.is_empty()
+/// `y` prefers the visible dragged payload. If it has expired, `y` keeps its
+/// original selected-block behavior.
+pub(super) fn dispatch_copy_held_selection(app: &mut AppView) {
+    with_active_agent(app, |agent| {
+        if let Some(text) = agent
+            .visible_held_selection_copy_text()
+            .map(str::to_owned)
+            .or_else(|| text_for_copy_block_content(agent))
         {
             agent.copy_to_clipboard(&text);
         }
     });
+}
+
+/// A rendered selection chip is never a request to copy a different block.
+pub(super) fn dispatch_copy_held_selection_only(app: &mut AppView) {
+    with_active_agent(app, |agent| {
+        if let Some(text) = agent.visible_held_selection_copy_text().map(str::to_owned) {
+            agent.copy_to_clipboard(&text);
+        }
+    });
+}
+
+fn text_for_copy_block_content(agent: &AgentView) -> Option<String> {
+    let idx = agent.scrollback.selected()?;
+    if agent.scrollback.entry_content_hidden_by_group(idx) {
+        return None;
+    }
+    let entry = agent.scrollback.entry(idx)?;
+
+    // BgTask blocks: copy stdout from the shared `bg_tasks` store.
+    let text = if let RenderBlock::BgTask(block) = &entry.block {
+        agent
+            .session
+            .bg_tasks
+            .get(&block.task_id)
+            .map(|task| task.stdout.clone())
+    } else {
+        entry.block.copy_text(entry.raw)
+    };
+    text.filter(|text| !text.is_empty())
 }
 
 /// Copy the Nth most recent assistant message to the clipboard, or to `file_path`.
@@ -828,4 +841,44 @@ pub(super) fn handle_skills_toggle_done(
     // The toggle effect already called x.ai/skills/refresh-baseline
     // That triggers the session to reload skills and push an AvailableCommandsUpdate notification with the updated list
     vec![]
+}
+
+#[cfg(test)]
+mod copy_action_tests {
+    use super::*;
+    use crate::app::agent_view::test_fixtures::make_agent;
+    use crate::scrollback::text_selection::{
+        PersistentTextSelection, SelectionEndpoint, SelectionKind, SelectionOrigin,
+    };
+
+    #[test]
+    fn block_copy_uses_selected_block_even_with_held_payload() {
+        let mut agent = make_agent();
+        agent
+            .scrollback
+            .push_block(RenderBlock::agent_message("whole block"));
+        agent.scrollback.set_selected(Some(0));
+        agent.persistent_text_selection = Some(PersistentTextSelection {
+            entry_idx: 0,
+            range_id: 0,
+            anchor: SelectionEndpoint {
+                block_line_idx: 0,
+                col_within_range: 0,
+            },
+            head: SelectionEndpoint {
+                block_line_idx: 0,
+                col_within_range: 0,
+            },
+            head_range: None,
+            origin: SelectionOrigin::Drag,
+            kind: SelectionKind::Linear,
+        });
+        let selection = agent.persistent_text_selection.expect("held selection");
+        agent.persistent_selection_copy = Some((selection, "fragment".into()));
+        assert_eq!(agent.held_selection_copy_text(), Some("fragment"));
+        assert_eq!(
+            text_for_copy_block_content(&agent).as_deref(),
+            Some("whole block")
+        );
+    }
 }

@@ -34,6 +34,15 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use std::collections::HashSet;
 use std::time::Instant;
+
+pub(super) fn reserve_held_copy_gutter(content: &mut Rect, enabled: bool) -> bool {
+    let reserved = enabled && content.width > 1;
+    if reserved {
+        content.width -= 1;
+    }
+    reserved
+}
+
 /// AppView-owned per-frame inputs to [`AgentView::draw`]: state the agent view cannot see itself (voice pipeline, Esc ownership, status row).
 /// Grouped (mirroring `WelcomeRenderParams`) so the next app-level render fact extends this struct instead of every `draw` call site.
 /// Tests take `Default` and override only what they exercise.
@@ -97,11 +106,30 @@ impl AgentView {
         model: ResolvedSelectionModel,
         boundaries: ResolvedSelectionBoundaries,
     ) {
+        let scrollback_gesture = self.pending_text_drag.is_some_and(|drag| {
+            drag.anchor.entry_idx != crate::views::btw_overlay::BTW_OVERLAY_ENTRY_IDX
+        }) || self.drag_selection.is_some_and(|drag| {
+            drag.anchor.entry_idx != crate::views::btw_overlay::BTW_OVERLAY_ENTRY_IDX
+        });
+        let held_scrollback = self.persistent_text_selection.is_some_and(|selection| {
+            selection.entry_idx != crate::views::btw_overlay::BTW_OVERLAY_ENTRY_IDX
+        });
+        if (scrollback_gesture
+            && !self.selection_source_is_current(model.content_area.width, false))
+            || (held_scrollback
+                && !self.selection_source_is_current(model.content_area.width, true))
+        {
+            self.pending_scrollback_click = None;
+            self.invalidate_text_selection();
+        }
         self.last_scrollback_selection_model = model;
         self.last_scrollback_selection_boundaries = boundaries;
     }
     fn clear_scrollback_selection_state(&mut self) {
-        self.update_scrollback_selection_state(Default::default(), Default::default());
+        // The draw prologue has no content width yet. Validate the source only
+        // when the real scrollback model is installed later in this frame.
+        self.last_scrollback_selection_model = Default::default();
+        self.last_scrollback_selection_boundaries = Default::default();
     }
     /// Keep [`Self::timeline_hover_preview`] in sync with [`Self::timeline_hover`].
     /// Called when hover changes (mouse Moved or rail rebuild under a stationary pointer) so render can borrow the cached text.
@@ -609,6 +637,7 @@ impl AgentView {
             crate::views::announcements::promo_cta(banner_announcements, hidden_announcement_ids)
                 .is_some_and(|(owner, _, _)| !crate::views::announcements::is_dismissible(owner));
         self.frame_occluder_rects.clear();
+        self.hit_held_copy.clear();
         self.clear_scrollback_selection_state();
         self.refresh_prompt_suggestion_gate();
         let theme = Theme::current();
@@ -1131,6 +1160,13 @@ impl AgentView {
                 prompt_height.min(AgentViewLayout::rows_available_for_prompt(layout_params));
         }
         let mut layout = AgentViewLayout::compute(layout_params);
+        let mut held_copy_gutter = reserve_held_copy_gutter(
+            &mut layout.scrollback_content,
+            appearance.scrollback.display.selection_buttons,
+        );
+        // A held copy chip must never replace an assistant glyph. Newer entry chrome lets
+        // ordinary assistant text fill its entire entry area, so give the chip one fixed
+        // column outside the transcript's render width on every frame.
         let search_active =
             self.scrollback_search.is_some() && self.active_pane == AgentPane::Scrollback;
         let search_reserved_rows =
@@ -1187,6 +1223,10 @@ impl AgentView {
                         timeline_width: 0,
                         ..layout_params
                     });
+                    held_copy_gutter = reserve_held_copy_gutter(
+                        &mut layout.scrollback_content,
+                        appearance.scrollback.display.selection_buttons,
+                    );
                     if search_reserved_rows > 0 {
                         layout.scrollback.height -= search_reserved_rows;
                         layout.scrollback_content.height = layout
@@ -1692,6 +1732,23 @@ impl AgentView {
             }
             let any_drag_active =
                 self.drag_selection.is_some() || self.block_drag_selection.is_some();
+            let held_copy_row = (!any_drag_active && !overlay_focused && held_copy_gutter)
+                .then(|| self.held_copy_chip_row())
+                .flatten();
+            let held_copy_row = held_copy_row.map(|row| {
+                let toast_on_last_row = self
+                    .active_toast_message()
+                    .and_then(|msg| fit_toast_text(msg, layout.scrollback.width))
+                    .is_some();
+                if toast_on_last_row
+                    && row == layout.scrollback.bottom().saturating_sub(1)
+                    && row > layout.scrollback.y
+                {
+                    row - 1
+                } else {
+                    row
+                }
+            });
             if !any_drag_active
                 && !overlay_focused
                 && let Some(ref selection_box) = sb_output.selection_box
@@ -1701,12 +1758,19 @@ impl AgentView {
                     buf,
                     selection_box,
                     sb_output.selected_entry_area,
+                    held_copy_row.is_some(),
                     &theme,
                 );
             } else {
                 self.hit_sb_copy.clear();
                 self.hit_sb_view.clear();
             }
+            self.render_held_copy_chip(
+                buf,
+                held_copy_row,
+                layout.scrollback_content.right(),
+                &theme,
+            );
             let rail_shown = self.timeline_rail.is_some();
             if !rail_shown {
                 agent::render_scrollbar(
@@ -4560,8 +4624,10 @@ mod goal_subagent_token_tests {
 mod selection_state_tests {
     use super::super::test_fixtures::make_agent;
     use super::*;
+    use crate::scrollback::block::RenderBlock;
     use crate::scrollback::text_selection::ResolvedSelectableLine;
     use crate::scrollback::types::SelectionBoundary;
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use std::sync::Arc;
     #[test]
     fn frame_reset_clears_model_and_companion_together() {
@@ -4588,6 +4654,76 @@ mod selection_state_tests {
         agent.clear_scrollback_selection_state();
         assert!(agent.last_scrollback_selection_model.ranges.is_empty());
         assert!(agent.last_scrollback_selection_boundaries.is_empty());
+    }
+
+    #[test]
+    fn nonzero_width_draw_cycles_keep_pending_active_and_held_selection() {
+        let mut agent = make_agent();
+        agent
+            .scrollback
+            .push_block(RenderBlock::agent_message("first second"));
+        agent.pane_areas.scrollback = ratatui::layout::Rect::new(0, 0, 80, 24);
+        let mut model = ResolvedSelectionModel {
+            content_area: ratatui::layout::Rect::new(0, 0, 46, 24),
+            ..Default::default()
+        };
+        model.push_line(ResolvedSelectableLine {
+            entry_idx: 0,
+            range_id: 0,
+            block_line_idx: 0,
+            screen_y: 5,
+            screen_x: 0,
+            selectable_cols: 0..12,
+            text: "first second".into(),
+            painted_region: None,
+            joiner_to_previous: None,
+        });
+        agent.update_scrollback_selection_state(model.clone(), Default::default());
+        let mouse = |kind, column, row| MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::empty(),
+        };
+        assert!(agent.begin_pending_text_drag(&mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            1,
+            5
+        )));
+        agent.clear_scrollback_selection_state();
+        assert!(
+            agent.pending_text_drag.is_some(),
+            "draw prologue lost mouse-down"
+        );
+        agent.update_scrollback_selection_state(model.clone(), Default::default());
+        assert!(agent.pending_text_drag.is_some());
+
+        assert!(matches!(
+            agent.handle_scrollback_drag_motion(&mouse(
+                MouseEventKind::Drag(MouseButton::Left),
+                8,
+                5
+            )),
+            crate::app::app_view::InputOutcome::Changed
+        ));
+        assert!(agent.drag_selection.is_some());
+        agent.clear_scrollback_selection_state();
+        assert!(
+            agent.drag_selection.is_some(),
+            "draw prologue lost active drag"
+        );
+        agent.update_scrollback_selection_state(model.clone(), Default::default());
+        assert!(agent.drag_selection.is_some());
+
+        assert!(agent.finish_text_drag());
+        assert!(agent.persistent_text_selection.is_some());
+        agent.clear_scrollback_selection_state();
+        assert!(
+            agent.persistent_text_selection.is_some(),
+            "draw prologue lost held selection"
+        );
+        agent.update_scrollback_selection_state(model, Default::default());
+        assert!(agent.held_selection_copy_text().is_some());
     }
 }
 #[cfg(test)]

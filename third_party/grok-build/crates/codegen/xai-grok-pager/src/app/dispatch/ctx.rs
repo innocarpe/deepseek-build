@@ -107,14 +107,22 @@ pub(super) fn with_scrollback(app: &mut AppView, f: impl FnOnce(&mut ScrollbackS
     with_active_agent(app, |agent| f(&mut agent.scrollback));
 }
 
+pub(super) fn with_scrollback_invalidating_text_selection(
+    app: &mut AppView,
+    f: impl FnOnce(&mut ScrollbackState),
+) {
+    with_active_agent(app, |agent| {
+        agent.invalidate_text_selection();
+        f(&mut agent.scrollback);
+    });
+}
+
 /// Navigate the scrollback and clear any persistent text selection.
 ///
 /// Used by navigation actions (j/k/g/G/PageUp/PageDown/Ctrl-D/Ctrl-U) where scrolling away from the selected region should dismiss the highlight.
 pub(super) fn navigate_clearing_selection(app: &mut AppView, f: impl FnOnce(&mut ScrollbackState)) {
     with_active_agent(app, |agent| {
-        agent.persistent_text_selection = None;
-        agent.table_selection_geometry = None;
-        agent.selection_created_at = None;
+        agent.invalidate_text_selection();
         agent.highlighted_link_idx = None;
         f(&mut agent.scrollback);
     });

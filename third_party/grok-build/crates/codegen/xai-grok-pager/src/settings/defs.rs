@@ -233,12 +233,12 @@ const TEXT_SELECTION_CHOICES: &[EnumChoice] = &[
     EnumChoice {
         canonical: TextSelection::Flash.as_canonical(),
         display: "Flash after copy",
-        description: "Brief highlight on mouse-up, then clear. Double-click toggles fold. Default.",
+        description: "Brief highlight on mouse-up, then clear. Double-click toggles fold.",
     },
     EnumChoice {
         canonical: TextSelection::Hold.as_canonical(),
         display: "Hold until dismissed",
-        description: "Keep the selection visible until Esc, click, or scroll. Double-click toggles fold.",
+        description: "Keep the selection visible until Esc, click, or scroll. Double-click toggles fold. Default.",
     },
     EnumChoice {
         canonical: TextSelection::WordSelect.as_canonical(),
@@ -1161,8 +1161,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             restart_required: false,
             hidden_in_minimal: false,
         },
-        // SHELL-owned `flash` | `hold` | `word_select` on `[ui].keep_text_selection`. The compile-time default is `flash`.
-        // The default can be set remotely via the `keep_text_selection_default` soft-default
+        // SHELL-owned `flash` | `hold` | `word_select` on `[ui].keep_text_selection`. The compile-time default is `hold`.
+        // The default can be set remotely to `hold` or `word_select`; remote `flash` is ignored.
         // That staged rollout applies at startup and is not reflected in this static default
         SettingMeta {
             key: "keep_text_selection",
@@ -1186,7 +1186,7 @@ pub fn default_settings() -> Vec<SettingMeta> {
                 "terminal",
             ],
             kind: SettingKind::Enum {
-                default: TextSelection::Flash.as_canonical(),
+                default: TextSelection::Hold.as_canonical(),
                 choices: TEXT_SELECTION_CHOICES,
                 supports_preview: false,
             },

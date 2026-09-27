@@ -21,7 +21,7 @@ use crate::scrollback::text_selection::{
     VisibleBlockGeometry,
 };
 use crate::scrollback::types::{BlockContext, DisplayMode, derive_selection_text, selectable_cols};
-use crate::scrollback::wrappers::block_content_width_for;
+use crate::scrollback::wrappers::{block_content_width_for, timestamp_reserved_for};
 use crate::theme::Theme;
 
 /// Displays conversation entries with optional pinned header for the current turn's prompt. For efficiency, scratch
@@ -602,15 +602,7 @@ impl ScrollbackPane {
 
         // When timestamps are shown on message blocks, reserve right margin in the block's content width
         // Wrapped text then doesn't collide with the overlaid timestamp (matches EntryRenderer for normal content)
-        let ts_reserved = if appearance.show_timestamps
-            && matches!(
-                &entry.block,
-                RenderBlock::UserPrompt(_) | RenderBlock::AgentMessage(_) | RenderBlock::Btw(_)
-            ) {
-            10
-        } else {
-            0
-        };
+        let ts_reserved = timestamp_reserved_for(appearance, &entry.block);
         let content_width_for_block = layout.content_width().saturating_sub(ts_reserved);
 
         let ctx = entry.context_with_mode_and_budget(
@@ -1307,6 +1299,61 @@ mod tests {
             "a top-clipped header published no selectable line, so every \
              rebase assertion was skipped\n{trace}"
         );
+    }
+
+    #[test]
+    fn timestamped_sticky_prompt_wraps_like_its_inline_selection() {
+        let area = Rect::new(0, 0, 32, 14);
+        let mut state = ScrollbackState::new();
+        let mut appearance = AppearanceConfig::default();
+        appearance.show_timestamps = true;
+        appearance.scrollback.blocks.prompt.vpad = false;
+        appearance.scrollback.blocks.prompt.show_prefix = false;
+        state.set_appearance(appearance);
+        state.push_block(RenderBlock::user_prompt(
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+        ));
+        state.prepare_layout(area.width, area.height);
+        state.set_scroll_offset(0);
+        let inline = render_model(&mut state, area);
+        let inline_first = inline
+            .ranges
+            .iter()
+            .filter(|range| range.entry_idx == 0)
+            .flat_map(|range| &range.lines)
+            .find(|line| line.block_line_idx == 0)
+            .expect("inline prompt first line")
+            .text
+            .clone();
+        assert!(
+            inline_first.len() > 10,
+            "fixture must wrap: {inline_first:?}"
+        );
+
+        let height = state.get_cached_entry_height(0).expect("prompt height");
+        let mut buf = Buffer::empty(area);
+        let mut scratch = ScratchBuffer::default();
+        let header = ScrollbackPane::new()
+            .render_sticky_header(
+                &mut buf,
+                area,
+                &state,
+                0,
+                0,
+                &crate::theme::Theme::default(),
+                height,
+                0,
+                &mut scratch,
+                false,
+                None,
+            )
+            .expect("sticky prompt selection");
+        let header_first = header
+            .lines
+            .iter()
+            .find(|line| line.block_line_idx == 0)
+            .expect("sticky prompt first line");
+        assert_eq!(header_first.text, inline_first);
     }
 
     /// A phone-width pane paints the collapsed echo as two selectable rows inside one pad row each side. The

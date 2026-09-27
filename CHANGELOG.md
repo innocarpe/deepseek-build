@@ -3,6 +3,7 @@
 ## Unreleased
 
 - On a phone-width pane the turn clock no longer reserves a gutter on every wrapped line. A finished turn paints the short time in leftover space on the first line, or on one right-aligned row above the body when that line is full. A turn that is still streaming paints nothing, so the paragraph width stays put until it finishes. The next full line skips that row when the previous painted clock is the same minute. Tapping the clock toggles the long form for that turn only; if the long form does not fit, it uses the row above the body and the body is not rewrapped. Wider panes keep the right-edge clock and take its columns from the first line only.
+- Every completed unit ends with a **debrief** before its report. `skills/session-debrief` counts what the unit produced, classifies it (incident, playbook, concept, decision, gap, or none), and records the WC-worthy parts with the global `w-conatus` skill without asking again; a unit with nothing transferable reports `no record needed` with the reason. `skills/session-unit` runs it after the merge and before the report, the report carries the WC paths and commit SHAs, and the clauses are pinned in the description windows and in `scripts/test-session-close.py`. This repository's personal work creates no company HQ records.
 
 ## 6.1.5 — 2026-09-27
 

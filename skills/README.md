@@ -8,7 +8,8 @@ Agent-loadable skills (`SKILL.md` directories) live here.
 | [`pr-authoring/`](./pr-authoring/SKILL.md) | Writing or opening a PR body. Opening the PR is not the end of the unit; the close stays in `session-unit` |
 | [`release/`](./release/SKILL.md) | The user asked to ship a version. A child brief cannot drop this skill. Then bump, CHANGELOG, tag, assets, npm |
 | [`orca-tab/`](./orca-tab/SKILL.md) | Open an Orca tab or launch grok, dsb, codex, or claude. Run the recipes; do not read the full `orca` manual |
-| [`session-unit/`](./session-unit/SKILL.md) | Default end of asked work: PR, CI, merge commit, report. Stop earlier only when that turn said so |
+| [`session-unit/`](./session-unit/SKILL.md) | Default end of asked work: PR, CI, merge commit, WC debrief, report. Stop earlier only when that turn said so |
+| [`session-debrief/`](./session-debrief/SKILL.md) | Every completed unit's close, after the merge and before the report: classify the unit's output and record the WC-worthy parts with the global `w-conatus` skill. No company HQ records |
 | [`worktree-dispatch/`](./worktree-dispatch/SKILL.md) | One worktree per unit, then merge and clean up. A brief cannot shrink the user's turn |
 
 ## How coding agents load these

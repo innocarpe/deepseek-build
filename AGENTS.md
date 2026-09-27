@@ -260,7 +260,8 @@ verbatim. The order, the report, and what counts as merged live in
 in [`worktree-dispatch`](skills/worktree-dispatch/SKILL.md); the Orca tab stays
 in [`skills/orca-tab`](skills/orca-tab/SKILL.md); the PR body stays in
 [`pr-authoring`](skills/pr-authoring/SKILL.md); a version the user asked for
-stays in [`skills/release`](skills/release/SKILL.md).
+stays in [`skills/release`](skills/release/SKILL.md); the debrief stays in
+[`skills/session-debrief`](skills/session-debrief/SKILL.md).
 
 - **Write the done-condition in one sentence before editing.** Take it from
   the user turn. Do not later swap it for a smaller goal that is only what
@@ -275,16 +276,26 @@ stays in [`skills/release`](skills/release/SKILL.md).
 - **Carry the unit through without waiting for another prompt** when the user
   asked for the work. The default end is one line: implement, run the checks
   the change needs, one-concern commits, open the PR, read CI, merge with a
-  merge commit, and report. Stop earlier only when that turn said so — a
-  review-only unit, a stacked child whose parent is unmerged, or a PR the
-  user asked to look at first.
+  merge commit, run the debrief, and report. Stop earlier only when that turn
+  said so — a review-only unit, a stacked child whose parent is unmerged, or a
+  PR the user asked to look at first.
+- **Every completed unit runs the debrief before its report.** After the end
+  conditions stand — the merge, or the earlier stop the turn named —
+  [`skills/session-debrief`](skills/session-debrief/SKILL.md) counts what the
+  unit produced and records the WC-worthy parts with the global `w-conatus`
+  skill. The close authorizes those writes; do not ask again. Nothing
+  transferable reports `no record needed` with the reason, and the report
+  carries what was recorded or why nothing was. If the WC root cannot be
+  resolved and verified, write nowhere else and do not report the unit done.
+  This repository's personal work creates no company HQ records.
 - **A merge is a fact only after `scripts/check-pr-merged.sh` prints `pass`.**
   That output is `MERGED`, a non-empty `mergedAt`, a `mergeCommit`, and two
   parents. Saying merged before that is not a fact.
 - **The report's first line is whether the done-condition holds, and if not,
   which clause does not.** Then the PR URL, the CI conclusion, the merge
-  fields, and the checks with what they printed. What you did not do is a
-  separate list. That list does not open the next unit. The report closes
+  fields, the checks with what they printed, and the debrief (WC paths and
+  commit SHAs, or `no record needed` with the reason). What you did not do is
+  a separate list. That list does not open the next unit. The report closes
   with the **Session disposition** block (`skills/session-unit`): close now ·
   more in this session · to hand off.
 - **A defect in a file this unit is already changing**, which no other

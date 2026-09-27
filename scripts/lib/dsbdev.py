@@ -20,8 +20,9 @@ target is seeded instead of built from scratch:
   record    after a debug build that compiled something, walk the fingerprint
             graph from the pager binary and write
             <target>/debug/dsbdev/manifest.json: the units it used, their
-            fingerprint hash-file signatures, the codegen objects the binary
-            links, and the git blob of every repository file at build start.
+            fingerprint hash-file signatures, and the git blob of every
+            repository file at build start. It runs between the link and the
+            launch, so it stays under a second (no nm over the binary).
   seed      in a worktree with no manifest, pick the sibling worktree target
             whose recorded sources differ least, clone (APFS clonefile) just
             those units, stamp them all with one mtime, then bump the mtime of
@@ -29,7 +30,10 @@ target is seeded instead of built from scratch:
             then rebuilds exactly the crates whose sources differ, plus their
             dependents. Not cloned: a unit rebuilt in the donor since its
             manifest, and a unit whose build script watches an absolute path
-            in a checkout (the pager's git HEAD). Without any manifest, only
+            in a checkout (the pager's git HEAD), nor a codegen object the
+            donor's binary does not link (read from its debug map with nm,
+            here rather than in record: 2.1 s on the 512 MB pager, measured
+            2026-09-28, which only a seed needs). Without any manifest, only
             registry units are cloned from the shared target; its workspace
             units have unknown sources.
 """
@@ -276,7 +280,6 @@ def cmd_record(args):
         "worktree": repo,
         "built_at": time.time(),
         "files": files,
-        "objects": linked_objects(debug),
     }
     os.makedirs(os.path.dirname(out), exist_ok=True)
     tmp = out + ".tmp"
@@ -502,7 +505,7 @@ def cmd_seed(args):
         bound = [u for u in units if watches_checkout(os.path.join(src_debug, ".fingerprint", u), roots)]
         units = [u for u in units if u not in bound]
         counts = clone_units(
-            src_debug, debug, units, stale == 0 and not bound, stamp, manifest.get("objects")
+            src_debug, debug, units, stale == 0 and not bound, stamp, linked_objects(src_debug)
         )
         # The donor may be building while we copy; drop what changed under us.
         for unit in units:

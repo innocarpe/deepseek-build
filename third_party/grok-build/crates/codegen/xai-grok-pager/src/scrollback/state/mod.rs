@@ -3622,25 +3622,27 @@ mod tests {
 
     // ── Width-derived prompt fold at push and on resize ────────────
 
-    /// The measured iPhone Orca pane is 55 columns. At that pane width the prompt's content column (entry area minus
-    /// chrome minus the timestamp gutter) is narrow enough that a ~100-column one-liner needs more than one row.
+    /// The measured iPhone Orca pane is 55 columns. The clock no longer reserves a
+    /// gutter there, so the prompt's content column is ~50 and the collapsed budget
+    /// is two rows: this fixture wraps to three rows at that width, and to two at
+    /// [`DESKTOP_PANE`], where the budget is three.
     const PHONE_PANE: u16 = 55;
     /// The narrowest desktop pane observed on the same machine.
     const DESKTOP_PANE: u16 = 80;
 
-    fn hundred_column_prompt() -> String {
-        "x".repeat(100)
+    fn phone_overflowing_prompt() -> String {
+        "x".repeat(130)
     }
 
     #[test]
     fn prompt_at_phone_width_defaults_to_collapsed() {
         let mut state = ScrollbackState::new();
         state.prepare_layout(PHONE_PANE, 20);
-        let id = state.push_block(user_block(&hundred_column_prompt()));
+        let id = state.push_block(user_block(&phone_overflowing_prompt()));
         assert_eq!(
             state.get_by_id(id).unwrap().display_mode,
             DisplayMode::Collapsed,
-            "a ~100-column prompt pushed into a {PHONE_PANE}-column pane must arrive folded"
+            "a prompt needing three rows in a {PHONE_PANE}-column pane must arrive folded"
         );
     }
 
@@ -3648,7 +3650,7 @@ mod tests {
     fn prompt_at_desktop_width_stays_expanded() {
         let mut state = ScrollbackState::new();
         state.prepare_layout(DESKTOP_PANE, 20);
-        let id = state.push_block(user_block(&hundred_column_prompt()));
+        let id = state.push_block(user_block(&phone_overflowing_prompt()));
         assert_eq!(
             state.get_by_id(id).unwrap().display_mode,
             DisplayMode::Expanded,
@@ -3659,7 +3661,7 @@ mod tests {
     #[test]
     fn prompt_pushed_before_first_frame_keeps_its_block_default() {
         let mut state = ScrollbackState::new();
-        let text = hundred_column_prompt();
+        let text = phone_overflowing_prompt();
         let id = state.push_block(user_block(&text));
         assert_eq!(
             state.get_by_id(id).unwrap().display_mode,
@@ -3672,8 +3674,8 @@ mod tests {
     fn resize_narrow_folds_unpinned_prompt() {
         let mut state = ScrollbackState::new();
         state.prepare_layout(DESKTOP_PANE, 20);
-        let pinned = state.push_block(user_block(&hundred_column_prompt()));
-        let automatic = state.push_block(user_block(&hundred_column_prompt()));
+        let pinned = state.push_block(user_block(&phone_overflowing_prompt()));
+        let automatic = state.push_block(user_block(&phone_overflowing_prompt()));
         // A manual fold is a user gesture: pinned-and-expanded, the shape `fold_selected_impl` produces.
         state.get_by_id_mut(pinned).unwrap().display_mode_pinned = true;
 
@@ -3695,7 +3697,7 @@ mod tests {
     fn resize_wider_unfolds_the_automatic_prompt() {
         let mut state = ScrollbackState::new();
         state.prepare_layout(PHONE_PANE, 20);
-        let id = state.push_block(user_block(&hundred_column_prompt()));
+        let id = state.push_block(user_block(&phone_overflowing_prompt()));
         assert_eq!(
             state.get_by_id(id).unwrap().display_mode,
             DisplayMode::Collapsed

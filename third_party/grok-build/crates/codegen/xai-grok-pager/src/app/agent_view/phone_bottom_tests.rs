@@ -413,8 +413,8 @@ fn seed_prompt_echo(agent: &mut AgentView, text: &str) {
 
 /// Rows the prompt echo's band touches, read at the echo's text column: the
 /// text rows carry the band as their background, the pad rows carry it as the
-/// ink of their fractional block glyph (`▂` / `▆`), so all four rows of the
-/// band show up here.
+/// ink of their fractional block glyph (`▂` / `▆`), and the meta clock row
+/// carries it as the band fill, so every row of the band shows up here.
 fn echo_band_rows(buf: &Buffer, band_bg: ratatui::style::Color) -> Vec<u16> {
     (0..buf.area.height)
         .filter(|&y| {
@@ -440,33 +440,39 @@ fn top_border_row(buf: &Buffer) -> u16 {
 }
 
 /// The frame the report's screenshots show, at the measured iPhone size: the
-/// echo's band is its text rows and no pad row, the composer box is the top
-/// border, one text row and the divider, the turn time stops one column inside
-/// the echo's right edge, and the status band keeps its single floor row.
+/// echo's band is its meta clock row, its text rows and one pad row each side,
+/// the composer box is the top border, one text row and the divider, the turn
+/// time stops one column inside the echo's band, and the status band keeps its
+/// single floor row.
 #[test]
 fn phone_frame_pads_the_prompt_areas_by_one_cell() {
     let _guard = crate::theme::cache::pin_theme();
     let theme = Theme::current();
     let mut agent = phone_agent();
     // Two wrapped rows at the echo's content width, so the collapsed phone
-    // budget shows the whole prompt and paints no fold affordance row.
+    // budget shows the whole prompt and paints no fold affordance row. The
+    // first row is full, so the clock takes the meta row above the top pad.
     seed_prompt_echo(&mut agent, &"M".repeat(60));
     agent.prompt.set_text("phone draft");
     let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
     let frame = frame_text(&buf);
     eprintln!("phone 55x41 — full frame:\n{frame}");
 
-    // (a) The echo band is two text rows inside one pad row each side, and each
-    // pad row spends two eighths of its height on the band (one column of
-    // air at the phone's font, where a whole row is 2.15 columns).
+    // (a) The echo band is the meta clock row, two text rows, and one pad row
+    // each side, and each pad row spends two eighths of its height on the band
+    // (one column of air at the phone's font, where a whole row is 2.15 columns).
     let band = echo_band_rows(&buf, theme.bg_light);
     assert_eq!(
         band.len(),
-        4,
-        "the echo band is two text rows plus a pad row each side: {band:?}\n{frame}"
+        5,
+        "the echo band is the meta clock row, two text rows plus a pad row each side: {band:?}\n{frame}"
     );
-    let first = band[0];
-    let top_pad = buf.cell((1, first)).unwrap();
+    let meta = band[0];
+    assert!(
+        row_text(&buf, meta).contains("AM") || row_text(&buf, meta).contains("PM"),
+        "the meta row carries the right-aligned turn clock:\n{frame}"
+    );
+    let top_pad = buf.cell((1, band[1])).unwrap();
     assert_eq!(
         top_pad.symbol(),
         "\u{2582}",
@@ -474,15 +480,14 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
     );
     assert_eq!(top_pad.fg, theme.bg_light, "{frame}");
     assert_eq!(top_pad.bg, theme.bg_base, "{frame}");
-    let last = band[3];
-    let bottom_pad = buf.cell((1, last)).unwrap();
+    let bottom_pad = buf.cell((1, band[4])).unwrap();
     assert_eq!(
         bottom_pad.symbol(),
         "\u{2586}",
         "the bottom pad row keeps the band on its upper two eighths:\n{frame}"
     );
     assert_eq!(bottom_pad.bg, theme.bg_light, "{frame}");
-    for y in [band[1], band[2]] {
+    for y in [band[2], band[3]] {
         assert!(
             row_text(&buf, y).contains('M'),
             "text row {y} carries the prompt:\n{frame}"
@@ -502,8 +507,10 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
         "the box's middle row is the text row:\n{frame}"
     );
 
-    // (c) The turn time stops one column inside the echo's band.
-    let echo_y = band[1];
+    // (c) The turn time stops one column inside the echo's band. The echo's
+    // first content row is full, so the clock sits on the meta row; that row is
+    // still part of the band.
+    let echo_y = meta;
     let band_right = (0..PHONE_COLS)
         .rev()
         .find(|&x| {
@@ -514,7 +521,7 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
     let last_ink = (0..PHONE_COLS)
         .rev()
         .find(|&x| buf.cell((x, echo_y)).is_some_and(|c| c.symbol() != " "))
-        .expect("the echo's first row must carry text");
+        .expect("the echo's meta row must carry the clock");
     assert_eq!(
         band_right - last_ink,
         1,

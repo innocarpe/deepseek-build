@@ -170,6 +170,7 @@ impl App {
             range_id: hit.range_id,
             anchor: sel.anchor,
             head: sel.head,
+            head_range: None,
             origin: SelectionOrigin::DoubleClick,
             kind: Default::default(),
         });
@@ -204,6 +205,7 @@ impl App {
                 block_line_idx: hit.block_line_idx,
                 col_within_range: width.saturating_sub(1),
             },
+            head_range: None,
             origin: SelectionOrigin::TripleClick,
             kind: Default::default(),
         });

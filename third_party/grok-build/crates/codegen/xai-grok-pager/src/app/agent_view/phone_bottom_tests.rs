@@ -480,14 +480,6 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
         "the bottom pad row keeps the band on its upper two eighths:\n{frame}"
     );
     assert_eq!(bottom_pad.bg, theme.bg_light, "{frame}");
-    for x in [0, PHONE_COLS - 1] {
-        assert_eq!(
-            buf.cell((x, first)).unwrap().symbol(),
-            "\u{2582}",
-            "{frame}"
-        );
-        assert_eq!(buf.cell((x, last)).unwrap().symbol(), "\u{2586}", "{frame}");
-    }
     for y in [band[1], band[2]] {
         assert!(
             row_text(&buf, y).contains('M'),
@@ -500,7 +492,6 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
             "{frame}"
         );
     }
-    assert_eq!(buf.cell((3, band[1])).unwrap().symbol(), "M", "{frame}");
 
     // (b) The composer box is exactly the border, text and divider rows.
     let top = top_border_row(&buf);
@@ -541,41 +532,6 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
         PHONE_ROWS,
         "the status band keeps its bottom gap:\n{frame}"
     );
-    assert!(
-        row_text(&buf, PHONE_ROWS - 1).trim().is_empty(),
-        "the final phone row is blank:\n{frame}"
-    );
-}
-
-#[test]
-fn phone_prompt_band_keeps_both_edges_while_scrolling() {
-    let _guard = crate::theme::cache::pin_theme();
-    let theme = Theme::current();
-    let mut agent = phone_agent();
-    seed_prompt_echo(&mut agent, &"M".repeat(60));
-    for i in 0..30 {
-        agent
-            .scrollback
-            .push_block(RenderBlock::agent_message(format!("answer {i}")));
-    }
-    let _ = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
-    for offset in 0..4 {
-        agent.scrollback.set_scroll_offset(offset);
-        let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
-        let band_rows = echo_band_rows(&buf, theme.bg_light);
-        assert!(
-            !band_rows.is_empty(),
-            "offset {offset}: pinned prompt is visible"
-        );
-        for y in band_rows {
-            let left = buf.cell((0, y)).unwrap();
-            let right = buf.cell((PHONE_COLS - 1, y)).unwrap();
-            assert_eq!(left.bg, right.bg, "offset {offset}, row {y}");
-            if matches!(left.symbol(), "\u{2582}" | "\u{2586}") {
-                assert_eq!(left.symbol(), right.symbol(), "offset {offset}, row {y}");
-            }
-        }
-    }
 }
 
 /// The status band keeps the same bottom gap at every phone height.

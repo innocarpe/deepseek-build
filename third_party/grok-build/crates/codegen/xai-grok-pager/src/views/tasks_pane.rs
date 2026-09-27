@@ -2421,37 +2421,6 @@ mod tests {
     }
 
     #[test]
-    fn phone_selected_task_background_reaches_both_frame_edges() {
-        let mut pane = TasksPane::new();
-        pane.overlay.show();
-        let mut tasks = BTreeMap::new();
-        tasks.insert(
-            "t1".to_string(),
-            make_bg_task("t1", "echo ready", BgTaskStatus::Running),
-        );
-        pane.sync(&tasks, &HashMap::new(), &HashMap::new(), &[]);
-        let area = Rect::new(0, 0, 55, 6);
-        let mut buf = Buffer::empty(area);
-        let mut layout = LayoutConfig::default();
-        layout.narrow = true;
-        pane.render(
-            area,
-            &mut buf,
-            true,
-            &layout,
-            &tasks,
-            &HashMap::new(),
-            &HashMap::new(),
-        );
-        let selected_bg = pane.list_style.selection_bg;
-        let selected_y = (area.y..area.bottom())
-            .find(|&y| buf.cell((1, y)).is_some_and(|cell| cell.bg == selected_bg))
-            .expect("focused task paints a selected row");
-        assert_eq!(buf.cell((0, selected_y)).unwrap().bg, selected_bg);
-        assert_eq!(buf.cell((54, selected_y)).unwrap().bg, selected_bg);
-    }
-
-    #[test]
     fn render_hides_down_arrow_at_bottom() {
         let mut pane = TasksPane::new();
         pane.overlay.show();

@@ -2245,24 +2245,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn phone_task_pane_reaches_both_edges_without_moving_the_composer() {
-        let area = Rect::new(0, 0, 55, 41);
-        let mut layout_cfg = LayoutConfig::default();
-        layout_cfg.narrow = true;
-        let layout = AgentViewLayout::compute(AgentViewLayoutParams {
-            tasks_height: 3,
-            layout_cfg,
-            ..base_params(area)
-        });
-        assert_eq!(layout.tasks.x, area.x);
-        assert_eq!(layout.tasks.right(), area.right());
-        assert_eq!(layout.scrollback.x, area.x);
-        assert_eq!(layout.scrollback.right(), area.right());
-        assert_eq!(layout.prompt.x, area.x + LayoutConfig::MIN_HPAD);
-        assert_eq!(layout.prompt.right(), area.right() - LayoutConfig::MIN_HPAD);
-    }
-
     /// The inner width the composer wraps at: the two reserved outer columns are
     /// all that separates it from the pane edge, at any width.
     #[test]

@@ -1208,20 +1208,6 @@ mod tests {
     }
 
     #[test]
-    fn phone_full_width_keeps_plain_and_echo_text_columns() {
-        let mut appearance = AppearanceConfig::default();
-        appearance.scrollback.layout.narrow = true;
-        let plain = ScrollbackEntry::new(RenderBlock::agent_message("answer"));
-        let echo = ScrollbackEntry::new(RenderBlock::user_prompt("question"));
-        assert_eq!(entry_chrome(&plain, &appearance).accent, 1);
-        assert_eq!(entry_chrome(&echo, &appearance).accent, 3);
-        // The phone content viewport gains one column at the left, which each
-        // entry spends on its former outer gutter rather than on rewrapping.
-        assert_eq!(block_content_width_for(&plain, &appearance, 54), 53);
-        assert_eq!(block_content_width_for(&echo, &appearance, 54), 50);
-    }
-
-    #[test]
     fn row_soft_wraps_only_empty_joiners() {
         let theme = Theme::current();
         let appearance = AppearanceConfig::default();

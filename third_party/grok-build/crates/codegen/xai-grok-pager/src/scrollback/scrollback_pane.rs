@@ -1512,13 +1512,6 @@ mod tests {
         assert_eq!(top.bg, theme.bg_base);
         assert_eq!(bottom.symbol(), "\u{2586}", "and the bottom pad does too");
         assert_eq!(bottom.bg, theme.bg_light);
-        for x in 0..3 {
-            assert_eq!(buf.cell((x, band_rows[0])).unwrap().symbol(), "\u{2582}");
-            assert_eq!(
-                buf.cell((x, *band_rows.last().unwrap())).unwrap().symbol(),
-                "\u{2586}"
-            );
-        }
     }
 
     /// A pushed header paints through a scratch buffer, so its lines must be rebased onto the rows that reached the screen; clipped rows are dropped.

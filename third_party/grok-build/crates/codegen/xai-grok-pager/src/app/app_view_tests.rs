@@ -2332,6 +2332,17 @@ fn welcome_ctrl_q_requires_confirmation() {
     );
 }
 #[test]
+fn welcome_ctrl_u_restarts_pending_update() {
+    let mut app = test_app();
+    app.pending_update_version = Some("9.9.9".into());
+    let key = key_event(KeyCode::Char('u'), KeyModifiers::CONTROL);
+    assert!(matches!(
+        app.handle_input(&key),
+        InputOutcome::Action(Action::QuitForUpdate)
+    ));
+}
+
+#[test]
 fn minimal_ctrl_g_edits_prompt_while_full_tui_keeps_tasks() {
     let event = key_event(KeyCode::Char('g'), KeyModifiers::CONTROL);
     let mut minimal = test_app_with_agent();

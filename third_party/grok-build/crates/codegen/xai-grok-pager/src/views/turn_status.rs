@@ -34,10 +34,11 @@ pub(crate) const SPINNER_DIVISOR: u64 = 4;
 /// cell row down, so the dots center on the activity label instead of floating above it.
 ///
 /// [`crate::glyphs::braille_spinner_frames`] draws in the top three rows of the braille
-/// cell, and phone terminals pin that ink to the top of the line box — measured on a
-/// device screenshot, the dot centroid sat ~10px above the label's optical center.
-/// Eight-dot rows 2-4 shift the same rotation down one row. The shared set stays
-/// untouched for every other spinner.
+/// cell, and phone terminals pin that ink to the top of the line box — on the device
+/// screenshot that surfaced this, the cell's middle row sat 10px above the label's
+/// x-height center and the visible dot centroid ran 3px high. Eight-dot rows 2-4 shift
+/// the same rotation down one row. The shared set stays untouched for every other
+/// spinner.
 const STATUS_SPINNER_FRAMES: &[&str] = &[
     "\u{2816}", "\u{2832}", "\u{28b2}", "\u{28b0}", "\u{28f0}", "\u{28e0}", "\u{28c4}", "\u{28c6}",
 ];
@@ -797,17 +798,22 @@ mod tests {
     /// The top row (dots 1,4) must stay clear, or the dots float above the label again.
     #[test]
     fn status_spinner_frames_shift_the_shared_set_one_row_down() {
+        /// Frozen copy of the shared FANCY frames. The live accessor returns the ASCII
+        /// fallback on legacy ConHost, and this mapping must hold on every host.
+        const SHARED: [&str; 8] = [
+            "\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}",
+            "\u{2827}",
+        ];
         const SHIFT: [(u32, u32); 6] = [
             (0b000001, 0b000010),
             (0b000010, 0b000100),
-            (0b000100, 0b010000),
-            (0b001000, 0b0100000),
+            (0b000100, 0b01000000),
+            (0b001000, 0b010000),
             (0b010000, 0b100000),
             (0b100000, 0b10000000),
         ];
-        let shared = crate::glyphs::braille_spinner_frames();
-        assert_eq!(shared.len(), STATUS_SPINNER_FRAMES.len());
-        for (shared_frame, status_frame) in shared.iter().zip(STATUS_SPINNER_FRAMES) {
+        assert_eq!(SHARED.len(), STATUS_SPINNER_FRAMES.len());
+        for (shared_frame, status_frame) in SHARED.iter().zip(STATUS_SPINNER_FRAMES) {
             let dots = shared_frame.chars().next().unwrap() as u32 - 0x2800;
             let mut expected = 0u32;
             for (from, to) in SHIFT {
@@ -823,6 +829,10 @@ mod tests {
                 1,
                 "{status_frame:?} must stay 1 column"
             );
+        }
+        // Hosts with braille still serve exactly this frozen set.
+        if !crate::glyphs::is_legacy_windows_console() {
+            assert_eq!(crate::glyphs::braille_spinner_frames(), SHARED);
         }
     }
 

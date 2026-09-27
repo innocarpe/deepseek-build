@@ -3905,7 +3905,7 @@ mod tests {
             appearance.scrollback.display.sticky_headers = false;
             agent.scrollback.set_appearance(appearance);
             let clocked = RenderBlock::agent_message("A".repeat(26));
-            let plain = RenderBlock::stub_non_groupable("B", ratatui::style::Color::Blue);
+            let plain = RenderBlock::system("B");
             if clock_first {
                 agent.scrollback.push_block(clocked);
                 agent.scrollback.push_block(plain);

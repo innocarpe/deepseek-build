@@ -1618,6 +1618,18 @@ impl AgentView {
                     scratch,
                 );
             let sb_output = sb_rendered.output;
+            // Only a phone pane reports band rows. Painted before the overlays and the
+            // scrollbar, so a drawn bar keeps its column.
+            let band_right_edge = match &self.timeline_rail {
+                Some(_) => layout.timeline_x,
+                None => layout.scrollback.right(),
+            };
+            agent::extend_phone_band_rows(
+                buf,
+                layout.scrollback_content,
+                band_right_edge,
+                &sb_output.band_rows,
+            );
             sticky_gap_row = sb_output.sticky_gap_row;
             self.update_scrollback_selection_state(
                 sb_output.selection_model.clone(),
@@ -1780,14 +1792,6 @@ impl AgentView {
                         );
                     }
                 }
-            }
-            if narrow && !rail_shown {
-                agent::paint_phone_scrollback_right_edge(
-                    buf,
-                    layout.scrollback_content,
-                    layout.scrollback,
-                    &theme,
-                );
             }
             let any_drag_active =
                 self.drag_selection.is_some() || self.block_drag_selection.is_some();

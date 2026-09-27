@@ -24,7 +24,7 @@ use crate::scrollback::text_selection::{
 };
 use crate::scrollback::types::{BlockContext, DisplayMode, derive_selection_text, selectable_cols};
 use crate::scrollback::wrappers::block_content_width_for;
-use crate::scrollback::wrappers::{entry_chrome, paint_pad_row};
+use crate::scrollback::wrappers::{band_spans_the_pane, entry_chrome, paint_pad_row};
 use crate::theme::Theme;
 
 /// Displays conversation entries with optional pinned header for the current turn's prompt. For efficiency, scratch
@@ -355,6 +355,16 @@ impl ScrollbackPane {
         // Sticky descriptors carry absolute indices; the selection model is relative to the rendered range (`render_content` remaps the same way).
         let selection_idx = |entry_idx: usize| entry_idx.saturating_sub(entry_range.start);
         let mut header_selection: Vec<StickyHeaderSelection> = Vec::new();
+        // A sticky echo paints the same band as the flowing one, so its rows are band rows too.
+        let mut header_band_rows: Vec<u16> = Vec::new();
+        let mut note_header_band = |entry_idx: usize, header_area: Rect| {
+            if state
+                .entry(entry_idx)
+                .is_some_and(|entry| band_spans_the_pane(entry, state.appearance()))
+            {
+                header_band_rows.extend(header_area.y..header_area.bottom());
+            }
+        };
         let mut pushed_header_selection_box: Option<SelectionBox> = None;
         if let Some(ref pushed) = sticky.pushed {
             let visible_height = pushed.visible_height();
@@ -366,6 +376,7 @@ impl ScrollbackPane {
                     width: area.width,
                     height: visible_height,
                 };
+                note_header_band(pushed.entry_idx, header_area);
                 header_selection.extend(self.render_sticky_header(
                     buf,
                     header_area,
@@ -436,6 +447,7 @@ impl ScrollbackPane {
                     width: area.width,
                     height: visible_height,
                 };
+                note_header_band(pinned.entry_idx, header_area);
                 header_selection.extend(self.render_sticky_header(
                     buf,
                     header_area,
@@ -544,6 +556,8 @@ impl ScrollbackPane {
             }
         };
         prepend_header_selection(&mut output.output.selection_model, header_selection);
+        header_band_rows.append(&mut output.output.band_rows);
+        output.output.band_rows = header_band_rows;
         // A header-only viewport skips the content renderer, so publish the (zero-height, pane-bottom) content
         // rect here; drag autoscroll reads it to tell "all chrome" apart from "no frame yet".
         if output.output.selection_model.content_area == Rect::default() {
@@ -1055,6 +1069,7 @@ impl ScrollbackPane {
                 link_overlay: result.link_overlay,
                 inline_media: result.inline_media,
                 diagram_affordances: result.diagram_affordances,
+                band_rows: result.band_rows,
                 ..Default::default()
             },
             selection_boundaries,

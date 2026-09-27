@@ -539,25 +539,28 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
         "the box's middle row is the text row:\n{frame}"
     );
 
-    // (c) The turn time stops one column inside the echo's band. The echo's
-    // first content row is full, so the clock sits on the meta row; that row is
-    // still part of the band.
+    // (c) The turn time closes one column inside the transcript's right edge
+    // (the clock's edge inset), and the band runs on from there to the frame
+    // edge: the echo's own pad column, the held-copy gutter the transcript
+    // leaves blank, and the scrollbar's column while no bar is drawn. The
+    // echo's first content row is full, so the clock sits on the meta row; that
+    // row is still part of the band.
     let echo_y = meta;
-    let band_right = (0..PHONE_COLS)
-        .rev()
-        .find(|&x| {
-            buf.cell((x, echo_y))
-                .is_some_and(|c| c.bg == theme.bg_light)
-        })
-        .expect("the echo's band must have a right edge");
-    let last_ink = (0..PHONE_COLS - 1)
+    let last_ink = (0..PHONE_COLS)
         .rev()
         .find(|&x| buf.cell((x, echo_y)).is_some_and(|c| c.symbol() != " "))
         .expect("the echo's meta row must carry the clock");
+    for x in last_ink + 1..PHONE_COLS {
+        let cell = buf.cell((x, echo_y)).unwrap();
+        assert!(
+            cell.symbol() == " " && cell.bg == theme.bg_light,
+            "column {x} right of the time is blank band\n{frame}"
+        );
+    }
     assert_eq!(
-        band_right - last_ink,
-        2,
-        "the time keeps its original inset inside the full-width band: ink {last_ink}, band {band_right}\n{frame}"
+        PHONE_COLS - 1 - last_ink,
+        3,
+        "the time's pad, the copy gutter and the bar's column follow the ink\n{frame}"
     );
 
     // (d) The status band reaches the PTY bottom; the host adds pixel space below.
@@ -706,3 +709,88 @@ fn phone_pins_the_echo_in_compact_mode_too() {
     );
 }
 
+/// With the scrollbar drawn, the echo's band fills every column up to the bar —
+/// the transcript's own width plus the held-copy gutter the transcript leaves
+/// blank — in the flow and pinned alike, and the bar keeps its own column.
+#[test]
+fn phone_echo_band_fills_up_to_the_scrollbar() {
+    let _guard = crate::theme::cache::pin_theme();
+    let theme = Theme::current();
+    let mut agent = phone_agent();
+    seed_scrolling_turns(&mut agent);
+    let _ = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    let descriptors = agent
+        .scrollback
+        .get_cached_prompt_descriptors()
+        .expect("prompt descriptors")
+        .to_vec();
+    // Pinned (inside the middle answer), then flowing (the last prompt a few
+    // rows under the viewport top).
+    let pinned_frame = scroll_into_middle_answer(&mut agent, PHONE_COLS, PHONE_ROWS);
+    agent
+        .scrollback
+        .set_scroll_offset(descriptors[2].y_virtual.saturating_sub(8));
+    let flow_frame = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    for (label, buf, marker) in [
+        ("pinned", &pinned_frame, "prompt-1"),
+        ("flow", &flow_frame, "prompt-2"),
+    ] {
+        let frame = frame_text(buf);
+        let text_rows = rows_with(buf, marker);
+        assert_eq!(
+            text_rows.len(),
+            1,
+            "{label}: the echo is on screen\n{frame}"
+        );
+        let y = text_rows[0];
+        let bar = PHONE_COLS - 1;
+        // The left edge, and the right edge up to the bar: the band's own right
+        // pad, then the held-copy gutter the transcript leaves blank. A wide
+        // glyph's second cell inside the text keeps the buffer's default style.
+        for x in [0, bar - 3, bar - 2, bar - 1] {
+            assert_eq!(
+                buf.cell((x, y)).unwrap().bg,
+                theme.bg_light,
+                "{label}: band column {x} of row {y} reaches the scrollbar\n{frame}"
+            );
+        }
+        // The thumb's colour can match the band's, so only its glyph is checked.
+        let bar_cell = buf.cell((bar, y)).unwrap();
+        let track = bar_cell.symbol() == " " && bar_cell.bg == theme.scrollbar_bg;
+        assert!(
+            track || bar_cell.symbol() == "\u{2588}",
+            "{label}: the scrollbar keeps its column, got {:?}\n{frame}",
+            (bar_cell.symbol(), bar_cell.bg)
+        );
+    }
+}
+
+/// The scrollbar column only ever holds the bar: no transcript background (a
+/// code block's shading, a text row's fill) and no pad glyph is copied into it
+/// while the transcript scrolls under it.
+#[test]
+fn phone_scrollbar_column_holds_only_the_bar_while_scrolling() {
+    let _guard = crate::theme::cache::pin_theme();
+    let theme = Theme::current();
+    let mut agent = phone_agent();
+    seed_scrolling_turns(&mut agent);
+    let _ = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    let (_, viewport, total) = agent.scrollback.scroll_info();
+    let bar = PHONE_COLS - 1;
+    for offset in (0..total.saturating_sub(usize::from(viewport))).step_by(3) {
+        agent.scrollback.set_scroll_offset(offset);
+        let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+        // The scrollback's rows: under the status bar, as tall as its viewport.
+        for y in 1..1 + viewport {
+            let cell = buf.cell((bar, y)).unwrap();
+            let track = cell.symbol() == " " && cell.bg == theme.scrollbar_bg;
+            let thumb = cell.symbol() == "\u{2588}";
+            assert!(
+                track || thumb,
+                "offset {offset}: scrollbar row {y} holds {:?}\n{}",
+                (cell.symbol(), cell.fg, cell.bg),
+                frame_text(&buf)
+            );
+        }
+    }
+}

@@ -756,31 +756,40 @@ pub fn render_scrollbar(
     }
 }
 
-/// The scrollbar owns the phone frame's last column. Keep the prompt echo's
-/// band visible behind it, including the fractional top and bottom pad rows.
-pub(crate) fn paint_phone_scrollback_right_edge(
+/// Carry a phone pane's prompt-echo band from the transcript's last column to
+/// `right_edge` (exclusive), across the held-copy gutter and the scrollbar
+/// column the transcript does not paint.
+///
+/// Only the rows the scrollback reports as band rows are touched, so a code
+/// block or a highlighted line at the transcript's edge never leaks into those
+/// columns. Run it before the scrollbar and the overlays: a drawn scrollbar
+/// then owns its column, and the band reaches the frame edge only while no bar
+/// is drawn. A pad row keeps its fractional glyph; a text or clock row carries
+/// the band's colour, never the glyph at the edge.
+pub(crate) fn extend_phone_band_rows(
     buf: &mut Buffer,
     content: Rect,
-    frame: Rect,
-    theme: &Theme,
+    right_edge: u16,
+    band_rows: &[u16],
 ) {
-    if content.width == 0 || content.right() >= frame.right() {
+    if content.width == 0 || content.right() >= right_edge {
         return;
     }
     let source_x = content.right() - 1;
-    let edge_x = frame.right() - 1;
-    for y in content.y..content.bottom() {
+    for &y in band_rows {
+        if y < content.y || y >= content.bottom() {
+            continue;
+        }
         let Some(source) = buf.cell((source_x, y)).cloned() else {
             continue;
         };
         let pad = matches!(source.symbol(), "\u{2582}" | "\u{2586}");
-        if (source.bg != theme.bg_base || pad)
-            && let Some(edge) = buf.cell_mut((edge_x, y))
-        {
-            edge.bg = source.bg;
-            if pad {
-                edge.set_symbol(source.symbol());
+        for x in content.right()..right_edge {
+            if let Some(edge) = buf.cell_mut((x, y)) {
+                edge.set_symbol(if pad { source.symbol() } else { " " });
                 edge.fg = source.fg;
+                edge.bg = source.bg;
+                edge.modifier = source.modifier;
             }
         }
     }

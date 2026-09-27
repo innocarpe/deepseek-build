@@ -981,6 +981,34 @@ fn a_wide_pinned_prompt_keeps_every_row_it_paints() {
     }
 }
 
+/// A phone echo row that ends on a wide glyph carries the band into the copy
+/// gutter too. The glyph's trailing half in the transcript's last column has
+/// the buffer's default style, and the gutter used to copy it: a grey dot of
+/// the terminal's own background between the band and the scrollbar.
+#[test]
+fn phone_echo_band_reaches_the_gutter_after_a_wide_glyph() {
+    let _guard = crate::theme::cache::pin_theme();
+    let theme = Theme::current();
+    let mut agent = phone_agent();
+    // 26 two-column glyphs fill the first 52-column text row exactly.
+    seed_prompt_echo(&mut agent, &format!("{}나다라", "가".repeat(26)));
+    let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    let frame = frame_text(&buf);
+    let y = rows_with(&buf, "가")[0];
+    assert_eq!(
+        buf.cell((PHONE_COLS - 4, y)).unwrap().symbol(),
+        "가",
+        "the row's last glyph starts two columns before the gutter\n{frame}"
+    );
+    for x in [PHONE_COLS - 2, PHONE_COLS - 1] {
+        assert_eq!(
+            buf.cell((x, y)).unwrap().bg,
+            theme.bg_light,
+            "column {x} past the wide glyph carries the band\n{frame}"
+        );
+    }
+}
+
 /// Compact prompt mode keeps the echo's fractional pad rows on a phone pane:
 /// without them the text sits on the band's top and bottom edges.
 #[test]

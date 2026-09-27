@@ -728,6 +728,33 @@ fn phone_pins_the_echo_in_compact_mode_too() {
     );
 }
 
+/// Compact prompt mode keeps the echo's fractional pad rows on a phone pane:
+/// without them the text sits on the band's top and bottom edges.
+#[test]
+fn phone_compact_echo_keeps_its_fractional_pads() {
+    let _guard = crate::theme::cache::pin_theme();
+    let theme = Theme::current();
+    let mut agent = phone_agent();
+    seed_prompt_echo(&mut agent, "지금 전반적으로 구현 다 잘 됐어???");
+    set_compact(&mut agent, true);
+    let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    let frame = frame_text(&buf);
+    let text_y = rows_with(&buf, "구현")
+        .first()
+        .copied()
+        .unwrap_or_else(|| panic!("the echo is on screen\n{frame}"));
+    let band = echo_band_rows(&buf, theme.bg_light);
+    let pads: Vec<&str> = band
+        .iter()
+        .filter(|&&y| y != text_y)
+        .map(|&y| buf.cell((1, y)).unwrap().symbol())
+        .collect();
+    assert!(
+        pads.contains(&"\u{2582}") && pads.contains(&"\u{2586}"),
+        "the echo keeps a lower-eighths pad above and an upper pad below, got {pads:?} on rows {band:?}\n{frame}"
+    );
+}
+
 /// Selecting the pinned echo in compact mode keeps its box inside the pane. A
 /// compact echo has no pad row to pull the box onto, so an unclipped top would
 /// draw its corners on the status bar's row.

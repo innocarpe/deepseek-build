@@ -1119,17 +1119,10 @@ impl AgentView {
         // The rendered transcript can be narrower than the mouse pane when a
         // scrollbar or timeline occupies its right edge. Offscreen entries
         // must use that same viewport width to preserve wrapping.
-        let render_area = if self.last_scrollback_selection_model.content_area.width > 0 {
-            self.last_scrollback_selection_model.content_area
-        } else {
-            self.pane_areas.scrollback
+        let viewport_width = match self.last_scrollback_selection_model.viewport_width {
+            0 => self.pane_areas.scrollback.width.max(1),
+            width => width,
         };
-        let base_width = crate::scrollback::HorizontalLayout::new(
-            render_area,
-            &scrollback.appearance().scrollback.layout,
-        )
-        .entry_content_area()
-        .width;
         let mut visual_row = 0usize;
         for idx in first..=last {
             let abs_idx = idx + visible_start;
@@ -1213,14 +1206,11 @@ impl AgentView {
             let rendered_width = self
                 .last_scrollback_selection_model
                 .visible_block_content_width(idx);
-            let fallback_width = if base_width == 0 {
-                drag.anchor_content_width.unwrap_or(1)
-            } else {
-                base_width.saturating_sub(crate::scrollback::wrappers::timestamp_reserved_for(
-                    scrollback.appearance(),
-                    &entry.block,
-                ))
-            };
+            let fallback_width = crate::scrollback::wrappers::block_content_width_for(
+                entry,
+                scrollback.appearance(),
+                viewport_width,
+            );
             let width = if idx == drag.anchor.entry_idx {
                 drag.anchor_content_width.or(rendered_width)
             } else {
@@ -1240,17 +1230,31 @@ impl AgentView {
             );
             let header_rows =
                 usize::from(layout.is_some_and(|layout| layout.is_expanded_verb_header()));
+            let right_pad = crate::scrollback::HorizontalLayout::new_with_chrome(
+                Rect::new(0, 0, viewport_width, 1),
+                &scrollback.appearance().scrollback.layout,
+                crate::scrollback::wrappers::entry_chrome(entry, scrollback.appearance()),
+            )
+            .right_padding
+            .width;
+            let clock_meta_rows =
+                usize::from(crate::scrollback::timestamp_layout::cached_clock_is_meta(
+                    entry,
+                    scrollback.appearance(),
+                    width.saturating_add(right_pad),
+                ));
             let output = entry.cached_rendered_output_ref();
             append_full_span_lines(
                 &mut model,
                 &mut boundaries,
                 idx,
                 &output,
-                entry_row + header_rows + top_padding,
+                entry_row + header_rows + clock_meta_rows + top_padding,
             );
             if layout.is_none() {
                 visual_row = entry_row
                     .saturating_add(output.output.lines.len())
+                    .saturating_add(clock_meta_rows)
                     .saturating_add(top_padding * 2)
                     .saturating_add(1);
             }
@@ -2795,7 +2799,7 @@ mod tests {
             &crate::theme::Theme::default(),
         );
         assert!(agent.hit_sb_copy.rect.is_none());
-        agent.render_held_copy_chip(&mut buf, Some(5), 83, &crate::theme::Theme::default());
+        agent.render_held_copy_chip(&mut buf, Some(5), 81, &crate::theme::Theme::default());
         let chip = agent.hit_held_copy.rect.expect("visible held copy chip");
         assert_eq!(chip.y, 5);
         assert_eq!(chip.x, 81, "chip belongs in right padding, outside text");
@@ -2853,7 +2857,7 @@ mod tests {
         assert_eq!(agent.held_copy_chip_row(), Some(2));
         assert_eq!(agent.visible_held_selection_copy_text(), Some("STICKY"));
         let mut buf = ratatui::buffer::Buffer::empty(Rect::new(0, 0, 85, 10));
-        agent.render_held_copy_chip(&mut buf, Some(2), 83, &crate::theme::Theme::default());
+        agent.render_held_copy_chip(&mut buf, Some(2), 81, &crate::theme::Theme::default());
         let chip = agent.hit_held_copy.rect.expect("sticky header copy chip");
         assert_eq!(chip.y, 2);
         agent.active_pane = AgentPane::Prompt;
@@ -2870,6 +2874,85 @@ mod tests {
             InputOutcome::Unchanged
         ));
         assert!(!agent.held_copy_pressed);
+    }
+
+    #[test]
+    fn held_chip_uses_reserved_gutter_beyond_a_full_assistant_line() {
+        use crate::scrollback::block::RenderBlock;
+        use crate::scrollback::render::ScratchBuffer;
+        use crate::scrollback::scrollback_pane::ScrollbackPane;
+        use ratatui::buffer::Buffer;
+
+        let mut agent = make_agent();
+        let mut appearance = agent.scrollback.appearance().clone();
+        appearance.show_timestamps = true;
+        appearance.scrollback.display.selection_buttons = true;
+        appearance.scrollback.display.sticky_headers = false;
+        agent.scrollback.set_appearance(appearance);
+        agent
+            .scrollback
+            .push_block(RenderBlock::agent_message("X".repeat(80)));
+        let mut viewport = Rect::new(0, 0, 32, 8);
+        assert!(super::super::render::reserve_held_copy_gutter(
+            &mut viewport,
+            true
+        ));
+        assert_eq!(viewport.width, 31);
+        agent.pane_areas.scrollback = viewport;
+        agent
+            .scrollback
+            .prepare_layout(viewport.width, viewport.height);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 32, 8));
+        let mut scratch = ScratchBuffer::new();
+        let rendered = ScrollbackPane::new().render_with_scratch_and_selection_boundaries(
+            viewport,
+            &mut buf,
+            &agent.scrollback,
+            &mut scratch,
+        );
+        let model = rendered.output.selection_model;
+        let full = model
+            .ranges
+            .iter()
+            .flat_map(|range| &range.lines)
+            .find(|line| line.entry_idx == 0 && line.block_line_idx > 0 && line.text.len() == 31)
+            .expect("a later line fills the assistant viewport")
+            .clone();
+        agent.update_scrollback_selection_state(model, rendered.selection_boundaries);
+        agent.persistent_text_selection = Some(PersistentTextSelection {
+            entry_idx: 0,
+            range_id: full.range_id,
+            anchor: SelectionEndpoint {
+                block_line_idx: full.block_line_idx,
+                col_within_range: 0,
+            },
+            head: SelectionEndpoint {
+                block_line_idx: full.block_line_idx,
+                col_within_range: 31,
+            },
+            head_range: None,
+            origin: SelectionOrigin::Drag,
+            kind: SelectionKind::Linear,
+        });
+        agent.remember_selection_copy(&"X".repeat(31));
+        let row = agent.held_copy_chip_row().expect("held chip row");
+        assert_eq!(row, full.screen_y);
+        agent.render_held_copy_chip(
+            &mut buf,
+            Some(row),
+            viewport.right(),
+            &crate::theme::Theme::default(),
+        );
+        assert_eq!(agent.hit_held_copy.rect.unwrap().x, 31);
+        assert_eq!(
+            buf.cell((30, row)).unwrap().symbol(),
+            "X",
+            "selected glyph survives"
+        );
+        assert_eq!(
+            buf.cell((31, row)).unwrap().symbol(),
+            crate::glyphs::copy_icon()
+        );
     }
 
     /// Build an agent whose scrollback selection model holds a single range with the given `(block_line_idx, text, joiner_to_previous)` lines.
@@ -3791,6 +3874,84 @@ mod tests {
     }
 
     #[test]
+    fn cross_entry_copy_uses_the_painted_phone_clock_meta_row() {
+        use crate::scrollback::block::RenderBlock;
+        use crate::scrollback::render::ScratchBuffer;
+        use crate::scrollback::scrollback_pane::ScrollbackPane;
+        use ratatui::buffer::Buffer;
+
+        for clock_first in [true, false] {
+            let mut agent = make_agent();
+            let mut appearance = agent.scrollback.appearance().clone();
+            appearance.show_timestamps = true;
+            appearance.scrollback.layout.narrow = true;
+            appearance.scrollback.display.sticky_headers = false;
+            agent.scrollback.set_appearance(appearance);
+            let clocked = RenderBlock::agent_message("A".repeat(26));
+            let plain = RenderBlock::stub_non_groupable("B", ratatui::style::Color::Blue);
+            if clock_first {
+                agent.scrollback.push_block(clocked);
+                agent.scrollback.push_block(plain);
+            } else {
+                agent.scrollback.push_block(plain);
+                agent.scrollback.push_block(clocked);
+            }
+            let area = Rect::new(0, 0, 32, 12);
+            agent.pane_areas.scrollback = area;
+            agent.scrollback.prepare_layout(area.width, area.height);
+            agent.scrollback.set_scroll_offset(0);
+            let mut buf = Buffer::empty(area);
+            let mut scratch = ScratchBuffer::new();
+            let rendered = ScrollbackPane::new().render_with_scratch_and_selection_boundaries(
+                area,
+                &mut buf,
+                &agent.scrollback,
+                &mut scratch,
+            );
+            let model = rendered.output.selection_model;
+            let line = |idx| {
+                model
+                    .ranges
+                    .iter()
+                    .flat_map(|range| &range.lines)
+                    .find(|line| line.entry_idx == idx)
+                    .expect("selected entry line")
+                    .clone()
+            };
+            let first = line(0);
+            let second = line(1);
+            let expected = format!(
+                "{}{}{}",
+                first.text,
+                "\n".repeat((second.screen_y - first.screen_y) as usize),
+                second.text
+            );
+            let drag = ActiveTextDrag {
+                anchor: RangeHit {
+                    entry_idx: 0,
+                    range_id: first.range_id,
+                    block_line_idx: first.block_line_idx,
+                    col_within_range: 0,
+                },
+                head: RangeHit {
+                    entry_idx: 1,
+                    range_id: second.range_id,
+                    block_line_idx: second.block_line_idx,
+                    col_within_range: second.selectable_cols.end - second.selectable_cols.start,
+                },
+                kind: SelectionKind::Linear,
+                anchor_content_width: model.visible_block_content_width(0),
+            };
+            agent.update_scrollback_selection_state(model, rendered.selection_boundaries);
+            assert_eq!(
+                agent.reconstruct_drag_copy(&drag).map(|(text, _)| text),
+                Some(expected),
+                "copy row spacing must match paint (clock_first={clock_first})"
+            );
+        }
+    }
+
+    #[test]
     fn offscreen_copy_uses_rendered_content_width_beside_timeline() {
         use crate::scrollback::block::RenderBlock;
 
@@ -3803,6 +3964,7 @@ mod tests {
             .push_block(RenderBlock::agent_message("second message"));
         agent.pane_areas.scrollback = Rect::new(0, 0, 80, 24);
         agent.last_scrollback_selection_model.content_area = Rect::new(0, 0, 60, 24);
+        agent.last_scrollback_selection_model.viewport_width = 60;
         let drag = ActiveTextDrag {
             anchor: RangeHit {
                 entry_idx: 0,
@@ -3821,11 +3983,98 @@ mod tests {
         };
         assert!(agent.reconstruct_drag_copy(&drag).is_some());
         let entry = agent.scrollback.get(1).unwrap();
-        let reserved = crate::scrollback::wrappers::timestamp_reserved_for(
-            agent.scrollback.appearance(),
-            &entry.block,
+        assert_eq!(entry.cached_content_width(), Some(60));
+    }
+
+    #[test]
+    fn offscreen_assistant_keeps_its_full_painted_width_during_copy() {
+        use crate::scrollback::block::RenderBlock;
+        use crate::scrollback::render::ScratchBuffer;
+        use crate::scrollback::scrollback_pane::ScrollbackPane;
+        use ratatui::buffer::Buffer;
+
+        let mut agent = make_agent();
+        let mut appearance = agent.scrollback.appearance().clone();
+        appearance.show_timestamps = false;
+        appearance.scrollback.display.sticky_headers = false;
+        agent.scrollback.set_appearance(appearance);
+        for text in [
+            "A".to_string(),
+            "B".repeat(30),
+            "C".to_string(),
+            "D".to_string(),
+        ] {
+            agent
+                .scrollback
+                .push_block(RenderBlock::agent_message(text));
+        }
+        let area = Rect::new(0, 0, 30, 2);
+        agent.pane_areas.scrollback = area;
+        agent.scrollback.prepare_layout(area.width, area.height);
+        assert_eq!(
+            agent
+                .scrollback
+                .get(1)
+                .unwrap()
+                .cached_rendered_output_ref()
+                .output
+                .lines
+                .len(),
+            1,
+            "middle assistant occupies one actual transcript row"
         );
-        assert_eq!(entry.cached_content_width(), Some(60 - reserved));
+        let max_scroll = agent.scrollback.scroll_info().2;
+        let mut scrolled = None;
+        for offset in 0..=max_scroll {
+            agent.scrollback.set_scroll_offset(offset);
+            let mut buf = Buffer::empty(area);
+            let mut scratch = ScratchBuffer::new();
+            let rendered = ScrollbackPane::new().render_with_scratch_and_selection_boundaries(
+                area,
+                &mut buf,
+                &agent.scrollback,
+                &mut scratch,
+            );
+            let blocks = &rendered.output.selection_model.visible_blocks;
+            if blocks.iter().any(|b| b.entry_idx == 2) && !blocks.iter().any(|b| b.entry_idx == 1) {
+                scrolled = Some(rendered);
+                break;
+            }
+        }
+        let rendered = scrolled.expect("middle block scrolled out while head remains visible");
+        assert_eq!(rendered.output.selection_model.viewport_width, 30);
+        agent.update_scrollback_selection_state(
+            rendered.output.selection_model,
+            rendered.selection_boundaries,
+        );
+        let drag = ActiveTextDrag {
+            anchor: RangeHit {
+                entry_idx: 0,
+                range_id: 0,
+                block_line_idx: 0,
+                col_within_range: 0,
+            },
+            head: RangeHit {
+                entry_idx: 2,
+                range_id: 0,
+                block_line_idx: 0,
+                col_within_range: 1,
+            },
+            kind: SelectionKind::Linear,
+            anchor_content_width: Some(30),
+        };
+        let copied = agent
+            .reconstruct_drag_copy(&drag)
+            .expect("cross-entry copy")
+            .0;
+        assert!(
+            copied.contains(&"B".repeat(30)),
+            "offscreen line rewrapped: {copied:?}"
+        );
+        assert!(
+            copied.lines().any(|line| line == "B".repeat(30)),
+            "offscreen line must stay whole: {copied:?}"
+        );
     }
 
     #[test]

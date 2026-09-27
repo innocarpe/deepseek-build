@@ -971,29 +971,20 @@ impl AgentView {
         &mut self,
         buf: &mut Buffer,
         row: Option<u16>,
-        viewport_right: u16,
+        gutter_x: u16,
         theme: &Theme,
     ) {
         let Some(row) = row else {
             self.hit_held_copy.clear();
             return;
         };
-        let area = self.last_scrollback_selection_model.content_area;
-        if area.width < 3 {
+        if gutter_x >= buf.area.right() || row >= buf.area.bottom() {
             self.hit_held_copy.clear();
             return;
         }
-        // The horizontal layout reserves right padding beside selectable
-        // text. Use its first cell, falling back inside only when a custom
-        // zero-pad layout leaves no such column.
-        let x = if area.right() < viewport_right {
-            area.right()
-        } else {
-            area.right().saturating_sub(1)
-        };
         let areas = render_char_buttons(
             buf,
-            x,
+            gutter_x,
             row,
             [(crate::glyphs::copy_icon(), self.hit_held_copy.hovered)],
             Style::default().fg(theme.selection_border),

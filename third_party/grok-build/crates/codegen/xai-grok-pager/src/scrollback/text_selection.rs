@@ -81,6 +81,8 @@ pub struct ResolvedSelectionModel {
     pub ranges: Vec<ResolvedSelectableRange>,
     pub visible_blocks: Vec<VisibleBlockGeometry>,
     pub content_area: Rect,
+    /// Actual transcript viewport width before each entry's own chrome is removed.
+    pub viewport_width: u16,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

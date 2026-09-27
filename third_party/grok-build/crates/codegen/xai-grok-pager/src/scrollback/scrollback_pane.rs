@@ -551,6 +551,9 @@ impl ScrollbackPane {
         if output.output.selection_model.content_area == Rect::default() {
             output.output.selection_model.content_area = content_area;
         }
+        if output.output.selection_model.viewport_width == 0 {
+            output.output.selection_model.viewport_width = area.width;
+        }
 
         // Publish the gap row this frame's pinned header actually produced (None during push transitions and degenerate tiny viewports)
         output.output.sticky_gap_row = sticky.gap_row().filter(|row| *row < area.height);

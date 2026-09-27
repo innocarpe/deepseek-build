@@ -34,6 +34,15 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use std::collections::HashSet;
 use std::time::Instant;
+
+pub(super) fn reserve_held_copy_gutter(content: &mut Rect, enabled: bool) -> bool {
+    let reserved = enabled && content.width > 1;
+    if reserved {
+        content.width -= 1;
+    }
+    reserved
+}
+
 /// AppView-owned per-frame inputs to [`AgentView::draw`]: state the agent view cannot see itself (voice pipeline, Esc ownership, status row).
 /// Grouped (mirroring `WelcomeRenderParams`) so the next app-level render fact extends this struct instead of every `draw` call site.
 /// Tests take `Default` and override only what they exercise.
@@ -1151,6 +1160,13 @@ impl AgentView {
                 prompt_height.min(AgentViewLayout::rows_available_for_prompt(layout_params));
         }
         let mut layout = AgentViewLayout::compute(layout_params);
+        let mut held_copy_gutter = reserve_held_copy_gutter(
+            &mut layout.scrollback_content,
+            appearance.scrollback.display.selection_buttons,
+        );
+        // A held copy chip must never replace an assistant glyph. Newer entry chrome lets
+        // ordinary assistant text fill its entire entry area, so give the chip one fixed
+        // column outside the transcript's render width on every frame.
         let search_active =
             self.scrollback_search.is_some() && self.active_pane == AgentPane::Scrollback;
         let search_reserved_rows =
@@ -1207,6 +1223,10 @@ impl AgentView {
                         timeline_width: 0,
                         ..layout_params
                     });
+                    held_copy_gutter = reserve_held_copy_gutter(
+                        &mut layout.scrollback_content,
+                        appearance.scrollback.display.selection_buttons,
+                    );
                     if search_reserved_rows > 0 {
                         layout.scrollback.height -= search_reserved_rows;
                         layout.scrollback_content.height = layout
@@ -1712,7 +1732,7 @@ impl AgentView {
             }
             let any_drag_active =
                 self.drag_selection.is_some() || self.block_drag_selection.is_some();
-            let held_copy_row = (!any_drag_active && !overlay_focused)
+            let held_copy_row = (!any_drag_active && !overlay_focused && held_copy_gutter)
                 .then(|| self.held_copy_chip_row())
                 .flatten();
             let held_copy_row = held_copy_row.map(|row| {

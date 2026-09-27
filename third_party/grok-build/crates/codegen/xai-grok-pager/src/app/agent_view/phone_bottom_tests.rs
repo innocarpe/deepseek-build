@@ -1,9 +1,10 @@
 //! Phone-width bottom stack (measured iPhone Orca pane: 55 columns).
 //!
-//! The prompt box keeps a plain bottom rule. Balance, cache, model and permission
-//! share the single row under it: cost and cache on the left, model and permission
-//! on the right. The shortcut-hint row stays absent. Desktop widths keep the label
-//! on the divider and the balance on its own row.
+//! The composer is a band across the frame, like the prompt echo's, and the
+//! frame ends on the two-row footer under it: balance and cache against the
+//! model, then this session's tokens against the permission mode. The
+//! shortcut-hint row stays absent. Desktop widths keep the boxed composer with
+//! the label on its divider and the balance on its own row.
 //!
 //! `views::prompt_widget`'s tests pin the widget in isolation; these frames pin the
 //! whole-view stack (the hint row is a layout row owned by `render`).
@@ -156,79 +157,95 @@ fn assert_no_hint_row(agent: &AgentView, registry: &ActionRegistry, buf: &Buffer
     }
 }
 
-/// The one row under the box. Cost cluster, then a gap, then the model cluster
-/// flush to the inner right edge (the outer pad column stays blank).
-fn assert_one_band(buf: &Buffer, balance: &str, cache: &str, model: &str, mode: Option<&str>) {
-    let border_y = border_row(buf);
-    let border = row_text(buf, border_y);
-    assert!(
-        !border.contains(model) && mode.is_none_or(|m| !border.contains(m)),
-        "the divider row carries no label text: {border:?}"
-    );
-    let border_chars: Vec<char> = border.chars().collect();
-    let left = crate::appearance::LayoutConfig::default().eff_hpad_left(false) as usize;
-    assert!(
-        border_chars[left + 1..border_chars.len() - left - 1]
-            .iter()
-            .all(|c| *c == '\u{2500}'),
-        "the phone divider is a plain rule: {border:?}"
-    );
+/// The composer band's pad rows on a phone: the last row made only of `▂`
+/// (the band's bottom pad) and the last row above it made only of `▆` (its top
+/// pad). The band spans the frame, so every cell of a pad row is the glyph.
+fn composer_band_rows(buf: &Buffer) -> (u16, u16) {
+    let all = |y: u16, glyph: &str| {
+        (0..buf.area.width).all(|x| buf.cell((x, y)).is_some_and(|c| c.symbol() == glyph))
+    };
+    let bottom = (0..buf.area.height)
+        .rev()
+        .find(|&y| all(y, "\u{2582}"))
+        .unwrap_or_else(|| panic!("composer band bottom pad not found in\n{}", frame_text(buf)));
+    let top = (0..bottom)
+        .rev()
+        .find(|&y| all(y, "\u{2586}"))
+        .unwrap_or_else(|| panic!("composer band top pad not found in\n{}", frame_text(buf)));
+    (top, bottom)
+}
 
-    let band_y = border_y + 1;
-    let band = row_text(buf, band_y);
-    let balance_at = band
-        .find(balance)
-        .unwrap_or_else(|| panic!("balance {balance:?} missing: {band:?}"));
-    let cache_at = band
-        .find(cache)
-        .unwrap_or_else(|| panic!("cache {cache:?} missing: {band:?}"));
-    let model_at = band
-        .find(model)
-        .unwrap_or_else(|| panic!("model {model:?} missing: {band:?}"));
-    assert!(balance_at < cache_at, "cost sits left of cache: {band:?}");
-    assert!(
-        cache_at >= balance_at + balance.len(),
-        "cache does not overlap the balance: {band:?}"
+/// The two rows that end the phone frame, right under the composer band. Row
+/// one: balance and cache from the first inner column, the model flush to the
+/// inner right edge. Row two: this session's tokens, then the mode flush right.
+/// The outer column on each side stays blank, and two columns stay clear
+/// between the sides of a row.
+fn assert_footer(
+    buf: &Buffer,
+    balance: &str,
+    cache: &str,
+    model: &str,
+    tokens: Option<&str>,
+    mode: Option<&str>,
+) {
+    let frame = frame_text(buf);
+    let (_, band_bottom) = composer_band_rows(buf);
+    let (row1_y, row2_y) = (buf.area.height - 2, buf.area.height - 1);
+    assert_eq!(
+        band_bottom + 1,
+        row1_y,
+        "the footer sits right under the composer band and ends the frame:\n{frame}"
     );
-    let left_end = cache_at + cache.len();
+    let inner_right = buf.area.width as usize - 1;
+    let (row1, row2) = (row_text(buf, row1_y), row_text(buf, row2_y));
+    for row in [&row1, &row2] {
+        assert!(row.starts_with(' ') && row.ends_with(' '), "{row:?}");
+    }
+    let left1 = format!(" {balance} {cache}");
     assert!(
-        model_at >= left_end + 2,
-        "two columns stay clear between the clusters: {band:?}"
+        row1.starts_with(&left1),
+        "row one opens on {left1:?}: {row1:?}"
     );
-    if let Some(mode) = mode {
-        let mode_at = band
-            .find(mode)
-            .unwrap_or_else(|| panic!("mode {mode:?} missing: {band:?}"));
-        assert!(mode_at >= model_at, "the mode follows the model: {band:?}");
+    assert!(
+        row1.trim_end().ends_with(model) && row1.trim_end().chars().count() == inner_right,
+        "row one closes on {model:?} at the inner edge: {row1:?}"
+    );
+    let model_at = row1.chars().count() - 1 - model.chars().count();
+    assert!(
+        model_at >= left1.chars().count() + 2,
+        "two columns stay clear on row one: {row1:?}"
+    );
+    if let Some(tokens) = tokens {
         assert!(
-            band.trim_end().ends_with(mode),
-            "the mode is the right edge of the row: {band:?}"
+            row2.starts_with(&format!(" {tokens}")),
+            "row two opens on {tokens:?}: {row2:?}"
         );
     }
-    assert_eq!(
-        band_y + 1 + crate::views::agent::bottom_margin_rows(buf.area.height),
-        buf.area.height,
-        "the band sits on the frame's floor row, got {band_y} in {}",
-        buf.area.height
-    );
-    assert!(
-        !band.contains("DeepSeek "),
-        "the phone row drops the product prefix: {band:?}"
-    );
+    match mode {
+        Some(mode) => assert!(
+            row2.trim_end().ends_with(mode) && row2.trim_end().chars().count() == inner_right,
+            "row two closes on {mode:?} at the inner edge: {row2:?}"
+        ),
+        None => assert!(
+            tokens.is_none_or(|t| row2.trim() == t),
+            "row two carries no mode: {row2:?}"
+        ),
+    }
 }
 
 #[test]
-fn phone_pane_puts_cost_and_model_on_one_row_and_drops_the_hint_row() {
+fn phone_pane_ends_on_a_two_row_footer_and_drops_the_hint_row() {
     let mut agent = phone_agent();
     let registry = ActionRegistry::defaults();
     let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
-    eprintln!("phone 55x41 — bottom band:\n{}", bottom_rows(&buf, 6));
+    eprintln!("phone 55x41 — bottom rows:\n{}", bottom_rows(&buf, 6));
 
-    assert_one_band(
+    assert_footer(
         &buf,
         "$15.87",
         "cache 88%",
-        "V4.1 Flash (max)",
+        "DeepSeek V4.1 Flash (max)",
+        Some("4.1k in \u{b7} 0 out"),
         Some("always-approve"),
     );
     assert_no_hint_row(&agent, &registry, &buf);
@@ -264,41 +281,38 @@ fn phone_pane_fits_a_large_balance_and_a_full_cache() {
     let mut agent = agent_with(MODEL_LABEL, "1234.56", 100, 100);
     let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
     eprintln!(
-        "phone 55x41 large balance — bottom band:\n{}",
+        "phone 55x41 large balance — bottom rows:\n{}",
         bottom_rows(&buf, 4)
     );
-    assert_one_band(
+    // Row one holds only money and the model, so even the widest balance
+    // leaves the model its full name.
+    assert_footer(
         &buf,
         "$1234.56",
         "cache 100%",
-        // The full cache label costs the five columns the old `c100%` saved,
-        // so the widest money string drops the effort suffix; the mode holds.
-        "V4.1 Flash",
+        "DeepSeek V4.1 Flash (max)",
+        Some("100 in \u{b7} 0 out"),
         Some("always-approve"),
     );
 }
 
 #[test]
-fn phone_pane_ellipsizes_the_long_model_after_effort_is_gone() {
+fn phone_pane_drops_only_the_prefix_a_long_model_needs() {
     let mut agent = agent_with("DeepSeek V4.1 Flash Thinking", "1234.56", 100, 100);
     let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
     eprintln!(
-        "phone 55x41 long model — bottom band:\n{}",
+        "phone 55x41 long model — bottom rows:\n{}",
         bottom_rows(&buf, 4)
     );
-    let band_y = border_row(&buf) + 1;
-    let band = row_text(&buf, band_y);
-    assert_one_band(
+    // `DeepSeek V4.1 Flash Thinking (max)` is 34 columns beside 19 of money;
+    // the prefix goes, the effort stays.
+    assert_footer(
         &buf,
         "$1234.56",
         "cache 100%",
-        "V4.1 Flash Thi",
+        "V4.1 Flash Thinking (max)",
+        None,
         Some("always-approve"),
-    );
-    assert!(!band.contains("(max)"), "effort yields: {band:?}");
-    assert!(
-        band.contains('…'),
-        "the long model takes the ellipsis the label left it: {band:?}"
     );
 }
 
@@ -308,61 +322,48 @@ fn phone_pane_ellipsizes_only_a_model_that_cannot_fit() {
     let mut agent = agent_with(&model, "1234.56", 100, 100);
     let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
     eprintln!(
-        "phone 55x41 pathological model — bottom band:\n{}",
+        "phone 55x41 pathological model — bottom rows:\n{}",
         bottom_rows(&buf, 4)
     );
-    let band = row_text(&buf, border_row(&buf) + 1);
-    assert!(band.contains("$1234.56"), "{band:?}");
-    assert!(band.contains("cache 100%"), "{band:?}");
-    assert!(band.trim_end().ends_with("always-approve"), "{band:?}");
-    assert!(band.contains('…'), "{band:?}");
-    let money = band.find("$1234.56").unwrap();
-    let mode = band.find("always-approve").unwrap();
-    assert!(money + "$1234.56".len() < mode, "{band:?}");
+    let (row1, row2) = (
+        row_text(&buf, PHONE_ROWS - 2),
+        row_text(&buf, PHONE_ROWS - 1),
+    );
+    assert!(row1.starts_with(" $1234.56 cache 100%"), "{row1:?}");
+    assert!(row1.contains('\u{2026}'), "only the model is cut: {row1:?}");
+    assert!(row2.trim_end().ends_with("always-approve"), "{row2:?}");
 }
 
 #[test]
 fn phone_pane_keeps_other_permission_modes_whole() {
+    let tokens = Some("4.1k in \u{b7} 0 out");
+    let model = "DeepSeek V4.1 Flash (max)";
     let mut auto = phone_agent();
     auto.session.set_yolo_mode_for_test(false);
     auto.session.set_auto_mode_for_test(true);
     let buf = draw(&mut auto, PHONE_COLS, PHONE_ROWS);
-    eprintln!("phone 55x41 auto — bottom band:\n{}", bottom_rows(&buf, 4));
-    assert_one_band(
-        &buf,
-        "$15.87",
-        "cache 88%",
-        "V4.1 Flash (max)",
-        Some("auto"),
-    );
+    eprintln!("phone 55x41 auto — bottom rows:\n{}", bottom_rows(&buf, 4));
+    assert_footer(&buf, "$15.87", "cache 88%", model, tokens, Some("auto"));
 
     let mut ask = phone_agent();
     ask.session.set_yolo_mode_for_test(false);
     let buf = draw(&mut ask, PHONE_COLS, PHONE_ROWS);
-    eprintln!("phone 55x41 ask — bottom band:\n{}", bottom_rows(&buf, 4));
-    let band = row_text(&buf, border_row(&buf) + 1);
-    assert_one_band(&buf, "$15.87", "cache 88%", "V4.1 Flash (max)", None);
-    assert!(
-        !band.contains("always-approve") && !band.contains("auto"),
-        "{band:?}"
-    );
-    assert!(band.trim_end().ends_with("(max)"), "{band:?}");
+    eprintln!("phone 55x41 ask — bottom rows:\n{}", bottom_rows(&buf, 4));
+    assert_footer(&buf, "$15.87", "cache 88%", model, tokens, None);
 
     let mut plan = phone_agent();
     plan.plan_mode_active = true;
     let buf = draw(&mut plan, PHONE_COLS, PHONE_ROWS);
-    eprintln!("phone 55x41 plan — bottom band:\n{}", bottom_rows(&buf, 4));
-    // The plan flag plus the full cache label spend the columns the effort
-    // suffix used to take; the mode itself stays whole.
-    assert_one_band(
+    eprintln!("phone 55x41 plan — bottom rows:\n{}", bottom_rows(&buf, 4));
+    // The plan flag rides row two with the mode; row one keeps the model whole.
+    assert_footer(
         &buf,
         "$15.87",
         "cache 88%",
-        "V4.1 Flash",
-        Some("always-approve"),
+        model,
+        tokens,
+        Some("plan \u{b7} always-approve"),
     );
-    let band = row_text(&buf, border_row(&buf) + 1);
-    assert!(band.contains("plan"), "plan stays on the row: {band:?}");
 }
 
 #[test]
@@ -372,15 +373,16 @@ fn phone_pane_drops_the_hint_row_mid_turn_too() {
     let registry = ActionRegistry::defaults();
     let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
     eprintln!(
-        "phone 55x41 mid-turn — bottom band:\n{}",
+        "phone 55x41 mid-turn — bottom rows:\n{}",
         bottom_rows(&buf, 7)
     );
 
-    assert_one_band(
+    assert_footer(
         &buf,
         "$15.87",
         "cache 88%",
-        "V4.1 Flash (max)",
+        "DeepSeek V4.1 Flash (max)",
+        Some("4.1k in \u{b7} 0 out"),
         Some("always-approve"),
     );
     assert_no_hint_row(&agent, &registry, &buf);
@@ -450,27 +452,12 @@ fn echo_band_rows(buf: &Buffer, band_bg: ratatui::style::Color) -> Vec<u16> {
         .collect()
 }
 
-/// The composer box's top border row: the last row whose outer left column
-/// holds `╭` (its `╰` is [`border_row`]).
-fn top_border_row(buf: &Buffer) -> u16 {
-    let left = crate::appearance::LayoutConfig::default().eff_hpad_left(false) as usize;
-    (0..buf.area.height)
-        .rev()
-        .find(|&y| {
-            row_text(buf, y)
-                .chars()
-                .nth(left)
-                .is_some_and(|c| c == '\u{256d}')
-        })
-        .unwrap_or_else(|| panic!("prompt box top border not found in\n{}", frame_text(buf)))
-}
-
 /// The frame the report's screenshots show, at the measured iPhone size: the
 /// echo's band is its text rows (the last one closing on the turn clock) and
-/// one pad row each side,
-/// the composer box is the top border, one text row and the divider, the turn
-/// time stops one column inside the echo's band, and the status row closes the
-/// phone frame flush to the measured PTY edge (the iOS host adds a pixel inset).
+/// one pad row each side, the composer is a band across the frame with its text
+/// row between a `▆` and a `▂` pad row, the turn time stops one column inside
+/// the echo's band, and the two-row footer closes the phone frame at the
+/// measured PTY edge.
 #[test]
 fn phone_frame_pads_the_prompt_areas_by_one_cell() {
     let _guard = crate::theme::cache::pin_theme();
@@ -490,7 +477,12 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
     // bubble, and takes no row of its own. Each pad row spends two eighths of
     // its height on the band (one column of air at the phone's font, where a
     // whole row is 2.15 columns).
-    let band = echo_band_rows(&buf, theme.bg_light);
+    // The composer's band shares the echo's colour; the echo is the band above it.
+    let (composer_top, _) = composer_band_rows(&buf);
+    let band: Vec<u16> = echo_band_rows(&buf, theme.bg_light)
+        .into_iter()
+        .filter(|&y| y < composer_top)
+        .collect();
     assert_eq!(
         band.len(),
         4,
@@ -554,17 +546,43 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
         "{frame}"
     );
 
-    // (b) The composer box is exactly the border, text and divider rows.
-    let top = top_border_row(&buf);
-    let divider = border_row(&buf);
+    // (b) The composer is a band: a top pad row whose lower three quarters are
+    // the band, one text row, and a bottom pad row whose upper three quarters
+    // are the band. It spans the frame in the echo's colour and draws no rule.
+    let (top, bottom) = composer_band_rows(&buf);
     assert_eq!(
-        divider - top,
+        bottom - top,
         2,
-        "the composer box is border + text + divider, got rows {top}..={divider}:\n{frame}"
+        "the composer band is pad + text + pad, got rows {top}..={bottom}:\n{frame}"
     );
+    let text_row = top + 1;
     assert!(
-        row_text(&buf, top + 1).contains("phone draft"),
-        "the box's middle row is the text row:\n{frame}"
+        row_text(&buf, text_row).contains("phone draft"),
+        "the band's middle row is the text row:\n{frame}"
+    );
+    let top_pad = buf.cell((0, top)).unwrap();
+    assert_eq!(
+        (top_pad.fg, top_pad.bg),
+        (theme.bg_light, theme.bg_base),
+        "{frame}"
+    );
+    let bottom_pad = buf.cell((0, bottom)).unwrap();
+    assert_eq!(
+        (bottom_pad.fg, bottom_pad.bg),
+        (theme.bg_base, theme.bg_light),
+        "{frame}"
+    );
+    for x in [0, PHONE_COLS - 1] {
+        let cell = buf.cell((x, text_row)).unwrap();
+        assert_eq!(
+            (cell.symbol(), cell.bg),
+            (" ", theme.bg_light),
+            "the band's edge column {x} is fill, not a rule:\n{frame}"
+        );
+    }
+    assert!(
+        !frame.contains('\u{2570}') && !frame.contains('\u{256d}'),
+        "a phone draws no box:\n{frame}"
     );
 
     // (c) The turn time closes on the transcript's last column: the held-copy
@@ -589,62 +607,33 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
         "the copy gutter and the bar's column follow the ink\n{frame}"
     );
 
-    // (d) The status band sits on the frame's half-row floor at the PTY bottom.
-    let status_y = divider + 1;
+    // (d) The two-row footer follows the band and ends the frame.
     assert_eq!(
-        status_y + 1 + crate::views::agent::BOTTOM_MARGIN_ROWS,
+        bottom + 1 + crate::views::agent::PHONE_FOOTER_ROWS,
         PHONE_ROWS,
-        "the status band sits on the floor row at the measured PTY bottom:\n{frame}"
+        "the footer's two rows end the frame at the measured PTY bottom:\n{frame}"
     );
 }
 
-/// The status band sits on the frame's floor at every phone height, and it
-/// still paints its content there: a geometry-only check would pass on a blank
-/// band, so each height runs the same content assertions as the 55x41 frame
-/// test. The floor is one blank row in the frame's background, so the frame
-/// ends a row under the status text in its own colour. A short terminal drops
-/// the floor with the other margins.
+/// The footer ends the frame at every phone height, short terminals included,
+/// and still paints its content there: a geometry-only check would pass on
+/// blank rows, so each height runs the same content assertions as the 55x41
+/// frame test.
 #[test]
-fn phone_frame_keeps_a_one_row_floor_at_every_phone_height() {
-    let _guard = crate::theme::cache::pin_theme();
-    let theme = Theme::current();
-    assert_eq!(crate::views::agent::BOTTOM_MARGIN_ROWS, 1);
-    for rows in [PHONE_ROWS, 36, 33, 30, 26, 24, 20] {
+fn phone_frame_ends_on_its_footer_at_every_phone_height() {
+    let short = crate::views::agent::SHORT_TERMINAL_ROWS;
+    for rows in [PHONE_ROWS, 36, 33, 30, 26, 24, 20, short] {
         let mut agent = phone_agent();
         let buf = draw(&mut agent, PHONE_COLS, rows);
-        let frame = frame_text(&buf);
-        assert_one_band(
+        assert_footer(
             &buf,
             "$15.87",
             "cache 88%",
-            "V4.1 Flash (max)",
+            "DeepSeek V4.1 Flash (max)",
+            Some("4.1k in \u{b7} 0 out"),
             Some("always-approve"),
         );
-        let status_y = border_row(&buf) + 1;
-        assert_eq!(
-            status_y + 1 + crate::views::agent::BOTTOM_MARGIN_ROWS,
-            rows,
-            "{PHONE_COLS}x{rows}: the status band sits on the floor row\n{frame}"
-        );
-        let floor = rows - 1;
-        for x in 0..PHONE_COLS {
-            let cell = buf.cell((x, floor)).unwrap();
-            assert_eq!(
-                (cell.symbol(), cell.bg),
-                (" ", theme.bg_base),
-                "{PHONE_COLS}x{rows}: floor cell {x} is blank in the frame's background\n{frame}"
-            );
-        }
     }
-    let short = crate::views::agent::SHORT_TERMINAL_ROWS;
-    let mut agent = phone_agent();
-    let buf = draw(&mut agent, PHONE_COLS, short);
-    let frame = frame_text(&buf);
-    assert_eq!(
-        border_row(&buf) + 2,
-        short,
-        "{PHONE_COLS}x{short}: a short terminal drops the floor\n{frame}"
-    );
 }
 
 // ── Scrolled transcript: the pinned echo, the band's right edge, the scrollbar column ──

@@ -110,8 +110,13 @@ dsb --version
 ```
 
 `release.sh` stages: bump → MAJOR/README gate → verify → PR (`chore(release)`)
-→ merge → tag → asset wait → **CI publishes over OIDC** (`publish-npm.yml`) →
-registry verified. No npm token and no one-time code are involved.
+→ **wait for the PR's checks** → merge → tag → asset wait → **CI publishes over
+OIDC** (`publish-npm.yml`) → registry verified. No npm token and no one-time
+code are involved. The wait is the lesson of the 6.1.1 / 6.1.7 / 6.1.10 stops:
+the merge fired before GitHub finished computing mergeability ("Pull Request is
+not mergeable") and left the PR for a person to merge and resume. A failed
+check now stops the release before the merge call, with the PR and the resume
+command printed (`--checks-timeout`, default 3600 s).
 
 ## npm Trusted Publisher enrollment (one-time, npm website)
 

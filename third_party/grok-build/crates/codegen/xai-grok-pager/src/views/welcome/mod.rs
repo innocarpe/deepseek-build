@@ -651,6 +651,42 @@ fn render_prompt_and_version(
     }
     let prompt_result = prompt::render_prompt(prompt_centered, buf, focus, prompt, info, compact);
 
+    // A phone paints the version gap and the version row as the conversation
+    // view's two-row footer, one column in from the frame's edges like it.
+    let frame = *buf.area();
+    if pending_hint.is_none()
+        && !skip_version
+        && layout.version.height > 0
+        && prompt::phone_band(prompt_centered.width)
+    {
+        let footer_area = Rect {
+            x: frame.x + 1,
+            y: layout.version.y.saturating_sub(VERSION_GAP),
+            width: frame.width.saturating_sub(2),
+            height: 2,
+        };
+        let product = format!(
+            "DeepSeek Build {}{}",
+            xai_grok_version::installed(),
+            xai_grok_update::channel_label()
+        );
+        let flag_texts: Vec<&str> = info.flags.iter().map(|flag| flag.text).collect();
+        let footer = crate::views::phone_bottom_band::compose_phone_footer(
+            footer_area.width as usize,
+            Some(product.as_str()),
+            None,
+            None,
+            info.model_name,
+            &flag_texts,
+            // The welcome's weekly-limit label is the Grok subscription's; the
+            // conversation view drops it for a DeepSeek session too.
+            None,
+            info.multiline,
+        );
+        crate::views::phone_bottom_band::paint_phone_footer(buf, footer_area, &footer, theme);
+        return prompt_result;
+    }
+
     if let Some(pending) = &pending_hint {
         render_pending_hint(layout.version, buf, theme, pending);
     } else if !skip_version {
@@ -770,6 +806,13 @@ pub fn render_welcome(
         H_MARGIN
     };
     let v_margin = 1u16;
+    // A phone's welcome ends on the same two-row footer as the conversation
+    // view, so it keeps no margin row under it either.
+    let bottom_margin = if prompt::phone_band(area.width) {
+        0
+    } else {
+        v_margin
+    };
 
     buf.set_style(area, Style::default().bg(theme.bg_base));
 
@@ -778,7 +821,7 @@ pub fn render_welcome(
         Constraint::Length(v_margin),
         Constraint::Length(1),
         Constraint::Min(10),
-        Constraint::Length(v_margin),
+        Constraint::Length(bottom_margin),
     ])
     .areas(area);
 
@@ -945,6 +988,7 @@ fn render_welcome_blocked(
         layout_input.prompt_height = Some(prompt::desired_prompt_height(
             prompt_widget,
             content_area.width,
+            buf.area().width,
             compact,
             prompt_max_height(&layout_input),
         ));
@@ -1857,6 +1901,7 @@ fn render_welcome_done(
         layout_input.prompt_height = Some(prompt::desired_prompt_height(
             prompt,
             content_area.width,
+            buf.area().width,
             p.compact,
             prompt_max_height(&layout_input),
         ));

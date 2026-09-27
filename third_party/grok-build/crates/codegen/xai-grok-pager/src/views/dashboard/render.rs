@@ -2332,6 +2332,7 @@ fn render_dispatch(
         chrome: false,
         bg: PromptBg::Canvas(theme.bg_base),
         image_preview: false,
+        band: false,
         ..PromptStyle::default()
     };
     state

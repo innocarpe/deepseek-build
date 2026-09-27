@@ -187,6 +187,12 @@ pub struct PromptStyle {
     pub title: Option<String>,
     /// Paint image-chip overlay into `overlay_area` (default true).
     pub image_preview: bool,
+    /// Draw the chrome as a band instead of the rounded box: the theme's
+    /// `bg_light` behind the text (the prompt echo's band), the two border rows
+    /// cut to three quarters of a row (`▆` above the text, `▂` below) and no
+    /// side rules. Phone panes set it. A theme without an RGB `bg_light` or
+    /// `bg_base` keeps the box; see [`composer_band_color`].
+    pub band: bool,
 }
 
 /// Background for the prompt widget. Paste chips bake `theme.paste_bg` (a badge color tuned for the
@@ -238,6 +244,7 @@ impl Default for PromptStyle {
             show_borders: true,
             title: None,
             image_preview: true,
+            band: false,
         }
     }
 }
@@ -273,6 +280,7 @@ impl PromptStyle {
             show_borders: false,
             title: None,
             image_preview: true,
+            band: false,
         }
     }
 
@@ -300,6 +308,19 @@ impl PromptStyle {
         } else {
             theme.gray_dim
         })
+    }
+}
+
+/// The composer band's colour when [`PromptStyle::band`] is set: the theme's
+/// `bg_light`, the colour the prompt echo's band uses. `None` when either
+/// `bg_light` or `bg_base` is the terminal's own (`Reset`): the band's border
+/// rows are block glyphs painted in those two colours, and a `Reset` foreground
+/// would draw them in the text colour.
+pub(crate) fn composer_band_color(theme: &Theme) -> Option<ratatui::style::Color> {
+    use ratatui::style::Color;
+    match (theme.bg_light, theme.bg_base) {
+        (Color::Reset, _) | (_, Color::Reset) => None,
+        (band, _) => Some(band),
     }
 }
 
@@ -3035,7 +3056,13 @@ impl PromptWidget {
         }
 
         let theme = Theme::current();
-        let bg = style.bg.color(theme.bg_base);
+        // The band's colour, when this prompt is drawn as a band rather than the box.
+        let band = if style.band {
+            composer_band_color(&theme)
+        } else {
+            None
+        };
+        let bg = band.unwrap_or_else(|| style.bg.color(theme.bg_base));
 
         let border_color = style.border_color_override.unwrap_or(if style.focused {
             theme.prompt_border_active
@@ -3096,6 +3123,12 @@ impl PromptWidget {
             let right_x = area.x + area.width.saturating_sub(1);
             for x in area.x..area.x + area.width {
                 if let Some(cell) = buf.cell_mut((x, div_y)) {
+                    if band.is_some() {
+                        // The band fills this row's bottom three quarters.
+                        cell.set_char('\u{2586}'); // ▆
+                        cell.set_style(Style::default().fg(bg).bg(theme.bg_base));
+                        continue;
+                    }
                     let ch = if x == left_x {
                         '\u{256d}' // ╭
                     } else if x == right_x {
@@ -3121,6 +3154,7 @@ impl PromptWidget {
             let max_w = caption_right.saturating_sub(area.x + 3);
             if let Some(caption) = caption
                 && max_w >= 6
+                && band.is_none()
             {
                 let label = format!(" {caption} ");
                 let trunc = crate::render::line_utils::truncate_str(&label, max_w as usize);
@@ -3381,13 +3415,15 @@ impl PromptWidget {
             let div_style = Style::default().fg(border_color).bg(bg);
             let left_x = area.x;
             let right_x = area.x + area.width.saturating_sub(1);
+            // A band has no side rules: its fill is the edge.
+            let side = if band.is_some() { ' ' } else { '\u{2502}' }; // │
             for y in text_area_rect.y..text_area_rect.y + text_area_rect.height {
                 if let Some(cell) = buf.cell_mut((left_x, y)) {
-                    cell.set_char('\u{2502}'); // │
+                    cell.set_char(side);
                     cell.set_style(div_style);
                 }
                 if let Some(cell) = buf.cell_mut((right_x, y)) {
-                    cell.set_char('\u{2502}'); // │
+                    cell.set_char(side);
                     cell.set_style(div_style);
                 }
             }
@@ -3408,6 +3444,13 @@ impl PromptWidget {
             let right_x = area.x + area.width.saturating_sub(1);
             for x in area.x..area.x + area.width {
                 if let Some(cell) = buf.cell_mut((x, div_y)) {
+                    if band.is_some() {
+                        // The band fills this row's top three quarters: the
+                        // frame's colour paints the bottom quarter over it.
+                        cell.set_char('\u{2582}'); // ▂
+                        cell.set_style(Style::default().fg(theme.bg_base).bg(bg));
+                        continue;
+                    }
                     let ch = if x == left_x {
                         '\u{2570}' // ╰
                     } else if x == right_x {
@@ -3423,7 +3466,10 @@ impl PromptWidget {
             // A phone-width pane paints no label on this divider at all: the agent
             // view puts the model on the DeepSeek status row under the box, so no
             // label row is reserved here.
-            if !narrow && let Some(info) = info.filter(|i| !i.is_blank()) {
+            if !narrow
+                && band.is_none()
+                && let Some(info) = info.filter(|i| !i.is_blank())
+            {
                 // Reserve one cell per corner so the label starts on a blank pad
                 // rather than on the divider rule. `content_area` begins
                 // `chrome_pad_left` cells in, which left `─` painted directly

@@ -25,6 +25,9 @@
 #   4. no-build  — `fmt` seeds nothing and passes a busy queue (stub cargo)
 #   5. refuse    — a build in flight refuses with exit 1, nothing started
 #   6. gate      — --allow-concurrent obeys the memory gate: 2 jobs or refuse
+#   7. exempt    — with DSB_EXEMPT=<runner> cargo runs as the DsbExempt runner's
+#                  child and is attributed to it; DSB_EXEMPT=0 runs it bare
+#                  (macOS only; the runner is built into the temp dir)
 #
 # Usage: ./scripts/test-vendor-cargo.sh
 set -euo pipefail
@@ -129,6 +132,10 @@ cat >"$STUB/cargo" <<'SH'
   printf 'TARGET=%s\n' "${CARGO_TARGET_DIR:-unset}"
   printf 'JOBS=%s\n' "${CARGO_BUILD_JOBS:-unset}"
   printf 'ARGS=%s\n' "$*"
+  printf 'PARENT=%s\n' "$PPID"
+  if [[ "$(uname -s)" == Darwin ]]; then
+    printf 'RESPONSIBLE=%s\n' "$(/usr/bin/python3 -c 'import ctypes,sys;f=ctypes.CDLL(None).responsibility_get_pid_responsible_for_pid;f.restype=ctypes.c_int;f.argtypes=[ctypes.c_int];print(f(int(sys.argv[1])))' "$$")"
+  fi
 } >"${STUB_OUT:?}"
 exit 0
 SH
@@ -300,6 +307,26 @@ run_stub_with "$TMP/env6b" DSB_HOST_FREE_PERCENT=10 DSB_HOST_LOAD5M=5 DSB_HOST_S
 [[ ! -f "$TMP/env6b" ]] && ok "cargo never ran under a denied gate" || bad "cargo ran despite the denial"
 case "$ERR" in *"memory gate denies a second build"*) ok "the denial names the gate" ;;
   *) bad "denial reason missing: $ERR" ;; esac
+
+# --- 7. the DsbExempt runner ---------------------------------------------
+head_ "7. DSB_EXEMPT: cargo runs under the runner, or bare with 0"
+if [[ "$(uname -s)" == Darwin ]]; then
+  "$ROOT/scripts/install-dsb-exempt.sh" --app-dir "$TMP/apps" --bin-dir "$TMP/runner-bin" >/dev/null 2>&1
+  RUNNER="$TMP/runner-bin/dsb-exempt"
+  run_stub_with "$TMP/env7" DSB_EXEMPT="$RUNNER" -- fmt --all -- --check
+  [[ "$RC" -eq 0 ]] && ok "exit 0 under the runner" || bad "exit $RC: $ERR"
+  parent="$(env_field "$TMP/env7" PARENT)"
+  [[ "$(env_field "$TMP/env7" RESPONSIBLE)" == "$parent" ]] \
+    && ok "cargo is attributed to its parent, the runner (pid $parent)" \
+    || bad "cargo responsible $(env_field "$TMP/env7" RESPONSIBLE), parent $parent"
+  case "$ERR" in *"under DsbExempt"*) ok "the runner is announced" ;; *) bad "no runner notice: $ERR" ;; esac
+  run_stub_with "$TMP/env7b" DSB_EXEMPT=0 -- fmt --all -- --check
+  [[ "$(env_field "$TMP/env7b" RESPONSIBLE)" != "$(env_field "$TMP/env7b" PARENT)" ]] \
+    && ok "DSB_EXEMPT=0: cargo is not attributed to a runner" || bad "DSB_EXEMPT=0 still ran under a runner"
+  case "$ERR" in *"under DsbExempt"*) bad "DSB_EXEMPT=0 still announced the runner" ;; *) ok "no runner notice with DSB_EXEMPT=0" ;; esac
+else
+  ok "skipped: the runner is macOS only"
+fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]] || exit 1

@@ -522,6 +522,7 @@ pub fn render_peek_panel(
                             chrome: false,
                             bg: PromptBg::Canvas(theme.bg_base),
                             image_preview: false,
+                            band: false,
                             ..PromptStyle::default()
                         };
                         let res = reply.draw(buf, slot, overlay_area, &widget_style, None, None);
@@ -627,6 +628,7 @@ pub fn render_peek_panel(
         bg: PromptBg::Canvas(theme.bg_base),
         placeholder_override: Some("reply\u{2026}"),
         image_preview: false,
+        band: false,
         ..PromptStyle::default()
     };
     // Interim STT into the reply box so voice stays visible with a peek open.

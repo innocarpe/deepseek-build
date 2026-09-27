@@ -1105,14 +1105,12 @@ mod tests {
                     );
                 }
                 ("keep_text_selection", SettingKind::Enum { default, .. }) => {
-                    // The compile-time default is flash
-                    // The `word_select` default is a remote rollout flag applied at startup, not part of this static registry default
-                    let expected = if ui.keep_text_selection_enabled() {
-                        "hold"
-                    } else {
-                        "flash"
-                    };
-                    assert_eq!(*default, expected);
+                    // Remote defaults and explicit user settings apply at startup;
+                    // the static settings registry reflects the local default.
+                    assert_eq!(
+                        *default,
+                        crate::appearance::TextSelection::Hold.as_canonical()
+                    );
                 }
                 // voice_keybind_enabled: Option<bool>; None reads as true
                 ("voice_keybind_enabled", SettingKind::Bool { default }) => {

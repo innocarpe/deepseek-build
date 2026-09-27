@@ -3,17 +3,20 @@
 //! This is the single, unified control for scrollback text-selection behavior.
 //! It governs both how long an in-app selection highlight stays on screen and what a double/triple-click does, so the two never drift out of sync.
 //!
-//! The compile-time default is `flash`.
-//! A remote `keep_text_selection_default` soft-default (`flash` | `hold` | `word_select`) can override it at pager startup.
+//! The compile-time default is `hold`, so an explicit copy after a drag still
+//! has the selected span available.
+//! A remote `keep_text_selection_default` soft-default (`hold` | `word_select`)
+//! can override it at pager startup. Remote `flash` is ignored; users can still
+//! explicitly select `flash`.
 //! See `apply_remote_keep_text_selection_default`.
 
 /// Scrollback text-selection behavior: highlight lifetime and double-click action.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum TextSelection {
-    /// Brief highlight on mouse-up, then clear; double-click toggles fold. Default.
-    #[default]
+    /// Brief highlight on mouse-up, then clear; double-click toggles fold.
     Flash,
-    /// Stay visible until Esc/click/scroll; double-click toggles fold.
+    /// Stay visible until Esc/click/scroll; double-click toggles fold. Default.
+    #[default]
     Hold,
     /// Stay visible until dismissed; double-click selects and copies a word, triple-click a paragraph (terminal-like).
     /// Implies [`TextSelection::holds`].
@@ -70,9 +73,9 @@ mod tests {
     }
 
     #[test]
-    fn default_is_flash() {
-        assert_eq!(TextSelection::default(), TextSelection::Flash);
-        assert_eq!(TextSelection::default().as_canonical(), "flash");
+    fn default_is_hold() {
+        assert_eq!(TextSelection::default(), TextSelection::Hold);
+        assert_eq!(TextSelection::default().as_canonical(), "hold");
     }
 
     /// `word_select` always implies `holds()` (persistent highlight).

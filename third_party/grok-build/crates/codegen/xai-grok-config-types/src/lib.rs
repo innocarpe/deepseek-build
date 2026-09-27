@@ -907,10 +907,10 @@ pub struct RemoteSettings {
     pub workspace_command_enabled: Option<bool>,
     #[serde(default)]
     pub workspace_dashboard_enabled: Option<bool>,
-    /// Soft default for `keep_text_selection` (`"flash"`, `"hold"`, or `"word_select"`), from `grok_build_settings.keep_text_selection_default`.
-    /// It applies only when the user has set no local text-selection preference; an explicit local `keep_text_selection` always wins.
-    /// An absent or unrecognized value keeps the client default (`flash`).
-    /// Set it remotely to stage a new default to a segment, cut everyone over, or revert it for a customer.
+    /// Soft default for `keep_text_selection`, from `grok_build_settings.keep_text_selection_default`.
+    /// The pager accepts `"hold"` and `"word_select"` when the user has set no local preference;
+    /// remote `"flash"` is ignored so a later Copy still uses the dragged span. Users may choose
+    /// `"flash"` locally. An absent or unrecognized value keeps the client default (`"hold"`).
     #[serde(default)]
     pub keep_text_selection_default: Option<String>,
     /// Master switch for jemalloc heap sampling and threshold dumps.

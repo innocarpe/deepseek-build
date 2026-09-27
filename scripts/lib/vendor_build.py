@@ -1,30 +1,38 @@
 #!/usr/bin/env python3
-"""status / clone / prune for the shared vendored Grok build target.
+"""status / run / prune for the vendored Grok build queues.
 
-The queue this reads
---------------------
-Sessions on this machine share one cargo target directory for the
-vendored tree (`CARGO_TARGET_DIR=<primary checkout>/third_party/grok-build/target`).
-Cargo serializes builds in one target directory with a file lock on
+The queues this reads
+---------------------
+Every worktree of this repo builds the vendored tree in its **own** cargo
+target, `<worktree>/third_party/grok-build/target`. They used to share the
+primary checkout's target; that cannot come back, because cargo names a path
+package's artifacts by its path *relative to the workspace root*, so two
+worktrees write the same file names into one target, and cargo's mtime-only
+freshness then hands the worktree with the older sources the other worktree's
+code (measured 2026-09-27).
+
+A cargo target directory serializes builds with a file lock on
 `<target>/<profile-dir>/.cargo-lock`: dev, test and check share `debug/`,
 release and bench share `release/`. A cargo that waits on that lock prints
-nothing, so the queue behind it looks like a hung command in a TUI.
+nothing, so a queue looks like a hung command in a TUI. `status` therefore
+reads *every* worktree's target: one vendored build at a time is a whole-host
+rule (memory is the scarce resource), and with per-worktree targets no single
+lock file answers it any more.
 
-  status  read the queue. Read-only. Exit 0 free, 1 busy, 2 error.
-  clone   copy the target copy-on-write (`cp -c -R`, APFS clonefile)
-          into `~/.cache/dsb-vendor-targets/<slug>` and print, on stdout,
-          the one line `export CARGO_TARGET_DIR=<clone>`. Registry
-          dependencies stay fresh (their sources stay under the same
-          `~/.cargo/registry`); workspace crates rebuild from the copy
-          without waiting on the lock. Exit 0 created, 1 refused/failed,
-          2 usage.
-  prune   delete personal clones idle for >= N days (default 3). The base
-          target is never touched. Exit 0 done, 1 a delete failed, 2 usage.
-  run     run a command now. Queue free → it runs as-is (exec). Queue busy →
-          it runs only when the memory gate passes, in a personal CoW
-          clone with CARGO_BUILD_JOBS=2; otherwise nothing starts, status is
+  status  read the queues. Read-only. Exit 0 free, 1 busy, 2 error.
+          Default: every worktree's vendored target. `--target DIR` narrows
+          it to one directory (the single-target contract).
+  run     run a command now. No vendored build in flight → it runs as-is
+          (exec). One in flight → it runs only when the memory gate passes,
+          with CARGO_BUILD_JOBS=2; otherwise nothing starts, status is
           printed, and the exit code is 1. The command keeps its own exit
-          code when it runs.
+          code when it runs. The target directory is the running command's
+          own business: `scripts/vendor-cargo.sh` pins it to the worktree.
+  prune   delete personal target copies idle for >= N days (default 3).
+          Nothing creates them any more (the queue is per worktree now);
+          this clears the ones older sessions left in
+          `~/.cache/dsb-vendor-targets`. The base target is never touched.
+          Exit 0 done, 1 a delete failed, 2 usage.
 
 The memory gate
 ---------------------
@@ -50,9 +58,9 @@ one with none is waiting. Both are marked "(inferred)" in the output.
 No deadlock exists today
 ------------------------
 Nothing under `third_party/grok-build` invokes cargo from inside a cargo
-build or test; adding such a call would create a real lock cycle under a
-shared target. status flags a descendant cargo as `nested_cargo` so that
-shape is visible if it ever appears.
+build or test; adding such a call would create a real lock cycle on that
+target. status flags a descendant cargo as `nested_cargo` so that shape is
+visible if it ever appears.
 """
 import argparse
 import fcntl
@@ -68,7 +76,6 @@ from pathlib import Path
 LOCK_NAME = ".cargo-lock"
 DEFAULT_PRUNE_DAYS = 3
 DEFAULT_CLONE_ROOT = "~/.cache/dsb-vendor-targets"
-QUIESCE_TIMEOUT_SECONDS = 5.0
 STARTING_GRACE_SECONDS = 3
 GATE_FREE_PERCENT_MIN = 25.0
 GATE_LOAD5M_MAX = 18.0
@@ -77,7 +84,6 @@ SECOND_BUILD_JOBS = 2
 COMPILER_RE = re.compile(
     r"^(rustc|rustc_driver|clippy-driver|rustdoc|cc1|cc1plus|cc|clang|clang\+\+|gcc|g\+\+|ld|ld64|dsymutil|swiftc)(-\d+(\.\d+)*)?$"
 )
-SLUG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
 def fail(message, code=2):
@@ -125,6 +131,12 @@ def resolve_root(args):
     if getattr(args, "root", None):
         return Path(os.path.expanduser(args.root)).resolve()
     return default_clone_root().resolve()
+
+
+def resolve_repo(args):
+    if getattr(args, "repo", None):
+        return Path(os.path.expanduser(args.repo)).resolve()
+    return primary_checkout(script_repo_root())
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +262,16 @@ def host_line(facts, gate):
     else:
         verdict = "DENIED (" + "; ".join(gate["reasons"]) + ")"
     return f"host: free {free_s} · swap {swap_s} · load5m {load_s}{source} → 2nd build: {verdict}"
+
+
+def busy_hint(busy):
+    if busy:
+        return (
+            "vendor-build: BUSY → exit 1 — a vendored build is in flight and one runs at a "
+            "time; wait for it, or run yours through `./scripts/vendor-cargo.sh "
+            "--allow-concurrent` when the memory gate above allows a second build"
+        )
+    return "vendor-build: FREE → exit 0"
 
 
 # ---------------------------------------------------------------------------
@@ -481,30 +503,98 @@ def collect_locks(target, wt_roots):
     return reports, busy
 
 
-def cmd_status(args):
-    target = resolve_target(args)
-    primary = Path(os.path.expanduser(args.repo)).resolve() if args.repo else primary_checkout(script_repo_root())
-    wt_roots = worktree_roots(primary)
+def worktree_targets(primary):
+    """(worktree, vendored target) for every worktree of this repo, git's order."""
+    return [
+        (wt, Path(wt) / "third_party" / "grok-build" / "target")
+        for wt in worktree_roots(primary)
+    ]
 
-    reports, busy = collect_locks(target, wt_roots)
+
+def collect_machine(primary, wt_roots):
+    """Per-worktree reports for every vendored target. Returns (entries, busy)."""
+    entries = []
+    busy = False
+    for wt, target in worktree_targets(primary):
+        if not target.is_dir():
+            entries.append({"worktree": wt, "target": str(target), "state": "absent", "locks": []})
+            continue
+        reports, wt_busy = collect_locks(target, wt_roots)
+        busy = busy or wt_busy
+        entries.append({
+            "worktree": wt,
+            "target": str(target),
+            "state": "busy" if wt_busy else "free",
+            "locks": reports,
+        })
+    return entries, busy
+
+
+def cmd_status(args):
+    primary = resolve_repo(args)
+    wt_roots = worktree_roots(primary)
     facts = host_facts()
     gate = evaluate_gate(facts)
+    note = "holder/waiter labels are inferred from live descendants, not read from the file lock"
 
+    if args.target:
+        target = Path(os.path.expanduser(args.target)).resolve()
+        reports, busy = collect_locks(target, wt_roots)
+        payload = {
+            "target": str(target),
+            "status": "busy" if busy else "free",
+            "exit_code": 1 if busy else 0,
+            "host": facts,
+            "second_build": gate,
+            "locks": reports,
+            "note": note,
+        }
+        if args.json:
+            print(json.dumps(payload, indent=2))
+        else:
+            print(render_status(target, reports, busy, facts, gate))
+        return 1 if busy else 0
+
+    entries, busy = collect_machine(primary, wt_roots)
     payload = {
-        "target": str(target),
+        "repo": str(primary),
+        "worktrees": len(entries),
+        "targets": entries,
         "status": "busy" if busy else "free",
         "exit_code": 1 if busy else 0,
         "host": facts,
         "second_build": gate,
-        "locks": reports,
-        "note": "holder/waiter labels are inferred from live descendants, not read from the file lock",
+        "note": note,
     }
-
     if args.json:
         print(json.dumps(payload, indent=2))
     else:
-        print(render_status(target, reports, busy, facts, gate))
+        print(render_machine_status(primary, entries, busy, facts, gate))
     return 1 if busy else 0
+
+
+def render_locks(reports, indent="  "):
+    lines = []
+    for r in reports:
+        if r["probe"] == "locked" or r["processes"]:
+            state = "BUSY (file lock held)" if r["probe"] == "locked" else "BUSY (process on the lock file)"
+        else:
+            state = "free"
+        lines.append(f"{indent}lock {r['profile']}/{LOCK_NAME}: {state}")
+        for p in r["processes"]:
+            etime = p["etime"] or "?"
+            lines.append(f"{indent}  pid {p['pid']}  etime {etime}  {p['label']} (inferred) — {p['basis']}")
+            lines.append(f"{indent}        cmd: {p['command']}")
+            if p["cwd"]:
+                lines.append(f"{indent}        cwd: {p['cwd']}")
+            if p["worktree"]:
+                lines.append(f"{indent}        worktree: {p['worktree']}")
+            for n in p.get("nested_cargo", []):
+                lines.append(
+                    f"{indent}        WARNING nested cargo pid {n['pid']} — "
+                    "cargo inside cargo on one target is a lock cycle"
+                )
+    return lines
 
 
 def render_status(target, reports, busy, facts, gate):
@@ -514,251 +604,23 @@ def render_status(target, reports, busy, facts, gate):
             lines.append(f"locks: none — no {LOCK_NAME} under any profile directory (nothing has built here)")
         else:
             lines.append(f"locks: none — {target} does not exist (nothing is building there)")
-    for r in reports:
-        if r["probe"] == "locked" or r["processes"]:
-            state = "BUSY (file lock held)" if r["probe"] == "locked" else "BUSY (process on the lock file)"
-        else:
-            state = "free"
-        lines.append(f"lock {r['profile']}/{LOCK_NAME}: {state}")
-        for p in r["processes"]:
-            etime = p["etime"] or "?"
-            lines.append(f"  pid {p['pid']}  etime {etime}  {p['label']} (inferred) — {p['basis']}")
-            lines.append(f"        cmd: {p['command']}")
-            if p["cwd"]:
-                lines.append(f"        cwd: {p['cwd']}")
-            if p["worktree"]:
-                lines.append(f"        worktree: {p['worktree']}")
-            for n in p.get("nested_cargo", []):
-                lines.append(
-                    f"        WARNING nested cargo pid {n['pid']} — cargo inside cargo on a shared target is a lock cycle"
-                )
-    if busy:
-        lines.append(
-            "vendor-build: BUSY → exit 1 — a waiting cargo prints nothing; "
-            "`./scripts/vendor-build.sh clone <slug>` builds without waiting"
-        )
-    else:
-        lines.append("vendor-build: FREE → exit 0")
+    lines.extend(render_locks(reports))
+    lines.append(busy_hint(busy))
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# clone
-# ---------------------------------------------------------------------------
-
-
-def acquire_for_quiesce(paths, quiesce):
-    """Hold the build locks for a snapshot.
-
-    Default: try each lock non-blocking for two seconds; on failure warn once
-    and continue (a partially written file is rebuilt by cargo). --quiesce
-    waits for the lock (that is the point of the flag).
-    """
-    held = []
-    for path in paths:
-        try:
-            fh = open(path, "rb")
-        except OSError as e:
-            print(f"vendor-build: cannot open {path}: {e}", file=sys.stderr)
-            return held
-        if quiesce:
-            print(f"vendor-build: --quiesce: waiting for {path}", file=sys.stderr)
-            fcntl.flock(fh, fcntl.LOCK_EX)
-            held.append(fh)
+def render_machine_status(primary, entries, busy, facts, gate):
+    lines = [f"repo: {primary} ({len(entries)} worktree(s), each with its own vendored target)", host_line(facts, gate)]
+    for e in entries:
+        lines.append(f"worktree {e['worktree']}")
+        if e["state"] == "absent":
+            lines.append(f"  target: {e['target']} — not built yet (nothing is building there)")
             continue
-        got = False
-        deadline = time.time() + QUIESCE_TIMEOUT_SECONDS
-        while True:
-            try:
-                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                got = True
-                break
-            except OSError:
-                if time.time() >= deadline:
-                    break
-                time.sleep(0.1)
-        if got:
-            held.append(fh)
-        else:
-            fh.close()
-            release_handles(held)
-            print(
-                f"vendor-build: could not quiesce {path} within {QUIESCE_TIMEOUT_SECONDS:.0f}s; "
-                "continuing — cargo rebuilds a partially written file",
-                file=sys.stderr,
-            )
-            return []
-    if held:
-        print("vendor-build: build lock held; snapshot is at rest", file=sys.stderr)
-    return held
-
-
-def release_handles(held):
-    for fh in held:
-        try:
-            fcntl.flock(fh, fcntl.LOCK_UN)
-        except OSError:
-            pass
-        fh.close()
-
-
-def clonefile_tree(src, dest):
-    """Copy a tree with APFS clonefile(2), skipping files that vanish.
-
-    The fallback for `cp -c -R` when a live build keeps removing artifacts
-    under the shared target mid-copy: a file that disappears is skipped (cargo
-    rebuilds it) instead of failing the whole clone. Files already present at
-    the destination (from an earlier partial copy) are left as they are.
-    Returns (copied, skipped_paths). macOS only.
-    """
-    import ctypes
-    import errno as errno_mod
-    import stat as stat_mod
-
-    libc = ctypes.CDLL(None, use_errno=True)
-    clonefile = libc.clonefile
-    clonefile.restype = ctypes.c_int
-    clonefile.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32]
-
-    copied = 0
-    skipped = []
-    for dirpath, dirnames, filenames in os.walk(src):
-        rel = os.path.relpath(dirpath, src)
-        target_dir = dest if rel == "." else os.path.join(dest, rel)
-        os.makedirs(target_dir, exist_ok=True)
-        for name in list(dirnames):
-            source = os.path.join(dirpath, name)
-            if os.path.islink(source):
-                # os.walk does not descend into symlinked directories;
-                # recreate them instead of losing them.
-                link_target = os.readlink(source)
-                target = os.path.join(target_dir, name)
-                if os.path.lexists(target):
-                    os.unlink(target)
-                os.symlink(link_target, target)
-                dirnames.remove(name)
-        for name in filenames:
-            source = os.path.join(dirpath, name)
-            target = os.path.join(target_dir, name)
-            try:
-                st = os.lstat(source)
-            except OSError:
-                skipped.append(source)
-                continue
-            if stat_mod.S_ISLNK(st.st_mode):
-                try:
-                    link_target = os.readlink(source)
-                except OSError:
-                    skipped.append(source)
-                    continue
-                if os.path.lexists(target):
-                    os.unlink(target)
-                os.symlink(link_target, target)
-                copied += 1
-                continue
-            if os.path.exists(target):
-                copied += 1
-                continue
-            rc = clonefile(os.fsencode(source), os.fsencode(target), 0)
-            if rc == 0:
-                copied += 1
-                continue
-            err = ctypes.get_errno()
-            if err == errno_mod.ENOENT:
-                skipped.append(source)
-                continue
-            if err == errno_mod.EEXIST:
-                copied += 1
-                continue
-            raise OSError(err, os.strerror(err), source)
-    return copied, skipped
-
-
-def do_copy(base, dest, full_copy):
-    if not full_copy and sys.platform != "darwin":
-        fail(
-            "clone needs APFS clonefile (`cp -c`), which is macOS-only; "
-            "pass --full-copy to copy the whole target instead (slow)"
-        )
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    cmd = ["cp", "-R", str(base), str(dest)] if full_copy else ["cp", "-c", "-R", str(base), str(dest)]
-    # A live build removes and rewrites artifacts under the shared target
-    # while we copy. Measured 2026-09-26: the first non-quiesced clone of the
-    # 196k-file target died on an rlib the other build had just removed
-    # (phone-bottom-band hit the same failure). First retry the plain copy
-    # with backoff; if it keeps colliding, fall back to a per-file clonefile
-    # walk that skips the vanished files — cargo rebuilds those anyway.
-    attempts = 4
-    last = None
-    for attempt in range(1, attempts + 1):
-        last = subprocess.run(cmd, capture_output=True, text=True)
-        if last.returncode == 0:
-            if attempt > 1:
-                print(f"vendor-build: copy succeeded on attempt {attempt}", file=sys.stderr)
-            return
-        if attempt < attempts:
-            first = (last.stderr or "").strip().splitlines()
-            reason = first[0] if first else "unknown error"
-            print(
-                f"vendor-build: copy attempt {attempt} collided with a live writer ({reason}); retrying",
-                file=sys.stderr,
-            )
-            time.sleep(float(attempt))
-    if not full_copy:
-        print(
-            "vendor-build: falling back to a per-file clonefile walk "
-            "(vanished files are skipped; cargo rebuilds them)",
-            file=sys.stderr,
-        )
-        try:
-            copied, skipped = clonefile_tree(base, dest)
-        except OSError as e:
-            shutil.rmtree(dest, ignore_errors=True)
-            fail(f"copy failed in the fallback walk: {e}", code=1)
-        if skipped:
-            print(
-                f"vendor-build: cloned {copied} file(s); {len(skipped)} vanished mid-copy and were skipped "
-                "— a live build removed them and cargo will rebuild them",
-                file=sys.stderr,
-            )
-        return
-    shutil.rmtree(dest, ignore_errors=True)
-    detail = (last.stderr or "").strip()
-    hint = ""
-    if "clonefile" in detail.lower():
-        hint = "\n  the destination may not sit on an APFS volume; --full-copy always works"
-    elif "No such file" in detail or "no such file" in detail:
-        hint = "\n  a live build kept rewriting the target; retry, or use --quiesce to wait for the build lock"
-    fail(f"copy failed after {attempts} attempt(s): {' '.join(cmd)}\n{detail}{hint}", code=1)
-
-
-def cmd_clone(args):
-    target = resolve_target(args)
-    root = resolve_root(args)
-    slug = args.slug
-    if slug in (".", "..") or not SLUG_RE.fullmatch(slug):
-        fail(f"invalid slug {slug!r}: use letters, digits, '.', '_' or '-' (no leading '-')")
-    dest = root / slug
-    if dest.exists():
-        fail(
-            f"clone destination already exists: {dest}\n"
-            "  refusing to overwrite; pick another slug or free it with `vendor-build.sh prune`",
-            code=1,
-        )
-    if not target.is_dir():
-        fail(f"base target does not exist: {target}", code=1)
-
-    lock_files = [path for _, path in discover_locks(target)]
-    held = acquire_for_quiesce(lock_files, args.quiesce)
-    started = time.time()
-    try:
-        print(f"vendor-build: copying {target} -> {dest}", file=sys.stderr)
-        do_copy(target, dest, args.full_copy)
-        print(f"vendor-build: copied in {time.time() - started:.1f}s", file=sys.stderr)
-    finally:
-        release_handles(held)
-    print(f"export CARGO_TARGET_DIR={dest}")
-    return 0
+        state = "BUSY" if e["state"] == "busy" else "free"
+        lines.append(f"  target: {e['target']} — {state}")
+        lines.extend(render_locks(e["locks"], indent="  "))
+    lines.append(busy_hint(busy))
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -766,75 +628,39 @@ def cmd_clone(args):
 # ---------------------------------------------------------------------------
 
 
-def default_slug():
-    base = os.path.basename(os.getcwd())
-    try:
-        r = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if r.returncode == 0 and r.stdout.strip():
-            base = os.path.basename(r.stdout.strip())
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", base).strip("-.")
-    return slug or "default"
-
-
 def cmd_run(args):
-    target = resolve_target(args)
-    root = resolve_root(args)
+    primary = resolve_repo(args)
+    wt_roots = worktree_roots(primary)
     cmd = list(args.cmd)
     while cmd and cmd[0] == "--":
         cmd.pop(0)
     if not cmd:
-        fail("run needs a command after `--`, e.g. `vendor-build.sh run -- cargo build`")
+        fail("run needs a command after `--`, e.g. `vendor-build.sh run -- cargo test -p <pkg>`")
 
-    reports, busy = collect_locks(target, [])
+    entries, busy = collect_machine(primary, wt_roots)
     facts = host_facts()
     gate = evaluate_gate(facts)
 
     if not busy:
-        print("vendor-build: queue free — running the command as-is", file=sys.stderr)
+        print("vendor-build: no vendored build in flight — running the command as-is", file=sys.stderr)
         sys.stdout.flush()
         sys.stderr.flush()
         os.execvp(cmd[0], cmd)  # never returns
 
     if not gate["allowed"]:
-        print(render_status(target, reports, busy, facts, gate))
+        print(render_machine_status(primary, entries, busy, facts, gate))
         print(
             "vendor-build: 2nd build DENIED by the memory gate — nothing started; "
-            "wait for the host to recover, or run when the queue is free",
+            "wait for the host to recover",
             file=sys.stderr,
         )
         return 1
 
-    slug = args.slug or default_slug()
-    if slug in (".", "..") or not SLUG_RE.fullmatch(slug):
-        fail(f"invalid slug {slug!r}: use letters, digits, '.', '_' or '-' (no leading '-')")
-    dest = root / slug
-    if not dest.is_dir():
-        if not target.is_dir():
-            fail(f"base target does not exist: {target}", code=1)
-        held = acquire_for_quiesce([p for _, p in discover_locks(target)], False)
-        started = time.time()
-        try:
-            print(f"vendor-build: creating the personal clone {dest}", file=sys.stderr)
-            do_copy(target, dest, args.full_copy)
-            print(f"vendor-build: cloned in {time.time() - started:.1f}s", file=sys.stderr)
-        finally:
-            release_handles(held)
-
     env = os.environ.copy()
-    env["CARGO_TARGET_DIR"] = str(dest)
-    try:
-        jobs_n = int(env.get("CARGO_BUILD_JOBS") or SECOND_BUILD_JOBS)
-    except ValueError:
-        jobs_n = SECOND_BUILD_JOBS
-    env["CARGO_BUILD_JOBS"] = str(min(jobs_n, SECOND_BUILD_JOBS))
+    env["CARGO_BUILD_JOBS"] = str(SECOND_BUILD_JOBS)
     print(
-        f"vendor-build: queue busy; memory gate passed — running in {dest} "
-        f"with CARGO_BUILD_JOBS={env['CARGO_BUILD_JOBS']}",
+        f"vendor-build: a vendored build is in flight; memory gate passed — running with "
+        f"CARGO_BUILD_JOBS={SECOND_BUILD_JOBS}",
         file=sys.stderr,
     )
     sys.stdout.flush()
@@ -981,56 +807,44 @@ def cmd_prune(args):
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="vendor-build.sh",
-        description="Read, or bypass, the shared vendored Grok build-target queue.",
+        description="Read the vendored Grok build queues, one per worktree.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
     def add_common(p):
         p.add_argument(
             "--target", default=None,
-            help="base target directory (default: <primary checkout>/third_party/grok-build/target)",
+            help=(
+                "one target directory to read instead of every worktree's vendored target "
+                "(default for `status`: all worktrees; for `prune`: the primary checkout's target)"
+            ),
         )
         p.add_argument(
             "--repo", default=None,
-            help="repository whose worktrees label the processes (default: this repo's primary checkout)",
+            help="repository whose worktrees are read (default: this repo's primary checkout)",
         )
 
-    st = sub.add_parser("status", help="read the lock queue (exit 0 free, 1 busy)")
+    st = sub.add_parser("status", help="read the vendored build queues (exit 0 free, 1 busy)")
     st.add_argument("--json", action="store_true", help="machine-readable output")
     add_common(st)
 
-    cl = sub.add_parser("clone", help="copy the target copy-on-write and print CARGO_TARGET_DIR")
-    cl.add_argument("slug")
-    cl.add_argument("--quiesce", action="store_true", help="wait for the build lock and snapshot at rest")
-    cl.add_argument(
-        "--full-copy", action="store_true", dest="full_copy",
-        help="full copy instead of APFS clonefile (slow, but works off APFS)",
-    )
-    cl.add_argument("--root", default=None, help="clone namespace (default: ~/.cache/dsb-vendor-targets)")
-    add_common(cl)
-
     rn = sub.add_parser(
         "run",
-        help="run a command now; on a busy queue only when the memory gate passes",
+        help="run a command now; with a build in flight only when the memory gate passes",
         description=(
-            "Run a command now. Queue free: it runs as-is. Queue busy: it runs in a "
-            "personal copy-on-write clone with CARGO_BUILD_JOBS=2, but only when the "
-            "memory gate passes; otherwise nothing starts, status is "
-            "printed, and the exit code is 1."
+            "Run a command now. No vendored build in flight: it runs as-is. One in "
+            "flight: it runs with CARGO_BUILD_JOBS=2, but only when the memory gate "
+            "passes; otherwise nothing starts, status is printed, and the exit code "
+            "is 1. The command's target directory is its own business — "
+            "scripts/vendor-cargo.sh pins it to the worktree."
         ),
     )
-    rn.add_argument("--slug", default=None, help="clone slug (default: the current worktree's directory name)")
-    rn.add_argument(
-        "--full-copy", action="store_true", dest="full_copy",
-        help="full copy instead of APFS clonefile when the clone must be created",
-    )
-    rn.add_argument("--root", default=None, help="clone namespace (default: ~/.cache/dsb-vendor-targets)")
     rn.add_argument("cmd", nargs=argparse.REMAINDER, help="the command, after `--`")
     add_common(rn)
 
-    pr = sub.add_parser("prune", help="delete personal clones idle for >= N days")
+    pr = sub.add_parser("prune", help="delete personal target copies idle for >= N days")
     pr.add_argument("--days", type=int, default=DEFAULT_PRUNE_DAYS)
-    pr.add_argument("--root", default=None, help="clone namespace (default: ~/.cache/dsb-vendor-targets)")
+    pr.add_argument("--root", default=None, help="copy namespace (default: ~/.cache/dsb-vendor-targets)")
     add_common(pr)
     return parser
 
@@ -1039,8 +853,6 @@ def main(argv):
     args = build_parser().parse_args(argv)
     if args.command == "status":
         return cmd_status(args)
-    if args.command == "clone":
-        return cmd_clone(args)
     if args.command == "run":
         return cmd_run(args)
     if args.command == "prune":

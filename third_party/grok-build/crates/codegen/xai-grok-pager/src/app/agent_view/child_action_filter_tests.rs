@@ -33,6 +33,7 @@ const ALLOWED: &[&str] = &[
     "CancelTurn",
     "KillBgTask",
     "CopyBlockContent",
+    "CopyHeldSelection",
     "CopyBlockMeta",
     "OpenBlockViewer",
     "OpenLink",

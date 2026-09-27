@@ -7,6 +7,7 @@ use super::billing::dispatch_open_supergrok_url;
 use super::ctx::{
     active_agent_session_id, get_active_agent_mut, navigate_clearing_selection, open_url_or_show,
     sync_sleep_inhibitor, with_active_agent, with_scrollback,
+    with_scrollback_invalidating_text_selection,
 };
 use super::dashboard::{
     dispatch_dashboard_attach, dispatch_dashboard_begin_rename, dispatch_dashboard_change_location,
@@ -106,8 +107,8 @@ use super::status::{
 use super::task_result::{dispatch_task_result, unregister_all_active_sessions};
 use super::transcript::{
     dispatch_copy_assistant_message, dispatch_copy_block_content, dispatch_copy_block_meta,
-    dispatch_dump_input_log, dispatch_export_conversation, dispatch_open_block_viewer,
-    dispatch_open_config_agents_modal, dispatch_open_extensions_modal,
+    dispatch_copy_held_selection, dispatch_dump_input_log, dispatch_export_conversation,
+    dispatch_open_block_viewer, dispatch_open_config_agents_modal, dispatch_open_extensions_modal,
     dispatch_open_transcript_pager,
 };
 use super::turn::{
@@ -546,19 +547,19 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
             vec![]
         }
         Action::NextTurn => {
-            with_scrollback(app, |s| {
+            with_scrollback_invalidating_text_selection(app, |s| {
                 s.next_turn();
             });
             vec![]
         }
         Action::PrevTurn => {
-            with_scrollback(app, |s| {
+            with_scrollback_invalidating_text_selection(app, |s| {
                 s.prev_turn();
             });
             vec![]
         }
         Action::NextResponse => {
-            with_scrollback(app, |s| {
+            with_scrollback_invalidating_text_selection(app, |s| {
                 if let Some(t) = s.turn_below_viewport_top() {
                     s.jump_to_turn(t);
                 }
@@ -566,7 +567,7 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
             vec![]
         }
         Action::PrevResponse => {
-            with_scrollback(app, |s| {
+            with_scrollback_invalidating_text_selection(app, |s| {
                 if let Some(t) = s.turn_above_viewport_top() {
                     s.jump_to_turn(t);
                 }
@@ -606,7 +607,7 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
             vec![]
         }
         Action::Collapse => {
-            with_scrollback(app, |s| {
+            with_scrollback_invalidating_text_selection(app, |s| {
                 let at_minimum = s
                     .selected()
                     .and_then(|i| s.entry(i))
@@ -618,7 +619,7 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
             vec![]
         }
         Action::Expand => {
-            with_scrollback(app, |s| {
+            with_scrollback_invalidating_text_selection(app, |s| {
                 if !s.toggle_group_expansion() {
                     s.expand_selected();
                 }
@@ -626,7 +627,7 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
             vec![]
         }
         Action::ToggleFold => {
-            with_scrollback(app, |s| {
+            with_scrollback_invalidating_text_selection(app, |s| {
                 if !s.toggle_group_expansion() {
                     s.toggle_fold_selected();
                 }
@@ -634,15 +635,15 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
             vec![]
         }
         Action::ToggleExpandAll => {
-            with_scrollback(app, |s| s.toggle_expand_all());
+            with_scrollback_invalidating_text_selection(app, |s| s.toggle_expand_all());
             vec![]
         }
         Action::ExpandAllThinking => {
-            with_scrollback(app, |s| s.expand_all_thinking());
+            with_scrollback_invalidating_text_selection(app, |s| s.expand_all_thinking());
             vec![]
         }
         Action::ToggleRaw => {
-            with_scrollback(app, |s| s.toggle_raw_selected());
+            with_scrollback_invalidating_text_selection(app, |s| s.toggle_raw_selected());
             vec![]
         }
         Action::ToggleMouseCapture => {
@@ -695,6 +696,10 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
             dispatch_copy_block_content(app);
             vec![]
         }
+        Action::CopyHeldSelection => {
+            dispatch_copy_held_selection(app);
+            vec![]
+        }
         Action::CopyAssistantMessage { n, file_path } => {
             dispatch_copy_assistant_message(app, n, file_path);
             vec![]
@@ -717,7 +722,9 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
         }
         Action::OpenBlockViewer => {
             let mut group_toggled = false;
-            with_scrollback(app, |s| group_toggled = s.toggle_group_expansion());
+            with_scrollback_invalidating_text_selection(app, |s| {
+                group_toggled = s.toggle_group_expansion()
+            });
             if group_toggled {
                 return vec![];
             }

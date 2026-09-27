@@ -800,9 +800,10 @@ impl AgentView {
         buf: &mut Buffer,
         selection_box: &SelectionBox,
         selected_entry_area: Option<Rect>,
+        held_copy_visible: bool,
         theme: &Theme,
     ) {
-        // Gated by appearance config (opt-in while testing).
+        // Respect an explicit appearance choice to hide selection buttons.
         if !self
             .scrollback
             .appearance()
@@ -827,7 +828,7 @@ impl AgentView {
         };
 
         let header_selected = self.scrollback.entry_content_hidden_by_group(selected_idx);
-        let has_copy = entry.block.supports_copy() && !header_selected;
+        let has_copy = entry.block.supports_copy() && !header_selected && !held_copy_visible;
         let has_view = entry.block.supports_fullscreen() && !header_selected;
         if !has_copy && !has_view {
             self.hit_sb_copy.clear();
@@ -850,6 +851,16 @@ impl AgentView {
 
         let sel = &selection_box.inner_area;
         let right_x = sel.x + sel.width.saturating_sub(1);
+        let corner_button_row = || {
+            let corner_y = sel.y.saturating_sub(1);
+            if corner_y < self.pane_areas.scrollback.y {
+                // A clipped border can share the status row with several
+                // controls. Keep buttons inside scrollback in that case.
+                sel.y
+            } else {
+                corner_y
+            }
+        };
 
         let btn_base = Style::default().fg(theme.selection_border);
         let btn_hover = Style::default().fg(theme.text_primary);
@@ -863,7 +874,7 @@ impl AgentView {
                 (right_x.saturating_sub(2), entry_y)
             } else {
                 // Corner row: buttons to the left of ╮.
-                let corner_y = sel.y.saturating_sub(1);
+                let corner_y = corner_button_row();
                 (right_x.saturating_sub(2), corner_y)
             };
             if !selection_box.top_clipped || inline {
@@ -890,7 +901,7 @@ impl AgentView {
                 let entry_y = selected_entry_area.map(|r| r.y).unwrap_or(sel.y);
                 (right_x.saturating_sub(2), entry_y)
             } else {
-                let corner_y = sel.y.saturating_sub(1);
+                let corner_y = corner_button_row();
                 (right_x.saturating_sub(2), corner_y)
             };
             if !selection_box.top_clipped || inline {
@@ -914,7 +925,7 @@ impl AgentView {
                 let entry_y = selected_entry_area.map(|r| r.y).unwrap_or(sel.y);
                 (right_x.saturating_sub(2), entry_y)
             } else {
-                let corner_y = sel.y.saturating_sub(1);
+                let corner_y = corner_button_row();
                 (right_x.saturating_sub(2), corner_y)
             };
             if !selection_box.top_clipped || inline {
@@ -933,6 +944,55 @@ impl AgentView {
             }
             self.hit_sb_copy.clear();
         }
+    }
+
+    pub(super) fn held_copy_chip_row(&self) -> Option<u16> {
+        if !self
+            .scrollback
+            .appearance()
+            .scrollback
+            .display
+            .selection_buttons
+            || self.held_selection_copy_text().is_none()
+        {
+            return None;
+        }
+        let selection = self.persistent_text_selection.as_ref()?;
+        crate::scrollback::text_selection::last_visible_selected_row(
+            &self.last_scrollback_selection_model,
+            selection,
+            self.table_geometry_for_selection(selection.entry_idx, selection.range_id),
+        )
+    }
+
+    /// A held span owns its own copy control, independent of the selected
+    /// block's box and its potentially clipped top border.
+    pub(super) fn render_held_copy_chip(
+        &mut self,
+        buf: &mut Buffer,
+        row: Option<u16>,
+        theme: &Theme,
+    ) {
+        let Some(row) = row else {
+            self.hit_held_copy.clear();
+            return;
+        };
+        let area = self.last_scrollback_selection_model.content_area;
+        if area.width < 3 {
+            self.hit_held_copy.clear();
+            return;
+        }
+        let x = area.x.saturating_add(area.width).saturating_sub(2);
+        let areas = render_char_buttons(
+            buf,
+            x,
+            row,
+            [(crate::glyphs::copy_icon(), self.hit_held_copy.hovered)],
+            Style::default().fg(theme.selection_border),
+            Style::default().fg(theme.text_primary),
+            0,
+        );
+        self.hit_held_copy.set(Some(areas[0]));
     }
 
     // -- Block viewer input handling ------------------------------------------

@@ -61,6 +61,10 @@ fn wrapped_lines_from_widths(widths: &[u32], content_width: u16) -> u16 {
 pub struct ScrollbackEntry {
     pub id: EntryId,
 
+    /// Changes only when this entry's source or display state is invalidated,
+    /// so selections elsewhere survive unrelated streaming output.
+    pub(crate) content_revision: u64,
+
     pub block: RenderBlock,
 
     /// Whether block is still running (for animation, auto-collapse).
@@ -151,6 +155,7 @@ impl ScrollbackEntry {
         let display_mode = block.default_display_mode();
         Self {
             id,
+            content_revision: 0,
             block,
             is_running: false,
             is_pending_user_input: false,
@@ -180,6 +185,7 @@ impl ScrollbackEntry {
         let display_mode = block.default_display_mode();
         Self {
             id,
+            content_revision: 0,
             block,
             is_running: true,
             is_pending_user_input: false,
@@ -258,6 +264,7 @@ impl ScrollbackEntry {
 
     /// Invalidate cached output after a content change.
     pub fn invalidate_cache(&mut self) {
+        self.content_revision = self.content_revision.wrapping_add(1);
         self.invalidate_width_caches();
         *self.cached_line_widths.borrow_mut() = None;
     }

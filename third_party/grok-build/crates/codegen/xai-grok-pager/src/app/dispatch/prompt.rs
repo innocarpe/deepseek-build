@@ -1088,6 +1088,7 @@ pub(super) fn dispatch_send_prompt_submission(
         }
         // Reaching here means the command queued or passed text through, a real submission
         // Local-UI commands returned above and must keep the hook-block hold
+        agent.invalidate_text_selection();
         agent.credit_limit_stashed_prompt = None;
         agent.release_hook_block_hold();
         let mut untaken = attach_prompt_state_to_last_queued(
@@ -1114,6 +1115,7 @@ pub(super) fn dispatch_send_prompt_submission(
         // Server-authoritative immediate send (plain prompt only)
         // The agent appends it to its authoritative `pending_inputs` (turn starts never overlap) and drives the drain via `x.ai/queue/changed`
         // So the chips are cleared ONLY when the suggestion actually sends or enqueues
+        agent.invalidate_text_selection();
         agent.release_hook_block_hold();
         if is_follow_up && agent.session.session_id.is_some() {
             agent.clear_follow_ups();
@@ -1301,6 +1303,7 @@ pub(super) fn dispatch_send_bash_command(app: &mut AppView, command: String) -> 
     let Some(agent) = app.agents.get_mut(&id) else {
         return vec![];
     };
+    agent.invalidate_text_selection();
     // Submitting a bash command retires any edit-contextual ephemeral tip.
     agent.ephemeral_tip.clear_on_submit();
     agent.release_hook_block_hold();

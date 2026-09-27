@@ -320,6 +320,8 @@ pub enum Action {
     ShowDebugStatus,
     /// Copy selected block's content to clipboard.
     CopyBlockContent,
+    /// Copy the held text selection, falling back to the selected block for `y`.
+    CopyHeldSelection,
     /// Copy the Nth most recent assistant message (1 is the latest).
     /// `None` copies to the clipboard (with file fallback on failure); `Some(p)` writes a UTF-8 file.
     CopyAssistantMessage {

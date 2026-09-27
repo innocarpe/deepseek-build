@@ -40,6 +40,7 @@ impl AgentView {
             .map(|link| link.parent_session_id().clone());
         if self.active_subagent.as_deref() != Some(child_sid.as_str()) {
             self.close_subagent_fullscreen();
+            self.invalidate_text_selection();
         }
         let replay_outcome = crate::app::subagent::ensure_subagent_child_replayed(self, &child_sid);
         tracing::debug!(
@@ -75,6 +76,7 @@ impl AgentView {
     /// All close sites route through here.
     pub(crate) fn close_subagent_fullscreen(&mut self) {
         if let Some(child_sid) = self.active_subagent.take() {
+            self.invalidate_text_selection();
             let _ = crate::app::subagent::evict_finished_child_view(self, &child_sid);
         }
     }

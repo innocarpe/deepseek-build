@@ -515,6 +515,20 @@ mod tests {
     }
 
     #[test]
+    fn bare_y_copies_scrollback_only_in_vim_mode() {
+        let registry = ActionRegistry::defaults();
+        let y = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::empty());
+        assert_eq!(
+            registry.lookup_with_mode(&y, When::ScrollbackFocused, false),
+            None
+        );
+        assert_eq!(
+            registry.lookup_with_mode(&y, When::ScrollbackFocused, true),
+            Some(ActionId::CopyBlockContent)
+        );
+    }
+
+    #[test]
     fn shortcut_used_allowlist_is_ctrl_l_actions_only() {
         assert_eq!(
             shortcut_used_action_label(ActionId::InterjectPrompt),

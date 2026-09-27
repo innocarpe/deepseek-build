@@ -367,6 +367,24 @@ impl AgentView {
                     self.set_active_pane(AgentPane::Prompt, false);
                     return InputOutcome::Changed;
                 }
+                // Dropdowns and status controls paint above the transcript.
+                // The held chip is inside its visible highlight; the box
+                // button retains its separate whole-block meaning.
+                if self.hit_held_copy.contains(mouse.column, mouse.row)
+                    && !self.pos_occluded(mouse.column, mouse.row)
+                {
+                    return InputOutcome::Action(Action::CopyHeldSelection);
+                }
+                if self.hit_sb_copy.contains(mouse.column, mouse.row)
+                    && !self.pos_occluded(mouse.column, mouse.row)
+                {
+                    return InputOutcome::Action(Action::CopyBlockContent);
+                }
+                if self.hit_sb_view.contains(mouse.column, mouse.row)
+                    && !self.pos_occluded(mouse.column, mouse.row)
+                {
+                    return InputOutcome::Action(Action::OpenBlockViewer);
+                }
                 if self.hit_scrollbar.contains(mouse.column, mouse.row) {
                     self.set_active_pane(AgentPane::Scrollback, false);
                     self.scrollbar_dragging = true;
@@ -380,17 +398,12 @@ impl AgentView {
                         .hit(mouse.column, mouse.row)
                         .and_then(|hit| crate::views::timeline::chevron_target(rail, hit));
                     if let Some(turn_idx) = target {
+                        self.invalidate_text_selection();
                         self.set_active_pane(AgentPane::Scrollback, false);
                         self.scrollback.jump_to_turn(turn_idx);
                         return InputOutcome::Changed;
                     }
                     return InputOutcome::Unchanged;
-                }
-                if self.hit_sb_copy.contains(mouse.column, mouse.row) {
-                    return InputOutcome::Action(Action::CopyBlockContent);
-                }
-                if self.hit_sb_view.contains(mouse.column, mouse.row) {
-                    return InputOutcome::Action(Action::OpenBlockViewer);
                 }
                 if self.last_btw_area.area() > 0
                     && self
@@ -705,6 +718,7 @@ impl AgentView {
                         }
                         self.persistent_text_selection = None;
                         self.persistent_selection_copy = None;
+                        self.selection_source_snapshot = None;
                         self.table_selection_geometry = None;
                         self.selection_created_at = None;
                         if is_link_modifier_held(mouse.modifiers)
@@ -746,6 +760,7 @@ impl AgentView {
                         if above_prompt_strip {
                             self.persistent_text_selection = None;
                             self.persistent_selection_copy = None;
+                            self.selection_source_snapshot = None;
                             self.table_selection_geometry = None;
                             self.selection_created_at = None;
                             self.deferred_text_press = Some((mouse.column, mouse.row));
@@ -796,7 +811,13 @@ impl AgentView {
                         InputOutcome::Unchanged
                     };
                 }
-                let had_pending_text_drag = self.pending_text_drag.take().is_some();
+                let pending_text_drag = self.pending_text_drag.take();
+                let had_pending_text_drag = pending_text_drag.is_some();
+                if pending_text_drag
+                    .is_some_and(|pending| pending.anchor.entry_idx != BTW_OVERLAY_ENTRY_IDX)
+                {
+                    self.selection_source_snapshot = None;
+                }
                 let _had_pending_block_drag = self.pending_block_drag.take().is_some();
                 if let Some((lc, lr, target)) = self.pending_link_click.take()
                     && mouse.column == lc
@@ -825,6 +846,7 @@ impl AgentView {
                                         1 => {
                                             self.persistent_text_selection = None;
                                             self.persistent_selection_copy = None;
+                                            self.selection_source_snapshot = None;
                                             self.table_selection_geometry = None;
                                             self.selection_created_at = None;
                                             if hit.entry_idx != BTW_OVERLAY_ENTRY_IDX {

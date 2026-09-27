@@ -189,6 +189,34 @@ def queue(primary):
     return entries, busy, facts, vendor_build.evaluate_gate(facts)
 
 
+
+def exempt_runner(env):
+    """The DsbExempt runner to put cargo under, or None.
+
+    macOS assesses every freshly built executable and dylib on its first run
+    (300-590 ms each, 10 s for a 512 MB debug binary, measured 2026-09-28).
+    Developer Tools exempts processes whose responsible app is listed there,
+    and Orca tabs are responsible for themselves, so cargo runs under
+    scripts/lib/dsb-exempt.c (installed by scripts/install-dsb-exempt.sh and
+    listed under Developer Tools). DSB_EXEMPT=0 turns it off; a path picks
+    that runner.
+    """
+    if sys.platform != "darwin":
+        return None
+    choice = env.get("DSB_EXEMPT", "")
+    if choice == "0":
+        return None
+    if choice and choice != "1":
+        return choice if os.access(choice, os.X_OK) else None
+    found = shutil.which("dsb-exempt", path=env.get("PATH"))
+    if found:
+        return found
+    for apps in (Path("/Applications"), Path.home() / "Applications"):
+        app = apps / "DsbExempt.app" / "Contents" / "MacOS" / "dsb-exempt"
+        if os.access(app, os.X_OK):
+            return str(app)
+    return None
+
 def main(argv):
     args, cargo_argv = parse(argv)
     if args.help:
@@ -259,10 +287,13 @@ def main(argv):
              env.get("PATH", "")]
         )
 
-    log(f"{subcommand or 'cargo'} → target {target} · -j {jobs}")
+    runner = exempt_runner(env)
+    log(f"{subcommand or 'cargo'} → target {target} · -j {jobs}" + (" · under DsbExempt" if runner else ""))
     sys.stdout.flush()
     sys.stderr.flush()
     os.chdir(vendor)
+    if runner:
+        os.execve(runner, [runner, "cargo", *cargo_argv], env)  # never returns
     os.execvpe("cargo", ["cargo", *cargo_argv], env)  # never returns
 
 

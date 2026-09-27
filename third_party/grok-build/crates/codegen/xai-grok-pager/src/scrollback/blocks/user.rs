@@ -2,6 +2,7 @@ use std::ops::Range;
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::render::wrapping::{RtOptions, word_wrap_line_with_joiners};
@@ -136,6 +137,70 @@ fn token_styled_line(
         spans.push(Span::styled(body.to_string(), body_style));
     }
     Line::from(spans)
+}
+
+/// Clip a styled line to `width` display columns on grapheme boundaries, without padding.
+///
+/// A folded echo's last visible row ends in ` …`, so its content fills the columns it shows and
+/// leaves none for the clock. A line shorter than `width` keeps its own columns (the clock may
+/// still close the row), and a wide grapheme that would cross the boundary stays out whole.
+fn clip_line_to_width(line: Line<'_>, width: usize) -> Line<'_> {
+    let Line {
+        style,
+        alignment,
+        spans,
+    } = line;
+    let mut out: Vec<Span<'_>> = Vec::new();
+    let mut used = 0usize;
+    for span in spans {
+        let span_width = span.content.width();
+        if used + span_width <= width {
+            used += span_width;
+            let complete = used == width;
+            out.push(span);
+            if complete {
+                break;
+            }
+            continue;
+        }
+        // This span straddles the boundary: take whole graphemes that fit, and drop a wide
+        // grapheme that would cross it so it never prints half a glyph.
+        let remaining = width - used;
+        let mut taken = String::new();
+        let mut taken_width = 0usize;
+        for grapheme in span.content.graphemes(true) {
+            let grapheme_width = grapheme.width();
+            if taken_width + grapheme_width > remaining {
+                break;
+            }
+            taken_width += grapheme_width;
+            taken.push_str(grapheme);
+        }
+        if !taken.is_empty() {
+            out.push(Span::styled(taken, span.style));
+        }
+        break;
+    }
+    Line {
+        style,
+        alignment,
+        spans: out,
+    }
+}
+
+/// Drop trailing whitespace from a styled line, removing spans it empties.
+fn trim_line_end(line: &mut Line<'_>) {
+    while let Some(last) = line.spans.last_mut() {
+        let keep = last.content.trim_end().len();
+        if keep == 0 {
+            line.spans.pop();
+            continue;
+        }
+        if keep < last.content.len() {
+            last.content = last.content[..keep].to_string().into();
+        }
+        break;
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -433,9 +498,8 @@ impl UserPromptBlock {
             let (wrapped, wrap_joiners) = word_wrap_line_with_joiners(&content_line, wrap_opts);
             let wrapped_count = wrapped.len();
 
-            for (wrap_idx, (wrapped_line, wrap_joiner)) in
-                wrapped.into_iter().zip(wrap_joiners).enumerate()
-            {
+            for wrap_idx in 0..wrapped_count {
+                let wrapped_line = &wrapped[wrap_idx];
                 let is_first_line = logical_idx == 0 && wrap_idx == 0;
                 let indent: String = " ".repeat(prefix_width);
                 let line_prefix = if is_first_line { prefix } else { &indent };
@@ -452,25 +516,43 @@ impl UserPromptBlock {
                 let joiner = if is_first_line || wrap_idx == 0 {
                     None
                 } else {
-                    wrap_joiner
+                    wrap_joiners[wrap_idx].clone()
                 };
 
                 if will_be_last && has_more {
-                    // Re-wrap the current line's content with reduced width to make room for the ellipsis
-                    // Re-wrapping the styled line (not flattened text) keeps token spans teal here
                     let line_budget = if logical_idx == 0 && wrap_idx == 0 {
                         base_content_width.saturating_sub(first_line_reserve).max(1)
                     } else {
                         base_content_width
                     };
                     let reduced_width = line_budget.saturating_sub(ellipsis_width).max(1);
-                    let (re_wrapped_lines, _) =
-                        word_wrap_line_with_joiners(&wrapped_line, RtOptions::new(reduced_width));
 
-                    let final_content = re_wrapped_lines
-                        .into_iter()
-                        .next()
-                        .unwrap_or_else(Line::default);
+                    // The last visible row runs to `reduced_width` before the ellipsis: join this row
+                    // with every later row of its logical line (each later row's joiner is the space
+                    // the base wrap skipped) and clip on grapheme boundaries. Re-wrapping only this
+                    // row left it short of the boundary and handed the leftover columns to the clock.
+                    // Building the tail from the wrapped rows keeps the styled spans (teal tokens)
+                    // crossing the cut intact.
+                    // A cut that lands on a joiner drops the space, so the ellipsis's own space is
+                    // the only one before it.
+                    let mut tail = Line::default();
+                    let mut tail_width = 0usize;
+                    for i in wrap_idx..wrapped_count {
+                        if tail_width >= reduced_width {
+                            break;
+                        }
+                        if i > wrap_idx
+                            && let Some(space) = &wrap_joiners[i]
+                            && !space.is_empty()
+                        {
+                            tail_width += space.width();
+                            tail.spans.push(Span::styled(space.clone(), text_style));
+                        }
+                        tail_width += wrapped[i].width();
+                        tail.spans.extend(wrapped[i].spans.iter().cloned());
+                    }
+                    let mut final_content = clip_line_to_width(tail, reduced_width);
+                    trim_line_end(&mut final_content);
 
                     // Build final line with prefix, content, and ellipsis
                     let mut spans = vec![Span::styled(line_prefix.to_string(), prefix_style)];
@@ -499,7 +581,7 @@ impl UserPromptBlock {
 
                 // Normal line (not truncated)
                 let mut spans = vec![Span::styled(line_prefix.to_string(), prefix_style)];
-                spans.extend(wrapped_line.spans.into_iter().map(|s| Span {
+                spans.extend(wrapped_line.spans.iter().map(|s| Span {
                     content: s.content.to_string().into(),
                     style: s.style,
                 }));
@@ -1049,7 +1131,8 @@ mod tests {
 
         let theme = Theme::current();
         let last = &line_at(&lines, 2).content;
-        assert!(line_text(last).ends_with(" \u{2026}"));
+        // The cut lands on the space after "words"; that space is dropped, not doubled before the ellipsis.
+        assert_eq!(line_text(last), "/do-it more words \u{2026}");
         assert_eq!(teal_text(last, &theme), "/do-it");
         let body: String = last
             .spans
@@ -1482,6 +1565,39 @@ mod tests {
         }
     }
 
+    /// The folded last row runs to the edge before its ellipsis. It used to stop where word wrapping
+    /// broke it (`…because it has plenty …` in the 52-column phone echo), and the clock took the
+    /// columns left over.
+    #[test]
+    fn collapsed_last_line_fills_its_row_before_the_ellipsis() {
+        const ECHO_WIDTH: u16 = 52;
+        let block = UserPromptBlock::new(LONG_PROMPT);
+        let rows: Vec<String> = block
+            .wrap_prompt_lines(ECHO_WIDTH, Some(2), false, false)
+            .iter()
+            .map(|l| line_text(&l.content))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                "This is a long prompt that should be collapsed and".to_string(),
+                "truncated at narrow widths because it has plenty o \u{2026}".to_string(),
+            ],
+        );
+        assert_eq!(rows[1].width(), usize::from(ECHO_WIDTH));
+    }
+
+    /// A wide glyph that would cross the cut stays out whole, so the row ends one column short.
+    #[test]
+    fn collapsed_last_line_keeps_a_wide_glyph_whole() {
+        let block = UserPromptBlock::new("가".repeat(30));
+        let lines = block.wrap_prompt_lines(21, Some(1), false, false);
+        assert_eq!(
+            line_text(&line_at(&lines, 0).content),
+            format!("{} \u{2026}", "가".repeat(9))
+        );
+    }
+
     /// The other half of the contract: widths above the threshold keep the
     /// three-line budget, so the desktop layout is unchanged.
     #[test]
@@ -1717,7 +1833,8 @@ mod tests {
 
     /// The fold check counts the rows word wrapping produces, not `ceil(width / columns)`. Three words that take a
     /// row each at 52 columns are 96 columns wide, so the lower bound said two rows: the echo stayed expanded and
-    /// painted three. Folded, it paints the two-row budget and ends in the ellipsis.
+    /// painted three. Folded, it paints the two-row budget, its second row runs on into the third word up to the
+    /// ellipsis, and the ellipsis ends the row at the edge.
     #[test]
     fn fold_check_counts_word_wrapped_rows() {
         const ECHO_WIDTH: u16 = 52;
@@ -1741,8 +1858,11 @@ mod tests {
         );
         assert_eq!(
             rows(collapsed_max_lines(ECHO_WIDTH, DisplayMode::Collapsed)),
-            vec!["A".repeat(27), format!("{} \u{2026}", "B".repeat(27))],
-            "folded, the echo paints two rows and marks the rest"
+            vec![
+                "A".repeat(27),
+                format!("{} {} \u{2026}", "B".repeat(27), "C".repeat(22))
+            ],
+            "folded, the echo paints two rows, fills the second and marks the rest"
         );
 
         // A roomy pane has the same lower bound: 4 words of 40 are 163 columns, `ceil(163 / 78) = 3` rows, but

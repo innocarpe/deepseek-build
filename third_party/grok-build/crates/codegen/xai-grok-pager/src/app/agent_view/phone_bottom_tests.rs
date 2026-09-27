@@ -789,13 +789,15 @@ fn phone_pinned_echo_keeps_its_band_and_closes_on_its_clock() {
             2,
             false,
         ),
+        // Folded: the second row runs on into the third word up to the
+        // ellipsis, so it is full and the clock has no room.
         (
             "word wrap past the budget folds",
             three_rows.as_str(),
             "AAAA",
-            "B \u{2026}",
+            "C \u{2026}",
             2,
-            true,
+            false,
         ),
     ] {
         let mut agent = phone_agent();
@@ -974,16 +976,25 @@ fn a_wide_pinned_prompt_keeps_every_row_it_paints() {
         pinned.render_height, full_height,
         "the pinned prompt keeps every row it paints\n{frame}"
     );
-    for word in ["AAAA", "BBBB", "CCCC \u{2026}"] {
+    for word in ["AAAA", "BBBB", "CCCC"] {
         assert_eq!(
             rows_with(&buf, word).len(),
             1,
             "the pinned header shows the {word} row\n{frame}"
         );
     }
-    assert!(
-        rows_with(&buf, "DDDD").is_empty(),
-        "the fourth wrapped row is folded away\n{frame}"
+    // The fourth wrapped row is folded away: its word shows only where the
+    // third row runs on into it up to the ellipsis.
+    let third = rows_with(&buf, "CCCC");
+    assert_eq!(
+        rows_with(&buf, "D \u{2026}"),
+        third,
+        "the third row fills with the fourth word and ends in the ellipsis\n{frame}"
+    );
+    assert_eq!(
+        rows_with(&buf, "DDDD"),
+        third,
+        "no row of its own for the fourth word\n{frame}"
     );
 }
 

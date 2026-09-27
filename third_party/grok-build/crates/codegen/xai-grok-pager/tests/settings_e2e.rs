@@ -1997,7 +1997,7 @@ fn defaults_round_trip_through_registry() {
     // `current_value_for` for these keys reads process-wide caches, not `ui`.
     // Reset to defaults so a sibling test on this worker thread can't leak in.
     xai_grok_pager::appearance::cache::set_keep_text_selection(
-        xai_grok_pager::appearance::TextSelection::Flash,
+        xai_grok_pager::appearance::TextSelection::Hold,
     );
     xai_grok_pager::appearance::cache::set_show_thinking_blocks(true);
     xai_grok_pager::appearance::cache::set_prompt_suggestions(true);
@@ -2031,7 +2031,7 @@ fn defaults_round_trip_through_registry() {
             "remember_tool_approvals" => SettingValue::Bool(true),
             "toolset.ask_user_question.timeout_enabled" => SettingValue::Bool(true),
             "subagent_model_inheritance" => SettingValue::Bool(false),
-            "keep_text_selection" => SettingValue::Enum("flash"),
+            "keep_text_selection" => SettingValue::Enum("hold"),
             "theme" => SettingValue::Enum("deepseeknight"),
             "auto_dark_theme" => SettingValue::Enum("deepseeknight"),
             "auto_light_theme" => SettingValue::Enum("grokday"),
@@ -6376,7 +6376,7 @@ fn keep_text_selection_does_not_support_preview() {
 #[test]
 fn enter_on_keep_text_selection_row_enters_picking_enum() {
     // The picker's `original_value` is read from the process-wide cache
-    // Pin it to the default so a sibling test's `set_keep_text_selection` can't leak in
+    // Pin it to flash so a sibling test's `set_keep_text_selection` can't leak in.
     xai_grok_pager::appearance::cache::set_keep_text_selection(
         xai_grok_pager::appearance::TextSelection::Flash,
     );

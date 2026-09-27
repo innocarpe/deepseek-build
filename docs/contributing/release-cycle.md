@@ -9,7 +9,9 @@ The default cycle for any product-affecting change is:
 
 ```
 fix on a branch → PR (pr-authoring skill) → merge (merge commit)
-→ ./scripts/release.sh <version> → npm i -g @innocarpe/deepseek-build@<version> → verify
+→ ./scripts/release.sh <version>
+→ npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build@<version>
+→ verify
 ```
 
 **No step needs a human.** The tag push triggers
@@ -403,8 +405,16 @@ peer of the CI path.
 
 ## Verification after publish
 
+npm **12.0.0+** blocks the package's `postinstall` unless the installer opts
+in, and the blocked install still exits 0 — the agent binary then keeps the
+previous version and `dsb --version` reports the package/agent mismatch
+instead of `<version>`. Measured 2026-09-27 on npm 12.1.0: the plain form
+left package `6.1.8` beside agent `6.1.7`; the form below installed `6.1.8`
+with all three binaries matching the release tarball. npm 11 and older run
+the install script either way.
+
 ```bash
-npm i -g @innocarpe/deepseek-build@<version>
+npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build@<version>
 dsb --version                      # matches <version>
 dsb --resume                       # resumes most-recent TUI session (if any)
 # quit a full-screen session → hint should read: dsb --resume <id>

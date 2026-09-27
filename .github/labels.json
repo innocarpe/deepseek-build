@@ -8,6 +8,7 @@
   { "name": "test", "color": "BFDADC", "description": "Kind: tests only" },
   { "name": "ci", "color": "E4E669", "description": "Kind: CI / workflows only" },
   { "name": "perf", "color": "F9D0C4", "description": "Kind: faster or lighter without behavior change" },
+  { "name": "build", "color": "D4C5F9", "description": "Kind: build system, packaging, or dependencies" },
 
   { "name": "bug", "color": "B60205", "description": "Confirmed or suspected bug" },
   { "name": "enhancement", "color": "A2EEEF", "description": "Idea or improvement (triage)" },

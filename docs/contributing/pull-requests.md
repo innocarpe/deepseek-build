@@ -170,7 +170,7 @@ Local check:
 
 ### Labels (required kind; CI on non-draft)
 
-| Required | Exactly one of | `feat` `fix` `docs` `spec` `chore` `refactor` `test` `ci` `perf` |
+| Required | Exactly one of | `feat` `fix` `docs` `spec` `chore` `refactor` `test` `ci` `perf` `build` |
 |----------|----------------|--------------------------------------------------------------|
 | Recommended | Area | `area/cache` `area/provider` `area/docs` `area/infra` … |
 | Optional | Size / process | `size/S` `size/M` `size/L` `milestone-aligned` `needs-design` `ready` |

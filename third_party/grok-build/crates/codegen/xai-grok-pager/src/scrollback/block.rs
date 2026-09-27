@@ -806,6 +806,12 @@ impl RenderBlock {
         matches!(self, RenderBlock::UserPrompt(_))
     }
 
+    /// Whether a selection or hover box around this block should hug its vertical pad: the corners move from the
+    /// rows around the entry onto the band's own first and last rows. Only the prompt echo carries that pad.
+    pub fn selection_hugs_vpad(&self, appearance: &AppearanceConfig) -> bool {
+        self.is_user_prompt() && self.has_vpad_for(appearance)
+    }
+
     /// Used by the entry cache to decide whether selection state should invalidate the cached output.
     /// Tool call variants undim their collapsed header text when selected.
     pub fn is_tool_call(&self) -> bool {

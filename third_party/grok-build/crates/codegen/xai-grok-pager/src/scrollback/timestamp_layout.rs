@@ -12,14 +12,22 @@ use super::block::RenderBlock;
 use super::entry::ScrollbackEntry;
 use crate::appearance::AppearanceConfig;
 
-/// Widest short clock (`"12:59 PM"`). Wide panes subtract this from the first content line only.
+/// Widest short clock (`"12:59 PM"`).
 pub(crate) const TIMESTAMP_SHORT_MAX_COLS: u16 = 8;
+
+/// The clock ends one column inside the entry's right edge.
+pub(crate) const CLOCK_EDGE_INSET: u16 = 1;
+
+/// Columns a wide pane takes from the first content line only: the short clock,
+/// one blank column before it, and [`CLOCK_EDGE_INSET`].
+pub(crate) const TIMESTAMP_FIRST_LINE_RESERVE: u16 =
+    TIMESTAMP_SHORT_MAX_COLS + 1 + CLOCK_EDGE_INSET;
 
 /// Columns a wide pane takes from the first content line so the short clock and one blank column fit.
 /// Narrow panes, and `show_timestamps == false`, reserve nothing.
 pub(crate) fn wide_first_line_reserve(appearance: &AppearanceConfig) -> u16 {
     if appearance.show_timestamps && !appearance.scrollback.layout.narrow {
-        TIMESTAMP_SHORT_MAX_COLS
+        TIMESTAMP_FIRST_LINE_RESERVE
     } else {
         0
     }
@@ -82,6 +90,7 @@ fn fits(text_cols: u16, clock: &str, row_span: u16) -> bool {
     text_cols
         .saturating_add(1)
         .saturating_add(clock_cols(clock))
+        .saturating_add(CLOCK_EDGE_INSET)
         <= row_span
 }
 
@@ -174,9 +183,55 @@ impl ClockPlan {
     }
 }
 
+/// Meta rows at the top of a prompt echo whose selection should hug the band, not the clock.
+///
+/// The echo's band keeps one right-pad column. A missing cache means the row is not known yet.
+pub(crate) fn selection_clock_meta_rows(
+    entry: &ScrollbackEntry,
+    appearance: &AppearanceConfig,
+) -> u16 {
+    if !entry.block.selection_hugs_vpad(appearance) {
+        return 0;
+    }
+    let Some(content_width) = entry.cached_content_width() else {
+        return 0;
+    };
+    let row_span = content_width.saturating_add(1);
+    u16::from(cached_clock_is_meta(entry, appearance, row_span))
+}
+
+/// Whether the cached body needs the meta row. Hover is ignored: a hover must not change height.
+pub(crate) fn cached_clock_is_meta(
+    entry: &ScrollbackEntry,
+    appearance: &AppearanceConfig,
+    row_span: u16,
+) -> bool {
+    let output = entry.cached_output_ref();
+    let first = output
+        .lines
+        .first()
+        .map(|line| line_cols(&line.content))
+        .unwrap_or(0);
+    let has_content = !output.lines.is_empty();
+    drop(output);
+    ClockPlan::decide(&ClockQuery {
+        entry,
+        appearance,
+        first_line_cols: first,
+        row_span,
+        prev_clock: entry.clock_prev.get(),
+        hovered: false,
+        allow_long: true,
+        has_content,
+    })
+    .meta
+}
+
 /// Right edge of a painted clock inside an entry area whose right edge is `entry_right`.
 pub(crate) fn clock_origin(entry_right: u16, text: &str) -> u16 {
-    entry_right.saturating_sub(clock_cols(text))
+    entry_right
+        .saturating_sub(CLOCK_EDGE_INSET)
+        .saturating_sub(clock_cols(text))
 }
 
 pub(crate) fn point_in_clock(col: u16, row: u16, clock_x: u16, clock_y: u16, clock_w: u16) -> bool {

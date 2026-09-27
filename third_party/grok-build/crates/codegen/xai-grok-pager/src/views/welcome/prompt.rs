@@ -23,8 +23,8 @@ fn prompt_style(focus: WelcomePromptFocus, compact: bool) -> PromptStyle {
     PromptStyle {
         focused: focus == WelcomePromptFocus::Focused,
         show_prefix: true,
-        // One vpad row is the top border, so this box keeps the welcome screen's
-        // frame unchanged: the bottom inset follows `vpad_top` (see `info_block`).
+        // One vpad row: the top border. The box is border, text and divider (see
+        // `info_block`), which keeps the welcome screen's frame unchanged.
         vpad_top: 1,
         compact,
         chrome: true,

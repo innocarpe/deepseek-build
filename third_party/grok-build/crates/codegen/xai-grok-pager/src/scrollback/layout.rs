@@ -12,16 +12,55 @@ pub struct HorizontalLayout {
     pub right_padding: Rect,
 }
 
+/// The columns an entry spends left and right of its own text.
+///
+/// Left: the accent column when the block paints a rail there or fills it with
+/// its own band (the prompt echo's left gutter), plus the one column of air a
+/// rail keeps before its body — and nothing at all for a block with neither, so
+/// its text starts on the accent column: the minimum left unit. Right: the
+/// band's own gutter where a block paints a band, nothing elsewhere, so text
+/// runs to the entry area's last column, one column inside the frame.
+///
+/// Computed per entry (see `entry_chrome`) because one pane holds blocks with
+/// different left edges: the echo's band, a thinking rail, and plain text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntryChrome {
+    pub accent: u16,
+    pub right_pad: u16,
+}
+
+impl EntryChrome {
+    /// The chrome a pane lays out with before it knows its entries: one accent
+    /// column and the configured right pad.
+    pub fn of_config(config: &LayoutConfig) -> Self {
+        Self {
+            accent: HorizontalLayout::ACCENT,
+            right_pad: config.block_pad_right,
+        }
+    }
+
+    /// Total columns between the entry area's edge and its text.
+    pub fn chrome_width(&self, config: &LayoutConfig) -> u16 {
+        self.accent + config.block_pad_left + self.right_pad
+    }
+}
+
 impl HorizontalLayout {
     /// Accent width is always 1.
     pub const ACCENT: u16 = 1;
 
     pub fn new(area: Rect, config: &LayoutConfig) -> Self {
+        Self::new_with_chrome(area, config, EntryChrome::of_config(config))
+    }
+
+    /// `area` laid out with the entry's own chrome (see [`EntryChrome`]): the
+    /// accent column, the configured left pad, the text, and the right pad.
+    pub fn new_with_chrome(area: Rect, config: &LayoutConfig, chrome: EntryChrome) -> Self {
         let [accent, left_padding, content, right_padding] = Layout::horizontal([
-            Constraint::Length(Self::ACCENT),
+            Constraint::Length(chrome.accent),
             Constraint::Length(config.block_pad_left),
             Constraint::Min(1), // Content takes remaining space
-            Constraint::Length(config.block_pad_right),
+            Constraint::Length(chrome.right_pad),
         ])
         .areas(area);
 

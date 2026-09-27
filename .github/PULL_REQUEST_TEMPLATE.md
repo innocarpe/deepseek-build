@@ -55,7 +55,7 @@ As the project grows, replace placeholders with real commands (cargo test, …).
 
 <!-- Exactly one GitHub kind label must match the PR title type. -->
 
-- [ ] `feat` · [ ] `fix` · [ ] `docs` · [ ] `spec` · [ ] `chore` · [ ] `refactor` · [ ] `test` · [ ] `ci` · [ ] `perf`
+- [ ] `feat` · [ ] `fix` · [ ] `docs` · [ ] `spec` · [ ] `chore` · [ ] `refactor` · [ ] `test` · [ ] `ci` · [ ] `perf` · [ ] `build`
 
 ## Related
 

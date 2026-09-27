@@ -53,7 +53,7 @@ Full rules: **[docs/contributing/pull-requests.md](docs/contributing/pull-reques
 
 1. **One meaningful unit** per PR (prefer small vertical slices).  
 2. Branch name: `<type>/<short-kebab>` (e.g. `docs/pr-conventions`).  
-3. Title: Conventional Commit — `feat|fix|docs|spec|chore|refactor|test|ci|perf(scope)?: summary`.  
+3. Title: Conventional Commit — `feat|fix|docs|spec|chore|refactor|test|ci|perf|build(scope)?: summary`.  
 4. **Exactly one kind label** matching the title type.  
 5. Fill the PR template (summary, related, test plan).  
 6. Set milestone when known; link issues with `Closes #N` / `Refs #N`.  

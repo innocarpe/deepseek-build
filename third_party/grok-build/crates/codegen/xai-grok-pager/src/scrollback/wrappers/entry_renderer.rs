@@ -963,12 +963,32 @@ impl Renderable for EntryRenderer<'_> {
 
         if let Some(accent_style) = accent {
             let color = accent_style.color;
+            // A phone pane's transcript starts at the frame edge and spends its
+            // former outer column inside each entry (see `entry_chrome`). The
+            // rail keeps that column of air on its left instead of sitting on
+            // the frame edge; the column itself stays clear.
+            let rail_inset = if self.appearance().scrollback.layout.narrow && !self.hide_accent {
+                crate::appearance::LayoutConfig::MIN_HPAD.min(accent_area.width.saturating_sub(1))
+            } else {
+                0
+            };
+            if rail_inset > 0 {
+                fill_bg_spaces(
+                    buf,
+                    Rect {
+                        width: rail_inset,
+                        ..accent_area
+                    },
+                    bg_color.unwrap_or(self.fallback_bg()),
+                );
+            }
+            let rail_x = accent_area.x + rail_inset;
 
             if self.entry.is_pending_user_input && accent_style.animated {
                 // Pending user input freezes the wave: a solid rail reads as "paused on you" without the spinner motion.
                 let style = self.accent_paint_style(color);
                 for y in accent_area.y..accent_area.y + accent_area.height {
-                    buf.set_string_safe(accent_area.x, y, crate::glyphs::accent_bar(), style);
+                    buf.set_string_safe(rail_x, y, crate::glyphs::accent_bar(), style);
                 }
             } else if accent_style.animated {
                 let bg = bg_color.unwrap_or(self.fallback_bg());
@@ -980,12 +1000,12 @@ impl Renderable for EntryRenderer<'_> {
                         theme::wave_brightness(self.tick, skip_rows + row, wave_rows, WAVE_SPEED);
                     let animated_color = blend_color(bg, color, brightness).unwrap_or(color);
                     let style = self.accent_paint_style(animated_color);
-                    buf.set_string_safe(accent_area.x, y, crate::glyphs::accent_bar(), style);
+                    buf.set_string_safe(rail_x, y, crate::glyphs::accent_bar(), style);
                 }
             } else {
                 let style = self.accent_paint_style(color);
                 for y in accent_area.y..accent_area.y + accent_area.height {
-                    buf.set_string_safe(accent_area.x, y, crate::glyphs::accent_bar(), style);
+                    buf.set_string_safe(rail_x, y, crate::glyphs::accent_bar(), style);
                 }
             }
         }
@@ -1330,6 +1350,41 @@ mod tests {
         assert_eq!(buf.cell((2, 1)).unwrap().symbol(), "T");
         assert_eq!(buf.cell((3, 1)).unwrap().symbol(), "e");
         assert_eq!(buf.cell((4, 1)).unwrap().symbol(), "s");
+    }
+
+    /// A phone pane's transcript starts at the frame edge. The rail keeps the
+    /// pane's former outer column on its left instead of sitting on the edge,
+    /// and the text keeps its column.
+    #[test]
+    fn a_phone_rail_keeps_a_column_of_air_on_its_left() {
+        let _guard = pin_theme();
+        let theme = Theme::current();
+        let entry = ScrollbackEntry::new(RenderBlock::stub("Test", Color::Blue));
+        let mut appearance = AppearanceConfig::default();
+        appearance.scrollback.layout.narrow = true;
+
+        let area = Rect::new(0, 0, 20, 2);
+        let mut buf = Buffer::empty(area);
+        EntryRenderer::new(&entry, &theme)
+            .with_appearance_ref(&appearance)
+            .render(area, &mut buf);
+
+        for y in 0..area.height {
+            assert_eq!(
+                buf.cell((0, y)).unwrap().symbol(),
+                " ",
+                "row {y}: the edge column stays clear"
+            );
+            assert_eq!(
+                buf.cell((1, y)).unwrap().symbol(),
+                "┃",
+                "row {y}: the rail sits one column in"
+            );
+        }
+        let text_row = (0..area.height)
+            .find(|&y| buf.cell((3, y)).unwrap().symbol() == "T")
+            .expect("the text starts after the rail and its column of air");
+        assert_eq!(buf.cell((2, text_row)).unwrap().symbol(), " ");
     }
 
     #[test]

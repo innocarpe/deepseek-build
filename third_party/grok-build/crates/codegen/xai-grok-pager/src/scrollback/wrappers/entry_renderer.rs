@@ -599,7 +599,7 @@ impl<'a> EntryRenderer<'a> {
 
     fn clock_plan_from(
         &self,
-        first_line_cols: u16,
+        line_cols: u16,
         row_span: u16,
         has_content: bool,
         hovered: bool,
@@ -609,7 +609,7 @@ impl<'a> EntryRenderer<'a> {
         ClockPlan::decide(&ClockQuery {
             entry: self.entry,
             appearance: self.appearance(),
-            first_line_cols,
+            line_cols,
             row_span,
             prev_clock: self.entry.clock_prev.get(),
             hovered,
@@ -629,7 +629,15 @@ impl<'a> EntryRenderer<'a> {
 
     /// Meta row for the cheap height estimate. A full first source line on a narrow pane
     /// takes the row; a short one does not. Over-counting by a row is safer than overlap.
+    /// A phone echo's trailing clock never takes a row
+    /// ([`clock_trails_body`](crate::scrollback::timestamp_layout::clock_trails_body)).
     fn estimate_clock_meta(&self, content_width: u16) -> bool {
+        if crate::scrollback::timestamp_layout::clock_trails_body(
+            self.appearance(),
+            &self.entry.block,
+        ) {
+            return false;
+        }
         if self.entry.first_cached_source_cols().is_none() {
             let _ = self.entry.estimate_source_lines(content_width);
         }
@@ -1028,43 +1036,48 @@ impl Renderable for EntryRenderer<'_> {
         let text_width = content_area.width;
         self.entry
             .ensure_cached(text_width, self.appearance(), self.is_selected, self.cwd);
-        let (first_line_cols, has_content) = {
-            use crate::scrollback::timestamp_layout::line_cols;
+        let trails = crate::scrollback::timestamp_layout::clock_trails_body(
+            self.appearance(),
+            &self.entry.block,
+        );
+        let (clock_line_cols, content_lines) = {
             let cached = self.entry.cached_output_ref();
-            let first = cached
-                .lines
-                .first()
-                .map(|line| line_cols(&line.content))
-                .unwrap_or(0);
-            (first, !cached.lines.is_empty())
+            (
+                crate::scrollback::timestamp_layout::clock_line_cols(&cached.lines, trails),
+                u16::try_from(cached.lines.len()).unwrap_or(u16::MAX),
+            )
         };
+        let has_content = content_lines > 0;
         let row_span = text_width.saturating_add(self.block_pad_right());
-        let stable = self.clock_plan_from(first_line_cols, row_span, has_content, false, true);
+        let stable = self.clock_plan_from(clock_line_cols, row_span, has_content, false, true);
         let has_vpad = self
             .entry
             .block
             .has_vpad_for_width(self.appearance(), self.block_content_width(area.width));
-        // Layout is: [meta?] [vpad_top?] [content lines...] [vpad_bottom?], or on a phone pane
-        // [vpad_top?] [meta?] [content lines...] [vpad_bottom?] (see `pad_above_meta`).
+        // Layout is: [meta?] [vpad_top?] [content lines...] [vpad_bottom?]. A clock that trails the
+        // body (a phone echo, see `clock_trails_body`) shares the last content line or is not painted.
         let vpad_top = if has_vpad { 1u16 } else { 0 };
-        let pad_first =
-            vpad_top > 0 && crate::scrollback::timestamp_layout::pad_above_meta(self.appearance());
-        let clock_row = if stable.meta && !pad_first {
-            content_area.y
-        } else {
-            content_area.y.saturating_add(vpad_top)
-        };
-        let hovered = skip_rows == 0
-            && stable.text.as_deref().is_some_and(|text| {
+        // The clock's screen row, unless the rows above it are scrolled off with it.
+        let clock_y = crate::scrollback::timestamp_layout::clock_row_offset(
+            stable.meta,
+            trails,
+            vpad_top,
+            content_lines,
+        )
+        .checked_sub(skip_rows)
+        .map(|offset| content_area.y.saturating_add(offset));
+        let hovered = clock_y.is_some_and(|clock_y| {
+            stable.text.as_deref().is_some_and(|text| {
                 use crate::scrollback::timestamp_layout::{
                     clock_cols, clock_origin, point_in_clock,
                 };
                 let x = clock_origin(area.right(), text, self.appearance());
                 self.mouse_pos
-                    .is_some_and(|(mx, my)| point_in_clock(mx, my, x, clock_row, clock_cols(text)))
-            });
+                    .is_some_and(|(mx, my)| point_in_clock(mx, my, x, clock_y, clock_cols(text)))
+            })
+        });
         let hovered_plan = if hovered {
-            self.clock_plan_from(first_line_cols, row_span, has_content, true, true)
+            self.clock_plan_from(clock_line_cols, row_span, has_content, true, true)
         } else {
             stable.clone()
         };
@@ -1078,25 +1091,9 @@ impl Renderable for EntryRenderer<'_> {
         let mut skip_remaining = skip_rows;
         let mut row = content_area.y;
         let max_row = content_area.y + content_area.height;
-        let mut pad_top_y = None;
-        if pad_first {
-            if skip_remaining == 0 {
-                if row < max_row {
-                    pad_top_y = Some(row);
-                    row += 1;
-                }
-            } else {
-                skip_remaining -= 1;
-            }
-        }
         let meta_visible = plan.meta && skip_remaining == 0 && row < max_row;
         if plan.meta {
             if skip_remaining == 0 {
-                if let Some(text) = plan.text.as_deref()
-                    && row < max_row
-                {
-                    self.paint_clock(buf, area.right(), row, text);
-                }
                 if row < max_row {
                     row += 1;
                 }
@@ -1105,16 +1102,15 @@ impl Renderable for EntryRenderer<'_> {
             }
         }
 
-        let content_skip = if pad_first {
-            skip_remaining
+        let vpad_top_visible = skip_remaining < vpad_top;
+        let content_skip = skip_remaining.saturating_sub(vpad_top);
+        // The top pad is the row under a meta clock, not always `area.y`.
+        let pad_top_y = if vpad_top_visible && row < max_row {
+            let y = row;
+            row += 1;
+            Some(y)
         } else {
-            let vpad_top_visible = skip_remaining < vpad_top;
-            // The top pad is the row under a meta clock, not always `area.y`.
-            if vpad_top_visible && row < max_row {
-                pad_top_y = Some(row);
-                row += 1;
-            }
-            skip_remaining.saturating_sub(vpad_top)
+            None
         };
 
         let cached_ref = self.entry.cached_output_ref();
@@ -1127,7 +1123,6 @@ impl Renderable for EntryRenderer<'_> {
             &self.entry.block,
         );
         let mut painted_content = 0u16;
-        let first_content_y = row;
 
         for line in output.lines.iter().skip(content_skip as usize) {
             if row >= max_row {
@@ -1184,12 +1179,12 @@ impl Renderable for EntryRenderer<'_> {
             }
         }
 
-        if !plan.meta
-            && content_skip == 0
-            && first_content_y < max_row
+        // After the text, so an inline clock is not painted over.
+        if let Some(clock_y) = clock_y
+            && clock_y < max_row
             && let Some(text) = plan.text.as_deref()
         {
-            self.paint_clock(buf, area.right(), first_content_y, text);
+            self.paint_clock(buf, area.right(), clock_y, text);
         }
 
         // Post-pass: adjust bullet color based on block state. The running wave is skipped so the entry reads as "paused
@@ -1942,8 +1937,10 @@ mod tests {
         );
     }
 
-    /// The measured iPhone pane (55 columns): a full first line keeps no gutter,
-    /// so the short clock is a right-aligned row above the band. The band still
+    /// The measured iPhone pane (55 columns): the clock closes the echo's last
+    /// text row at the band's bottom-right when that row leaves room, and a full
+    /// last row (the fold's ellipsis) paints no clock rather than a row of its
+    /// own, so the folded echo stays two text rows. The band still
     /// keeps a fraction of a row above and below its text (two eighths, so the
     /// visible air is the one column the side gutters measure), and the clock
     /// stops one column inside the pane's right edge.
@@ -1972,12 +1969,11 @@ mod tests {
         let band = theme.bg_light;
         let base = theme.bg_base;
         assert_eq!(
-            height, 5,
-            "a pad row each side, the meta row and two text rows:\n{frame}"
+            height, 4,
+            "a pad row each side and two text rows, no clock row:\n{frame}"
         );
-        // The top pad leads the band, above the meta row: the band's color on the
-        // row's lower two eighths (`▂`), the pane's background above it. Under the
-        // meta row it would split the clock from the text with a dark strip.
+        // The top pad opens the band: the band's color on the row's lower two
+        // eighths (`▂`), the pane's background above it.
         let top_pad = buf.cell((1, 0)).unwrap();
         assert_eq!(top_pad.symbol(), NARROW_PAD_LOWER, "{frame}");
         assert_eq!(top_pad.fg, band, "the top pad's lower eighths are band");
@@ -1988,15 +1984,14 @@ mod tests {
         assert_eq!(bottom_pad.fg, base, "{frame}");
         assert_eq!(bottom_pad.bg, band, "{frame}");
         // The text rows stay full band, and the text keeps one column of air at
-        // the band's left edge. The first text row is under the top pad and the
-        // meta row.
-        let text_row = 2u16;
+        // the band's left edge. The first text row is right under the top pad.
+        let text_row = 1u16;
         assert_eq!(buf.cell((0, text_row)).unwrap().bg, band, "{frame}");
         assert_eq!(buf.cell((0, text_row)).unwrap().symbol(), " ", "{frame}");
         assert_eq!(
             buf.cell((1, text_row)).unwrap().symbol(),
             "x",
-            "the text opens the first text row, under the meta row and one column in:\n{frame}"
+            "the text opens the first text row, under the top pad and one column in:\n{frame}"
         );
         let wrap = r.block_content_width(width);
         assert!(
@@ -2004,18 +1999,29 @@ mod tests {
             "the first text row is {wrap} contiguous text cells (no clock gap):\n{frame}"
         );
         assert!(
-            !has_ampm_timestamp(&buf, text_row, width),
-            "a full narrow line does not paint the clock on the text:\n{frame}"
+            (0..height).all(|y| !has_ampm_timestamp(&buf, y, width)),
+            "full text rows leave the clock no room, so it is not painted:\n{frame}"
         );
 
-        let expected = entry.created_at.unwrap().format("%-I:%M %p").to_string();
+        // A last row with room closes on the clock, one column of air before it.
+        let short = ScrollbackEntry::new(RenderBlock::user_prompt("x".repeat(60)));
+        let mut appearance = AppearanceConfig::default();
+        appearance.scrollback.layout.narrow = true;
+        let r_short = EntryRenderer::new(&short, &theme).with_appearance(appearance);
+        let short_height = r_short.desired_height(width);
+        assert_eq!(short_height, 4, "the clock adds no row");
+        let short_area = Rect::new(0, 0, width, short_height);
+        let mut short_buf = Buffer::empty(short_area);
+        r_short.render(short_area, &mut short_buf);
+        let expected = short.created_at.unwrap().format("%-I:%M %p").to_string();
         let ts_width = expected.len() as u16;
-        let inset = ts_right_inset(&r);
+        let inset = ts_right_inset(&r_short);
         let ts_x = width - inset - ts_width;
         assert_eq!(
-            collect_row_symbols(&buf, 1, ts_x, ts_x + ts_width),
+            collect_row_symbols(&short_buf, short_height - 2, ts_x, ts_x + ts_width),
             expected,
-            "the time is the meta row, {inset} column(s) inside the right edge:\n{frame}"
+            "the time closes the last text row, above the bottom pad, \
+             {inset} column(s) inside the right edge"
         );
         assert_eq!(
             inset, 0,

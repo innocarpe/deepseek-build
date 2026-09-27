@@ -2,14 +2,17 @@
 //!
 //! Narrow panes (`effective_narrow`, `layout.narrow`) never reserve columns:
 //! the clock uses leftover space on the first content line, or one right-aligned
-//! meta row above the body after the turn finishes. Wide panes keep the
-//! right-edge clock and subtract its columns from the first content line only.
+//! meta row above the body after the turn finishes. A prompt echo on a narrow
+//! pane closes on its clock instead ([`clock_trails_body`]): leftover space on
+//! the last line, or no clock at all. Wide panes keep the right-edge clock and
+//! subtract its columns from the first content line only.
 
 use chrono::{DateTime, Local, Timelike};
 use unicode_width::UnicodeWidthStr;
 
 use super::block::RenderBlock;
 use super::entry::ScrollbackEntry;
+use super::types::BlockLine;
 use crate::appearance::AppearanceConfig;
 
 /// Widest short clock (`"12:59 PM"`).
@@ -54,6 +57,24 @@ pub(crate) fn timestamp_gutter_applies(block: &RenderBlock) -> bool {
         block,
         RenderBlock::UserPrompt(_) | RenderBlock::AgentMessage(_) | RenderBlock::Btw(_)
     )
+}
+
+/// Whether the clock closes the body rather than opening it.
+///
+/// A prompt echo on a phone pane is a chat bubble: its clock sits at the band's
+/// bottom-right corner, on the last text line when that line leaves room. It
+/// never takes a row of its own: the echo keeps the rows its text needs (two at
+/// most while folded), so with no room left the clock is not painted. Every
+/// other clock, and every clock on a wider pane, opens its body.
+pub(crate) fn clock_trails_body(appearance: &AppearanceConfig, block: &RenderBlock) -> bool {
+    appearance.scrollback.layout.narrow && matches!(block, RenderBlock::UserPrompt(_))
+}
+
+/// Display columns of the content line the clock would share: the first line,
+/// or the last one when the clock trails the body. Zero for an empty body.
+pub(crate) fn clock_line_cols(lines: &[BlockLine], trails: bool) -> u16 {
+    let line = if trails { lines.last() } else { lines.first() };
+    line.map(|line| line_cols(&line.content)).unwrap_or(0)
 }
 
 /// Columns a wide pane leaves empty on a block's first content line for the clock.
@@ -131,8 +152,9 @@ pub(crate) struct ClockPlan {
 pub(crate) struct ClockQuery<'a> {
     pub entry: &'a ScrollbackEntry,
     pub appearance: &'a AppearanceConfig,
-    /// Display columns of the first content line. Ignored when `has_content` is false.
-    pub first_line_cols: u16,
+    /// Display columns of the content line the clock would share ([`clock_line_cols`]). Ignored when
+    /// `has_content` is false.
+    pub line_cols: u16,
     /// Columns from the text origin to the entry's right edge.
     pub row_span: u16,
     pub prev_clock: Option<DateTime<Local>>,
@@ -162,11 +184,22 @@ impl ClockPlan {
         let short = short_clock(ts);
         let long = long_clock(ts);
         let edge_inset = clock_edge_inset(q.appearance);
-        let short_fits = fits(q.first_line_cols, &short, q.row_span, edge_inset);
-        let long_fits = fits(q.first_line_cols, &long, q.row_span, edge_inset);
+        let short_fits = fits(q.line_cols, &short, q.row_span, edge_inset);
+        let long_fits = fits(q.line_cols, &long, q.row_span, edge_inset);
         let expanded = q.allow_long && q.entry.timestamp_expanded;
         let want_long = expanded || (q.allow_long && q.hovered);
 
+        if clock_trails_body(q.appearance, &q.entry.block) {
+            // A phone echo's clock fits on its last text row or is not painted.
+            let text = if want_long && long_fits {
+                Some(long)
+            } else if short_fits {
+                Some(short)
+            } else {
+                None
+            };
+            return Self { meta: false, text };
+        }
         if want_long && long_fits {
             return Self {
                 meta: false,
@@ -213,13 +246,13 @@ impl ClockPlan {
 
 /// Meta rows at the top of a prompt echo whose selection should hug the band, not the clock.
 ///
-/// A missing cache means the row is not known yet. On a phone pane the top pad sits above the meta row
-/// ([`pad_above_meta`]), so the clock is inside the band the box hugs and no row is dropped.
+/// A missing cache means the row is not known yet. A phone echo's clock never takes a meta row
+/// ([`clock_trails_body`]).
 pub(crate) fn selection_clock_meta_rows(
     entry: &ScrollbackEntry,
     appearance: &AppearanceConfig,
 ) -> u16 {
-    if !entry.block.selection_hugs_vpad(appearance) || pad_above_meta(appearance) {
+    if !entry.block.selection_hugs_vpad(appearance) {
         return 0;
     }
     let Some(content_width) = entry.cached_content_width() else {
@@ -230,33 +263,21 @@ pub(crate) fn selection_clock_meta_rows(
     u16::from(cached_clock_is_meta(entry, appearance, row_span))
 }
 
-/// Whether an echo's top pad row sits above its clock meta row rather than under it.
-///
-/// A phone pane paints each pad row as a fraction of a row, mostly the pane's background. Under the meta row it
-/// would split the clock from the text with a dark strip, so there the pad leads the band: pad, clock, text, pad.
-/// Wider panes paint full pad rows and keep the clock on the band's first row.
-pub(crate) fn pad_above_meta(appearance: &AppearanceConfig) -> bool {
-    appearance.scrollback.layout.narrow
-}
-
 /// Whether the cached body needs the meta row. Hover is ignored: a hover must not change height.
 pub(crate) fn cached_clock_is_meta(
     entry: &ScrollbackEntry,
     appearance: &AppearanceConfig,
     row_span: u16,
 ) -> bool {
+    let trails = clock_trails_body(appearance, &entry.block);
     let output = entry.cached_output_ref();
-    let first = output
-        .lines
-        .first()
-        .map(|line| line_cols(&line.content))
-        .unwrap_or(0);
+    let line_cols = clock_line_cols(&output.lines, trails);
     let has_content = !output.lines.is_empty();
     drop(output);
     ClockPlan::decide(&ClockQuery {
         entry,
         appearance,
-        first_line_cols: first,
+        line_cols,
         row_span,
         prev_clock: entry.clock_prev.get(),
         hovered: false,
@@ -264,6 +285,20 @@ pub(crate) fn cached_clock_is_meta(
         has_content,
     })
     .meta
+}
+
+/// Rows from an entry's top to its clock row, pads included, for a body of `content_lines` rows.
+///
+/// A meta row is row 0, above the pads and the text. An inline clock shares the first text row,
+/// or the last one when it trails the body ([`clock_trails_body`], which never takes a meta row).
+pub(crate) fn clock_row_offset(meta: bool, trails: bool, vpad_top: u16, content_lines: u16) -> u16 {
+    if meta {
+        0
+    } else if trails {
+        vpad_top.saturating_add(content_lines.saturating_sub(1))
+    } else {
+        vpad_top
+    }
 }
 
 /// Left column of a painted clock inside an entry area whose right edge is `entry_right`.

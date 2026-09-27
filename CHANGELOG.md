@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- On a phone-width pane the prompt echo's clock closes its last text row at the band's bottom-right, like a chat bubble, and only when that row leaves room for it; otherwise the echo shows no clock. The clock no longer takes a row of its own above the text (it did whenever the first row was full, the usual case on a phone), so a folded echo stays two text rows. Agent messages, `/btw` replies and wider panes keep their clock where it was.
+
 ## 6.1.7 — 2026-09-27
 
 - The turn-status spinner centers on the row's activity label. The shared braille frames ink the six-dot cell's top three rows, and phone terminals pin that cell to the top of the line box, so the dots float above the label — measured on the iPhone screenshot that surfaced this: the cell's middle row sat 10px above the label's x-height center, its bottom row was empty, and the visible dot centroid ran 3px high. The turn-status row re-encodes the same rotation one braille row down in eight-dot rows 2-4 (`⠖⠲⢲⢰⣰⣠⣄⣆` for `⠋⠙⠹⠸⠼⠴⠦⠧`), which drops the pattern onto the label's optical center; every other spinner keeps the shared set. A unit test pins the shift (dots 1,2,3 → 2,3,7 and 4,5,6 → 5,6,8) and the cleared top row.

@@ -6,7 +6,10 @@ Codex loads about the first 160 characters of a skill description (measured
 2026-09-26 the session-unit description was 188 characters and its first 160
 ended at "through the PR, then hand". The body already said to merge. Sessions
 stopped at the window. On 2026-09-27 the same lock covers the debrief step:
-the close ends at the report only after the WC recording ran.
+the close ends at the report only after the WC recording ran, and what that
+report has to say — the result and why, a source on every measured sentence,
+the owned worktree by exact path, a reason per not-done item, the checked
+range as the clean scope.
 
 This module locks the phrases that have to sit inside that 160-character
 window, and it rejects a handoff brief whose prohibition contradicts the
@@ -65,6 +68,15 @@ BODY_NEEDLES = {
         "To hand off",
         "session-debrief",
         "no record needed",
+        "says what the evidence means",
+        "Observation and inference are separated",
+        "carries the command",
+        "before → after",
+        "a reason per item",
+        "left alone",
+        "exact path",
+        "the checked range is clean",
+        "deployed state",
     ),
     "skills/session-debrief/SKILL.md": (
         "not a summary of the final answer",
@@ -107,6 +119,12 @@ AGENTS_SECTION_NEEDLES = (
     "w-conatus",
     "no record needed",
     "company HQ",
+    "what the evidence means",
+    "carrying its source",
+    "inference marked",
+    "a reason per item",
+    "exact path",
+    "the checked range clean",
 )
 AGENTS_CLAIM_NEEDLE = "do not end the unit"
 

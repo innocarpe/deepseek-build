@@ -2241,7 +2241,7 @@ mod tests {
     fn layout_uses_full_width_phone_transcript_and_flush_pty_bottom() {
         for (cols, rows) in [(55u16, 41u16), (120, 40), (180, 50)] {
             let area = Rect::new(0, 0, cols, rows);
-            let narrow = effective_narrow(cols);
+            let narrow = effective_narrow(cols, rows);
             let mut layout_cfg = LayoutConfig::default();
             layout_cfg.narrow = narrow;
             let bottom_margin_rows = if narrow { PHONE_BOTTOM_MARGIN_ROWS } else { 0 };

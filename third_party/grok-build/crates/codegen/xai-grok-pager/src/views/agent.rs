@@ -120,10 +120,25 @@ fn constraint_rows(constraints: &[Constraint]) -> u16 {
         .fold(0u16, u16::saturating_add)
 }
 
-/// Paint the frame's floor ([`BOTTOM_MARGIN_ROWS`]). A theme whose background
-/// is the terminal's own (`Reset`) has no edge to draw, so the row stays blank:
-/// a `Reset` foreground would paint the half block in the text colour.
-pub(crate) fn paint_bottom_margin(buf: &mut Buffer, rect: Rect, base: Color) {
+/// What a phone pane paints under the floor's half block: the background of the
+/// key bar Orca iOS draws right under the terminal.
+///
+/// The grid ends on the key bar's top edge (measured 2026-09-27 on a 1320x2868
+/// capture of a 55x41 pane: rows 51 px, grid bottom at y 2524, the bar's 3 px
+/// `(42,42,42)` rule at 2525, the bar `(26,26,26)` under it). With the
+/// terminal's own background, `(40,44,52)` there, the half block's lower half
+/// reads as a grey strip between the frame and the bar. In the bar's colour it
+/// reads as the bar, so the frame ends half a row under the status text and
+/// the host's chrome starts there. Another phone terminal shows a near-black
+/// strip instead of its own background.
+pub const PHONE_FLOOR_UNDER: Color = Color::Rgb(26, 26, 26);
+
+/// Paint the frame's floor ([`BOTTOM_MARGIN_ROWS`]): the frame's background
+/// `base` on the top half, `under` on the bottom half (`Reset` is the
+/// terminal's own). A theme whose background is the terminal's own (`Reset`)
+/// has no edge to draw, so the row stays blank: a `Reset` foreground would
+/// paint the half block in the text colour.
+pub(crate) fn paint_bottom_margin(buf: &mut Buffer, rect: Rect, base: Color, under: Color) {
     for y in rect.y..rect.bottom() {
         for x in rect.x..rect.right() {
             if let Some(cell) = buf.cell_mut((x, y)) {
@@ -131,6 +146,7 @@ pub(crate) fn paint_bottom_margin(buf: &mut Buffer, rect: Rect, base: Color) {
                 if !matches!(base, Color::Reset) {
                     cell.set_symbol("\u{2580}");
                     cell.fg = base;
+                    cell.bg = under;
                 }
             }
         }

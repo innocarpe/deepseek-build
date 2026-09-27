@@ -598,9 +598,10 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
 /// still paints its content there: a geometry-only check would pass on a blank
 /// band, so each height runs the same content assertions as the 55x41 frame
 /// test. The floor is one row of upper half blocks — the frame's background on
-/// the top half, the terminal's on the bottom — so the frame ends half a row
-/// under the status text whatever inset the host keeps outside the PTY. A
-/// short terminal drops the floor with the other margins.
+/// the top half, the host key bar's colour on the bottom — so the frame ends
+/// half a row under the status text and the lower half reads as the bar Orca
+/// iOS draws under the grid. A short terminal drops the floor with the other
+/// margins.
 #[test]
 fn phone_frame_keeps_a_half_row_floor_at_every_phone_height() {
     let _guard = crate::theme::cache::pin_theme();
@@ -628,8 +629,12 @@ fn phone_frame_keeps_a_half_row_floor_at_every_phone_height() {
             let cell = buf.cell((x, floor)).unwrap();
             assert_eq!(
                 (cell.symbol(), cell.fg, cell.bg),
-                ("\u{2580}", theme.bg_base, ratatui::style::Color::Reset),
-                "{PHONE_COLS}x{rows}: floor cell {x} is the frame's top half over the terminal's own background\n{frame}"
+                (
+                    "\u{2580}",
+                    theme.bg_base,
+                    crate::views::agent::PHONE_FLOOR_UNDER
+                ),
+                "{PHONE_COLS}x{rows}: floor cell {x} is the frame's top half over the key bar's colour\n{frame}"
             );
         }
     }

@@ -122,7 +122,7 @@ pub struct ScrollbackDisplayConfig {
     /// Character to use as the expand indicator. Default: "›".
     pub expandable_indicator_char: String,
     /// Show ⧉ (copy) and ↗ (view) buttons on the selection box.
-    /// Default: false (opt-in while testing).
+    /// Default: true.
     pub selection_buttons: bool,
     /// Pin user prompts as sticky headers when scrolled past.
     /// Default: true.
@@ -151,7 +151,7 @@ impl Default for ScrollbackDisplayConfig {
             expandable_indicator: true,
             expandable_indicator_running: true,
             expandable_indicator_char: "›".to_string(),
-            selection_buttons: false,
+            selection_buttons: true,
             sticky_headers: true,
             tab_width: 4,
             group_max_visible: 10,
@@ -798,7 +798,7 @@ pub struct RawScrollbackDisplayConfig {
     pub expandable_indicator_running: Option<bool>,
     /// Character for the expand indicator. Default: "›".
     pub expandable_indicator_char: Option<String>,
-    /// Show ⧉/↗ buttons on the selection box. Default: false.
+    /// Show ⧉/↗ buttons on the selection box. Default: true.
     pub selection_buttons: Option<bool>,
     /// Pin user prompts as sticky headers when scrolled past. Default: true.
     pub sticky_headers: Option<bool>,
@@ -825,7 +825,7 @@ impl Default for RawScrollbackDisplayConfig {
             expandable_indicator: Some(true),
             expandable_indicator_running: Some(true),
             expandable_indicator_char: Some("›".to_string()),
-            selection_buttons: Some(false),
+            selection_buttons: Some(true),
             sticky_headers: Some(true),
             tab_width: Some(4),
             group_max_visible: Some(10),
@@ -1302,7 +1302,7 @@ impl From<RawAppearanceConfig> for AppearanceConfig {
                         .display
                         .expandable_indicator_char
                         .unwrap_or_else(|| "›".to_string()),
-                    selection_buttons: raw.scrollback.display.selection_buttons.unwrap_or(false),
+                    selection_buttons: raw.scrollback.display.selection_buttons.unwrap_or(true),
                     sticky_headers: raw.scrollback.display.sticky_headers.unwrap_or(true),
                     tab_width: raw.scrollback.display.tab_width.unwrap_or(4),
                     group_max_visible: raw.scrollback.display.group_max_visible.unwrap_or(10),
@@ -1923,6 +1923,18 @@ fn annotate_table<T: DocumentedFields>(table: &mut toml_edit::Table) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selection_buttons_default_on_but_explicit_false_survives() {
+        let defaults = AppearanceConfig::from(RawAppearanceConfig::default());
+        assert!(defaults.scrollback.display.selection_buttons);
+
+        let raw: RawAppearanceConfig =
+            toml::from_str("[scrollback.display]\nselection_buttons = false")
+                .expect("parse explicit button setting");
+        let configured = AppearanceConfig::from(raw);
+        assert!(!configured.scrollback.display.selection_buttons);
+    }
 
     #[test]
     fn test_parse_hex_color() {

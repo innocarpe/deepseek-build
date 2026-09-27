@@ -551,6 +551,9 @@ impl ScrollbackPane {
         if output.output.selection_model.content_area == Rect::default() {
             output.output.selection_model.content_area = content_area;
         }
+        if output.output.selection_model.viewport_width == 0 {
+            output.output.selection_model.viewport_width = area.width;
+        }
 
         // Publish the gap row this frame's pinned header actually produced (None during push transitions and degenerate tiny viewports)
         output.output.sticky_gap_row = sticky.gap_row().filter(|row| *row < area.height);
@@ -1601,6 +1604,94 @@ mod tests {
             "a top-clipped header published no selectable line, so every \
              rebase assertion was skipped\n{trace}"
         );
+    }
+
+    #[test]
+    fn timestamped_sticky_prompt_paints_the_same_selectable_text_as_the_flow() {
+        for narrow in [false, true] {
+            let area = Rect::new(0, 0, 32, 14);
+            let mut state = ScrollbackState::new();
+            let mut appearance = AppearanceConfig::default();
+            appearance.show_timestamps = true;
+            appearance.scrollback.layout.narrow = narrow;
+            appearance.scrollback.display.sticky_headers = false;
+            appearance.scrollback.blocks.prompt.vpad = false;
+            appearance.scrollback.blocks.prompt.show_prefix = false;
+            state.set_appearance(appearance);
+            state.push_block(RenderBlock::user_prompt(
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+            ));
+            state.prepare_layout(area.width, area.height);
+            state.set_scroll_offset(0);
+
+            let flow = render_model(&mut state, area);
+            let flow_first = flow
+                .ranges
+                .iter()
+                .filter(|range| range.entry_idx == 0)
+                .flat_map(|range| &range.lines)
+                .find(|line| line.block_line_idx == 0)
+                .expect("flow first line");
+            let expected = flow_first.text.clone();
+            let height = state.get_cached_entry_height(0).expect("prompt height");
+            let header_area = Rect::new(0, 0, area.width, height);
+            let mut buf = Buffer::empty(header_area);
+            let mut scratch = ScratchBuffer::default();
+            state.clear_timestamp_hits();
+            let header = ScrollbackPane::new()
+                .render_sticky_header(
+                    &mut buf,
+                    header_area,
+                    &state,
+                    0,
+                    0,
+                    &Theme::default(),
+                    height,
+                    0,
+                    &mut scratch,
+                    false,
+                    None,
+                )
+                .expect("sticky prompt");
+            let first = header
+                .lines
+                .iter()
+                .find(|line| line.block_line_idx == 0)
+                .expect("sticky first line");
+            assert_eq!(
+                first.text, expected,
+                "first-line wrap differs (narrow={narrow})"
+            );
+            for (col, ch) in first.text.chars().enumerate() {
+                assert_eq!(
+                    buf.cell((first.screen_x + col as u16, first.screen_y))
+                        .expect("painted text cell")
+                        .symbol(),
+                    ch.to_string(),
+                    "clock covers selectable text at column {col} (narrow={narrow})"
+                );
+            }
+
+            let mut clock_cells = Vec::new();
+            for y in 0..height {
+                for x in 0..area.width {
+                    if state.timestamp_hit_at(x, y) == Some(0) {
+                        clock_cells.push((x, y));
+                    }
+                }
+            }
+            assert!(
+                !clock_cells.is_empty(),
+                "clock must be painted (narrow={narrow})"
+            );
+            if narrow {
+                assert!(clock_cells.iter().all(|&(_, y)| y < first.screen_y));
+            } else {
+                assert!(clock_cells.iter().all(|&(x, y)| {
+                    y == first.screen_y && x > first.screen_x + first.text.len() as u16
+                }));
+            }
+        }
     }
 
     /// A phone-width pane paints the collapsed echo as two selectable text rows inside one pad row each side

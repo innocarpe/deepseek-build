@@ -37,7 +37,7 @@ const GROUP_TOOL_VERBS_DEFAULT: bool = true;
 const COLLAPSED_EDIT_BLOCKS_DEFAULT: bool = false;
 /// "Prompt suggestions" is the ghost text Tab autocompletes.
 const PROMPT_SUGGESTIONS_DEFAULT: bool = true;
-const KEEP_TEXT_SELECTION_DEFAULT: TextSelection = TextSelection::Flash;
+const KEEP_TEXT_SELECTION_DEFAULT: TextSelection = TextSelection::Hold;
 /// This matches the legacy `[ui].scroll_speed` default.
 const SCROLL_SPEED_DEFAULT: u8 = 50;
 const SCROLL_SPEED_MIN: u8 = 1;
@@ -428,11 +428,17 @@ pub fn set_keep_text_selection(value: TextSelection) {
 
 /// Apply the server's soft default for `keep_text_selection`, called once at startup after [`prime`].
 ///
-/// A recognized remote value becomes the default only when the user never picked a text-selection setting; any explicit local choice wins.
+/// A remote `hold` or `word_select` becomes the default only when the user
+/// never picked a text-selection setting. Remote `flash` cannot shorten the
+/// default lifetime of a dragged span before the user clicks Copy; an explicit
+/// local `flash` choice still wins.
 pub fn apply_remote_keep_text_selection_default(remote_default: Option<&str>, ui: &UiConfig) {
     let Some(value) = remote_default.and_then(TextSelection::from_canonical) else {
         return;
     };
+    if value == TextSelection::Flash {
+        return;
+    }
     let user_expressed_preference = ui.keep_text_selection.is_some()
         || ui.selection_highlight_duration_ms.is_some()
         || ui.double_click_action.as_deref() == Some("word_select");
@@ -1197,17 +1203,33 @@ mod tests {
         .unwrap();
     }
 
+    #[test]
+    fn explicit_flash_survives_hold_default() {
+        std::thread::spawn(|| {
+            let ui = UiConfig {
+                keep_text_selection: Some("flash".into()),
+                ..UiConfig::default()
+            };
+            prime(&ui);
+            assert_eq!(load_keep_text_selection(), TextSelection::Flash);
+        })
+        .join()
+        .unwrap();
+    }
+
     /// The remote `keep_text_selection_default` sets only the untouched default.
     /// It never overrides an explicit local choice and ignores unknown values.
     #[test]
     fn remote_keep_text_selection_default_sets_only_untouched_default() {
         std::thread::spawn(|| {
-            // Absent or unrecognized: the compile-time default (flash) stands.
-            set_keep_text_selection(TextSelection::Flash);
+            // Absent or unrecognized: the compile-time default (hold) stands.
+            set_keep_text_selection(TextSelection::Hold);
             apply_remote_keep_text_selection_default(None, &UiConfig::default());
-            assert_eq!(load_keep_text_selection(), TextSelection::Flash);
+            assert_eq!(load_keep_text_selection(), TextSelection::Hold);
             apply_remote_keep_text_selection_default(Some("nonsense"), &UiConfig::default());
-            assert_eq!(load_keep_text_selection(), TextSelection::Flash);
+            assert_eq!(load_keep_text_selection(), TextSelection::Hold);
+            apply_remote_keep_text_selection_default(Some("flash"), &UiConfig::default());
+            assert_eq!(load_keep_text_selection(), TextSelection::Hold);
 
             // With no user preference, a recognized value is adopted (word_select and hold)
             set_keep_text_selection(TextSelection::Flash);

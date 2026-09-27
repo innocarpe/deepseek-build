@@ -522,7 +522,7 @@ pub(super) fn app_should_open_link_on_click_with(
 }
 /// Whether double/triple-click performs terminal-like word/paragraph text selection (and copy) instead of toggling a fold.
 /// Unified into the `keep_text_selection` setting (the `word_select` mode):
-/// reads the live appearance cache, so a Settings-panel change applies without a restart and can never drift from the highlight-persistence behavior. The compile-time default (`flash`) keeps double-click as a fold-toggle; `word_select` is a staged rollout via a remote flag.
+/// reads the live appearance cache, so a Settings-panel change applies without a restart and can never drift from the highlight-persistence behavior. The compile-time default (`hold`) keeps double-click as a fold-toggle; `word_select` is a staged rollout via a remote flag.
 pub(super) fn is_text_selection_on_double_click() -> bool {
     crate::appearance::cache::load_keep_text_selection().selects_word()
 }
@@ -983,6 +983,9 @@ pub struct AgentView {
     pub pending_text_drag: Option<PendingTextDrag>,
     /// Active markdown text drag selection.
     pub drag_selection: Option<ActiveTextDrag>,
+    /// Whether the current text drag began on a pinned header row. Keep the
+    /// press-time classification when autoscroll later pins a normal anchor.
+    pub text_drag_started_on_sticky_header: bool,
     /// Pending whole-block drag before the pointer crosses the drag threshold.
     pub pending_block_drag: Option<PendingBlockDrag>,
     /// Active whole-block drag selection.
@@ -993,6 +996,11 @@ pub struct AgentView {
     /// completion, double-click, or triple-click. Cleared on next click
     /// elsewhere, Escape, or navigation.
     pub persistent_text_selection: Option<PersistentTextSelection>,
+    /// Exact clipboard payload associated with the held selection. The
+    /// selection key prevents an old payload from following a new highlight.
+    pub(crate) persistent_selection_copy: Option<(PersistentTextSelection, String)>,
+    /// Source identity for the active drag or held text selection.
+    pub(in crate::app) selection_source_snapshot: Option<selection::SelectionSourceSnapshot>,
     /// Table geometry for the held highlight. Not shared with an in-progress drag.
     pub table_selection_geometry: Option<TableSelectionGeometry>,
     /// Table geometry for the active drag. A `/btw` drag must not steal the held slot.
@@ -1250,6 +1258,10 @@ pub struct AgentView {
     pub(crate) scrollback_search: Option<ScrollbackSearchState>,
     /// Hit area for scrollback selection box copy button.
     pub(crate) hit_sb_copy: HitArea,
+    /// Hit area for the copy chip on a visible held text selection.
+    pub(crate) hit_held_copy: HitArea,
+    /// Consume the drag and release after a held-copy chip press.
+    pub(crate) held_copy_pressed: bool,
     /// Hit area for scrollback selection box view button.
     pub(crate) hit_sb_view: HitArea,
     /// Active question view (from `AskUserQuestion` tool). When `Some`, the prompt area shows a structured question UI and input is modal.
@@ -1944,7 +1956,7 @@ fn resolve_action(action_id: Option<ActionId>) -> Option<InputOutcome> {
         ActionId::ExpandAllThinking => Action::ExpandAllThinking,
         ActionId::ToggleRaw => Action::ToggleRaw,
         ActionId::ToggleMouseCapture => Action::ToggleMouseCapture,
-        ActionId::CopyBlockContent => Action::CopyBlockContent,
+        ActionId::CopyBlockContent => Action::CopyHeldSelection,
         ActionId::CopyBlockMeta => Action::CopyBlockMeta,
         ActionId::OpenBlockViewer => Action::OpenBlockViewer,
         ActionId::OpenNextLink => Action::OpenNextLink,

@@ -273,6 +273,7 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
     let viewport_end = scroll_offset + viewport.height as usize;
 
     result.selection_model.content_area = layout.content;
+    result.selection_model.viewport_width = viewport.width;
 
     // Reused across all visible rows so the search-highlight pass allocates at most once per frame (not once per row)
     // Empty until search is active

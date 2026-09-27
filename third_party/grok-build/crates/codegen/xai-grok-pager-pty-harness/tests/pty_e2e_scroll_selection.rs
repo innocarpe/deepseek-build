@@ -43,6 +43,8 @@ mod mouse_reporting_toggle_sticky_persists_pty;
 mod nested_quote_drag_copy_excludes_bars_pty;
 #[path = "pty_e2e/page_flip_on_send_pty.rs"]
 mod page_flip_on_send_pty;
+#[path = "pty_e2e/plain_mouse_drag_cross_blocks_pty.rs"]
+mod plain_mouse_drag_cross_blocks_pty;
 #[path = "pty_e2e/plan_scrollbar_grab_zone_pty.rs"]
 mod plan_scrollbar_grab_zone_pty;
 #[path = "pty_e2e/quote_block_drag_copy_excludes_bars_pty.rs"]

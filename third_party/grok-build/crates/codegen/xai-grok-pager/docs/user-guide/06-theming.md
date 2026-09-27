@@ -227,7 +227,7 @@ expandable_indicator_char = "›"    # Character to use (default: "›")
 collapsed_accent_char = "❙"        # Accent for collapsed groupable blocks (falls back to "|" on the legacy Windows console)
 dim_accent = 0.5                   # Blend factor for dimmed accents (0.0-1.0)
 line_under_last_entry = false      # Horizontal line below last entry
-selection_buttons = false          # Show copy/view buttons on selection box
+selection_buttons = true           # Show copy/view buttons on selection box (default)
 ```
 
 ### Animation

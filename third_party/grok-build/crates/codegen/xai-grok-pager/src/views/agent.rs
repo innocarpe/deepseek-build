@@ -87,9 +87,9 @@ pub const SHORT_TERMINAL_ROWS: u16 = 16;
 /// The scrollback's floor, pushed as the layout's only `Min`.
 /// The solver ranks it above every `Length`, so an over-committed layout shrinks another row.
 pub const SCROLLBACK_MIN_ROWS: u16 = 5;
-/// Rows a phone frame keeps under the bottom status row. A terminal can only
-/// reserve whole rows; desktop retains its existing flush bottom edge.
-pub const PHONE_BOTTOM_MARGIN_ROWS: u16 = 1;
+/// The terminal reserves no whole row below the status; the iOS host applies
+/// the smaller pixel inset outside the measured PTY viewport.
+pub const PHONE_BOTTOM_MARGIN_ROWS: u16 = 0;
 /// Auto-compact threshold: at or below this height the compact flag handed to rendering is forced on.
 /// Deliberately above [`SHORT_TERMINAL_ROWS`], which still gates the harder cuts (tip-row rendering, dropping the CTA and follow-up rows).
 pub const AUTO_COMPACT_MAX_ROWS: u16 = 20;
@@ -308,8 +308,8 @@ impl AgentViewLayout {
         // DeepSeek bottom status row: always present so the row count is
         // stable; renders blank when no status data has landed.
         constraints.push(Constraint::Length(1));
-        // Keep the phone status row off the physical bottom edge. The composer
-        // and status remain adjacent; this row only belongs below the status.
+        // The iOS host owns the fractional bottom inset outside the PTY.
+        // The composer and status remain adjacent at every width.
         let bottom_margin_rows = if layout_cfg.narrow {
             PHONE_BOTTOM_MARGIN_ROWS
         } else {
@@ -2188,9 +2188,9 @@ mod tests {
     }
 
     /// The phone transcript reaches both frame edges while the composer keeps
-    /// its own inset. The phone status gets one floor row; desktop stays flush.
+    /// its own inset. The status reaches the measured PTY bottom at every width.
     #[test]
-    fn layout_uses_full_width_phone_transcript_and_bottom_gap() {
+    fn layout_uses_full_width_phone_transcript_and_flush_pty_bottom() {
         for (cols, rows) in [(55u16, 41u16), (120, 40), (180, 50)] {
             let area = Rect::new(0, 0, cols, rows);
             let narrow = effective_narrow(cols);

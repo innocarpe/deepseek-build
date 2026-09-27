@@ -1504,8 +1504,8 @@ impl AgentView {
         // and leaves the row blank until that status lands. A phone pane skips
         // this pass and paints cost and model together later, once the label exists.
         buf.set_style(layout.deepseek_status, Style::default().bg(theme.bg_base));
-        // The frame's floor row: clear both glyph and style so a former
-        // status-line character cannot survive when a phone frame gains it.
+        // Clear a configured floor row so a former status-line character cannot
+        // survive there. Both phone and desktop currently configure zero rows.
         buf.set_style(layout.bottom_margin, Style::default().bg(theme.bg_base));
         for y in layout.bottom_margin.y..layout.bottom_margin.bottom() {
             for x in layout.bottom_margin.x..layout.bottom_margin.right() {
@@ -1809,7 +1809,7 @@ impl AgentView {
         }
         // The chip owns the scrollback's last row. The ▼ it replaces sat in the gap row below the
         // scrollback, which on a phone-width pane (`prompt_gap == 0`) belongs to the next chrome
-        // row; the last scrollback row is above the prompt, the bottom band and the floor row.
+        // row; the last scrollback row is above the prompt and the bottom band.
         match draw_jump_to_bottom_chip(
             buf,
             &theme,
@@ -5103,11 +5103,12 @@ mod status_line_draw_tests {
     const FIVE_ROW_SCRIPT: &str = "row-1\nrow-2\nrow-3\nrow-4\nrow-5";
     #[test]
     fn short_terminal_leaves_the_row_four_of_its_five_rows() {
-        // Height 17 for the flush frame (one blank floor row under the status
+        // Height 16 for the flush frame (no blank floor row under the status
         // row): the status line's panel gets the four rows the frame can spare
-        // of its script's five. The fifth would have to come out of the prompt,
-        // which is a priority question of its own, not this golden's.
-        let buf = draw_script(FIVE_ROW_SCRIPT, 17);
+        // of its script's five. At 17 all five fit now that the floor row is
+        // gone; the fifth would come out of the prompt, which is a priority
+        // question of its own, not this golden's.
+        let buf = draw_script(FIVE_ROW_SCRIPT, 16);
         let screen = dump(&buf);
         assert!(
             find(&buf, "row-4").is_some(),

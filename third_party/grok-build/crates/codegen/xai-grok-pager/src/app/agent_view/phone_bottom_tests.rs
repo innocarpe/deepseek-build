@@ -207,7 +207,7 @@ fn assert_one_band(buf: &Buffer, balance: &str, cache: &str, model: &str, mode: 
     assert_eq!(
         band_y + 1 + crate::views::agent::PHONE_BOTTOM_MARGIN_ROWS,
         buf.area.height,
-        "the band keeps the frame's floor row(s) under it, got {band_y} in {}",
+        "the band reaches the measured PTY bottom, got {band_y} in {}",
         buf.area.height
     );
     assert!(
@@ -404,7 +404,7 @@ fn desktop_pane_keeps_the_label_on_the_divider_and_the_hint_row() {
     }
 }
 
-// ── Prompt-area padding: the echo band, the composer box, the floor row ──
+// ── Prompt-area padding: the echo band, the composer box, the PTY bottom ──
 
 /// Seed the scrollback with the echo a submitted prompt leaves in the frame.
 fn seed_prompt_echo(agent: &mut AgentView, text: &str) {
@@ -443,7 +443,7 @@ fn top_border_row(buf: &Buffer) -> u16 {
 /// echo's band is its meta clock row, its text rows and one pad row each side,
 /// the composer box is the top border, one text row and the divider, the turn
 /// time stops one column inside the echo's band, and the status row closes the
-/// phone frame with one floor row below it (desktop reserves none).
+/// phone frame flush to the measured PTY edge (the iOS host adds a pixel inset).
 #[test]
 fn phone_frame_pads_the_prompt_areas_by_one_cell() {
     let _guard = crate::theme::cache::pin_theme();
@@ -534,22 +534,22 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
         "the time keeps its original inset inside the full-width band: ink {last_ink}, band {band_right}\n{frame}"
     );
 
-    // (d) The status band has one floor row below it on the phone.
+    // (d) The status band reaches the PTY bottom; the host adds pixel space below.
     let status_y = divider + 1;
     assert_eq!(
         status_y + 1 + crate::views::agent::PHONE_BOTTOM_MARGIN_ROWS,
         PHONE_ROWS,
-        "the status band keeps its bottom gap:\n{frame}"
+        "the status band reaches the measured PTY bottom:\n{frame}"
     );
 }
 
-/// The status band keeps the same bottom gap at every phone height.
+/// The status band reaches the measured PTY bottom at every phone height.
 #[test]
-fn phone_status_band_keeps_bottom_gap_at_every_phone_height() {
+fn phone_status_band_reaches_pty_bottom_at_every_phone_height() {
     assert_eq!(
         crate::views::agent::PHONE_BOTTOM_MARGIN_ROWS,
-        1,
-        "the phone layout has one bottom row"
+        0,
+        "the phone layout leaves pixel spacing to the host"
     );
     for rows in [PHONE_ROWS, 36, 33, 30, 26, 24, 20] {
         let mut agent = phone_agent();
@@ -559,7 +559,7 @@ fn phone_status_band_keeps_bottom_gap_at_every_phone_height() {
         assert_eq!(
             status_y + 1 + crate::views::agent::PHONE_BOTTOM_MARGIN_ROWS,
             rows,
-            "{PHONE_COLS}x{rows}: the status band keeps a bottom gap\n{frame}"
+            "{PHONE_COLS}x{rows}: the status band reaches the PTY bottom\n{frame}"
         );
     }
 }

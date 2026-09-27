@@ -19,8 +19,10 @@
 | `reorder-changelog.sh` | Reorder CHANGELOG to the invariant (Unreleased top, newest-first); `--check` for CI. Reorders only — it does not move items between sections |
 | `test-changelog-release.sh` | Hermetic regression test for the `Unreleased` → version-section move (fixture CHANGELOGs; no network, no repo writes) |
 | `lib/changelog_release.py` | The mover behind `bump-version.sh` (`plan` / `apply`), shared so the dry-run and the real bump report the same outcome |
-| `release.sh` | Release orchestrator (bump → PR → merge → tag → assets → CI publish → verify) |
+| `release.sh` | Release orchestrator (bump → PR → wait for the PR's checks → merge → tag → assets → CI publish → verify) |
+| `lib/pr_checks.py` | The wait behind that merge: polls `gh pr view --json state,mergeable,statusCheckRollup` until every check the PR reports is complete with none failed and GitHub says `MERGEABLE`; a failed check, a conflict, a closed PR or the deadline (`--checks-timeout`, default 3600 s) stops before the merge call |
 | `test-release-args.sh` | Hermetic regression for `release.sh` argument expansion: a release with no `--desc` must reach the bump under macOS `/bin/bash` 3.2 (empty-array `set -u` guard, the 6.1.7 stop), and a multi-word `--desc` stays one argv element |
+| `test-release-pr-wait.sh` | Hermetic regression for that wait (a temp repo with a bare origin and a fake `gh` replaying rollup fixtures): empty → pending → green waits, merges and reaches the tag; a failing check, a conflict and a rejected `gh pr merge` stop before/short of the merge with the resume command printed; `--checks-timeout` bounds the wait |
 | `npm-emergency-publish.sh` | **Emergency** local npm publish; drives the interactive login + emailed code through `aside` (ADR 0012) |
 | `verify-npm-version.sh` | Wait (bounded retry) until the registry serves a published version — the post-publish read shared by `release.sh`, `npm-emergency-publish.sh` and `publish-npm.yml` |
 | `test-npm-verify-retry.sh` | Hermetic regression test for that retry (local mock registry; no network, no credentials) |

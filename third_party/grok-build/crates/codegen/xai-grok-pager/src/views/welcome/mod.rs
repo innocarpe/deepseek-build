@@ -2984,24 +2984,31 @@ mod tests {
                 age: std::time::Duration::from_secs(125),
             };
             for compact in [false, true] {
-                for width in [24, 40, 52, 100] {
+                for width in [20, 24, 40, 52, 100] {
                     let mut params = render_params(&auth, &trust, None);
                     params.compact = compact;
                     params.foreign_resume_hint = Some(&hint);
                     let text = render_done_text_at_width(&params, width);
                     let lines: Vec<_> = text.lines().collect();
-                    let first = lines
-                        .iter()
-                        .position(|line| line.contains(&format!("Resume {label}")))
-                        .unwrap_or_else(|| panic!("missing source at width {width}: {text}"));
                     let last = lines
                         .iter()
                         .position(|line| line.contains("ctrl+u"))
                         .unwrap_or_else(|| panic!("missing action at width {width}: {text}"));
+                    let first = lines[..last]
+                        .iter()
+                        .rposition(|line| line.trim_start().starts_with("Resume "))
+                        .unwrap_or_else(|| panic!("missing hint at width {width}: {text}"));
                     assert!(first < last, "width {width}: {text}");
-                    let tip = lines[first..=last].join(" ");
-                    assert!(tip.contains("DeepSeek Build"), "width {width}: {text}");
-                    assert!(tip.contains("2m ago"), "width {width}: {text}");
+                    let tip = lines[first..=last]
+                        .iter()
+                        .map(|line| line.trim())
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    assert_eq!(
+                        tip,
+                        format!("Resume {label} in DeepSeek Build 2m ago · press ctrl+u"),
+                        "width {width}, compact={compact}"
+                    );
                     for line in &lines[first..=last] {
                         assert!(
                             line.starts_with("  "),

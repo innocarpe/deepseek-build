@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 6.1.6 — 2026-09-27
+
 - The classic DeepSeek Night theme keeps its dark-navy ground and lifts the glyph ramp so the phone screen reads: body `#C4C8DC → #D7D9E7` (APCA Lc 73 → 83), tool rows `#6E748C → #868DAC` (WCAG 3.97 → 5.60, above the AA floor), emphasis `#E8EAF6 → #F9F9FC`. The emphasis/body CIE L* gap holds at Δ11 — the rejected first candidate collapsed it to Δ5 — and the tool-row gray keeps its blue cast. Only the blue-tinted ramp moves: the neutral skin, the shared accents, `DEEPSEEK_BLUE*` and the field wiring are unchanged. Two tests pin the contrast floors on `bg_base` and the L* hierarchy, and `docs/product/THEME_CLASSIC_READABILITY_2026-09-27.md` keeps the candidate rounds, the evidence images and the edge-case checklist for the next touch-up.
 - On a phone-width pane, the status bar, the task list and the scrollback span the screen width. The prompt echo's background runs from the left edge up to the scrollbar — through the column the transcript keeps for the copy chip — and to the right edge when no scrollbar is drawn, while its text stays in the same place; the scrollbar column holds only the bar, so scrolling no longer leaves stray marks there. Scrolling a prompt into its pinned position preserves the fractional pad rows across every left gutter column instead of leaving a dark notch.
 - A phone pane pins the prompt echo you are scrolled into in compact mode too. `/compact-mode` (offered by the small-screen tip) and the auto-compact that the on-screen keyboard triggers used to drop the pinned echo, so it scrolled away; desktop panes keep compact mode's scrolling echo.

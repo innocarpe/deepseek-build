@@ -2,9 +2,10 @@ use std::ops::Range;
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::render::wrapping::{RtOptions, word_wrap_line_with_joiners};
+use crate::render::wrapping::{RtOptions, blockquote_prefix_len, word_wrap_line_with_joiners};
 use crate::scrollback::block::BlockContent;
 use crate::scrollback::types::{
     AccentStyle, BlockBackground, BlockContext, BlockLine, BlockOutput, DisplayMode, Selectable,
@@ -136,6 +137,117 @@ fn token_styled_line(
         spans.push(Span::styled(body.to_string(), body_style));
     }
     Line::from(spans)
+}
+
+/// Clip a styled line to `width` terminal cells on grapheme boundaries, without padding.
+///
+/// A folded echo's last visible row ends in ` …`, so its content fills the cells it shows and
+/// leaves none for the clock. A line narrower than `width` keeps its own cells (the clock may
+/// still close the row), and a grapheme that would cross the boundary stays out whole.
+///
+/// Cells are counted the way the buffer paints them (`Buffer::set_stringn`): span by span, one
+/// grapheme of that span at a time, see [`painted_cells`]. A whole-string width can be narrower
+/// (`"لا".width()` is 1, painted as 2 cells). Graphemes that paint no cell right after the cut
+/// stay: a combining mark in the span after its base letter is not dropped.
+fn clip_line_to_width(line: Line<'_>, width: usize) -> Line<'_> {
+    let Line {
+        style,
+        alignment,
+        spans,
+    } = line;
+    let mut out: Vec<Span<'_>> = Vec::new();
+    let mut used = 0usize;
+    for span in spans {
+        let mut cut = None;
+        for (at, grapheme) in span.content.grapheme_indices(true) {
+            let cells = painted_cells(grapheme);
+            if used + cells > width {
+                cut = Some(at);
+                break;
+            }
+            used += cells;
+        }
+        let Some(cut) = cut else {
+            out.push(span);
+            continue;
+        };
+        if let Some(head) = span.content.get(..cut)
+            && !head.is_empty()
+        {
+            out.push(Span::styled(head.to_string(), span.style));
+        }
+        break;
+    }
+    Line {
+        style,
+        alignment,
+        spans: out,
+    }
+}
+
+/// Cells the buffer paints for one grapheme (`Buffer::set_stringn`): none for a grapheme with a
+/// control character, which it skips although `"\t".width()` is 1; otherwise its width.
+fn painted_cells(grapheme: &str) -> usize {
+    if grapheme.contains(char::is_control) {
+        0
+    } else {
+        grapheme.width()
+    }
+}
+
+/// Cells the buffer paints for one span's text, grapheme by grapheme.
+fn span_painted_cells(text: &str) -> usize {
+    text.graphemes(true).map(painted_cells).sum()
+}
+
+/// Append `span`, folding it into the last span when they share a style. The wrapper cuts a word too
+/// long for its row between characters, which can split one grapheme (an emoji sequence) across two
+/// rows; joined back as one string, the clip, the buffer and a copy all see that grapheme whole.
+fn push_merged<'a>(spans: &mut Vec<Span<'a>>, span: Span<'a>) {
+    match spans.last_mut() {
+        Some(last) if last.style == span.style => last.content.to_mut().push_str(&span.content),
+        _ => spans.push(span),
+    }
+}
+
+/// Drop trailing whitespace from a styled line, removing spans it empties.
+fn trim_line_end(line: &mut Line<'_>) {
+    while let Some(last) = line.spans.last_mut() {
+        let keep = last.content.trim_end().len();
+        if keep == 0 {
+            line.spans.pop();
+            continue;
+        }
+        if keep < last.content.len()
+            && let Some(kept) = last.content.get(..keep)
+        {
+            last.content = kept.to_string().into();
+        }
+        break;
+    }
+}
+
+/// A wrapped row's spans without its first `indent` bytes: the quote marker (`│ `) the wrapper
+/// repeats at the start of every continuation row of a quoted line. That marker is layout, not
+/// text, so it must not show up where a later row is joined onto the one before it.
+fn spans_after_indent<'a>(spans: &[Span<'a>], mut indent: usize) -> Vec<Span<'a>> {
+    let mut out = Vec::with_capacity(spans.len());
+    for span in spans {
+        if indent == 0 {
+            out.push(span.clone());
+            continue;
+        }
+        let len = span.content.len();
+        if len <= indent {
+            indent -= len;
+            continue;
+        }
+        if let Some(rest) = span.content.get(indent..) {
+            out.push(Span::styled(rest.to_string(), span.style));
+        }
+        indent = 0;
+    }
+    out
 }
 
 #[derive(Debug, Clone)]
@@ -432,9 +544,15 @@ impl UserPromptBlock {
             }
             let (wrapped, wrap_joiners) = word_wrap_line_with_joiners(&content_line, wrap_opts);
             let wrapped_count = wrapped.len();
+            // A quoted line (`│ …`) repeats its marker at the start of each continuation row; the
+            // same rule as the wrapper's says how many bytes of such a row are that marker.
+            let quote_indent = match blockquote_prefix_len(line_text) {
+                len if len < line_text.len() => len,
+                _ => 0,
+            };
 
             for (wrap_idx, (wrapped_line, wrap_joiner)) in
-                wrapped.into_iter().zip(wrap_joiners).enumerate()
+                wrapped.iter().zip(&wrap_joiners).enumerate()
             {
                 let is_first_line = logical_idx == 0 && wrap_idx == 0;
                 let indent: String = " ".repeat(prefix_width);
@@ -452,25 +570,49 @@ impl UserPromptBlock {
                 let joiner = if is_first_line || wrap_idx == 0 {
                     None
                 } else {
-                    wrap_joiner
+                    wrap_joiner.clone()
                 };
 
                 if will_be_last && has_more {
-                    // Re-wrap the current line's content with reduced width to make room for the ellipsis
-                    // Re-wrapping the styled line (not flattened text) keeps token spans teal here
                     let line_budget = if logical_idx == 0 && wrap_idx == 0 {
                         base_content_width.saturating_sub(first_line_reserve).max(1)
                     } else {
                         base_content_width
                     };
                     let reduced_width = line_budget.saturating_sub(ellipsis_width).max(1);
-                    let (re_wrapped_lines, _) =
-                        word_wrap_line_with_joiners(&wrapped_line, RtOptions::new(reduced_width));
 
-                    let final_content = re_wrapped_lines
-                        .into_iter()
-                        .next()
-                        .unwrap_or_else(Line::default);
+                    // The last visible row runs to `reduced_width` before the ellipsis: join this row
+                    // with every later row of its logical line (each later row's joiner is the space
+                    // the base wrap skipped, and its quote marker is dropped) and clip on grapheme
+                    // boundaries. Re-wrapping only this row left it short of the boundary and handed
+                    // the leftover columns to the clock. Building the tail from the wrapped rows keeps
+                    // the styled spans (teal tokens) crossing the cut intact.
+                    // A cut that lands on a joiner drops the space, so the ellipsis's own space is
+                    // the only one before it.
+                    let mut tail = wrapped_line.clone();
+                    let mut tail_cells: usize = tail
+                        .spans
+                        .iter()
+                        .map(|s| span_painted_cells(&s.content))
+                        .sum();
+                    for (row, row_joiner) in wrapped.iter().zip(&wrap_joiners).skip(wrap_idx + 1) {
+                        // One cell past the budget is enough for the clip to see what follows the cut.
+                        if tail_cells > reduced_width {
+                            break;
+                        }
+                        if let Some(space) = row_joiner
+                            && !space.is_empty()
+                        {
+                            tail_cells += span_painted_cells(space);
+                            push_merged(&mut tail.spans, Span::styled(space.clone(), text_style));
+                        }
+                        for span in spans_after_indent(&row.spans, quote_indent) {
+                            tail_cells += span_painted_cells(&span.content);
+                            push_merged(&mut tail.spans, span);
+                        }
+                    }
+                    let mut final_content = clip_line_to_width(tail, reduced_width);
+                    trim_line_end(&mut final_content);
 
                     // Build final line with prefix, content, and ellipsis
                     let mut spans = vec![Span::styled(line_prefix.to_string(), prefix_style)];
@@ -499,7 +641,7 @@ impl UserPromptBlock {
 
                 // Normal line (not truncated)
                 let mut spans = vec![Span::styled(line_prefix.to_string(), prefix_style)];
-                spans.extend(wrapped_line.spans.into_iter().map(|s| Span {
+                spans.extend(wrapped_line.spans.iter().map(|s| Span {
                     content: s.content.to_string().into(),
                     style: s.style,
                 }));
@@ -1049,7 +1191,8 @@ mod tests {
 
         let theme = Theme::current();
         let last = &line_at(&lines, 2).content;
-        assert!(line_text(last).ends_with(" \u{2026}"));
+        // The cut lands on the space after "words"; that space is dropped, not doubled before the ellipsis.
+        assert_eq!(line_text(last), "/do-it more words \u{2026}");
         assert_eq!(teal_text(last, &theme), "/do-it");
         let body: String = last
             .spans
@@ -1429,7 +1572,6 @@ mod tests {
         }
     }
 
-    /// Text of each rendered line, styles dropped.
     /// A phone pane's appearance: the narrow layout, whose clock takes no first-row columns.
     fn phone_appearance() -> AppearanceConfig {
         let mut appearance = AppearanceConfig::default();
@@ -1437,6 +1579,7 @@ mod tests {
         appearance
     }
 
+    /// Text of each rendered line, styles dropped.
     fn rendered_lines(block: &UserPromptBlock, ctx: &BlockContext) -> Vec<String> {
         block
             .output(ctx)
@@ -1480,6 +1623,142 @@ mod tests {
                 "the second line must carry the ellipsis at {width} cols: {lines:?}"
             );
         }
+    }
+
+    /// The folded last row runs to the edge before its ellipsis. It used to stop where word wrapping
+    /// broke it (`…because it has plenty …` in the 52-column phone echo), and the clock took the
+    /// columns left over.
+    #[test]
+    fn collapsed_last_line_fills_its_row_before_the_ellipsis() {
+        const ECHO_WIDTH: u16 = 52;
+        let block = UserPromptBlock::new(LONG_PROMPT);
+        let rows: Vec<String> = block
+            .wrap_prompt_lines(ECHO_WIDTH, Some(2), false, false)
+            .iter()
+            .map(|l| line_text(&l.content))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                "This is a long prompt that should be collapsed and".to_string(),
+                "truncated at narrow widths because it has plenty o \u{2026}".to_string(),
+            ],
+        );
+        assert_eq!(rows[1].width(), usize::from(ECHO_WIDTH));
+    }
+
+    /// A wide glyph that would cross the cut stays out whole, so the row ends one column short.
+    #[test]
+    fn collapsed_last_line_keeps_a_wide_glyph_whole() {
+        let block = UserPromptBlock::new("가".repeat(30));
+        let lines = block.wrap_prompt_lines(21, Some(1), false, false);
+        assert_eq!(
+            line_text(&line_at(&lines, 0).content),
+            format!("{} \u{2026}", "가".repeat(9))
+        );
+    }
+
+    /// The cut counts the cells the buffer paints, one grapheme at a time. `"لا".width()` is 1 (a
+    /// lam-alef ligature), but the buffer paints `ل` and `ا` in a cell each, so a whole-string measure
+    /// let the row run past the budget and pushed the ellipsis off it.
+    #[test]
+    fn collapsed_last_line_counts_painted_cells() {
+        use crate::scrollback::types::str_display_cells;
+        let pair = "\u{644}\u{627}";
+        assert!(
+            pair.width() < str_display_cells(pair),
+            "the premise: the pair measures narrower than it paints"
+        );
+        let block = UserPromptBlock::new(format!("head\n{}\ntail", pair.repeat(5)));
+        let lines = block.wrap_prompt_lines(10, Some(2), false, false);
+        let last = line_text(&line_at(&lines, 1).content);
+        assert_eq!(last, format!("{} \u{2026}", pair.repeat(4)));
+        assert_eq!(str_display_cells(&last), 10);
+    }
+
+    /// The wrapper splits a family emoji across two rows (it cuts a word too long for its row between
+    /// characters). Joined back, the pieces are one string again: the buffer paints the emoji whole, a
+    /// copy of the row reads the same grapheme, and the ellipsis still fits. Kept as two spans, the row
+    /// painted its pieces apart past the budget and the ellipsis was not painted.
+    #[test]
+    fn collapsed_last_line_joins_a_grapheme_the_wrapper_split() {
+        const WIDTH: u16 = 6;
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}";
+        let block = UserPromptBlock::new(format!("head\n{family}ab\nend"));
+        assert_eq!(
+            block.wrap_prompt_lines(WIDTH, None, false, false).len(),
+            4,
+            "the premise: the wrapper splits the emoji line into two rows"
+        );
+        let lines = block.wrap_prompt_lines(WIDTH, Some(2), false, false);
+        let last = &line_at(&lines, 1).content;
+        assert_eq!(line_text(last), format!("{family}ab \u{2026}"));
+        assert!(
+            last.spans.iter().any(|s| s.content.contains(family)),
+            "the emoji is one string, so a copy reads what the buffer paints: {last:?}"
+        );
+        let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, WIDTH, 1));
+        buf.set_line(0, 0, last, WIDTH);
+        let painted: String = (0..WIDTH)
+            .map(|x| buf.cell((x, 0)).unwrap().symbol().to_string())
+            .collect();
+        assert!(
+            painted.trim_end().ends_with('\u{2026}'),
+            "the ellipsis is painted: {painted:?} from {last:?}"
+        );
+    }
+
+    /// The buffer skips control characters, so a tab paints no cell although `"\t".width()` is 1. The
+    /// cut counts it as the buffer does and the row still reaches the ellipsis at the edge.
+    #[test]
+    fn collapsed_last_line_counts_a_tab_as_no_cell() {
+        const WIDTH: u16 = 8;
+        let block = UserPromptBlock::new("head\n\tABCDEFGH\ntail");
+        let lines = block.wrap_prompt_lines(WIDTH, Some(2), false, false);
+        let last = &line_at(&lines, 1).content;
+        assert_eq!(line_text(last), "\tABCDEF \u{2026}");
+        let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, WIDTH, 1));
+        buf.set_line(0, 0, last, WIDTH);
+        let painted: String = (0..WIDTH)
+            .map(|x| buf.cell((x, 0)).unwrap().symbol().to_string())
+            .collect();
+        assert_eq!(painted, "ABCDEF \u{2026}");
+    }
+
+    /// A quoted prompt's continuation rows start with the `│ ` the wrapper repeats. Joining the hidden
+    /// rows onto the last visible one leaves that marker out, so it never lands mid-row.
+    #[test]
+    fn collapsed_last_line_leaves_the_repeated_quote_marker_out() {
+        let block = UserPromptBlock::new(format!(
+            "\u{2502} {} {} {}",
+            "A".repeat(27),
+            "B".repeat(27),
+            "C".repeat(40)
+        ));
+        let rows: Vec<String> = block
+            .wrap_prompt_lines(52, Some(2), false, false)
+            .iter()
+            .map(|l| line_text(&l.content))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                format!("\u{2502} {}", "A".repeat(27)),
+                format!("\u{2502} {} {} \u{2026}", "B".repeat(27), "C".repeat(20)),
+            ],
+        );
+    }
+
+    /// A combining mark right after a token is a span of its own but part of the token's last
+    /// grapheme, so a cut that lands at the token's end keeps it.
+    #[test]
+    fn collapsed_last_line_keeps_a_combining_mark_after_a_token() {
+        let _guard = crate::theme::cache::pin_theme();
+        let block = UserPromptBlock::with_skill_tokens("head\n/abcd\u{301}z\ntail", vec![5..10]);
+        let lines = block.wrap_prompt_lines(7, Some(2), false, false);
+        let last = &line_at(&lines, 1).content;
+        assert_eq!(teal_text(last, &Theme::current()), "/abcd");
+        assert_eq!(line_text(last), "/abcd\u{301} \u{2026}");
     }
 
     /// The other half of the contract: widths above the threshold keep the
@@ -1717,7 +1996,8 @@ mod tests {
 
     /// The fold check counts the rows word wrapping produces, not `ceil(width / columns)`. Three words that take a
     /// row each at 52 columns are 96 columns wide, so the lower bound said two rows: the echo stayed expanded and
-    /// painted three. Folded, it paints the two-row budget and ends in the ellipsis.
+    /// painted three. Folded, it paints the two-row budget, its second row runs on into the third word up to the
+    /// ellipsis, and the ellipsis ends the row at the edge.
     #[test]
     fn fold_check_counts_word_wrapped_rows() {
         const ECHO_WIDTH: u16 = 52;
@@ -1741,8 +2021,11 @@ mod tests {
         );
         assert_eq!(
             rows(collapsed_max_lines(ECHO_WIDTH, DisplayMode::Collapsed)),
-            vec!["A".repeat(27), format!("{} \u{2026}", "B".repeat(27))],
-            "folded, the echo paints two rows and marks the rest"
+            vec![
+                "A".repeat(27),
+                format!("{} {} \u{2026}", "B".repeat(27), "C".repeat(22))
+            ],
+            "folded, the echo paints two rows, fills the second and marks the rest"
         );
 
         // A roomy pane has the same lower bound: 4 words of 40 are 163 columns, `ceil(163 / 78) = 3` rows, but

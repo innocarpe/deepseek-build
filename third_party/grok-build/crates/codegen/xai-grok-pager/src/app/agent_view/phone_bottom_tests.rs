@@ -759,6 +759,13 @@ fn phone_pinned_echo_keeps_its_band_and_closes_on_its_clock() {
     // `ceil(96 / 52) = 2` rows once kept this prompt expanded at three rows; the
     // fold check counts the wrapped rows, so it folds to two and the ellipsis.
     let three_rows = format!("{} {} {}", "A".repeat(27), "B".repeat(27), "C".repeat(40));
+    // Folded, the second row fills with Arabic lam-alef pairs. `UnicodeWidthStr`
+    // reads each pair as one column; the buffer paints a cell per letter.
+    let ligature_rows = format!(
+        "head\n{} {}\ntail",
+        "A".repeat(20),
+        "\u{644}\u{627}".repeat(16)
+    );
     for (label, prompt, head, tail, text_rows, clock) in [
         // The prompt from the report: its second row leaves room.
         (
@@ -778,13 +785,24 @@ fn phone_pinned_echo_keeps_its_band_and_closes_on_its_clock() {
             2,
             false,
         ),
+        // Folded: the second row runs on into the third word up to the
+        // ellipsis, so it is full and the clock has no room.
         (
             "word wrap past the budget folds",
             three_rows.as_str(),
             "AAAA",
-            "B \u{2026}",
+            "C \u{2026}",
             2,
-            true,
+            false,
+        ),
+        // The same full row, measured by the cells it paints: no clock over it.
+        (
+            "full ligature row",
+            ligature_rows.as_str(),
+            "head",
+            "\u{644} \u{2026}",
+            2,
+            false,
         ),
     ] {
         let mut agent = phone_agent();
@@ -832,7 +850,9 @@ fn phone_pinned_echo_keeps_its_band_and_closes_on_its_clock() {
         );
 
         let first_text = rows_with(&buf, head)[0];
-        let last_text = *rows_with(&buf, tail).last().unwrap();
+        let last_text = *rows_with(&buf, tail)
+            .last()
+            .unwrap_or_else(|| panic!("{label}: no row shows {tail:?}\n{frame}"));
         let top_pad = first_text - 1;
         let bottom_pad = top_pad + full_height - 1;
         assert_eq!(
@@ -963,16 +983,25 @@ fn a_wide_pinned_prompt_keeps_every_row_it_paints() {
         pinned.render_height, full_height,
         "the pinned prompt keeps every row it paints\n{frame}"
     );
-    for word in ["AAAA", "BBBB", "CCCC \u{2026}"] {
+    for word in ["AAAA", "BBBB", "CCCC"] {
         assert_eq!(
             rows_with(&buf, word).len(),
             1,
             "the pinned header shows the {word} row\n{frame}"
         );
     }
-    assert!(
-        rows_with(&buf, "DDDD").is_empty(),
-        "the fourth wrapped row is folded away\n{frame}"
+    // The fourth wrapped row is folded away: its word shows only where the
+    // third row runs on into it up to the ellipsis.
+    let third = rows_with(&buf, "CCCC");
+    assert_eq!(
+        rows_with(&buf, "D \u{2026}"),
+        third,
+        "the third row fills with the fourth word and ends in the ellipsis\n{frame}"
+    );
+    assert_eq!(
+        rows_with(&buf, "DDDD"),
+        third,
+        "no row of its own for the fourth word\n{frame}"
     );
 }
 

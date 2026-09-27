@@ -34,26 +34,28 @@ mod palette {
     use super::*;
 
     // Blue-tinted ramp (DeepSeek Night). The cool cast makes the whole
-    // surface read "DeepSeek"; slightly lower small-text legibility.
-    pub const BG: Color = rgb(10, 10, 14);
-    pub const BG_DARK: Color = rgb(12, 12, 18);
-    pub const BG_STORM_DARK: Color = rgb(16, 17, 24);
-    pub const BG_STORM: Color = rgb(18, 20, 28);
-    pub const BG_HIGHLIGHT: Color = rgb(32, 36, 52);
-    pub const FG: Color = rgb(232, 234, 246);
-    pub const FG_DARK: Color = rgb(196, 200, 220);
-    pub const FG_GUTTER: Color = rgb(70, 74, 96);
-    pub const COMMENT: Color = rgb(110, 116, 140);
-    pub const DARK3: Color = rgb(90, 96, 120);
-    pub const DARK5: Color = rgb(130, 136, 160);
+    // surface read "DeepSeek". The dark-navy ground stays and the glyph
+    // ramp is lifted instead: the emphasis/body L* gap holds its original
+    // size, and the tool-row gray brightens while keeping its blue cast.
+    pub const BG: Color = rgb(8, 10, 21); // #080A15
+    pub const BG_DARK: Color = rgb(9, 12, 24); // #090C18
+    pub const BG_STORM_DARK: Color = rgb(14, 17, 29); // #0E111D
+    pub const BG_STORM: Color = rgb(14, 20, 37); // #0E1425
+    pub const BG_HIGHLIGHT: Color = rgb(26, 36, 62); // #1A243E
+    pub const FG: Color = rgb(249, 249, 252); // #F9F9FC
+    pub const FG_DARK: Color = rgb(215, 217, 231); // #D7D9E7
+    pub const FG_GUTTER: Color = rgb(71, 77, 100); // #474D64
+    pub const COMMENT: Color = rgb(134, 141, 172); // #868DAC
+    pub const DARK3: Color = rgb(104, 110, 137); // #686E89
+    pub const DARK5: Color = rgb(164, 170, 199); // #A4AAC7
 
     // Per-field blue-ramp values that were previously inlined.
-    pub const BG_SURFACE: Color = rgb(24, 26, 36); // bg_dark
-    pub const BG_HOVER: Color = rgb(40, 44, 62);
-    pub const BG_VISUAL: Color = rgb(40, 46, 70);
-    pub const MD_CODE_BG: Color = rgb(28, 30, 42);
-    pub const HOVER_BORDER: Color = rgb(30, 34, 48);
-    pub const PROMPT_BORDER: Color = rgb(48, 54, 78);
+    pub const BG_SURFACE: Color = rgb(19, 26, 45); // #131A2D — bg_dark
+    pub const BG_HOVER: Color = rgb(34, 44, 72); // #222C48
+    pub const BG_VISUAL: Color = rgb(32, 46, 80); // #202E50
+    pub const MD_CODE_BG: Color = rgb(22, 30, 52); // #161E34
+    pub const HOVER_BORDER: Color = rgb(25, 34, 58); // #19223A
+    pub const PROMPT_BORDER: Color = rgb(41, 54, 89); // #293659
 
     // Hue-neutral ramp (DeepSeek Night Neutral) — same luminance as the
     // blue ramp but r≈g≈b (blue channel at most a couple of levels for a
@@ -297,5 +299,86 @@ mod tests {
         assert_eq!(blue.prompt_border_active, neutral.prompt_border_active);
         assert_eq!(blue.accent_thinking, neutral.accent_thinking);
         assert_eq!(blue.command, neutral.command);
+    }
+
+    // ---- colorimetry helpers (mirrors `deepseeknight_v2` tests) ----------
+
+    fn rgb_of(c: Color) -> (f64, f64, f64) {
+        match c {
+            Color::Rgb(r, g, b) => (r as f64, g as f64, b as f64),
+            other => panic!("expected Color::Rgb, got {other:?}"),
+        }
+    }
+
+    fn lin(v: f64) -> f64 {
+        let v = v / 255.0;
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    }
+
+    fn luminance(c: Color) -> f64 {
+        let (r, g, b) = rgb_of(c);
+        0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+    }
+
+    fn contrast(a: Color, b: Color) -> f64 {
+        let (la, lb) = (luminance(a), luminance(b));
+        let (hi, lo) = if la >= lb { (la, lb) } else { (lb, la) };
+        (hi + 0.05) / (lo + 0.05)
+    }
+
+    fn l_star(c: Color) -> f64 {
+        let y = luminance(c);
+        let d = 6.0 / 29.0;
+        let f = if y > d * d * d {
+            y.cbrt()
+        } else {
+            y / (3.0 * d * d) + 4.0 / 29.0
+        };
+        116.0 * f - 16.0
+    }
+
+    #[test]
+    fn classic_glyph_ramp_meets_contrast_floors_on_bg_base() {
+        // The tool-row gray used to sit at WCAG 3.97, below the AA floor;
+        // `gray_dim` stays rule-only on purpose.
+        let t = Theme::deepseeknight();
+        let bg = t.bg_base;
+        for (name, c, floor) in [
+            ("text_primary", t.text_primary, 16.0),
+            ("md_text", t.md_text, 12.0),
+            ("gray_bright", t.gray_bright, 7.5),
+            ("gray", t.gray, 5.2),
+        ] {
+            let cr = contrast(c, bg);
+            assert!(
+                cr >= floor,
+                "{name} contrast {cr:.2} on bg_base is below {floor}"
+            );
+        }
+        let dim = contrast(t.gray_dim, bg);
+        assert!(dim <= 3.0, "gray_dim must stay rule-only, got {dim:.2}");
+    }
+
+    #[test]
+    fn classic_glyph_ramp_keeps_l_star_hierarchy() {
+        // The rejected first candidate raised the background and collapsed
+        // emphasis and body into one white; these gaps keep the hierarchy
+        // the classic theme has always had.
+        let t = Theme::deepseeknight();
+        let primary = l_star(t.text_primary);
+        let body = l_star(t.md_text);
+        let gray = l_star(t.gray);
+        assert!(
+            primary - body >= 10.0,
+            "text_primary({primary:.1}) - md_text({body:.1}) is under 10"
+        );
+        assert!(
+            body - gray >= 25.0,
+            "md_text({body:.1}) - gray({gray:.1}) is under 25"
+        );
     }
 }

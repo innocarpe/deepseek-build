@@ -32,6 +32,9 @@
 | **`test-path-a-public-entry-e2e.sh`** | **Path A R0A** public CLI → agent_launch → scripted DeepSeek + wire |
 | `lib/scripted_deepseek_server.py` | Hermetic Chat Completions fixture (SSE + wire JSONL) |
 | `lib/owner-bar-common.sh` | Shared helpers for owner-bar gates |
+| `theme-preview/metrics.py` | Colorimetry for theme candidates — WCAG 2.1 contrast, CIE L\*, APCA Lc, LCh↔sRGB (stdlib only) |
+| `theme-preview/remap.py` | Recolor a screenshot's terminal region with a candidate palette (`--src`/`--old`/`--new`/`--out`/`--crop`); the method and its limits are in [`THEME_CLASSIC_READABILITY_2026-09-27.md`](../docs/product/THEME_CLASSIC_READABILITY_2026-09-27.md) |
+| `theme-preview/remap2.py` | Blend-aware pass of the same: backgrounds that are a mix of two ramp colors, host chrome preserved |
 
 ## Owner-bar-5x (active product train → `5.0.0`)
 

@@ -54,7 +54,8 @@ a tag ref cannot be restored by the next tag.
 | [`reorder-changelog.sh`](../../scripts/reorder-changelog.sh) | Reorder CHANGELOG.md to the invariant (Unreleased top, versions newest-first) without touching non-version sections; `--check` exits non-zero if out of order. Reorders only — it does not move items between sections. |
 | [`test-changelog-release.sh`](../../scripts/test-changelog-release.sh) | Hermetic regression test for the `Unreleased` move (`lib/changelog_release.py`); fixture CHANGELOGs in a temp dir, no network, no repo state |
 | [`lib/version_log.py`](../../scripts/lib/version_log.py) | Fill the decision-log row's `PR #_(fill in)_` with the release PR number; called by `release.sh` the moment `gh pr create` returns (idempotent, so a resumed release re-runs safely) |
-| [`release.sh`](../../scripts/release.sh) | Orchestrator: bump → MAJOR/README gate → verify → PR (`chore(release)`) → merge → tag `v{ver}` → wait for prebuilt assets → wait for CI publish → verify the registry. |
+| [`release.sh`](../../scripts/release.sh) | Orchestrator: bump → MAJOR/README gate → verify → PR (`chore(release)`) → **wait for the PR's checks** → merge → tag `v{ver}` → wait for prebuilt assets → wait for CI publish → verify the registry. |
+| [`lib/pr_checks.py`](../../scripts/lib/pr_checks.py) | The wait behind that merge — polls `gh pr view --json state,mergeable,statusCheckRollup` until every check the PR reports is complete with none failed and GitHub says `MERGEABLE`; the 6.1.1/6.1.7/6.1.10 "Pull Request is not mergeable" stop (§The merge waits for the release PR's checks) |
 | [`npm-emergency-publish.sh`](../../scripts/npm-emergency-publish.sh) | **Emergency path only.** Local interactive publish that drives `npm login --auth-type=web` and any emailed code through the `aside` browser agent, so no person has to supply a number. |
 | [`cache-guard.sh`](../../scripts/cache-guard.sh) | Release gate for spec 10 §1.9: overlay bench always, Path A bench only when `xai-grok-shell` is already compiled in the vendored target. Skips unless `DSB_RELEASE_CACHE_GUARD=1`; threshold via `DSB_CACHE_GUARD_THRESHOLD` (default 90). |
 
@@ -104,6 +105,38 @@ build (30–60+ minutes). The contract and test names are spec 10 §1.9 / §4.4.
 | `--platform ID` | Platform to wait for (default: detect from `npm/lib/platform.js`) |
 | `--wait-all` | Retained for future matrix expansion; currently waits for the single `darwin-arm64` target |
 | `--timeout SEC` | Asset wait timeout (default 5400) |
+| `--checks-timeout SEC` | How long to wait for the release PR's checks before merging (default 3600) |
+
+### The merge waits for the release PR's checks
+
+`gh pr merge` used to fire the instant `gh pr create` returned. GitHub computes
+a pull request's mergeability asynchronously and the checks had just started,
+so the merge answered
+
+```
+GraphQL: Pull Request is not mergeable (mergePullRequest)
+```
+
+on three releases — `6.1.1` (`#258`), `6.1.7` (`#311`) and `6.1.10` (`#323`).
+`6.1.6` (`#303`) stopped at the same place with `Base branch was modified`.
+Each time a person merged the PR and resumed with
+`./scripts/release.sh <ver> --skip-bump --skip-pr`.
+
+The script now waits (`scripts/lib/pr_checks.py`, polling
+`gh pr view --json state,mergeable,statusCheckRollup`) until every check the PR
+reports is complete with none failed or cancelled and GitHub reports the PR
+`MERGEABLE`, and only then merges. Nothing is enforced on `main` — its ruleset
+carries no required status checks, so `gh pr checks --required` has nothing to
+report — which is why the wait reads the PR's own rollup (the always-on `CI /
+required` job's result included) instead.
+
+A check that fails or is cancelled stops the release **before** the merge call:
+the script exits 1, prints the failing check names, the PR URL and the resume
+command. A rejected `gh pr merge` (the base moved, a conflict appeared) is the
+same loud exit. The wait is bounded by `--checks-timeout` (default 3600 s);
+`DSB_PR_CHECKS_INTERVAL_SEC` shortens the poll interval for the hermetic
+regression, [`scripts/test-release-pr-wait.sh`](../../scripts/test-release-pr-wait.sh),
+which runs `release.sh` in a temp repo against a fake `gh` and a bare origin.
 
 ## CHANGELOG convention (fail-close)
 

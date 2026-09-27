@@ -1,7 +1,47 @@
+use std::path::PathBuf;
 use std::process::Command;
 
+fn git(args: &[&str]) -> Option<String> {
+    Command::new("git")
+        .args(args)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// The files whose change moves `git rev-parse HEAD`: this checkout's HEAD and
+/// the ref it points at (loose, else packed-refs). `.git/HEAD` relative to this
+/// crate never exists — the crate is not the repository root, and a linked
+/// worktree's `.git` is a file — so cargo reran this script, and recompiled the
+/// pager, on every build.
+fn git_commit_inputs() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(git_dir) = git(&["rev-parse", "--absolute-git-dir"]) {
+        paths.push(PathBuf::from(git_dir).join("HEAD"));
+    }
+    if let (Some(common), Some(head_ref)) = (
+        git(&["rev-parse", "--path-format=absolute", "--git-common-dir"]),
+        git(&["rev-parse", "--symbolic-full-name", "HEAD"]),
+    ) {
+        let common = PathBuf::from(common);
+        let loose = common.join(&head_ref);
+        if head_ref.starts_with("refs/") && loose.is_file() {
+            paths.push(loose);
+        } else {
+            paths.push(common.join("packed-refs"));
+        }
+    }
+    paths.retain(|p| p.is_file());
+    paths
+}
+
 fn main() {
-    println!("cargo:rerun-if-changed=.git/HEAD");
+    for path in git_commit_inputs() {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
     println!("cargo:rerun-if-env-changed=DEEPSEEK_BUILD_VERSION");
     println!("cargo:rerun-if-env-changed=GROK_VERSION");
 

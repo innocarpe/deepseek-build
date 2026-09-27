@@ -143,7 +143,11 @@ impl XaiProtoBuilder {
     ) -> anyhow::Result<()> {
         let includes = Vec::from_iter(includes);
 
-        if let Some(protoc) = protoc {
+        // A protoc found on PATH comes back as the bare name `protoc`, which
+        // cargo resolves against the package directory, where it never
+        // exists: the build script was stale on every build, and so was every
+        // crate above it. Watch protoc only when it is a file from here.
+        if let Some(protoc) = protoc.filter(|p| p.is_file()) {
             println!(
                 "cargo:rerun-if-changed={}",
                 protoc.to_str().context("protoc path not UTF-8")?

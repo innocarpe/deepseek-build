@@ -619,28 +619,32 @@ impl BlockContent for UserPromptBlock {
     /// maps to `max_lines = None`, so the narrow budget [`collapsed_max_lines`] computes for that same width never got
     /// applied and the echo stayed at full body height.
     ///
-    /// Wrapping mirrors `wrap_prompt_lines` through [`Self::prefix_for`]: the prefix it reports (the `❯ ` on a roomy
-    /// pane, nothing on a narrow one, `$ ` / `↻  ` for bash and cron either way) is subtracted once, because every
-    /// row is indented by it. Row counts are `ceil(line_width / wrap_width)`, a lower bound on word-boundary wrapping.
-    /// A `None` budget means the mode never folds.
+    /// The row count is the renderer's own: `wrap_prompt_lines` wraps at word boundaries, with the prefix
+    /// [`Self::prefix_for`] reports (the `❯ ` on a roomy pane, nothing on a narrow one, `$ ` / `↻  ` for bash and
+    /// cron either way). `ceil(line_width / wrap_width)` is only a lower bound on that wrap: three words that take a
+    /// row each at 52 columns scored two, so the phone echo stayed expanded at three rows over its two-row budget.
+    /// That bound still answers first: past the budget it is already a fold, so the wrap only runs for text that
+    /// fits the budget's rows by width — a few hundred columns at most, however long the prompt. This is asked on
+    /// every layout pass and frame. A `None` budget means the mode never folds.
     fn is_foldable_at(&self, content_width: u16) -> bool {
         let Some(budget) = collapsed_max_lines(content_width, DisplayMode::Collapsed) else {
             return false;
         };
-        // Same helper the renderer uses, including the columns the dropped arrow hands back on a narrow pane.
         let prefix_width = self.prefix_for(true, content_width).width();
         let wrap_width = usize::from(content_width)
             .saturating_sub(prefix_width)
             .max(1);
-        let mut visual_lines = 0usize;
+        let mut lower_bound = 0usize;
         for line in self.text.lines() {
             let w = line.width();
-            visual_lines += if w == 0 { 1 } else { w.div_ceil(wrap_width) };
-            if visual_lines > budget {
+            lower_bound += if w == 0 { 1 } else { w.div_ceil(wrap_width) };
+            if lower_bound > budget {
                 return true;
             }
         }
-        false
+        self.wrap_prompt_lines(content_width, Some(budget + 1), true, false)
+            .len()
+            > budget
     }
 
     /// The off-screen height estimate asks this instead of assuming one row.
@@ -1684,6 +1688,45 @@ mod tests {
         assert!(
             over.is_foldable_at(PHONE_CONTENT_WIDTH),
             "one column past two rows needs a third row and must fold"
+        );
+    }
+
+    /// The fold check counts the rows word wrapping produces, not `ceil(width / columns)`. Three words that take a
+    /// row each at 52 columns are 96 columns wide, so the lower bound said two rows: the echo stayed expanded and
+    /// painted three. Folded, it paints the two-row budget and ends in the ellipsis.
+    #[test]
+    fn fold_check_counts_word_wrapped_rows() {
+        const ECHO_WIDTH: u16 = 52;
+        let words = format!("{} {} {}", "A".repeat(27), "B".repeat(27), "C".repeat(40));
+        let block = UserPromptBlock::new(words);
+        let rows = |max_lines| -> Vec<String> {
+            block
+                .wrap_prompt_lines(ECHO_WIDTH, max_lines, true, false)
+                .iter()
+                .map(|l| line_text(&l.content))
+                .collect()
+        };
+        assert_eq!(
+            rows(None).len(),
+            3,
+            "each word takes a row at {ECHO_WIDTH} columns"
+        );
+        assert!(
+            block.is_foldable_at(ECHO_WIDTH),
+            "three wrapped rows are past the two-row phone budget"
+        );
+        assert_eq!(
+            rows(collapsed_max_lines(ECHO_WIDTH, DisplayMode::Collapsed)),
+            vec!["A".repeat(27), format!("{} \u{2026}", "B".repeat(27))],
+            "folded, the echo paints two rows and marks the rest"
+        );
+
+        // A roomy pane has the same lower bound: 4 words of 40 are 163 columns, `ceil(163 / 78) = 3` rows, but
+        // no two fit one 78-column row.
+        let roomy = UserPromptBlock::new(vec!["w".repeat(40); 4].join(" "));
+        assert!(
+            roomy.is_foldable_at(80),
+            "four wrapped rows are past the three-row budget"
         );
     }
 

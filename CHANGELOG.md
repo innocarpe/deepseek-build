@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A folded prompt echo's last row runs to the edge before its ` …`. It used to stop where word wrapping had broken it: the word that did not fit had already moved to the hidden row, so the row ended early and, on a phone-width pane, the clock filled the gap (`BBB…B …   11:53 PM` for `AAA…A BBB…B CCC…C`). The row now carries on with the text that follows and is cut at the row's edge (`BBB…B CCC…C …`), so a full folded row shows no clock. A wide glyph (Hangul, CJK) that would straddle the cut stays out whole, a cut that lands on a space leaves one space before the ellipsis, and a line break in the prompt still ends the row. The echo keeps its two-row (three on a wide pane) fold.
+
 ## 6.1.9 — 2026-09-28
 
 - On a phone-width pane a prompt echo opens folded to two rows whenever its words wrap past two. The fold check counted `ceil(width / columns)` rows per line, a lower bound on word wrapping, so a prompt that word-wraps to three rows (a long English prompt, say) opened expanded at three; it now counts the rows the echo actually wraps to, with the renderer's own prefix and wrap. A prompt pushed before the first frame (a resumed or replayed session), a pass through width 0, and an appearance change such as compact mode keep or re-derive the fold the same way. Tapping still opens the echo, and a second tap folds it back to two rows.

@@ -9,7 +9,8 @@
 # Usage:
 #   ./scripts/release.sh 4.0.4 [--desc "one-line note"]
 #     [--no-publish] [--skip-bump] [--skip-pr] [--skip-tag] [--publish-only]
-#     [--local-publish] [--platform ID] [--timeout SEC] [--wait-all]
+#     [--local-publish] [--platform ID] [--timeout SEC] [--checks-timeout SEC]
+#     [--wait-all]
 #
 # Publishing (ADR 0012): the tag push triggers .github/workflows/publish-npm.yml,
 # which publishes via OIDC trusted publishing — no npm token and no one-time
@@ -31,6 +32,12 @@ VERSION=""
 DESC=""
 SKIP_BUMP=0; SKIP_PR=0; SKIP_TAG=0; NO_PUBLISH=0; WAIT_ALL=0; LOCAL_PUBLISH=0
 PLATFORM=""; TIMEOUT=5400
+# How long to wait for the release PR's checks before merging, and how often to
+# ask. The interval is env-only so the hermetic regression
+# (scripts/test-release-pr-wait.sh) can shorten a wait that is 10 s in a real
+# release.
+CHECKS_TIMEOUT="${DSB_PR_CHECKS_TIMEOUT_SEC:-3600}"
+CHECKS_INTERVAL="${DSB_PR_CHECKS_INTERVAL_SEC:-10}"
 # How long to keep asking the registry whether a version is live when that
 # answer only shapes a diagnostic (the failed-CI-run path below). The
 # post-publish confirmation uses the helper's full default window instead.
@@ -47,6 +54,7 @@ while [[ $# -gt 0 ]]; do
     --publish-only) SKIP_BUMP=1; SKIP_PR=1; SKIP_TAG=1; shift ;;
     --platform) PLATFORM="$2"; shift 2 ;;
     --timeout) TIMEOUT="$2"; shift 2 ;;
+    --checks-timeout) CHECKS_TIMEOUT="$2"; shift 2 ;;
     --wait-all) WAIT_ALL=1; shift ;;
     -h|--help) sed -n '1,25p' "$0"; exit 0 ;;
     -*) echo "unknown option: $1" >&2; exit 1 ;;
@@ -64,6 +72,13 @@ if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 for c in gh node npm; do
   command -v "$c" >/dev/null 2>&1 || { echo "error: $c not found on PATH" >&2; exit 1; }
+done
+for pair in "checks timeout=$CHECKS_TIMEOUT" "checks interval=$CHECKS_INTERVAL"; do
+  label="${pair%%=*}"; value="${pair#*=}"
+  if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+    echo "error: ${label} must be whole seconds (got '$value')" >&2
+    exit 1
+  fi
 done
 
 # --- 1. bump ----------------------------------------------------------------
@@ -179,7 +194,25 @@ EOF
   git commit -m "docs(product): record the release PR in the $VERSION decision-log row" || true
   git push origin "$BRANCH"
 
-  gh pr merge "$BRANCH" --merge
+  # Wait for the PR's checks before merging. Merging the instant `gh pr create`
+  # returned lost the race against GitHub computing mergeability and the checks
+  # starting: 6.1.1 (#258), 6.1.7 (#311) and 6.1.10 (#323) answered "GraphQL:
+  # Pull Request is not mergeable (mergePullRequest)", and the release stopped
+  # with the PR open for a person to merge. A red check must stop it here,
+  # before the merge call, with what is left to do printed below.
+  if ! python3 "$ROOT/scripts/lib/pr_checks.py" --pr "$PR_NUM" \
+      --timeout "$CHECKS_TIMEOUT" --interval "$CHECKS_INTERVAL"; then
+    echo "error: $PR_URL is not ready to merge — the release stops here" >&2
+    echo "  once its checks are green, merge it by hand and resume with:" >&2
+    echo "    $0 $VERSION --skip-bump --skip-pr" >&2
+    exit 1
+  fi
+  if ! gh pr merge "$BRANCH" --merge; then
+    echo "error: gh pr merge failed for $PR_URL — the release PR is still open" >&2
+    echo "  merge it by hand, then resume with:" >&2
+    echo "    $0 $VERSION --skip-bump --skip-pr" >&2
+    exit 1
+  fi
   STATE="$(gh pr view "$BRANCH" --json state --jq .state)"
   [[ "$STATE" == "MERGED" ]] || { echo "error: PR not merged (state=$STATE)" >&2; exit 1; }
   echo "== merged: $PR_URL =="

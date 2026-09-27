@@ -15,7 +15,7 @@ use crate::render::SafeBuf;
 use crate::render::scrollbar::render_scrollbar_styled;
 use crate::scrollback::layout::HorizontalLayout;
 use crate::scrollback::search::ScrollbackSearchState;
-use crate::scrollback::selection::{SelectionBox, hug_padded_band};
+use crate::scrollback::selection::{SelectionBox, area_below_clock_meta, hug_padded_band};
 use crate::scrollback::state::ScrollbackState;
 use crate::theme::Theme;
 use crate::views::prompt_widget::PromptWidget;
@@ -572,8 +572,21 @@ pub fn render_entry_hover(
             let hugs_pad = scrollback
                 .entry(hover_idx)
                 .is_some_and(|entry| entry.block.selection_hugs_vpad(scrollback.appearance()));
+            let meta = if top_clipped {
+                0
+            } else {
+                scrollback
+                    .entry(hover_idx)
+                    .map(|entry| {
+                        crate::scrollback::timestamp_layout::selection_clock_meta_rows(
+                            entry,
+                            scrollback.appearance(),
+                        )
+                    })
+                    .unwrap_or(0)
+            };
             let box_area = hug_padded_band(
-                entry_area,
+                area_below_clock_meta(entry_area, meta),
                 hugs_pad && !top_clipped,
                 hugs_pad && !bottom_clipped,
             );

@@ -17,10 +17,7 @@ const RESPONSE_PARAGRAPHS: usize = 40;
 /// would render as a markdown rule instead of wrapping.
 const LONG_TOKEN_LEN: usize = 200;
 
-/// Columns an agent message reserves on the right for its timestamp
-/// (`timestamp_reserved_for`): the block's text wraps this much narrower than
-/// the content area.
-const TIMESTAMP_GUTTER: u16 = 10;
+/// Phone panes do not reserve timestamp columns. The long token wraps at the text band.
 
 /// Where the scrollback text band starts inside the pane: the outer margin, the
 /// accent rail, and the rail's gutter (the default `block_pad_left`). The value
@@ -143,7 +140,7 @@ async fn tight_frame_and_phone_only_gates() {
         .unwrap();
     assert_eq!(
         rightmost,
-        (PHONE_COLS - 1 - TEXT_BAND_RIGHT_INSET - TIMESTAMP_GUTTER) as usize,
+        (PHONE_COLS - 1 - TEXT_BAND_RIGHT_INSET) as usize,
         "wrapped content runs to the text band's right edge\nrows: {:?}",
         token_rows
             .iter()

@@ -305,6 +305,18 @@ impl UserPromptBlock {
         show_prefix: bool,
         is_selected: bool,
     ) -> Vec<BlockLine> {
+        self.wrap_prompt_lines_reserved(width, max_lines, show_prefix, is_selected, 0)
+    }
+
+    /// `first_line_reserve` narrows only the first visual line. Tests call [`Self::wrap_prompt_lines`], which passes 0.
+    fn wrap_prompt_lines_reserved(
+        &self,
+        width: u16,
+        max_lines: Option<usize>,
+        show_prefix: bool,
+        is_selected: bool,
+        first_line_reserve: usize,
+    ) -> Vec<BlockLine> {
         let theme = Theme::current();
         // Minimal mode engages this lock; read it here instead of app state.
         let terminal_native = crate::theme::cache::terminal_native_locked();
@@ -402,8 +414,12 @@ impl UserPromptBlock {
                     text_style,
                 )
             };
-            let (wrapped, wrap_joiners) =
-                word_wrap_line_with_joiners(&content_line, RtOptions::new(base_content_width));
+            let mut wrap_opts = RtOptions::new(base_content_width);
+            if logical_idx == 0 && first_line_reserve > 0 {
+                wrap_opts = wrap_opts
+                    .first_line_width(base_content_width.saturating_sub(first_line_reserve).max(1));
+            }
+            let (wrapped, wrap_joiners) = word_wrap_line_with_joiners(&content_line, wrap_opts);
             let wrapped_count = wrapped.len();
 
             for (wrap_idx, (wrapped_line, wrap_joiner)) in
@@ -431,7 +447,12 @@ impl UserPromptBlock {
                 if will_be_last && has_more {
                     // Re-wrap the current line's content with reduced width to make room for the ellipsis
                     // Re-wrapping the styled line (not flattened text) keeps token spans teal here
-                    let reduced_width = base_content_width.saturating_sub(ellipsis_width);
+                    let line_budget = if logical_idx == 0 && wrap_idx == 0 {
+                        base_content_width.saturating_sub(first_line_reserve).max(1)
+                    } else {
+                        base_content_width
+                    };
+                    let reduced_width = line_budget.saturating_sub(ellipsis_width).max(1);
                     let (re_wrapped_lines, _) =
                         word_wrap_line_with_joiners(&wrapped_line, RtOptions::new(reduced_width));
 
@@ -514,11 +535,14 @@ impl BlockContent for UserPromptBlock {
 
         let prompt_cfg = &ctx.appearance.scrollback.blocks.prompt;
         let compact = ctx.appearance.prompt.compact;
-        let lines = self.wrap_prompt_lines(
+        let reserve =
+            crate::scrollback::timestamp_layout::wide_first_line_reserve(&ctx.appearance) as usize;
+        let lines = self.wrap_prompt_lines_reserved(
             ctx.width,
             max_lines,
             prompt_cfg.show_prefix && !compact,
             ctx.is_selected,
+            reserve,
         );
 
         BlockOutput { lines }

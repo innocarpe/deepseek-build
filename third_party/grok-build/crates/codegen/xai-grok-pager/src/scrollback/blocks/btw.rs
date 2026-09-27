@@ -4,7 +4,9 @@
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
+use crate::render::wrapping::{RtOptions, word_wrap_line_with_joiners};
 use crate::scrollback::block::BlockContent;
+use crate::scrollback::timestamp_layout::wide_first_line_reserve;
 use crate::scrollback::types::{AccentStyle, BlockContext, BlockLine, BlockOutput, DisplayMode};
 use crate::theme::Theme;
 
@@ -52,8 +54,32 @@ impl BlockContent for BtwBlock {
             format!("/btw {}", self.question),
             header_style,
         ));
-
-        let mut lines = vec![BlockLine::styled(header).with_selection_range(Some(0))];
+        // The header is the first content line, so a wide pane's clock reserve lands here.
+        // The markdown body below stays at the full width.
+        let width = ctx.width as usize;
+        let reserve = wide_first_line_reserve(&ctx.appearance) as usize;
+        let mut header_opts = RtOptions::new(width.max(1));
+        if reserve > 0 && width > reserve {
+            header_opts = header_opts.first_line_width(width - reserve);
+        }
+        let (wrapped_header, header_joiners) = word_wrap_line_with_joiners(&header, header_opts);
+        let mut lines = Vec::new();
+        for (idx, (line, joiner)) in wrapped_header.into_iter().zip(header_joiners).enumerate() {
+            let owned = Line::from(
+                line.spans
+                    .into_iter()
+                    .map(|span| Span::styled(span.content.to_string(), span.style))
+                    .collect::<Vec<_>>(),
+            );
+            let mut block_line = BlockLine::styled(owned).with_selection_range(Some(0));
+            if idx > 0 {
+                block_line = block_line.with_joiner(joiner);
+            }
+            lines.push(block_line);
+        }
+        if lines.is_empty() {
+            lines.push(BlockLine::styled(header).with_selection_range(Some(0)));
+        }
 
         // Collapsed: header only. Expanded: header, then separator, then markdown body.
         if !is_collapsed {

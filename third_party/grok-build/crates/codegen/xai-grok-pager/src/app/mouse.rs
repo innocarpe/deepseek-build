@@ -807,6 +807,16 @@ impl AgentView {
                         let now = Instant::now();
                         // A drag-free tap is a release on the same cell. A moved release is a selection, not a fold.
                         let same_cell = mouse.column == click_col && mouse.row == click_row;
+                        // The clock's cells are not the prompt-echo tap. A hit here toggles only that clock.
+                        if same_cell
+                            && let Some(idx) =
+                                self.scrollback.timestamp_hit_at(click_col, click_row)
+                        {
+                            self.scrollback.toggle_timestamp_expanded_at(idx);
+                            self.last_click = None;
+                            self.last_text_click = None;
+                            return InputOutcome::Changed;
+                        }
                         if is_text_selection_on_double_click() {
                             // A phone-width prompt echo toggles on every same-cell tap, including the
                             // tap that folds it shut. word_select must not turn that tap into a word

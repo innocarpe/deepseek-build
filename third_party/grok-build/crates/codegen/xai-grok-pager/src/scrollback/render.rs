@@ -150,6 +150,15 @@ pub struct ScrollRenderResult {
     pub inline_media: Vec<InlineMediaPlacement>,
     /// Diagram affordance rows to paint and register click hit-rects for.
     pub diagram_affordances: Vec<DiagramAffordancePlacement>,
+    /// Painted clocks. `entry_idx` is the renderer's logical index (relative to the visible range).
+    pub timestamp_hits: Vec<TimestampHit>,
+}
+
+/// One painted clock, in screen cells. A tap here toggles the long form and is not a body tap.
+#[derive(Debug, Clone, Copy)]
+pub struct TimestampHit {
+    pub entry_idx: usize,
+    pub rect: Rect,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -391,6 +400,12 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
             .with_group_header_label(header_label.as_ref())
             .with_cwd(cwd);
         renderer.render(entry_content_area, buf);
+        if let Some(rect) = renderer.take_clock_rect() {
+            result.timestamp_hits.push(TimestampHit {
+                entry_idx: logical_idx,
+                rect,
+            });
+        }
 
         if dim_from_entry.is_some_and(|d| logical_idx >= d) {
             // On the terminal-native theme `dim()` carries no fg (gray_dim is
@@ -418,6 +433,11 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
         let ts_reserved = timestamp_reserved_for_block(&entry.block, appearance);
         let content_width = entry_row_layout.content_width().saturating_sub(ts_reserved);
         entry.ensure_cached(content_width, appearance, is_selected, cwd);
+        // Before the cache borrow below: the meta query borrows the same RefCell.
+        let row_span = content_width.saturating_add(entry_row_layout.right_padding.width);
+        let meta_top = u16::from(crate::scrollback::timestamp_layout::cached_clock_is_meta(
+            entry, appearance, row_span,
+        ));
         let cached_rendered = entry.cached_rendered_output_ref();
         let cached_output = &cached_rendered.output;
         let cached_boundaries = &cached_rendered.boundaries;
@@ -439,8 +459,11 @@ pub(crate) fn render_scrolled_entries_with_selection_boundaries(
         let ctx = entry.context(content_width, appearance, cwd);
         let has_vpad = entry.block.has_vpad(&ctx);
         let vpad_top = if has_vpad { 1u16 } else { 0 };
-        let content_skip = skip_rows.saturating_sub(vpad_top) as usize;
-        let first_visible_content_y = render_y + if skip_rows < vpad_top { 1 } else { 0 };
+        // [meta?] [vpad?] [content...]. A meta row is part of the entry height, so
+        // selection, search, and links start on the body, not on the clock row.
+        let preface = meta_top.saturating_add(vpad_top);
+        let content_skip = skip_rows.saturating_sub(preface) as usize;
+        let first_visible_content_y = render_y + preface.saturating_sub(skip_rows.min(preface));
         let max_y = render_y + render_height;
 
         // Group-header entries draw synthetic "N more" text instead of `cached_output.lines` (the truncation fold forces

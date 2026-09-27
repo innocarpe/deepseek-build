@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::cell::OnceCell;
+use std::cell::{Cell, OnceCell};
 use std::path::Path;
 
 use ratatui::buffer::Buffer;
@@ -66,6 +66,8 @@ pub struct EntryRenderer<'a> {
     dim_accent: bool,
     /// Session/worktree cwd (`AgentSession.cwd`) for Expanded tool paths.
     cwd: Option<&'a Path>,
+    /// Screen rect of the clock painted by the last [`Self::render`], if it painted one.
+    clock_rect: Cell<Option<Rect>>,
 }
 
 impl<'a> EntryRenderer<'a> {
@@ -86,7 +88,13 @@ impl<'a> EntryRenderer<'a> {
             hide_accent: false,
             dim_accent: false,
             cwd: None,
+            clock_rect: Cell::new(None),
         }
+    }
+
+    /// Clock rect from the last [`Self::render`]. `None` when that render painted no clock.
+    pub(crate) fn take_clock_rect(&self) -> Option<Rect> {
+        self.clock_rect.take()
     }
 
     pub fn with_cwd(mut self, cwd: Option<&'a Path>) -> Self {
@@ -351,7 +359,7 @@ impl<'a> EntryRenderer<'a> {
     /// Timestamps are shown for user and agent messages (including /btw responses and mid-turn interjections).
     /// Thinking traces, tool calls, and system messages get none.
     fn should_show_timestamp(&self) -> bool {
-        timestamp_gutter_applies(&self.entry.block)
+        crate::scrollback::timestamp_layout::timestamp_gutter_applies(&self.entry.block)
     }
 
     /// Width reserved for the timestamp on the right side of content lines.
@@ -420,6 +428,7 @@ impl<'a> EntryRenderer<'a> {
         // Those live inside `output()` and are invisible to this source-based estimate, so it never under-reserves
         self.assemble_height(content_width, content_lines)
             .saturating_add(self.entry.block.estimate_extra_rows())
+            .saturating_add(u16::from(self.estimate_clock_meta(content_width)))
     }
 
     /// Estimate the rendered content-line count without laying the block out.
@@ -477,7 +486,9 @@ impl<'a> EntryRenderer<'a> {
         };
         self.entry
             .ensure_cached(content_width, self.appearance(), false, self.cwd);
+        let meta = u16::from(self.clock_meta_row(content_width));
         let output = self.entry.cached_output_ref();
+        let preface = vpad_top.saturating_add(meta);
         let starts = output
             .lines
             .iter()
@@ -485,9 +496,9 @@ impl<'a> EntryRenderer<'a> {
             .filter(|(_, line)| {
                 !matches!(line.selectable, Selectable::None) && line.joiner.is_none()
             })
-            .map(|(idx, _)| vpad_top.saturating_add(u16::try_from(idx).unwrap_or(u16::MAX)))
+            .map(|(idx, _)| preface.saturating_add(u16::try_from(idx).unwrap_or(u16::MAX)))
             .collect();
-        let last_content_row = vpad_top.saturating_add(
+        let last_content_row = preface.saturating_add(
             u16::try_from(output.lines.len().saturating_sub(1)).unwrap_or(u16::MAX),
         );
         (starts, last_content_row)
@@ -506,9 +517,9 @@ impl<'a> EntryRenderer<'a> {
         // The cached width is the wrap width `render` / `desired_height` just measured. Read it before borrowing the
         // cached lines: both sit in the same `RefCell`. Pad rows have to match that measurement; the width-blind
         // answer would shift wrap flags by a row on a phone-width prompt.
+        let cached_width = self.entry.cached_content_width();
         let vpad_top = u16::from(
-            self.entry
-                .cached_content_width()
+            cached_width
                 .map(|width| {
                     self.entry
                         .block
@@ -516,8 +527,11 @@ impl<'a> EntryRenderer<'a> {
                 })
                 .unwrap_or_else(|| self.entry.block.has_vpad_for(self.appearance())),
         );
+        let meta_top = cached_width
+            .map(|width| u16::from(self.clock_meta_row(width)))
+            .unwrap_or(0);
         let output = self.entry.cached_output_ref();
-        let (header_rows, skip_remaining) = if self.group_collapse_header {
+        let (header_rows, mut skip_remaining) = if self.group_collapse_header {
             if self.skip_rows == 0 {
                 (1u16, 0u16)
             } else {
@@ -526,9 +540,15 @@ impl<'a> EntryRenderer<'a> {
         } else {
             (0u16, self.skip_rows)
         };
+        let meta_visible = meta_top > 0 && skip_remaining == 0;
+        if meta_top > 0 && skip_remaining > 0 {
+            skip_remaining -= 1;
+        }
         let vpad_top_visible = skip_remaining < vpad_top;
         let content_skip = skip_remaining.saturating_sub(vpad_top);
-        let start_y = header_rows.saturating_add(u16::from(vpad_top_visible));
+        let start_y = header_rows
+            .saturating_add(u16::from(meta_visible))
+            .saturating_add(u16::from(vpad_top_visible));
 
         let mut painted = 0u16;
         for (i, line) in output.lines.iter().enumerate() {
@@ -571,17 +591,72 @@ impl<'a> EntryRenderer<'a> {
             .partition_point(|&start| start <= row)
             .saturating_sub(1)
     }
-}
 
-/// Whether this block's first content line carries a right-aligned timestamp.
-///
-/// Timestamps are shown for user and agent messages (including `/btw` responses and mid-turn interjections) but not
-/// for thinking traces, tool calls, or system messages.
-pub(crate) fn timestamp_gutter_applies(block: &RenderBlock) -> bool {
-    matches!(
-        block,
-        RenderBlock::UserPrompt(_) | RenderBlock::AgentMessage(_) | RenderBlock::Btw(_)
-    )
+    /// Columns from the text origin to the entry's right edge: the content width plus the right pad.
+    fn clock_row_span(&self, content_width: u16) -> u16 {
+        content_width.saturating_add(self.block_pad_right())
+    }
+
+    fn clock_plan_from(
+        &self,
+        first_line_cols: u16,
+        row_span: u16,
+        has_content: bool,
+        hovered: bool,
+        allow_long: bool,
+    ) -> crate::scrollback::timestamp_layout::ClockPlan {
+        use crate::scrollback::timestamp_layout::{ClockPlan, ClockQuery};
+        ClockPlan::decide(&ClockQuery {
+            entry: self.entry,
+            appearance: self.appearance(),
+            first_line_cols,
+            row_span,
+            prev_clock: self.entry.clock_prev.get(),
+            hovered,
+            allow_long,
+            has_content,
+        })
+    }
+
+    /// Meta row for an entry whose body is already cached at `content_width`.
+    fn clock_meta_row(&self, content_width: u16) -> bool {
+        crate::scrollback::timestamp_layout::cached_clock_is_meta(
+            self.entry,
+            self.appearance(),
+            self.clock_row_span(content_width),
+        )
+    }
+
+    /// Meta row for the cheap height estimate. A full first source line on a narrow pane
+    /// takes the row; a short one does not. Over-counting by a row is safer than overlap.
+    fn estimate_clock_meta(&self, content_width: u16) -> bool {
+        if self.entry.first_cached_source_cols().is_none() {
+            let _ = self.entry.estimate_source_lines(content_width);
+        }
+        let Some(source_cols) = self.entry.first_cached_source_cols() else {
+            return false;
+        };
+        // The wrapped first line is at most `content_width` columns. A source line that
+        // already fills it will not leave a gap; a shorter one is the visual width.
+        let visual = source_cols.min(content_width);
+        self.clock_plan_from(
+            visual,
+            self.clock_row_span(content_width),
+            true,
+            false,
+            true,
+        )
+        .meta
+    }
+
+    fn paint_clock(&self, buf: &mut Buffer, entry_right: u16, y: u16, text: &str) {
+        use crate::scrollback::timestamp_layout::{clock_cols, clock_origin};
+        let x = clock_origin(entry_right, text);
+        let style = Style::default().fg(self.theme.gray);
+        buf.set_string_safe(x, y, text, style);
+        self.clock_rect
+            .set(Some(Rect::new(x, y, clock_cols(text), 1)));
+    }
 }
 
 /// The columns an entry spends left and right of its text (see [`EntryChrome`]).
@@ -591,17 +666,10 @@ pub(crate) fn timestamp_gutter_applies(block: &RenderBlock) -> bool {
 /// rail — the rail and the one column of air its body keeps — and none for a
 /// block with neither, so its text starts on that column. Right: one column
 /// where a block paints a band (its own gutter), none elsewhere.
-///
-/// The one source for the pane's row layout, the wrap width and the paint, so a
-/// block's left edge cannot drift from what the mouse and the search highlight
-/// believe. The context here only answers the accent question; no block keyed
-/// its accent on `ctx.width` at the time of writing.
 pub(crate) fn entry_chrome(entry: &ScrollbackEntry, appearance: &AppearanceConfig) -> EntryChrome {
     let rail_w = HorizontalLayout::ACCENT;
     let ctx = entry.context(rail_w, appearance, None);
     let band = entry.block.accent_background(&ctx);
-    // The renderer paints the rail for an open entry, and a brief flash when a
-    // tool call or a thought finishes (the same rule `render` applies).
     let recently_finished = !entry.is_running
         && entry.finished_at.is_some_and(|t| {
             t.elapsed().as_millis() < crate::scrollback::state::FINISH_FLASH_DURATION_MS as u128
@@ -612,9 +680,6 @@ pub(crate) fn entry_chrome(entry: &ScrollbackEntry, appearance: &AppearanceConfi
         );
     let rail = entry.display_mode != DisplayMode::Collapsed
         && (recently_finished || entry.block.accent(&ctx).is_some());
-    // A band block on a phone-width pane runs to the pane's edges (see
-    // `band_spans_the_pane`): the outer margin column it takes there is band,
-    // so the accent column grows by it and the text stays where it was.
     let band_edge = if band && appearance.scrollback.layout.narrow {
         crate::appearance::LayoutConfig::MIN_HPAD
     } else {
@@ -632,33 +697,14 @@ pub(crate) fn entry_chrome(entry: &ScrollbackEntry, appearance: &AppearanceConfi
     }
 }
 
-/// Whether this entry's band spans the pane's full width: on a phone-width pane
-/// the prompt echo drops its outer left/right margins and runs to the screen's
-/// edges, the way Claude Code's and Codex CLI's prompt areas do. Its own inner
-/// gutters stay, so the text does not move.
-///
-/// The row layout expands the entry by [`LayoutConfig::MIN_HPAD`] on each side
-/// for this (`render`), and [`entry_chrome`] keeps the same columns as band, so
-/// the wrap width, the mouse mapping and the paint agree.
+/// Whether this entry's band spans the pane's full width on a phone-width pane.
 pub(crate) fn band_spans_the_pane(entry: &ScrollbackEntry, appearance: &AppearanceConfig) -> bool {
     let chrome = entry_chrome(entry, appearance);
     appearance.scrollback.layout.narrow && chrome.right_pad > 0
 }
 
-/// Paint one of an entry's pad rows: a phone-width pane keeps a fraction of the
-/// band's color next to the text, every other pane keeps the full-height pad the
-/// background fill already painted.
-///
-/// A terminal row is a little over two columns tall (55x41 measured: 16.5px
-/// cells, 35.5px rows), so a whole pad row is 2.15 columns of white where the
-/// sides keep one column. Two eighths of a row plus the text row's own leading
-/// is that one column; the two pad rows split the cell's background the same
-/// way from each side, so the band's edges stay symmetric.
-///
-/// A `Reset` band or background has no fixed ink for a fractional block glyph
-/// (it renders in the terminal's text color — see the dashboard halo), so those
-/// keep the plain row. Both the scrollback renderer and the sticky header call
-/// this: a pinned prompt has to show the band the one in the flow shows.
+/// Paint one of an entry's pad rows. A phone-width pane keeps a fraction of the
+/// band's color; every other pane keeps the full-height pad the background fill painted.
 pub(crate) fn paint_pad_row(
     buf: &mut Buffer,
     area: Rect,
@@ -672,9 +718,6 @@ pub(crate) fn paint_pad_row(
     if !narrow || flat_background || matches!(band, Color::Reset) || matches!(base, Color::Reset) {
         return;
     }
-    // The top pad row carries the band on its lower eighths (`▂` in the band's
-    // color); the bottom one leaves the band as the background and paints the
-    // rest in the pane's color (`▆`), the same two eighths from the other side.
     let (symbol, style) = if top {
         (NARROW_PAD_LOWER, Style::default().fg(band).bg(base))
     } else {
@@ -688,23 +731,15 @@ pub(crate) fn paint_pad_row(
     }
 }
 
-/// Width reserved on the right of a block's content for the timestamp overlay.
+/// Width subtracted from every content line for the timestamp.
 ///
-/// The reservation is the string's own width (the short format tops out at
-/// `"12:30 PM"`, 8) plus two columns of air, so wrapped text stops with a
-/// visible margin before the clock instead of abutting it. The overlay is
-/// right-aligned inside that gutter, one column short of the entry's edge, so
-/// the time never closes on the band's last column.
-///
-/// Free function so every caller that only has the appearance and the block computes the same reservation as
-/// [`EntryRenderer::timestamp_reserved`].
+/// The uniform gutter is gone. Narrow panes reserve nothing. Wide panes narrow
+/// only the first content line, inside the block wrap
+/// ([`crate::scrollback::timestamp_layout::wide_first_line_reserve`]).
+/// Callers that subtract this from the wrap width therefore subtract 0.
 pub(crate) fn timestamp_reserved_for(appearance: &AppearanceConfig, block: &RenderBlock) -> u16 {
-    if appearance.show_timestamps && timestamp_gutter_applies(block) {
-        // "12:30 PM" plus two columns so text keeps a margin before the clock
-        10
-    } else {
-        0
-    }
+    let _ = (appearance, block);
+    0
 }
 
 /// The width a block's text wraps at, given the entry area [`EntryRenderer`] is handed — accent, pads and the
@@ -764,6 +799,7 @@ impl Renderable for EntryRenderer<'_> {
         // Clamp the line count: a pathologically large block could exceed u16.
         let content_lines = self.entry.cached_output_ref().len().min(u16::MAX as usize) as u16;
         self.assemble_height(content_width, content_lines)
+            .saturating_add(u16::from(self.clock_meta_row(content_width)))
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -947,56 +983,98 @@ impl Renderable for EntryRenderer<'_> {
             }
         }
 
-        // Render content using cache (keyed on is_selected for blocks like UserPrompt that adjust styling based on selection state)
-        // When timestamps are enabled, wrap content at a narrower width so text never collides with the right-aligned timestamp
-        let ts_reserved = self.timestamp_reserved();
-        let text_width = content_area.width.saturating_sub(ts_reserved);
+        // The body wraps at the full content width. A wide pane narrows only the first
+        // line inside the block; a narrow pane does not narrow any line.
+        self.clock_rect.set(None);
+        let text_width = content_area.width;
         self.entry
             .ensure_cached(text_width, self.appearance(), self.is_selected, self.cwd);
-        let cached_ref = self.entry.cached_output_ref();
-        let output: &BlockOutput = &cached_ref;
-        // `ctx.width` here is the pre-timestamp content column. The height passes reserved pad rows from
-        // `block_content_width`, so the paint has to ask the same question or it draws pad the layout did not reserve.
+        let (first_line_cols, has_content) = {
+            use crate::scrollback::timestamp_layout::line_cols;
+            let cached = self.entry.cached_output_ref();
+            let first = cached
+                .lines
+                .first()
+                .map(|line| line_cols(&line.content))
+                .unwrap_or(0);
+            (first, !cached.lines.is_empty())
+        };
+        let row_span = text_width.saturating_add(self.block_pad_right());
+        let stable = self.clock_plan_from(first_line_cols, row_span, has_content, false, true);
         let has_vpad = self
             .entry
             .block
             .has_vpad_for_width(self.appearance(), self.block_content_width(area.width));
-        // Determine how many rows of vpad/content to skip.
-        // Layout is: [vpad_top?] [content lines...] [vpad_bottom?]
+        // Layout is: [meta?] [vpad_top?] [content lines...] [vpad_bottom?]
         let vpad_top = if has_vpad { 1u16 } else { 0 };
-        let skip_remaining = skip_rows;
-
-        // Skip vpad_top (0 or 1 row)
-        let vpad_top_visible = if skip_remaining < vpad_top {
-            // Partial skip into vpad: vpad is still visible
-            // (vpad is 0 or 1 row, so this means skip_rows == 0)
-            true
+        let clock_row = if stable.meta {
+            content_area.y
         } else {
-            false
+            content_area.y.saturating_add(vpad_top)
         };
-        let content_skip = skip_remaining.saturating_sub(vpad_top);
+        let hovered = skip_rows == 0
+            && stable.text.as_deref().is_some_and(|text| {
+                use crate::scrollback::timestamp_layout::{
+                    clock_cols, clock_origin, point_in_clock,
+                };
+                let x = clock_origin(area.right(), text);
+                self.mouse_pos
+                    .is_some_and(|(mx, my)| point_in_clock(mx, my, x, clock_row, clock_cols(text)))
+            });
+        let hovered_plan = if hovered {
+            self.clock_plan_from(first_line_cols, row_span, has_content, true, true)
+        } else {
+            stable.clone()
+        };
+        // Hover must not add or remove the meta row. That row is part of the laid-out height.
+        let plan = if hovered_plan.meta == stable.meta {
+            hovered_plan
+        } else {
+            stable
+        };
 
+        let mut skip_remaining = skip_rows;
         let mut row = content_area.y;
         let max_row = content_area.y + content_area.height;
-
-        // Top vpad (only if not skipped)
-        if vpad_top_visible && row < max_row {
-            row += 1;
+        let meta_visible = plan.meta && skip_remaining == 0 && row < max_row;
+        if plan.meta {
+            if skip_remaining == 0 {
+                if let Some(text) = plan.text.as_deref()
+                    && row < max_row
+                {
+                    self.paint_clock(buf, area.right(), row, text);
+                }
+                if row < max_row {
+                    row += 1;
+                }
+            } else {
+                skip_remaining -= 1;
+            }
         }
 
-        // Own the timestamp gutter per row (no-bg blocks skip the full-area fill) so a wide glyph can't strand a ghost
-        // Per-row bg keeps code blocks whole
-        let own_gutter = ts_reserved > 0 && bg_color.is_none() && content_area.width > ts_reserved;
+        let vpad_top_visible = skip_remaining < vpad_top;
+        let content_skip = skip_remaining.saturating_sub(vpad_top);
+        // The top pad is the row under a meta clock, not always `area.y`.
+        let pad_top_y = if vpad_top_visible && row < max_row {
+            let y = row;
+            row += 1;
+            Some(y)
+        } else {
+            None
+        };
 
-        // Content lines: skip the first `content_skip` lines
+        let cached_ref = self.entry.cached_output_ref();
+        let output: &BlockOutput = &cached_ref;
+        let reserve =
+            crate::scrollback::timestamp_layout::wide_first_line_reserve(self.appearance());
+        let mut painted_content = 0u16;
+        let first_content_y = row;
+
         for line in output.lines.iter().skip(content_skip as usize) {
             if row >= max_row {
                 break;
             }
 
-            // Apply line-specific background if set
-            // Decorative panel bands (tool result previews) are dropped in flat mode so they blend with the terminal's own background
-            // Semantic shading (diff rows, code-block fill) always paints
             let line_bg = if self.flat_background && line.background_is_panel {
                 None
             } else {
@@ -1013,16 +1091,20 @@ impl Renderable for EntryRenderer<'_> {
 
             buf.set_line_safe_bidi(content_area.x, row, &line.content, content_area.width);
 
-            if own_gutter {
+            // Wide panes leave the clock's columns empty on the first content line only.
+            // Later lines use the full width, so clearing them would erase text.
+            if reserve > 0 && content_skip == 0 && painted_content == 0 && bg_color.is_none() {
+                let gutter_w = reserve.min(content_area.width);
                 let gutter = Rect::new(
-                    area.right().saturating_sub(ts_reserved),
+                    content_area.right().saturating_sub(gutter_w),
                     row,
-                    ts_reserved,
+                    gutter_w,
                     1,
                 );
                 fill_bg_spaces(buf, gutter, line_bg.unwrap_or(self.fallback_bg()));
             }
 
+            painted_content = painted_content.saturating_add(1);
             row += 1;
         }
 
@@ -1030,55 +1112,32 @@ impl Renderable for EntryRenderer<'_> {
         // of a row (`paint_narrow_pad_row`) so the band's vertical air matches
         // the one-column side gutters; every other pane keeps the full-height
         // pad the background fill already painted. A group-collapse header owns
-        // its first row itself and keeps the plain fill.
+        // its first row itself and keeps the plain fill. The top pad sits under
+        // a meta clock when that row is present.
         if let Some(band) = bg_color
             && !self.group_collapse_header
         {
-            if vpad_top_visible {
-                self.paint_narrow_pad_row(buf, area, area.y, band, true);
+            if let Some(y) = pad_top_y {
+                self.paint_narrow_pad_row(buf, area, y, band, true);
             }
             if has_vpad && row < max_row {
                 self.paint_narrow_pad_row(buf, area, row, band, false);
             }
         }
 
-        // Overlay timestamp on the first content line for message blocks.
-        // Short format (h:mm AM/PM) by default; expands to full format (HH:mm:ss | MMM DD) when the mouse hovers over the timestamp area
-        // Gated on appearance.show_timestamps (toggled via /timestamps).
-        if self.appearance().show_timestamps
+        if !plan.meta
             && content_skip == 0
-            && !output.is_empty()
-            && self.should_show_timestamp()
-            && let Some(ts) = self.entry.created_at
+            && first_content_y < max_row
+            && let Some(text) = plan.text.as_deref()
         {
-            let first_content_y = content_area.y + if vpad_top_visible { 1 } else { 0 };
-            // Hover zone: the timestamp columns at the entry's right edge.
-            let ts_zone_x = area.right().saturating_sub(ts_reserved.max(1));
-            let ts_hovered = self.mouse_pos.is_some_and(|(mx, my)| {
-                my == first_content_y && mx >= ts_zone_x && mx < area.right()
-            });
-            let ts_str = if ts_hovered {
-                ts.format("%H:%M:%S | %b %d").to_string()
-            } else {
-                ts.format("%-I:%M %p").to_string()
-            };
-            let ts_width = ts_str.len() as u16;
-            if content_area.width > ts_width + 1 && first_content_y < max_row {
-                // Every message's clock ends on the same column: one column
-                // inside the band's right edge — the minimum unit, whatever the
-                // block's own right pad is — which also leaves the frame's own
-                // margin column clear.
-                let ts_x = area.right().saturating_sub(1).saturating_sub(ts_width);
-                let ts_style = Style::default().fg(self.theme.gray);
-                buf.set_string_safe(ts_x, first_content_y, &ts_str, ts_style);
-            }
+            self.paint_clock(buf, area.right(), first_content_y, text);
         }
 
         // Post-pass: adjust bullet color based on block state. The running wave is skipped so the entry reads as "paused
         // on you", not "loading".
         if skip_rows == 0 && self.entry.block.has_bullet(&ctx) {
             let bullet_style = self.entry.block.bullet(&ctx);
-            let bullet_y = content_area.y + if has_vpad { 1 } else { 0 };
+            let bullet_y = content_area.y + u16::from(meta_visible) + if has_vpad { 1 } else { 0 };
 
             if bullet_y >= max_row {
                 // bullet not visible; skip post-pass
@@ -1325,19 +1384,20 @@ mod tests {
             .collect()
     }
 
-    /// Columns the entry keeps between the time and its own right edge: one, on
-    /// every block. The clock is the one right-aligned element in the frame, so
-    /// it ends on one column whatever the block's own right pad is — otherwise
-    /// two message kinds show different margins for the same time.
+    /// Columns the entry keeps between the time and its own right edge.
     fn ts_right_inset(_renderer: &EntryRenderer) -> u16 {
-        1
+        crate::scrollback::timestamp_layout::CLOCK_EDGE_INSET
     }
 
-    /// The reserved timestamp gutter: the last `ts_reserved` columns of the
-    /// content band, ending one right-pad short of the entry's edge.
+    /// The wide pane's first-line clock columns, ending one column inside the edge.
+    ///
+    /// `timestamp_reserved()` is 0: the gutter is not subtracted from every line.
+    /// This band is only the columns the first-line clear owns.
     fn gutter_band(renderer: &EntryRenderer, width: u16) -> std::ops::Range<u16> {
-        let content_right = width - ts_right_inset(renderer);
-        (content_right - renderer.timestamp_reserved())..content_right
+        use crate::scrollback::timestamp_layout::wide_first_line_reserve;
+        let reserve = wide_first_line_reserve(renderer.appearance());
+        let content_right = width.saturating_sub(ts_right_inset(renderer));
+        content_right.saturating_sub(reserve)..content_right
     }
 
     /// Check that a right-aligned timestamp ending with "AM" or "PM" exists on a row.
@@ -1579,12 +1639,10 @@ mod tests {
         let entry = ScrollbackEntry::new(RenderBlock::user_prompt("hi"));
         let renderer = EntryRenderer::new(&entry, &theme);
 
-        // The short stamp is `%-I:%M %p`: 7 chars for a single-digit hour, 8 for
-        // a two-digit one, and the paint needs `content_area.width > ts_width + 1`.
-        // Width 10 leaves the accent and the echo's right pad eight content
-        // columns, one column short of the shorter stamp plus one, so both forms
-        // stay suppressed whatever the wall clock reads.
-        let width: u16 = 10;
+        // Too thin for the glyph, a one-column gap, the short stamp, and the
+        // one-column inset. Width 6 stays under that on a wide pane and on a
+        // phone-width pane, whatever the wall clock reads.
+        let width: u16 = 6;
         let height = renderer.desired_height(width);
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
@@ -1602,11 +1660,10 @@ mod tests {
 
     #[test]
     fn gutter_cleared_on_non_first_content_row_without_background() {
-        // Regression: nothing wrote the timestamp gutter on rows past the first
-        // A glyph stranded there (e.g. a wide table cell past `text_width`) used to persist; every content row must now clear it.
+        // Wide panes clear the clock columns on the first content line only.
+        // Later lines use those columns for text, so a ghost there is overwritten by the body.
         let theme = Theme::current();
-        // Long enough to wrap into several content rows at width 80.
-        let entry = ScrollbackEntry::new(RenderBlock::agent_message("word ".repeat(80)));
+        let entry = ScrollbackEntry::new(RenderBlock::agent_message("x".repeat(400)));
         let renderer = EntryRenderer::new(&entry, &theme);
 
         let width: u16 = 80;
@@ -1615,23 +1672,21 @@ mod tests {
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
 
-        // A column inside the gutter band (past `text_width`), so content never writes it; only the gutter clear can
         let ghost_x = gutter_band(&renderer, width).start + 2;
+        buf.set_string(ghost_x, 0, "X", Style::default());
         buf.set_string(ghost_x, 1, "X", Style::default());
-        buf.set_string(ghost_x, 2, "X", Style::default());
 
         renderer.render(area, &mut buf);
 
-        // Without the fix these cells stay "X" (nothing repaints them).
-        assert_eq!(
-            buf.cell((ghost_x, 1)).unwrap().symbol(),
-            " ",
-            "gutter ghost on row 1 must be cleared"
+        assert_ne!(
+            buf.cell((ghost_x, 0)).unwrap().symbol(),
+            "X",
+            "first-line clock zone must not keep a ghost"
         );
         assert_eq!(
-            buf.cell((ghost_x, 2)).unwrap().symbol(),
-            " ",
-            "gutter ghost on row 2 must be cleared"
+            buf.cell((ghost_x, 1)).unwrap().symbol(),
+            "x",
+            "the second line uses the columns the old gutter reserved"
         );
     }
 
@@ -1793,10 +1848,11 @@ mod tests {
         );
     }
 
-    /// The measured iPhone pane (55 columns): the echo's band keeps a *fraction*
-    /// of a row above and below its text (two eighths, so the visible air is the
-    /// one column the side gutters measure, not the 2.15 columns a whole row
-    /// is), and the turn time stops one column inside the band's right edge.
+    /// The measured iPhone pane (55 columns): a full first line keeps no gutter,
+    /// so the short clock is a right-aligned row above the band. The band still
+    /// keeps a fraction of a row above and below its text (two eighths, so the
+    /// visible air is the one column the side gutters measure), and the clock
+    /// stops one column inside the pane's right edge.
     #[test]
     fn phone_echo_band_pads_half_a_row_and_the_time_keeps_off_the_edge() {
         let _theme = pin_theme();
@@ -1822,12 +1878,12 @@ mod tests {
         let band = theme.bg_light;
         let base = theme.bg_base;
         assert_eq!(
-            height, 4,
-            "the phone echo band is two text rows with a pad row each side:\n{frame}"
+            height, 5,
+            "meta row, two text rows, and a pad row each side:\n{frame}"
         );
-        // Top pad: the band's color on the row's lower two eighths (`▂`), the
-        // pane's background above it.
-        let top_pad = buf.cell((1, 0)).unwrap();
+        // Top pad sits under the meta row: the band's color on the row's lower
+        // two eighths (`▂`), the pane's background above it.
+        let top_pad = buf.cell((1, 1)).unwrap();
         assert_eq!(top_pad.symbol(), NARROW_PAD_LOWER, "{frame}");
         assert_eq!(top_pad.fg, band, "the top pad's lower eighths are band");
         assert_eq!(top_pad.bg, base, "and the rest of the row is the pane");
@@ -1837,17 +1893,23 @@ mod tests {
         assert_eq!(bottom_pad.fg, base, "{frame}");
         assert_eq!(bottom_pad.bg, band, "{frame}");
         // The text rows stay full band, and the text keeps one column of air
-        // inside it (the band spans the pane, so that air is column 1).
-        assert_eq!(buf.cell((2, 1)).unwrap().bg, band, "{frame}");
+        // inside it (the band spans the pane, so that air is column 1). The
+        // first text row is under the meta row and the top pad.
+        let text_row = 2u16;
+        assert_eq!(buf.cell((2, text_row)).unwrap().bg, band, "{frame}");
         assert_eq!(
-            buf.cell((2, 1)).unwrap().symbol(),
+            buf.cell((2, text_row)).unwrap().symbol(),
             "x",
-            "the text opens the first text row, one pad row above and one column in:\n{frame}"
+            "the text opens the first text row, under the meta row and one column in:\n{frame}"
         );
         let wrap = r.block_content_width(width);
         assert!(
-            (2..2 + wrap).all(|x| buf.cell((x, 1)).unwrap().symbol() == "x"),
-            "the first text row is {wrap} contiguous text cells (no gap cell):\n{frame}"
+            (2..2 + wrap).all(|x| buf.cell((x, text_row)).unwrap().symbol() == "x"),
+            "the first text row is {wrap} contiguous text cells (no clock gap):\n{frame}"
+        );
+        assert!(
+            !has_ampm_timestamp(&buf, text_row, width),
+            "a full narrow line does not paint the clock on the text:\n{frame}"
         );
 
         let expected = entry.created_at.unwrap().format("%-I:%M %p").to_string();
@@ -1855,18 +1917,18 @@ mod tests {
         let inset = ts_right_inset(&r);
         let ts_x = width - inset - ts_width;
         assert_eq!(
-            collect_row_symbols(&buf, 1, ts_x, ts_x + ts_width),
+            collect_row_symbols(&buf, 0, ts_x, ts_x + ts_width),
             expected,
-            "the time closes the row {inset} column(s) inside the band's right edge:\n{frame}"
+            "the time is the meta row, {inset} column(s) inside the right edge:\n{frame}"
         );
         assert!(
             inset >= 1,
-            "the echo's right pad keeps the time off the band's edge"
+            "the clock stops one column inside the pane edge"
         );
         assert_eq!(
-            buf.cell((width - 1, 1)).unwrap().symbol(),
+            buf.cell((width - 1, 0)).unwrap().symbol(),
             " ",
-            "the band's last column stays blank:\n{frame}"
+            "the meta row's last column stays blank:\n{frame}"
         );
 
         // A desktop pane keeps the full-height pad: no fraction glyphs, the band
@@ -2159,6 +2221,291 @@ mod tests {
         assert!(
             buf_has_bg(&render_to_buf(&flat, 40), LINE_BG),
             "flat render must keep semantic (non-panel) line backgrounds"
+        );
+    }
+
+    fn phone_appearance() -> AppearanceConfig {
+        let mut appearance = AppearanceConfig::default();
+        appearance.scrollback.layout.narrow = true;
+        appearance.show_timestamps = true;
+        appearance
+    }
+
+    fn wide_appearance() -> AppearanceConfig {
+        let mut appearance = AppearanceConfig::default();
+        appearance.scrollback.layout.narrow = false;
+        appearance.show_timestamps = true;
+        appearance
+    }
+
+    fn render_with(entry: &ScrollbackEntry, appearance: AppearanceConfig, width: u16) -> Buffer {
+        let theme = Theme::current();
+        let renderer = EntryRenderer::new(entry, &theme).with_appearance(appearance);
+        render_to_buf(&renderer, width)
+    }
+
+    fn row_text(buf: &Buffer, y: u16) -> String {
+        let width = buf.area().width;
+        collect_row_symbols(buf, y, 0, width)
+    }
+
+    fn rightmost_glyph(row: &str, glyph: char) -> Option<usize> {
+        row.rfind(glyph)
+    }
+
+    #[test]
+    fn narrow_long_answer_keeps_full_wrap_and_puts_the_clock_on_a_meta_row() {
+        let mut on = phone_appearance();
+        let text = "x".repeat(400);
+        let entry = ScrollbackEntry::new(RenderBlock::agent_message(text));
+        let width = 55u16;
+        let with_clock = render_with(&entry, on.clone(), width);
+        on.show_timestamps = false;
+        let plain = render_with(&entry, on, width);
+
+        let body = row_text(&plain, 0);
+        let wrapped = rightmost_glyph(&body, 'x').expect("plain body");
+        let meta = row_text(&with_clock, 0);
+        let first = row_text(&with_clock, 1);
+        assert!(
+            !meta.contains('x'),
+            "a full first line moves the clock off the body: {meta:?}"
+        );
+        assert!(
+            meta.contains("AM") || meta.contains("PM"),
+            "meta row is the right-aligned short clock: {meta:?}"
+        );
+        assert_eq!(
+            rightmost_glyph(&first, 'x'),
+            Some(wrapped),
+            "the body wraps at the same column it would without a clock\nplain: {body:?}\nfirst: {first:?}"
+        );
+        assert!(
+            !(first.contains("AM") || first.contains("PM")),
+            "the full first line does not also carry the clock: {first:?}"
+        );
+    }
+
+    #[test]
+    fn narrow_short_first_line_paints_the_clock_in_leftover_space() {
+        let appearance = phone_appearance();
+        let entry = ScrollbackEntry::new(RenderBlock::agent_message("hi"));
+        let theme = Theme::current();
+        let renderer = EntryRenderer::new(&entry, &theme).with_appearance(appearance.clone());
+        let width = 55u16;
+        let plain = {
+            let mut off = appearance;
+            off.show_timestamps = false;
+            EntryRenderer::new(&entry, &theme)
+                .with_appearance(off)
+                .desired_height(width)
+        };
+        assert_eq!(
+            renderer.desired_height(width),
+            plain,
+            "a short line does not add a row"
+        );
+        let buf = render_to_buf(&renderer, width);
+        let row = row_text(&buf, 0);
+        let text_end = rightmost_glyph(&row, 'i').expect("hi");
+        let clock_at = row.rfind('M').expect("AM or PM");
+        assert!(
+            clock_at >= text_end + 2,
+            "at least one blank column between the last glyph and the clock: {row:?}"
+        );
+    }
+
+    #[test]
+    fn narrow_running_entry_paints_no_clock() {
+        let appearance = phone_appearance();
+        let entry = ScrollbackEntry::running(RenderBlock::agent_message("x".repeat(400)));
+        let theme = Theme::current();
+        let renderer = EntryRenderer::new(&entry, &theme).with_appearance(appearance.clone());
+        let width = 55u16;
+        let mut off = appearance;
+        off.show_timestamps = false;
+        let plain = EntryRenderer::new(&entry, &theme)
+            .with_appearance(off)
+            .desired_height(width);
+        assert_eq!(renderer.desired_height(width), plain);
+        let buf = render_to_buf(&renderer, width);
+        for y in 0..buf.area().height {
+            assert!(
+                !has_ampm_timestamp(&buf, y, width),
+                "a running narrow turn paints no clock on row {y}"
+            );
+        }
+    }
+
+    #[test]
+    fn same_minute_omits_the_meta_row_and_a_new_minute_keeps_it() {
+        use chrono::TimeZone;
+        let appearance = phone_appearance();
+        let theme = Theme::current();
+        let width = 55u16;
+        let earlier = chrono::Local
+            .with_ymd_and_hms(2026, 9, 27, 2, 52, 10)
+            .unwrap();
+        let mut first = ScrollbackEntry::new(RenderBlock::agent_message("x".repeat(400)));
+        first.created_at = Some(earlier);
+        let first_buf = render_with(&first, appearance.clone(), width);
+        assert!(
+            row_text(&first_buf, 0).contains("2:52"),
+            "the first full line takes the meta row: {:?}",
+            row_text(&first_buf, 0)
+        );
+
+        let mut same = ScrollbackEntry::new(RenderBlock::agent_message("x".repeat(400)));
+        same.created_at = Some(
+            chrono::Local
+                .with_ymd_and_hms(2026, 9, 27, 2, 52, 40)
+                .unwrap(),
+        );
+        same.clock_prev.set(Some(earlier));
+        let same_renderer = EntryRenderer::new(&same, &theme).with_appearance(appearance.clone());
+        let mut off = appearance.clone();
+        off.show_timestamps = false;
+        let plain = EntryRenderer::new(&same, &theme)
+            .with_appearance(off)
+            .desired_height(width);
+        assert_eq!(
+            same_renderer.desired_height(width),
+            plain,
+            "the same minute drops the meta row"
+        );
+        let same_buf = render_to_buf(&same_renderer, width);
+        for y in 0..same_buf.area().height {
+            assert!(
+                !has_ampm_timestamp(&same_buf, y, width),
+                "same minute paints no clock on row {y}"
+            );
+        }
+
+        let mut later = ScrollbackEntry::new(RenderBlock::agent_message("x".repeat(400)));
+        later.created_at = Some(
+            chrono::Local
+                .with_ymd_and_hms(2026, 9, 27, 2, 58, 0)
+                .unwrap(),
+        );
+        later.clock_prev.set(Some(earlier));
+        let later_buf = render_with(&later, appearance, width);
+        assert!(
+            row_text(&later_buf, 0).contains("2:58"),
+            "a new minute keeps the meta row: {:?}",
+            row_text(&later_buf, 0)
+        );
+    }
+
+    #[test]
+    fn wide_second_line_is_wider_than_the_first_by_the_reserve() {
+        use crate::scrollback::timestamp_layout::TIMESTAMP_FIRST_LINE_RESERVE;
+        let entry = ScrollbackEntry::new(RenderBlock::agent_message("x".repeat(500)));
+        let buf = render_with(&entry, wide_appearance(), 80);
+        let first = row_text(&buf, 0);
+        let second = row_text(&buf, 1);
+        let first_end = rightmost_glyph(&first, 'x').expect("first line") as u16;
+        let second_end = rightmost_glyph(&second, 'x').expect("second line") as u16;
+        assert_eq!(
+            second_end - first_end,
+            TIMESTAMP_FIRST_LINE_RESERVE,
+            "only the first line loses the clock columns\nfirst: {first:?}\nsecond: {second:?}"
+        );
+        assert!(
+            first.contains("AM") || first.contains("PM"),
+            "the clock stays on the first line: {first:?}"
+        );
+        assert!(
+            !(second.contains("AM") || second.contains("PM")),
+            "later lines have no clock: {second:?}"
+        );
+    }
+
+    #[test]
+    fn timestamps_off_reserves_nothing_and_paints_nothing() {
+        let mut appearance = phone_appearance();
+        appearance.show_timestamps = false;
+        let entry = ScrollbackEntry::new(RenderBlock::agent_message("x".repeat(200)));
+        let theme = Theme::current();
+        let renderer = EntryRenderer::new(&entry, &theme).with_appearance(appearance);
+        assert_eq!(renderer.timestamp_reserved(), 0);
+        let buf = render_to_buf(&renderer, 55);
+        for y in 0..buf.area().height {
+            let row = row_text(&buf, y);
+            assert!(
+                !(row.contains("AM") || row.contains("PM")),
+                "timestamps off paints no clock or meta row: {row:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn clock_hit_is_not_the_body_hit() {
+        let entry = ScrollbackEntry::new(RenderBlock::user_prompt("hello there"));
+        let theme = Theme::current();
+        let renderer = EntryRenderer::new(&entry, &theme).with_appearance(phone_appearance());
+        let buf = render_to_buf(&renderer, 55);
+        let rect = renderer
+            .take_clock_rect()
+            .expect("short prompt paints a clock");
+        let row = row_text(&buf, rect.y);
+        let text_col = row.find('h').expect("prompt text") as u16;
+        assert!(
+            text_col < rect.x,
+            "the prompt glyph is outside the clock rect {rect:?} row {row:?}"
+        );
+        assert!(
+            crate::scrollback::timestamp_layout::point_in_clock(
+                rect.x, rect.y, rect.x, rect.y, rect.width
+            ),
+            "the clock cell is the clock target"
+        );
+        assert!(
+            !crate::scrollback::timestamp_layout::point_in_clock(
+                text_col, rect.y, rect.x, rect.y, rect.width
+            ),
+            "the body cell is not the clock target"
+        );
+    }
+
+    #[test]
+    fn expanded_long_clock_uses_a_meta_row_without_rewrapping() {
+        let appearance = phone_appearance();
+        let theme = Theme::current();
+        // Fits the short clock, not the long one, on a 55-column entry.
+        let text = "x".repeat(40);
+        let mut entry = ScrollbackEntry::new(RenderBlock::agent_message(text.clone()));
+        let short = EntryRenderer::new(&entry, &theme).with_appearance(appearance.clone());
+        let short_height = short.desired_height(55);
+        let short_buf = render_to_buf(&short, 55);
+        assert_eq!(short_buf.area().height, short_height);
+        assert!(
+            row_text(&short_buf, 0).contains('x'),
+            "the short clock shares the first line: {:?}",
+            row_text(&short_buf, 0)
+        );
+
+        entry.timestamp_expanded = true;
+        let long = EntryRenderer::new(&entry, &theme).with_appearance(appearance);
+        let long_buf = render_to_buf(&long, 55);
+        assert_eq!(
+            long.desired_height(55),
+            short_height + 1,
+            "the long form that does not fit adds one row"
+        );
+        let meta = row_text(&long_buf, 0);
+        let body = row_text(&long_buf, 1);
+        assert!(
+            meta.contains('|'),
+            "the expanded clock is the long form on the meta row: {meta:?}"
+        );
+        assert!(
+            !body.contains('|'),
+            "the body is not rewritten around the long form: {body:?}"
+        );
+        assert_eq!(
+            rightmost_glyph(&body, 'x'),
+            rightmost_glyph(&row_text(&short_buf, 0), 'x'),
+            "the body wrap width is unchanged"
         );
     }
 }

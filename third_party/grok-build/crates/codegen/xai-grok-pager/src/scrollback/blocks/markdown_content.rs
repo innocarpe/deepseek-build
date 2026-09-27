@@ -8,7 +8,7 @@ use std::cell::RefCell;
 
 use ratatui::text::Line;
 
-use crate::render::wrapping::word_wrap_lines_with_joiners;
+use crate::render::wrapping::{RtOptions, word_wrap_lines_with_joiners};
 use crate::scrollback::types::{BlockLine, BlockOutput};
 
 use super::quote_bar::QuoteBarStrip;
@@ -24,8 +24,10 @@ use xai_grok_markdown::StreamingMarkdownRenderer;
 #[derive(Debug, Clone)]
 struct RenderState {
     renderer: StreamingMarkdownRenderer,
-    /// Cached word-wrap result keyed on `(width, generation, theme)`.
+    /// Cached word-wrap result keyed on `(width, first-line reserve, generation, theme)`.
     cache_width: usize,
+    /// Columns the first visual line wrapped narrower than `cache_width`. `0` means every line used `cache_width`.
+    cache_first_reserve: usize,
     cache_generation: u64,
     cache_theme: ThemeKind,
     cache_lines: Vec<Line<'static>>,
@@ -92,6 +94,7 @@ impl MarkdownContent {
             state: RefCell::new(RenderState {
                 renderer,
                 cache_width: 0,
+                cache_first_reserve: 0,
                 cache_generation: 0,
                 cache_theme: theme_cache::current_kind(),
                 cache_lines: Vec::new(),
@@ -110,6 +113,7 @@ impl MarkdownContent {
             state: RefCell::new(RenderState {
                 renderer: StreamingMarkdownRenderer::new(md_style::style(), true),
                 cache_width: 0,
+                cache_first_reserve: 0,
                 cache_generation: 0,
                 cache_theme: theme_cache::current_kind(),
                 cache_lines: Vec::new(),
@@ -268,6 +272,12 @@ impl MarkdownContent {
     /// Ensure the wrap cache is populated for the given width. Uses incremental wrapping: only re-wraps lines after the
     /// renderer's frozen boundary.
     fn ensure_wrapped(&self, width: usize) {
+        self.ensure_wrapped_reserved(width, 0);
+    }
+
+    /// Like [`Self::ensure_wrapped`], but the first visual line wraps `first_reserve` columns narrower.
+    /// Later lines stay at `width`. The reserve is part of the cache key.
+    fn ensure_wrapped_reserved(&self, width: usize, first_reserve: usize) {
         let mut state = self.state.borrow_mut();
         let current_theme = theme_cache::current_kind();
 
@@ -282,12 +292,16 @@ impl MarkdownContent {
             state.frozen_wrapped_count = 0;
         }
 
-        if state.cache_width == width && state.cache_generation == self.generation {
+        if state.cache_width == width
+            && state.cache_first_reserve == first_reserve
+            && state.cache_generation == self.generation
+        {
             return;
         }
 
-        // Width or theme changed: full re-wrap (frozen cache invalid)
-        let width_changed = state.cache_width != width;
+        // Width, first-line reserve, or theme changed: full re-wrap (frozen cache invalid)
+        let width_changed =
+            state.cache_width != width || state.cache_first_reserve != first_reserve;
         if width_changed {
             state.frozen_pre_wrap_count = 0;
             state.frozen_wrapped_count = 0;
@@ -298,18 +312,25 @@ impl MarkdownContent {
         state.renderer.render(Some(get_syntect()));
 
         let frozen_count = state.renderer.frozen_lines_count();
+        let frozen_start = state.frozen_pre_wrap_count;
 
         // Only two ranges need wrapping. We clone the line slices we need *before* mutating
         // cache_lines, because view() borrows the renderer immutably.
 
         // Step 1: Wrap any newly frozen lines
-        let new_frozen_wrapped = if frozen_count > state.frozen_pre_wrap_count {
+        let new_frozen_wrapped = if frozen_count > frozen_start {
             state
                 .renderer
                 .view()
                 .lines
-                .get(state.frozen_pre_wrap_count..frozen_count)
-                .map(|new_frozen| word_wrap_lines_with_joiners(new_frozen.to_vec(), width))
+                .get(frozen_start..frozen_count)
+                .map(|new_frozen| {
+                    wrap_markdown_lines(
+                        new_frozen.to_vec(),
+                        width,
+                        reserve_at_start(frozen_start, first_reserve),
+                    )
+                })
         } else {
             None
         };
@@ -317,12 +338,13 @@ impl MarkdownContent {
         // Step 2: Wrap the tail (unfrozen) lines
         let total_lines = state.renderer.view().lines.len();
         let tail_wrapped = if frozen_count < total_lines {
-            state
-                .renderer
-                .view()
-                .lines
-                .get(frozen_count..)
-                .map(|tail| word_wrap_lines_with_joiners(tail.to_vec(), width))
+            state.renderer.view().lines.get(frozen_count..).map(|tail| {
+                wrap_markdown_lines(
+                    tail.to_vec(),
+                    width,
+                    reserve_at_start(frozen_count, first_reserve),
+                )
+            })
         } else {
             None
         };
@@ -348,6 +370,7 @@ impl MarkdownContent {
         }
 
         state.cache_width = width;
+        state.cache_first_reserve = first_reserve;
         state.cache_generation = self.generation;
     }
 
@@ -355,7 +378,16 @@ impl MarkdownContent {
     /// The closure receives a [`WrappedLines`] reference valid for the duration of the call.
     /// That avoids cloning when the caller only needs to inspect or slice the lines (e.g., ThinkingBlock truncation).
     pub fn with_wrapped_lines<R>(&self, width: usize, f: impl FnOnce(WrappedLines<'_>) -> R) -> R {
-        self.ensure_wrapped(width);
+        self.with_wrapped_lines_reserved(width, 0, f)
+    }
+
+    fn with_wrapped_lines_reserved<R>(
+        &self,
+        width: usize,
+        first_reserve: usize,
+        f: impl FnOnce(WrappedLines<'_>) -> R,
+    ) -> R {
+        self.ensure_wrapped_reserved(width, first_reserve);
         let state = self.state.borrow();
         f(WrappedLines {
             lines: &state.cache_lines,
@@ -367,9 +399,15 @@ impl MarkdownContent {
     /// Each line is converted to a [`BlockLine`] with joiner and optional background color (from the line's style, e.g., for code blocks).
     /// This is the common path used by [`AgentMessageBlock`](super::AgentMessageBlock).
     pub fn output(&self, width: usize) -> BlockOutput {
+        self.output_with_reserve(width, 0)
+    }
+
+    /// [`Self::output`] with the wide-pane first-line clock reserve.
+    /// `first_reserve == 0` matches [`Self::output`].
+    pub fn output_with_reserve(&self, width: usize, first_reserve: usize) -> BlockOutput {
         // Raw mode shows the source `>` markers verbatim; nothing to exclude
         let strip = QuoteBarStrip::new(!self.current_raw);
-        self.with_wrapped_lines(width, |wrapped| {
+        self.with_wrapped_lines_reserved(width, first_reserve, |wrapped| {
             if wrapped.lines.is_empty() {
                 BlockOutput {
                     lines: vec![Line::from("").into()],
@@ -403,6 +441,23 @@ impl MarkdownContent {
             }
         })
     }
+}
+
+/// The first-line reserve applies only when this slice is the start of the document.
+fn reserve_at_start(start_line: usize, first_reserve: usize) -> usize {
+    if start_line == 0 { first_reserve } else { 0 }
+}
+
+fn wrap_markdown_lines(
+    lines: Vec<Line<'static>>,
+    width: usize,
+    first_reserve: usize,
+) -> (Vec<Line<'static>>, Vec<Option<String>>) {
+    let mut opts = RtOptions::new(width);
+    if first_reserve > 0 && width > first_reserve {
+        opts = opts.first_line_width(width - first_reserve);
+    }
+    word_wrap_lines_with_joiners(lines, opts)
 }
 
 /// Compute the display width of the `subsequent_indent` prefix on a wrapped continuation line. This width is NOT

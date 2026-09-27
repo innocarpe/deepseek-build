@@ -242,6 +242,21 @@ impl SelectionBox {
     }
 }
 
+/// Drop a clock meta row from the top of an entry rect before [`hug_padded_band`].
+///
+/// The meta row sits above the echo's pad. Leaving it in the rect puts the top corner on the clock.
+pub fn area_below_clock_meta(area: Rect, meta_rows: u16) -> Rect {
+    if meta_rows == 0 || area.height <= meta_rows {
+        area
+    } else {
+        Rect {
+            y: area.y.saturating_add(meta_rows),
+            height: area.height - meta_rows,
+            ..area
+        }
+    }
+}
+
 /// Pull a padded band's selection rect in by one row on each hugged side, so the corners [`SelectionBox::render`]
 /// draws one row outside `inner_area` land on the band's own pad rows instead of the rows around it.
 ///

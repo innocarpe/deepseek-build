@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- On a phone-width pane the turn clock no longer reserves a gutter on every wrapped line. A finished turn paints the short time in leftover space on the first line, or on one right-aligned row above the body when that line is full. A turn that is still streaming paints nothing, so the paragraph width stays put until it finishes. The next full line skips that row when the previous painted clock is the same minute. Tapping the clock toggles the long form for that turn only; if the long form does not fit, it uses the row above the body and the body is not rewrapped. Wider panes keep the right-edge clock and take its columns from the first line only.
+
 ## 6.1.5 — 2026-09-27
 
 - Selecting a prompt echo draws the selection bracket around the echo band itself: the corners sit on the band's own top and bottom pad rows instead of the blank rows above and below it, so the bracket hugs the echo with only its one-row pad inside. Blocks with no band of their own — tool rows, thoughts, groups — keep the box they have today.

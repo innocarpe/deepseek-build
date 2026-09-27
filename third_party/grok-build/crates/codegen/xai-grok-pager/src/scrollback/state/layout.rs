@@ -649,6 +649,25 @@ impl ScrollbackState {
     /// Full entry render-area width (accent, padding, content) for a viewport of `width`.
     /// This is the width handed to `EntryRenderer`, which subtracts chrome itself to reach the content width.
     /// Centralizes the layout round-trip so the reveal row mapping, exact height measurement, and prompt-descriptor layout can't drift apart.
+    /// Clock painted by the latest eligible entry before `idx`.
+    /// A narrow running entry does not count. See [`timestamp_anchor`](crate::scrollback::timestamp_layout::timestamp_anchor).
+    pub(super) fn timestamp_anchor_before(
+        &self,
+        idx: usize,
+    ) -> Option<chrono::DateTime<chrono::Local>> {
+        for i in (0..idx).rev() {
+            let Some((_, entry)) = self.entries.get_index(i) else {
+                continue;
+            };
+            if let Some(ts) =
+                crate::scrollback::timestamp_layout::timestamp_anchor(entry, &self.appearance)
+            {
+                return Some(ts);
+            }
+        }
+        None
+    }
+
     pub(super) fn entry_area_width(&self, width: u16) -> u16 {
         let simulated_area = Rect::new(0, 0, width, 1);
         HorizontalLayout::new(simulated_area, &self.appearance.scrollback.layout)
@@ -970,6 +989,16 @@ impl ScrollbackState {
     pub(super) fn update_dirty_entry_heights(&mut self, width: u16) -> Vec<(usize, i32)> {
         let entry_area_width = self.entry_area_width(width);
         let cwd = self.cwd.as_deref();
+        // Anchors before the cache borrow: a finished narrow turn changes the minute later rows see.
+        let dirty_entries: Vec<usize> = self
+            .dirty_heights
+            .iter()
+            .filter_map(|id| self.entries.get_index_of(id))
+            .collect();
+        let clock_anchors: Vec<Option<chrono::DateTime<chrono::Local>>> = dirty_entries
+            .iter()
+            .map(|&idx| self.timestamp_anchor_before(idx))
+            .collect();
         let Some(cache) = self.layout_cache.as_mut() else {
             return Vec::new();
         };
@@ -978,14 +1007,7 @@ impl ScrollbackState {
 
         let mut changes = Vec::new();
 
-        // Collect indices first: the height update mutably borrows the cache while `dirty_heights` is still live
-        let dirty_entries: Vec<usize> = self
-            .dirty_heights
-            .iter()
-            .filter_map(|id| self.entries.get_index_of(id))
-            .collect();
-
-        for idx in dirty_entries {
+        for (idx, clock_anchor) in dirty_entries.into_iter().zip(clock_anchors) {
             if idx >= cache.entries.len() {
                 continue; // Entry added after cache was built
             }
@@ -993,6 +1015,7 @@ impl ScrollbackState {
             let Some((_, entry)) = self.entries.get_index(idx) else {
                 continue;
             };
+            entry.clock_prev.set(clock_anchor);
             let Some(info) = cache.entries.get(idx).copied() else {
                 continue;
             };
@@ -1186,6 +1209,7 @@ impl ScrollbackState {
         let entry_area_width = self.entry_area_width(width);
         let prompt_width = self.prompt_content_width(width);
         let cwd = self.cwd.as_deref();
+        let clock_anchor = self.timestamp_anchor_before(new_idx);
         let Some(cache) = self.layout_cache.as_mut() else {
             return false;
         };
@@ -1208,6 +1232,7 @@ impl ScrollbackState {
         let Some((_, new_entry)) = self.entries.get_index(new_idx) else {
             return false;
         };
+        new_entry.clock_prev.set(clock_anchor);
 
         let renderer = EntryRenderer::new(new_entry, &theme)
             .with_appearance_ref(&self.appearance)
@@ -1290,11 +1315,19 @@ impl ScrollbackState {
 
         // Pass 1: Compute a cheap height estimate for every entry (no markdown render / word-wrap). This keeps the
         // bulk-load rebuild O(history) in cheap arithmetic instead of O(history) markdown renders.
+        // The clock anchor is written in the same walk so a narrow meta row sees the previous minute.
+        let mut clock_anchor: Option<chrono::DateTime<chrono::Local>> = None;
         for entry in self.entries.values() {
+            entry.clock_prev.set(clock_anchor);
             let renderer = EntryRenderer::new(entry, &theme)
                 .with_appearance_ref(&self.appearance)
                 .with_cwd(self.cwd());
             let height = renderer.estimate_height(entry_area_width);
+            if let Some(ts) =
+                crate::scrollback::timestamp_layout::timestamp_anchor(entry, &self.appearance)
+            {
+                clock_anchor = Some(ts);
+            }
             cache.entries.push(EntryLayoutInfo {
                 height,
                 gap_after: 1,

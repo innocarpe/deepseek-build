@@ -809,11 +809,8 @@ impl MermaidRuntime {
 /// The exact per-entry width does not matter (the cache key buckets width), so a single viewport-derived value drives the render request.
 fn representative_content_cols(terminal_width: u16) -> u16 {
     const CHROME: u16 = crate::scrollback::wrappers::EntryRenderer::CHROME_WIDTH;
-    const TIMESTAMP_RESERVE: u16 = 10;
-    terminal_width
-        .saturating_sub(CHROME)
-        .saturating_sub(TIMESTAMP_RESERVE)
-        .max(20)
+    // The clock no longer narrows every line, so a diagram sizes to the body width.
+    terminal_width.saturating_sub(CHROME).max(20)
 }
 
 /// Translate a content-column budget into a render pixel width.
@@ -1206,9 +1203,9 @@ mod tests {
 
     #[test]
     fn representative_cols_subtracts_chrome_and_timestamp() {
-        // Exactly chrome (4) + timestamp (10) reserved off the viewport width.
+        // Chrome only. The timestamp gutter is no longer a uniform column budget.
         let chrome = crate::scrollback::wrappers::EntryRenderer::CHROME_WIDTH;
-        assert_eq!(representative_content_cols(100), 100 - chrome - 10);
+        assert_eq!(representative_content_cols(100), 100 - chrome);
         // Tiny viewport never underflows below the floor.
         assert_eq!(representative_content_cols(0), 20);
         assert_eq!(representative_content_cols(5), 20, "saturates to the floor");

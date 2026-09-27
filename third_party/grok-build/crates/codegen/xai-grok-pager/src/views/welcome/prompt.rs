@@ -19,7 +19,25 @@ fn prompt_area_inset(compact: bool) -> u16 {
 
 const CHROME_PAD: u16 = crate::appearance::LayoutConfig::BOX_PAD;
 
-fn prompt_style(focus: WelcomePromptFocus, compact: bool) -> PromptStyle {
+/// A phone-width welcome draws its composer as the agent view's band, across
+/// the whole frame, so the switch to the conversation view on the first
+/// keystroke neither moves nor reshapes it.
+pub(super) fn phone_band(width: u16) -> bool {
+    crate::views::prompt_widget::is_narrow_label_width(width)
+}
+
+/// Width the composer is drawn at: the frame on a phone, else the content
+/// column less its inset. [`desired_prompt_height`] and [`render_prompt`] both
+/// use it, so the measured rows are the painted rows.
+fn drawn_width(content_width: u16, frame_width: u16, compact: bool) -> u16 {
+    if phone_band(content_width) {
+        frame_width
+    } else {
+        content_width.saturating_sub(prompt_area_inset(compact) * 2)
+    }
+}
+
+fn prompt_style(focus: WelcomePromptFocus, compact: bool, band: bool) -> PromptStyle {
     PromptStyle {
         focused: focus == WelcomePromptFocus::Focused,
         show_prefix: true,
@@ -31,22 +49,28 @@ fn prompt_style(focus: WelcomePromptFocus, compact: bool) -> PromptStyle {
         chrome_pad_left: CHROME_PAD,
         chrome_pad_right: CHROME_PAD,
         placeholder_override: Some("Type a message..."),
+        band,
         ..PromptStyle::default()
     }
 }
 
 /// Measured with the style [`render_prompt`] draws with, so the layout reserves the rows the draft will paint into.
+/// `frame_width` is the whole welcome frame's; a phone draws the composer across it.
 pub fn desired_prompt_height(
     prompt: &PromptWidget,
     content_width: u16,
+    frame_width: u16,
     compact: bool,
     max_height: u16,
 ) -> u16 {
-    let inset = prompt_area_inset(compact);
     // Focus only tints, never changes the row count
-    let style = prompt_style(WelcomePromptFocus::Focused, compact);
+    let style = prompt_style(
+        WelcomePromptFocus::Focused,
+        compact,
+        phone_band(content_width),
+    );
     prompt.desired_height(
-        content_width.saturating_sub(inset * 2),
+        drawn_width(content_width, frame_width, compact),
         &style,
         true,
         max_height,
@@ -65,14 +89,25 @@ pub fn render_prompt(
     Option<(u16, u16)>,
     Option<crate::terminal::overlay::PostFlush>,
 ) {
-    let style = prompt_style(focus, compact);
+    let band = phone_band(area.width);
+    let style = prompt_style(focus, compact, band);
 
     let inset = prompt_area_inset(compact);
-    let inset_area = Rect {
-        x: area.x + inset,
-        y: area.y,
-        width: area.width.saturating_sub(inset * 2),
-        height: area.height,
+    let frame = *buf.area();
+    let inset_area = if band {
+        Rect {
+            x: frame.x,
+            y: area.y,
+            width: drawn_width(area.width, frame.width, compact),
+            height: area.height,
+        }
+    } else {
+        Rect {
+            x: area.x + inset,
+            y: area.y,
+            width: drawn_width(area.width, frame.width, compact),
+            height: area.height,
+        }
     };
 
     let result = prompt.draw(buf, inset_area, None, &style, Some(info), None);
@@ -146,26 +181,26 @@ mod tests {
     fn desired_prompt_height_grows_per_draft_line_up_to_max() {
         let mut prompt = PromptWidget::new();
         assert_eq!(
-            desired_prompt_height(&prompt, 80, false, 20),
+            desired_prompt_height(&prompt, 80, 80, false, 20),
             super::super::PROMPT_HEIGHT
         );
 
         prompt.set_text("one\ntwo\nthree");
         assert_eq!(
-            desired_prompt_height(&prompt, 80, false, 20),
+            desired_prompt_height(&prompt, 80, 80, false, 20),
             super::super::PROMPT_HEIGHT + 2
         );
 
         prompt.set_text(&["line"; 30].join("\n"));
-        assert_eq!(desired_prompt_height(&prompt, 80, false, 20), 20);
+        assert_eq!(desired_prompt_height(&prompt, 80, 80, false, 20), 20);
     }
 
     #[test]
     fn desired_prompt_height_counts_wrapped_rows_at_the_drawn_width() {
         let mut prompt = PromptWidget::new();
         prompt.set_text(&"word ".repeat(40));
-        let narrow = desired_prompt_height(&prompt, 40, false, 40);
-        let wide = desired_prompt_height(&prompt, 400, false, 40);
+        let narrow = desired_prompt_height(&prompt, 40, 40, false, 40);
+        let wide = desired_prompt_height(&prompt, 400, 400, false, 40);
         assert_eq!(wide, super::super::PROMPT_HEIGHT);
         assert!(narrow > wide, "narrow={narrow} wide={wide}");
     }
@@ -175,9 +210,10 @@ mod tests {
     fn desired_prompt_height_measures_at_the_compact_draw_width() {
         let mut prompt = PromptWidget::new();
         prompt.set_text(&"word ".repeat(40));
-        for width in [40u16, 60, 80] {
-            let regular = desired_prompt_height(&prompt, width, false, 40);
-            let compact = desired_prompt_height(&prompt, width, true, 40);
+        // Wider than a phone: a phone draws the band across the frame instead.
+        for width in [70u16, 80, 100] {
+            let regular = desired_prompt_height(&prompt, width, width, false, 40);
+            let compact = desired_prompt_height(&prompt, width, width, true, 40);
             let regular_text_width = width.saturating_sub(prompt_area_inset(false) * 2);
             let compact_text_width = width.saturating_sub(prompt_area_inset(true) * 2);
             assert!(
@@ -188,7 +224,7 @@ mod tests {
                 compact,
                 prompt.desired_height(
                     compact_text_width,
-                    &prompt_style(WelcomePromptFocus::Focused, true),
+                    &prompt_style(WelcomePromptFocus::Focused, true, false),
                     true,
                     40
                 ),

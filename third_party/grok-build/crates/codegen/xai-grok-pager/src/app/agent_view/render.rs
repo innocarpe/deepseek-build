@@ -797,7 +797,8 @@ impl AgentView {
             show_borders: true,
             title: self.prompt_caption(),
             image_preview: !self.resize_hides_prompt_preview(),
-            band: false,
+            // A phone's composer is a band like the prompt echo's, across the frame.
+            band: layout_cfg.narrow,
         };
         let next = crate::views::session_title::rename_source_title_raw(self)
             .map(crate::views::session_title::sanitize_display_text);
@@ -2482,7 +2483,27 @@ impl AgentView {
         } else {
             info
         };
-        if narrow {
+        if narrow && layout.deepseek_status.height >= crate::views::agent::PHONE_FOOTER_ROWS {
+            let (balance, cache) = phone_cost_chips(self);
+            let tokens = phone_token_chip(self);
+            let flag_texts: Vec<&str> = info.flags.iter().map(|flag| flag.text).collect();
+            let footer = crate::views::phone_bottom_band::compose_phone_footer(
+                layout.deepseek_status.width as usize,
+                balance.as_deref(),
+                cache.as_deref(),
+                tokens.as_deref(),
+                info.model_name,
+                &flag_texts,
+                info.usage_warning,
+                info.multiline,
+            );
+            crate::views::phone_bottom_band::paint_phone_footer(
+                buf,
+                layout.deepseek_status,
+                &footer,
+                &theme,
+            );
+        } else if narrow {
             let (balance, cache) = phone_cost_chips(self);
             let flag_texts: Vec<&str> = info.flags.iter().map(|flag| flag.text).collect();
             let band = crate::views::phone_bottom_band::compose_phone_bottom_band(
@@ -4583,6 +4604,23 @@ fn phone_cost_chips(agent: &AgentView) -> (Option<String>, Option<String>) {
         ds.usage.totals.input_tokens,
     );
     (balance, cache)
+}
+
+/// This session's token traffic for the phone footer (`48.6k in · 236 out`).
+/// Empty until this session's DeepSeek status has landed and counted a token.
+fn phone_token_chip(agent: &AgentView) -> Option<String> {
+    if agent.deepseek_status_session_id.as_ref() != agent.session.session_id.as_ref() {
+        return None;
+    }
+    let ds = agent.deepseek_status.as_ref().filter(|s| s.is_deepseek)?;
+    let totals = &ds.usage.totals;
+    (totals.input_tokens > 0 || totals.output_tokens > 0).then(|| {
+        format!(
+            "{} in \u{b7} {} out",
+            crate::views::agent_status::format_tokens_compact(totals.input_tokens as i64),
+            crate::views::agent_status::format_tokens_compact(totals.output_tokens as i64),
+        )
+    })
 }
 
 #[cfg(test)]

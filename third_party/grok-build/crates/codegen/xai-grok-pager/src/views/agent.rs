@@ -87,7 +87,8 @@ pub const SHORT_TERMINAL_ROWS: u16 = 16;
 /// The scrollback's floor, pushed as the layout's only `Min`.
 /// The solver ranks it above every `Length`, so an over-committed layout shrinks another row.
 pub const SCROLLBACK_MIN_ROWS: u16 = 5;
-/// The frame's floor: the row under the bottom status row, at every width.
+/// The frame's floor: the row under the bottom status row on a desktop pane.
+/// A phone pane ends on its two-row footer instead ([`PHONE_FOOTER_ROWS`]).
 ///
 /// [`paint_bottom_margin`] fills it with the frame's background, so the frame
 /// ends a row under the status text in its own colour. A cell is the smallest
@@ -100,6 +101,12 @@ pub const SCROLLBACK_MIN_ROWS: u16 = 5;
 /// like the dashboard's floor, and the layout reserves it only in rows the rest
 /// of the stack leaves free, so it is the first row to yield.
 pub const BOTTOM_MARGIN_ROWS: u16 = 1;
+
+/// Rows under the composer on a phone pane: the two-row footer
+/// (`views::phone_bottom_band`). It ends the frame, so the phone keeps no floor
+/// row: the footer's text sits the cell's own leading above the grid's edge,
+/// and anything under the grid is the host's.
+pub const PHONE_FOOTER_ROWS: u16 = 2;
 
 /// Rows [`AgentViewLayout::compute`] reserves under the status row for a frame
 /// `area_height` rows tall when the rest of its stack fits.
@@ -371,11 +378,21 @@ impl AgentViewLayout {
         }
         constraints.push(Constraint::Length(shortcuts_height));
         // DeepSeek bottom status row: always present so the row count is
-        // stable; renders blank when no status data has landed.
-        constraints.push(Constraint::Length(1));
+        // stable; renders blank when no status data has landed. A phone pane
+        // gets the two-row footer instead.
+        constraints.push(Constraint::Length(if layout_cfg.narrow {
+            PHONE_FOOTER_ROWS
+        } else {
+            1
+        }));
         // The frame's floor under the status row (see `BOTTOM_MARGIN_ROWS`),
-        // only in rows every other row leaves free: the first row to yield.
-        let floor_rows = bottom_margin_rows(area.height);
+        // only in rows every other row leaves free: the first row to yield. A
+        // phone's footer ends the frame.
+        let floor_rows = if layout_cfg.narrow {
+            0
+        } else {
+            bottom_margin_rows(area.height)
+        };
         let floor_rows =
             if constraint_rows(&constraints).saturating_add(floor_rows) <= inner_area.height {
                 floor_rows
@@ -400,9 +417,9 @@ impl AgentViewLayout {
         };
         chunks.next();
         let mut scrollback = chunks.next().unwrap_or_default();
-        // A phone's status bar, task list and transcript own the whole width.
-        // The prompt composer and other panes keep their configured outer text
-        // inset. The status bar's hit rects come from the rect it renders into,
+        // A phone's status bar, task list and transcript own the whole width,
+        // and so does its composer (below), a band like the prompt echo's.
+        // Other panes keep their configured outer text inset. The status bar's hit rects come from the rect it renders into,
         // so they move with it.
         if layout_cfg.narrow {
             status_bar.x = area.x;
@@ -464,7 +481,11 @@ impl AgentViewLayout {
         } else {
             Rect::default()
         };
-        let prompt = chunks.next().unwrap_or_default();
+        let mut prompt = chunks.next().unwrap_or_default();
+        if layout_cfg.narrow {
+            prompt.x = area.x;
+            prompt.width = area.width;
+        }
         if shortcuts_gap > 0 {
             chunks.next();
         }
@@ -2306,40 +2327,54 @@ mod tests {
         );
     }
 
-    /// The phone status bar and transcript reach both frame edges while the
-    /// composer keeps its own inset. Every width keeps the frame's floor row
-    /// under the status, spanning the frame.
+    /// The phone status bar, transcript and composer reach both frame edges. A
+    /// phone ends on its two-row footer with no floor under it; a desktop pane
+    /// keeps one status row and the frame's floor row under it, spanning the
+    /// frame. Either way six rows are not transcript.
     #[test]
-    fn layout_uses_full_width_phone_bars_and_a_frame_floor() {
+    fn layout_uses_full_width_phone_bars_and_ends_a_phone_on_its_footer() {
         for (cols, rows) in [(55u16, 41u16), (120, 40), (180, 50)] {
             let area = Rect::new(0, 0, cols, rows);
             let narrow = effective_narrow(cols, rows);
             let mut layout_cfg = LayoutConfig::default();
             layout_cfg.narrow = narrow;
-            let bottom_margin_rows = BOTTOM_MARGIN_ROWS;
             let layout = AgentViewLayout::compute(AgentViewLayoutParams {
                 layout_cfg,
                 ..base_params(area)
             });
+            let (status_rows, floor_rows) = if narrow {
+                (PHONE_FOOTER_ROWS, 0)
+            } else {
+                (1, BOTTOM_MARGIN_ROWS)
+            };
 
             assert_eq!(
                 layout.status_bar.y, area.y,
                 "{cols}x{rows}: the status bar starts on the first row, got {:?}",
                 layout.status_bar,
             );
-            let status_inset = if narrow { 0 } else { LayoutConfig::MIN_HPAD };
+            let edge_inset = if narrow { 0 } else { LayoutConfig::MIN_HPAD };
             assert_eq!(
                 (layout.status_bar.x, layout.status_bar.right()),
-                (area.x + status_inset, area.right() - status_inset),
+                (area.x + edge_inset, area.right() - edge_inset),
                 "{cols}x{rows}: a phone status bar spans the frame, got {:?}",
                 layout.status_bar,
             );
-            assert_eq!(
-                (layout.bottom_margin.x, layout.bottom_margin.width),
-                (area.x, area.width),
-                "{cols}x{rows}: the floor spans the frame, got {:?}",
-                layout.bottom_margin,
-            );
+            if narrow {
+                assert_eq!(
+                    (layout.prompt.x, layout.prompt.width),
+                    (area.x, area.width),
+                    "{cols}x{rows}: a phone composer spans the frame, got {:?}",
+                    layout.prompt,
+                );
+            } else {
+                assert_eq!(
+                    (layout.bottom_margin.x, layout.bottom_margin.width),
+                    (area.x, area.width),
+                    "{cols}x{rows}: the floor spans the frame, got {:?}",
+                    layout.bottom_margin,
+                );
+            }
             assert_eq!(
                 layout.scrollback.y,
                 layout.status_bar.bottom(),
@@ -2348,31 +2383,32 @@ mod tests {
                 layout.status_bar,
             );
             assert_eq!(
-                layout.scrollback.x,
-                area.x + if narrow { 0 } else { LayoutConfig::MIN_HPAD },
-                "{cols}x{rows}: the phone transcript starts at the frame edge"
+                (layout.scrollback.x, layout.scrollback.right()),
+                (area.x + edge_inset, area.right() - edge_inset),
+                "{cols}x{rows}: the phone transcript runs edge to edge, got {:?}",
+                layout.scrollback,
             );
             assert_eq!(
-                layout.scrollback.right(),
-                area.right() - if narrow { 0 } else { LayoutConfig::MIN_HPAD },
-                "{cols}x{rows}: the phone transcript ends at the frame edge"
-            );
-            assert_eq!(
-                layout.deepseek_status.bottom() + bottom_margin_rows,
-                area.bottom(),
-                "{cols}x{rows}: the status row keeps {bottom_margin_rows} row(s) under it, got {:?}",
+                layout.deepseek_status.height, status_rows,
+                "{cols}x{rows}: the rows under the composer, got {:?}",
                 layout.deepseek_status,
             );
             assert_eq!(
-                layout.bottom_margin.height, bottom_margin_rows,
-                "{cols}x{rows}: the rows under the status row, got {:?}",
+                layout.deepseek_status.bottom() + floor_rows,
+                area.bottom(),
+                "{cols}x{rows}: {floor_rows} floor row(s) under the status, got {:?}",
+                layout.deepseek_status,
+            );
+            assert_eq!(
+                layout.bottom_margin.height, floor_rows,
+                "{cols}x{rows}: the rows under the status, got {:?}",
                 layout.bottom_margin,
             );
             assert_eq!(
                 layout.scrollback.height,
-                rows - 5 - bottom_margin_rows,
-                "{cols}x{rows}: every row but the status bar, prompt, shortcuts, \
-                 DeepSeek status and bottom-margin rows is scrollback, got {:?}",
+                rows - 6,
+                "{cols}x{rows}: every row but the status bar, prompt, hint row \
+                 (desktop), the status rows and the floor (desktop) is scrollback, got {:?}",
                 layout.scrollback,
             );
         }

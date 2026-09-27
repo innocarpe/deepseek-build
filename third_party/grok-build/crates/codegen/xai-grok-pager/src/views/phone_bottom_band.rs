@@ -1,4 +1,9 @@
-//! One row under the prompt on a phone-width pane.
+//! The rows under the prompt on a phone-width pane.
+//!
+//! The agent view paints the two-row footer ([`compose_phone_footer`]): each
+//! row split left and right, cost-side facts on the left and model-side facts
+//! on the right. The one-row band below is the fallback when the layout grants
+//! the footer a single row.
 //!
 //! Cost and cache stay on the left, in full. Model and permission stay on the
 //! right. The model is the only field that shrinks, and only after a leading
@@ -289,6 +294,138 @@ fn ellipsize_right(room: usize, model: &str, flags_body: &str) -> String {
     }
 }
 
+/// The phone footer: two rows under the composer, each split left and right.
+///
+/// ```text
+///  $15.70 cache 24%            DeepSeek V4.1 Flash (max)
+///  48.6k in · 236 out                     always-approve
+/// ```
+///
+/// Row 1: the balance and cache marker (the one-row band's left side, as is)
+/// against the model. Row 2: this session's token traffic against the mode
+/// flags, with a usage warning ahead of them. Each row fits its right side
+/// against its own left side, so the model keeps its `DeepSeek ` prefix and its
+/// effort while its row has the room.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PhoneFooter {
+    pub balance: Option<String>,
+    pub cache: Option<String>,
+    pub model: String,
+    pub tokens: Option<String>,
+    pub mode: String,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compose_phone_footer(
+    width: usize,
+    balance: Option<&str>,
+    cache_marker: Option<&str>,
+    tokens: Option<&str>,
+    model: &str,
+    flags: &[&str],
+    usage_warning: Option<&str>,
+    multiline: bool,
+) -> PhoneFooter {
+    let balance = nonempty(balance);
+    let cache = nonempty(cache_marker);
+    let tokens = nonempty(tokens);
+    let row1_left = left_width(balance.as_deref(), cache.as_deref());
+    let row2_left = tokens.as_deref().map_or(0, UnicodeWidthStr::width);
+    let model_mid = strip_model_prefix(model);
+    let model = fit_first(
+        right_room(width, row1_left),
+        &[model, model_mid, strip_effort(model_mid)],
+    );
+    let flags_body = flags.join(" \u{b7} ");
+    let warning = usage_warning.filter(|w| !w.is_empty());
+    let with_warning = assemble(warning, "", &flags_body, multiline).unwrap_or_default();
+    let without_warning = assemble(None, "", &flags_body, multiline).unwrap_or_default();
+    let mode = fit_first(
+        right_room(width, row2_left),
+        &[with_warning.as_str(), without_warning.as_str()],
+    );
+    PhoneFooter {
+        balance,
+        cache,
+        model,
+        tokens,
+        mode,
+    }
+}
+
+/// The first candidate that fits `room`, else the last one cut to it.
+fn fit_first(room: usize, candidates: &[&str]) -> String {
+    if room == 0 {
+        return String::new();
+    }
+    if let Some(fit) = candidates.iter().find(|c| c.width() <= room) {
+        return (*fit).to_owned();
+    }
+    candidates
+        .last()
+        .map(|last| truncate_to_width(last, room).into_owned())
+        .unwrap_or_default()
+}
+
+/// Blank both rows, then pin each row's left side to the left edge and its
+/// right side to the right edge. The composer guarantees they do not meet.
+pub(crate) fn paint_phone_footer(
+    buf: &mut Buffer,
+    area: Rect,
+    footer: &PhoneFooter,
+    theme: &Theme,
+) {
+    if area.height < 2 || area.width == 0 {
+        return;
+    }
+    let bg = theme.bg_base;
+    let blank = Style::default().bg(bg);
+    for y in area.y..area.y + 2 {
+        for x in area.x..area.x.saturating_add(area.width) {
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                cell.set_char(' ');
+                cell.set_style(blank);
+            }
+        }
+    }
+    let dim = Style::default().fg(theme.gray_dim).bg(bg);
+    let paint = |buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style| -> u16 {
+        let w = text.width() as u16;
+        if w > 0 {
+            buf.set_span_safe(x, y, &Span::styled(text.to_owned(), style), w);
+        }
+        w
+    };
+    let right = |buf: &mut Buffer, y: u16, text: &str| {
+        let w = text.width() as u16;
+        let x = area.x.saturating_add(area.width.saturating_sub(w));
+        paint(buf, x, y, text, dim);
+    };
+    // Row 1: balance, cache | model.
+    let mut x = area.x;
+    if let Some(balance) = &footer.balance {
+        x += paint(
+            buf,
+            x,
+            area.y,
+            balance,
+            Style::default().fg(theme.text_secondary).bg(bg),
+        );
+    }
+    if let Some(cache) = &footer.cache {
+        if footer.balance.is_some() {
+            x += 1;
+        }
+        paint(buf, x, area.y, cache, dim);
+    }
+    right(buf, area.y, &footer.model);
+    // Row 2: tokens | mode.
+    if let Some(tokens) = &footer.tokens {
+        paint(buf, area.x, area.y + 1, tokens, dim);
+    }
+    right(buf, area.y + 1, &footer.mode);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -465,5 +602,145 @@ mod tests {
         );
         assert_eq!(band.right, "V4.1 Flash (max) · always-approve");
         assert_separated(78, &band);
+    }
+
+    fn footer(
+        width: usize,
+        balance: &str,
+        tokens: Option<&str>,
+        warning: Option<&str>,
+    ) -> PhoneFooter {
+        compose_phone_footer(
+            width,
+            Some(balance),
+            Some("cache 24%"),
+            tokens,
+            "DeepSeek V4.1 Flash (max)",
+            &["always-approve"],
+            warning,
+            false,
+        )
+    }
+
+    /// Row by row, each side fits against its own row's other side.
+    fn assert_rows_separated(width: usize, footer: &PhoneFooter) {
+        let rows = [
+            (
+                left_width(footer.balance.as_deref(), footer.cache.as_deref()),
+                footer.model.width(),
+            ),
+            (
+                footer.tokens.as_deref().map_or(0, UnicodeWidthStr::width),
+                footer.mode.width(),
+            ),
+        ];
+        for (row, (left, right)) in rows.into_iter().enumerate() {
+            assert!(
+                left + right <= width,
+                "row {row} exceeds {width}: {footer:?}"
+            );
+            if left > 0 && right > 0 {
+                assert!(
+                    width - right >= left + GAP,
+                    "row {row} gap under {GAP}: {footer:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn phone_footer_keeps_the_full_model_beside_balance_and_cache() {
+        let footer = footer(PHONE_INNER, "$15.70", Some("48.6k in \u{b7} 236 out"), None);
+        assert_eq!(footer.balance.as_deref(), Some("$15.70"));
+        assert_eq!(footer.cache.as_deref(), Some("cache 24%"));
+        assert_eq!(footer.model, "DeepSeek V4.1 Flash (max)");
+        assert_eq!(footer.tokens.as_deref(), Some("48.6k in \u{b7} 236 out"));
+        assert_eq!(footer.mode, "always-approve");
+        assert_rows_separated(PHONE_INNER, &footer);
+    }
+
+    #[test]
+    fn phone_footer_row_two_does_not_shorten_the_model_on_row_one() {
+        // A long token line is row two's; the model on row one keeps its prefix.
+        let footer = footer(
+            PHONE_INNER,
+            "$15.70",
+            Some("1234.5M in \u{b7} 987.6k out"),
+            None,
+        );
+        assert_eq!(footer.model, "DeepSeek V4.1 Flash (max)");
+        assert_rows_separated(PHONE_INNER, &footer);
+    }
+
+    #[test]
+    fn phone_footer_shortens_the_model_only_as_far_as_its_row_needs() {
+        // `$1234.56 cache 24%` costs 18 columns.
+        for (width, model) in [
+            (45, "DeepSeek V4.1 Flash (max)"),
+            (36, "V4.1 Flash (max)"),
+            (30, "V4.1 Flash"),
+        ] {
+            let footer = footer(width, "$1234.56", None, None);
+            assert_eq!(footer.model, model, "at {width}");
+            assert_rows_separated(width, &footer);
+        }
+    }
+
+    #[test]
+    fn phone_footer_leads_the_mode_with_a_warning_while_it_fits() {
+        let fits = footer(PHONE_INNER, "$15.70", None, Some("low balance"));
+        assert_eq!(fits.mode, "low balance \u{b7} always-approve");
+        let tight = footer(
+            30,
+            "$15.70",
+            Some("48.6k in \u{b7} 236 out"),
+            Some("low balance"),
+        );
+        // Ten columns beside the tokens: the warning goes, the mode is cut to fit.
+        assert!(
+            !tight.mode.contains("low balance") && tight.mode.width() <= 10,
+            "{tight:?}"
+        );
+        let dropped = footer(
+            40,
+            "$15.70",
+            Some("48.6k in \u{b7} 236 out"),
+            Some("low balance"),
+        );
+        assert_eq!(dropped.mode, "always-approve");
+        for width in [30usize, 40, 53, 80] {
+            assert_rows_separated(
+                width,
+                &footer(
+                    width,
+                    "$1234.56",
+                    Some("48.6k in \u{b7} 236 out"),
+                    Some("low balance"),
+                ),
+            );
+        }
+    }
+
+    #[test]
+    fn phone_footer_paints_each_row_flush_left_and_right() {
+        let _guard = crate::theme::cache::pin_theme();
+        let theme = Theme::current();
+        let area = Rect::new(1, 0, PHONE_INNER as u16, 2);
+        let mut buf = Buffer::empty(Rect::new(0, 0, PHONE_INNER as u16 + 2, 2));
+        let footer = footer(PHONE_INNER, "$15.70", Some("48.6k in \u{b7} 236 out"), None);
+        paint_phone_footer(&mut buf, area, &footer, &theme);
+        let row = |y: u16| -> String {
+            (area.x..area.right())
+                .map(|x| buf.cell((x, y)).map_or(" ", |c| c.symbol()).to_owned())
+                .collect()
+        };
+        let (row1, row2) = (row(0), row(1));
+        assert!(row1.starts_with("$15.70 cache 24%"), "{row1:?}");
+        assert!(row1.ends_with("DeepSeek V4.1 Flash (max)"), "{row1:?}");
+        assert!(row2.starts_with("48.6k in \u{b7} 236 out"), "{row2:?}");
+        assert!(row2.ends_with("always-approve"), "{row2:?}");
+        for y in 0..2 {
+            assert_eq!(buf.cell((1, y)).map(|c| c.bg), Some(theme.bg_base));
+        }
     }
 }

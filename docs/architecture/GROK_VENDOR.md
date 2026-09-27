@@ -102,6 +102,7 @@ survived.
 
 | File | Overlay | Why |
 |------|---------|-----|
+| `crates/codegen/xai-grok-pager/src/app/agent_view/render.rs`, `crates/codegen/xai-grok-pager/src/views/credit_bar.rs` | The prompt's account quota warning is shown only after the active session is confirmed non-DeepSeek; unknown or DeepSeek provider status suppresses the warning | `CreditBalance` comes from x.ai billing and is account-scoped. It must not be presented as the allowance for a session billed by the DeepSeek API, and a stale provider response must not authorize the display |
 | `crates/codegen/xai-grok-pager/src/app/mod.rs` | `print_exit_resume_hint` prints the command from env `GROK_INVOCATION_NAME` (default `grok`) via `invocation_name()` + pure `resume_hint_line()` | dsb-cli brands quit hints `dsb --resume <id>` so the printed command is pasteable |
 | `crates/codegen/xai-grok-pager/src/app/screen_mode_relaunch.rs` | `screen_mode_relaunch_resume_hint` uses `super::invocation_name()` (pure `_with` variant for tests) | Same branding for the screen-mode relaunch failure hint |
 | `crates/codegen/xai-grok-pager/src/app/terminal_restore.rs` | The panic hook ends with `super::disable_mouse_paste_raw()` | The mouse/paste reset must remain last so a panicking agent shutdown cannot leave mouse reporting or bracketed paste enabled in the user's shell |
@@ -200,6 +201,9 @@ its bottom pad row and the side borders only between them,
 `selected_non_prompt_block_keeps_corners_one_row_outside` keeps a tool row's
 box on the rows outside the entry, and the `hug_padded_band` unit tests cover
 both sides, one clipped side, and areas too short to pull.
+`session_warning_requires_confirmed_non_deepseek_provider` pins that an
+unknown or DeepSeek session cannot show the x.ai weekly allowance, while a
+confirmed non-DeepSeek session retains its existing warning.
 
 ### Patch series
 

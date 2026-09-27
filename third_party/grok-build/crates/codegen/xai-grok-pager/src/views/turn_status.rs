@@ -30,6 +30,29 @@ use crate::theme::Theme;
 /// At ~30fps, 4 ticks is ~133ms per frame, about 7.5 spinner fps.
 pub(crate) const SPINNER_DIVISOR: u64 = 4;
 
+/// Spinner frames for the turn-status row: the shared braille rotation re-encoded one
+/// cell row down, so the dots center on the activity label instead of floating above it.
+///
+/// [`crate::glyphs::braille_spinner_frames`] draws in the top three rows of the braille
+/// cell, and phone terminals pin that ink to the top of the line box — on the device
+/// screenshot that surfaced this, the cell's middle row sat 10px above the label's
+/// x-height center and the visible dot centroid ran 3px high. Eight-dot rows 2-4 shift
+/// the same rotation down one row. The shared set stays untouched for every other
+/// spinner.
+const STATUS_SPINNER_FRAMES: &[&str] = &[
+    "\u{2816}", "\u{2832}", "\u{28b2}", "\u{28b0}", "\u{28f0}", "\u{28e0}", "\u{28c4}", "\u{28c6}",
+];
+
+/// Frames for the turn-status spinner; legacy ConHost has no braille, so it falls back
+/// to the shared ASCII cycle.
+fn status_spinner_frames() -> &'static [&'static str] {
+    if crate::glyphs::is_legacy_windows_console() {
+        crate::glyphs::braille_spinner_frames()
+    } else {
+        STATUS_SPINNER_FRAMES
+    }
+}
+
 /// Show each monitor-pulse frame for this many animation ticks, twice the [`SPINNER_DIVISOR`] dwell (~3.75 fps).
 /// The idle still-running cue should breathe calmly rather than read like the active turn spinner.
 /// Its `○ ◎ ◉ ◎` cycle therefore runs at roughly half the speed (~1.07s per loop).
@@ -365,7 +388,7 @@ pub fn render_turn_status(
     let spinner_str = if is_pending_user_input {
         format!("{} ", crate::glyphs::diamond_filled())
     } else {
-        let frames = crate::glyphs::braille_spinner_frames();
+        let frames = status_spinner_frames();
         let frame_idx = (tick / SPINNER_DIVISOR) as usize % frames.len();
         match frames.get(frame_idx) {
             Some(frame) => format!("{frame} "),
@@ -700,7 +723,7 @@ fn render_starting_session(
     tick: u64,
     theme: &Theme,
 ) {
-    let frames = crate::glyphs::braille_spinner_frames();
+    let frames = status_spinner_frames();
     let frame_idx = (tick / SPINNER_DIVISOR) as usize % frames.len();
     let Some(frame) = frames.get(frame_idx) else {
         return;
@@ -769,6 +792,49 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    /// Each status frame is the shared frame at the same index shifted one braille row
+    /// down: six-dot left column 1,2,3 → eight-dot 2,3,7; right column 4,5,6 → 5,6,8.
+    /// The top row (dots 1,4) must stay clear, or the dots float above the label again.
+    #[test]
+    fn status_spinner_frames_shift_the_shared_set_one_row_down() {
+        /// Frozen copy of the shared FANCY frames. The live accessor returns the ASCII
+        /// fallback on legacy ConHost, and this mapping must hold on every host.
+        const SHARED: [&str; 8] = [
+            "\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}",
+            "\u{2827}",
+        ];
+        const SHIFT: [(u32, u32); 6] = [
+            (0b000001, 0b000010),
+            (0b000010, 0b000100),
+            (0b000100, 0b01000000),
+            (0b001000, 0b010000),
+            (0b010000, 0b100000),
+            (0b100000, 0b10000000),
+        ];
+        assert_eq!(SHARED.len(), STATUS_SPINNER_FRAMES.len());
+        for (shared_frame, status_frame) in SHARED.iter().zip(STATUS_SPINNER_FRAMES) {
+            let dots = shared_frame.chars().next().unwrap() as u32 - 0x2800;
+            let mut expected = 0u32;
+            for (from, to) in SHIFT {
+                if dots & from != 0 {
+                    expected |= to;
+                }
+            }
+            let actual = status_frame.chars().next().unwrap() as u32 - 0x2800;
+            assert_eq!(actual, expected, "{shared_frame:?} → {status_frame:?}");
+            assert_eq!(actual & 0b1001, 0, "top-row dot left in {status_frame:?}");
+            assert_eq!(
+                status_frame.width(),
+                1,
+                "{status_frame:?} must stay 1 column"
+            );
+        }
+        // Hosts with braille still serve exactly this frozen set.
+        if !crate::glyphs::is_legacy_windows_console() {
+            assert_eq!(crate::glyphs::braille_spinner_frames(), SHARED);
+        }
+    }
 
     /// Sendable waits are exactly the wait reasons the shell aborts on a queued user prompt.
     /// Blocking task-output, wait_tasks, Await, and a blocked foreground subagent await all take the send-now path.

@@ -7,6 +7,7 @@
   { "name": "refactor", "color": "C5DEF5", "description": "Kind: refactor without behavior change" },
   { "name": "test", "color": "BFDADC", "description": "Kind: tests only" },
   { "name": "ci", "color": "E4E669", "description": "Kind: CI / workflows only" },
+  { "name": "perf", "color": "F9D0C4", "description": "Kind: faster or lighter without behavior change" },
 
   { "name": "bug", "color": "B60205", "description": "Confirmed or suspected bug" },
   { "name": "enhancement", "color": "A2EEEF", "description": "Idea or improvement (triage)" },

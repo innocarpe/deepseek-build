@@ -477,28 +477,35 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
     let mut agent = phone_agent();
     // Two wrapped rows at the echo's content width, so the collapsed phone
     // budget shows the whole prompt and paints no fold affordance row. The
-    // first row is full, so the clock takes the meta row above the top pad.
+    // first row is full, so the clock takes the meta row under the top pad.
     seed_prompt_echo(&mut agent, &"M".repeat(60));
     agent.prompt.set_text("phone draft");
     let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
     let frame = frame_text(&buf);
     eprintln!("phone 55x41 — full frame:\n{frame}");
 
-    // (a) The echo band is the meta clock row, two text rows, and one pad row
-    // each side, and each pad row spends two eighths of its height on the band
-    // (one column of air at the phone's font, where a whole row is 2.15 columns).
+    // (a) The echo band is the top pad, the meta clock row, two text rows and
+    // the bottom pad, in that order: the pad leads, so the clock row joins the
+    // text without a strip of the pane between them. Each pad row spends two
+    // eighths of its height on the band (one column of air at the phone's
+    // font, where a whole row is 2.15 columns).
     let band = echo_band_rows(&buf, theme.bg_light);
     assert_eq!(
         band.len(),
         5,
-        "the echo band is the meta clock row, two text rows plus a pad row each side: {band:?}\n{frame}"
+        "the echo band is a pad row each side, the meta clock row and two text rows: {band:?}\n{frame}"
     );
-    let meta = band[0];
+    assert_eq!(
+        band.windows(2).all(|w| w[1] == w[0] + 1),
+        true,
+        "the band's rows are contiguous: {band:?}\n{frame}"
+    );
+    let meta = band[1];
     assert!(
         row_text(&buf, meta).contains("AM") || row_text(&buf, meta).contains("PM"),
-        "the meta row carries the right-aligned turn clock:\n{frame}"
+        "the meta row, under the top pad, carries the right-aligned turn clock:\n{frame}"
     );
-    let top_pad = buf.cell((1, band[1])).unwrap();
+    let top_pad = buf.cell((1, band[0])).unwrap();
     assert_eq!(
         top_pad.symbol(),
         "\u{2582}",
@@ -525,6 +532,22 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
             "{frame}"
         );
     }
+    // The echo's text keeps the minimum unit of air inside its band: one
+    // column at the left edge, and on the right the held-copy gutter (then the
+    // scrollbar's column, band while no bar is drawn).
+    let first_text = band[2];
+    assert_eq!(buf.cell((0, first_text)).unwrap().symbol(), " ", "{frame}");
+    assert_eq!(buf.cell((1, first_text)).unwrap().symbol(), "M", "{frame}");
+    assert_eq!(
+        buf.cell((PHONE_COLS - 3, first_text)).unwrap().symbol(),
+        "M",
+        "the full first row runs to the column before the gutter:\n{frame}"
+    );
+    assert_eq!(
+        buf.cell((PHONE_COLS - 2, first_text)).unwrap().symbol(),
+        " ",
+        "{frame}"
+    );
 
     // (b) The composer box is exactly the border, text and divider rows.
     let top = top_border_row(&buf);
@@ -734,11 +757,11 @@ fn phone_compact_echo_keeps_its_fractional_pads() {
     let _guard = crate::theme::cache::pin_theme();
     let theme = Theme::current();
     let mut agent = phone_agent();
-    seed_prompt_echo(&mut agent, "지금 전반적으로 구현 다 잘 됐어???");
+    seed_prompt_echo(&mut agent, "prompt-c 지금 전반적으로 구현 다 잘 됐어???");
     set_compact(&mut agent, true);
     let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
     let frame = frame_text(&buf);
-    let text_y = rows_with(&buf, "구현")
+    let text_y = rows_with(&buf, "prompt-c")
         .first()
         .copied()
         .unwrap_or_else(|| panic!("the echo is on screen\n{frame}"));

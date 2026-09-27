@@ -681,20 +681,27 @@ pub(crate) fn entry_chrome(entry: &ScrollbackEntry, appearance: &AppearanceConfi
         );
     let rail = entry.display_mode != DisplayMode::Collapsed
         && (recently_finished || entry.block.accent(&ctx).is_some());
-    let phone_inset = if appearance.scrollback.layout.narrow {
+    let narrow = appearance.scrollback.layout.narrow;
+    let phone_inset = if narrow {
         crate::appearance::LayoutConfig::MIN_HPAD
     } else {
         0
     };
-    let band_edge = if band && appearance.scrollback.layout.narrow {
-        crate::appearance::LayoutConfig::MIN_HPAD
-    } else {
-        0
-    };
+    if band && narrow {
+        // A phone echo's band spans the frame, and its text keeps the minimum
+        // unit of air inside it: one column at the left edge, and on the right
+        // the held-copy gutter the transcript leaves blank (which the frame
+        // paints in the band), or one pad column when there is no gutter.
+        let gutter = appearance.scrollback.display.selection_buttons;
+        return EntryChrome {
+            accent: crate::appearance::LayoutConfig::MIN_HPAD,
+            right_pad: u16::from(!gutter),
+        };
+    }
     EntryChrome {
         accent: phone_inset
             + if band {
-                rail_w + band_edge
+                rail_w
             } else if rail {
                 rail_w + 1
             } else {
@@ -704,10 +711,15 @@ pub(crate) fn entry_chrome(entry: &ScrollbackEntry, appearance: &AppearanceConfi
     }
 }
 
+/// Whether the entry paints a band (the prompt echo's background) behind its text.
+fn entry_has_band(entry: &ScrollbackEntry, appearance: &AppearanceConfig) -> bool {
+    let ctx = entry.context(HorizontalLayout::ACCENT, appearance, None);
+    entry.block.accent_background(&ctx)
+}
+
 /// Whether this entry's band spans the pane's full width on a phone-width pane.
 pub(crate) fn band_spans_the_pane(entry: &ScrollbackEntry, appearance: &AppearanceConfig) -> bool {
-    let chrome = entry_chrome(entry, appearance);
-    appearance.scrollback.layout.narrow && chrome.right_pad > 0
+    appearance.scrollback.layout.narrow && entry_has_band(entry, appearance)
 }
 
 /// Paint one of an entry's pad rows. A phone-width pane keeps a fraction of the
@@ -1032,9 +1044,12 @@ impl Renderable for EntryRenderer<'_> {
             .entry
             .block
             .has_vpad_for_width(self.appearance(), self.block_content_width(area.width));
-        // Layout is: [meta?] [vpad_top?] [content lines...] [vpad_bottom?]
+        // Layout is: [meta?] [vpad_top?] [content lines...] [vpad_bottom?], or on a phone pane
+        // [vpad_top?] [meta?] [content lines...] [vpad_bottom?] (see `pad_above_meta`).
         let vpad_top = if has_vpad { 1u16 } else { 0 };
-        let clock_row = if stable.meta {
+        let pad_first =
+            vpad_top > 0 && crate::scrollback::timestamp_layout::pad_above_meta(self.appearance());
+        let clock_row = if stable.meta && !pad_first {
             content_area.y
         } else {
             content_area.y.saturating_add(vpad_top)
@@ -1063,6 +1078,17 @@ impl Renderable for EntryRenderer<'_> {
         let mut skip_remaining = skip_rows;
         let mut row = content_area.y;
         let max_row = content_area.y + content_area.height;
+        let mut pad_top_y = None;
+        if pad_first {
+            if skip_remaining == 0 {
+                if row < max_row {
+                    pad_top_y = Some(row);
+                    row += 1;
+                }
+            } else {
+                skip_remaining -= 1;
+            }
+        }
         let meta_visible = plan.meta && skip_remaining == 0 && row < max_row;
         if plan.meta {
             if skip_remaining == 0 {
@@ -1079,15 +1105,16 @@ impl Renderable for EntryRenderer<'_> {
             }
         }
 
-        let vpad_top_visible = skip_remaining < vpad_top;
-        let content_skip = skip_remaining.saturating_sub(vpad_top);
-        // The top pad is the row under a meta clock, not always `area.y`.
-        let pad_top_y = if vpad_top_visible && row < max_row {
-            let y = row;
-            row += 1;
-            Some(y)
+        let content_skip = if pad_first {
+            skip_remaining
         } else {
-            None
+            let vpad_top_visible = skip_remaining < vpad_top;
+            // The top pad is the row under a meta clock, not always `area.y`.
+            if vpad_top_visible && row < max_row {
+                pad_top_y = Some(row);
+                row += 1;
+            }
+            skip_remaining.saturating_sub(vpad_top)
         };
 
         let cached_ref = self.entry.cached_output_ref();
@@ -1946,11 +1973,12 @@ mod tests {
         let base = theme.bg_base;
         assert_eq!(
             height, 5,
-            "meta row, two text rows, and a pad row each side:\n{frame}"
+            "a pad row each side, the meta row and two text rows:\n{frame}"
         );
-        // Top pad sits under the meta row: the band's color on the row's lower
-        // two eighths (`▂`), the pane's background above it.
-        let top_pad = buf.cell((1, 1)).unwrap();
+        // The top pad leads the band, above the meta row: the band's color on the
+        // row's lower two eighths (`▂`), the pane's background above it. Under the
+        // meta row it would split the clock from the text with a dark strip.
+        let top_pad = buf.cell((1, 0)).unwrap();
         assert_eq!(top_pad.symbol(), NARROW_PAD_LOWER, "{frame}");
         assert_eq!(top_pad.fg, band, "the top pad's lower eighths are band");
         assert_eq!(top_pad.bg, base, "and the rest of the row is the pane");
@@ -1959,19 +1987,20 @@ mod tests {
         assert_eq!(bottom_pad.symbol(), NARROW_PAD_UPPER, "{frame}");
         assert_eq!(bottom_pad.fg, base, "{frame}");
         assert_eq!(bottom_pad.bg, band, "{frame}");
-        // The text rows stay full band, and the text keeps the former outer
-        // inset inside it. The
-        // first text row is under the meta row and the top pad.
+        // The text rows stay full band, and the text keeps one column of air at
+        // the band's left edge. The first text row is under the top pad and the
+        // meta row.
         let text_row = 2u16;
-        assert_eq!(buf.cell((3, text_row)).unwrap().bg, band, "{frame}");
+        assert_eq!(buf.cell((0, text_row)).unwrap().bg, band, "{frame}");
+        assert_eq!(buf.cell((0, text_row)).unwrap().symbol(), " ", "{frame}");
         assert_eq!(
-            buf.cell((3, text_row)).unwrap().symbol(),
+            buf.cell((1, text_row)).unwrap().symbol(),
             "x",
             "the text opens the first text row, under the meta row and one column in:\n{frame}"
         );
         let wrap = r.block_content_width(width);
         assert!(
-            (3..3 + wrap).all(|x| buf.cell((x, text_row)).unwrap().symbol() == "x"),
+            (1..1 + wrap).all(|x| buf.cell((x, text_row)).unwrap().symbol() == "x"),
             "the first text row is {wrap} contiguous text cells (no clock gap):\n{frame}"
         );
         assert!(
@@ -1984,7 +2013,7 @@ mod tests {
         let inset = ts_right_inset(&r);
         let ts_x = width - inset - ts_width;
         assert_eq!(
-            collect_row_symbols(&buf, 0, ts_x, ts_x + ts_width),
+            collect_row_symbols(&buf, 1, ts_x, ts_x + ts_width),
             expected,
             "the time is the meta row, {inset} column(s) inside the right edge:\n{frame}"
         );
@@ -1993,7 +2022,7 @@ mod tests {
             "the clock stops one column inside the pane edge"
         );
         assert_eq!(
-            buf.cell((width - 1, 0)).unwrap().symbol(),
+            buf.cell((width - 1, 1)).unwrap().symbol(),
             " ",
             "the meta row's last column stays blank:\n{frame}"
         );

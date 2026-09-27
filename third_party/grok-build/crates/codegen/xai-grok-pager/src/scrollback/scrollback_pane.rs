@@ -878,13 +878,17 @@ impl ScrollbackPane {
             use_vpad,
         );
         let mut clock_rect = None;
-        // [meta?] [vpad?] [content...]
+        // [meta?] [vpad?] [content...], or on a phone pane [vpad?] [meta?] [content...] (see `pad_above_meta`),
+        // exactly as the entry paints in the flow.
+        let pad_first =
+            use_vpad && crate::scrollback::timestamp_layout::pad_above_meta(&ctx.appearance);
         let mut y = content_area.y;
         if plan.meta {
+            let clock_y = y.saturating_add(u16::from(pad_first));
             if let Some(text) = plan.text.as_deref()
-                && y < content_area.y + content_area.height
+                && clock_y < content_area.y + content_area.height
             {
-                clock_rect = Some(paint_sticky_clock(buf, theme, entry_right, y, text));
+                clock_rect = Some(paint_sticky_clock(buf, theme, entry_right, clock_y, text));
             }
             y = y.saturating_add(1);
         }
@@ -908,9 +912,14 @@ impl ScrollbackPane {
             let narrow = ctx.appearance.scrollback.layout.narrow;
             let flat = false;
             if let Some(band) = bg_color {
-                // Under the meta clock when that row is present. Painting at
-                // `content_area.y` would cover the clock.
-                let pad_top_y = content_area.y.saturating_add(u16::from(plan.meta));
+                // Under the meta clock when that row is present, unless the pad
+                // leads the band (a phone pane). Painting a pad on the clock's
+                // row would cover the clock.
+                let pad_top_y = if pad_first {
+                    content_area.y
+                } else {
+                    content_area.y.saturating_add(u16::from(plan.meta))
+                };
                 paint_pad_row(
                     buf,
                     area,
@@ -1428,7 +1437,8 @@ fn sticky_clock_plan(
         has_content: !output.lines.is_empty(),
     };
     let stable = ClockPlan::decide(&query(false));
-    let clock_row = if stable.meta {
+    let pad_first = vpad && crate::scrollback::timestamp_layout::pad_above_meta(&ctx.appearance);
+    let clock_row = if stable.meta && !pad_first {
         content_top
     } else {
         content_top.saturating_add(u16::from(vpad))
@@ -1806,10 +1816,10 @@ mod tests {
         );
     }
 
-    /// A full phone-width line puts the clock on a row above the band. The box still
-    /// hugs the pad rows; the top corner does not move up onto the clock.
+    /// A full phone-width line puts the clock on a row of its own, under the band's
+    /// top pad. The box hugs the pad rows, so the clock is inside it with the text.
     #[test]
-    fn narrow_full_echo_selection_hugs_the_pad_under_the_clock() {
+    fn narrow_full_echo_selection_hugs_the_pad_above_the_clock() {
         let area = Rect::new(0, 0, 55, 41);
         let mut state = ScrollbackState::new();
         let mut appearance = AppearanceConfig::default();
@@ -1849,8 +1859,8 @@ mod tests {
 
         assert_eq!(
             symbol_rows(&buf, "┌"),
-            vec![band_y + 1],
-            "the top corner sits on the pad under the clock, not on the clock row"
+            vec![band_y],
+            "the top corner sits on the echo's own top pad, above the clock row"
         );
         assert_eq!(
             symbol_rows(&buf, "└"),

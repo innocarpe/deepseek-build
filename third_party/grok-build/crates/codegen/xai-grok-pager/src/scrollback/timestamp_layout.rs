@@ -197,19 +197,30 @@ impl ClockPlan {
 
 /// Meta rows at the top of a prompt echo whose selection should hug the band, not the clock.
 ///
-/// The echo's band keeps one right-pad column. A missing cache means the row is not known yet.
+/// A missing cache means the row is not known yet. On a phone pane the top pad sits above the meta row
+/// ([`pad_above_meta`]), so the clock is inside the band the box hugs and no row is dropped.
 pub(crate) fn selection_clock_meta_rows(
     entry: &ScrollbackEntry,
     appearance: &AppearanceConfig,
 ) -> u16 {
-    if !entry.block.selection_hugs_vpad(appearance) {
+    if !entry.block.selection_hugs_vpad(appearance) || pad_above_meta(appearance) {
         return 0;
     }
     let Some(content_width) = entry.cached_content_width() else {
         return 0;
     };
-    let row_span = content_width.saturating_add(1);
+    let right_pad = crate::scrollback::wrappers::entry_chrome(entry, appearance).right_pad;
+    let row_span = content_width.saturating_add(right_pad);
     u16::from(cached_clock_is_meta(entry, appearance, row_span))
+}
+
+/// Whether an echo's top pad row sits above its clock meta row rather than under it.
+///
+/// A phone pane paints each pad row as a fraction of a row, mostly the pane's background. Under the meta row it
+/// would split the clock from the text with a dark strip, so there the pad leads the band: pad, clock, text, pad.
+/// Wider panes paint full pad rows and keep the clock on the band's first row.
+pub(crate) fn pad_above_meta(appearance: &AppearanceConfig) -> bool {
+    appearance.scrollback.layout.narrow
 }
 
 /// Whether the cached body needs the meta row. Hover is ignored: a hover must not change height.

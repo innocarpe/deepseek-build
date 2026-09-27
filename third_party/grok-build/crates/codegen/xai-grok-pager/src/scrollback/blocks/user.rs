@@ -1429,7 +1429,6 @@ mod tests {
         }
     }
 
-    /// Text of each rendered line, styles dropped.
     /// A phone pane's appearance: the narrow layout, whose clock takes no first-row columns.
     fn phone_appearance() -> AppearanceConfig {
         let mut appearance = AppearanceConfig::default();
@@ -1437,6 +1436,7 @@ mod tests {
         appearance
     }
 
+    /// Text of each rendered line, styles dropped.
     fn rendered_lines(block: &UserPromptBlock, ctx: &BlockContext) -> Vec<String> {
         block
             .output(ctx)

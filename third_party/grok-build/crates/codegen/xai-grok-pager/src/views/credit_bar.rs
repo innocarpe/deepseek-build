@@ -149,17 +149,20 @@ pub fn usage_warning(
     autotopup: Option<&AutoTopupInfo>,
     usage_visible: bool,
 ) -> Option<(String, bool)> {
-    usage_warning_for_session(balance, autotopup, usage_visible, false)
+    usage_warning_for_session(balance, autotopup, usage_visible, false, Some(false))
 }
 
-/// Like [`usage_warning`], but suppresses output for gateway/chat-kind sessions.
+/// Like [`usage_warning`], but ties account billing warnings to the active session provider.
+/// Unknown provider status fails closed until the session is classified; DeepSeek API sessions
+/// must not display a Grok account allowance.
 pub fn usage_warning_for_session(
     balance: &CreditBalance,
     autotopup: Option<&AutoTopupInfo>,
     usage_visible: bool,
     gateway_chat: bool,
+    is_deepseek_session: Option<bool>,
 ) -> Option<(String, bool)> {
-    if gateway_chat || !usage_visible {
+    if gateway_chat || !usage_visible || is_deepseek_session != Some(false) {
         return None;
     }
 
@@ -426,6 +429,27 @@ mod tests {
         assert_eq!(
             usage_warning(&weekly, None, true),
             Some(("Weekly limit left: 8%".to_string(), false))
+        );
+    }
+
+    #[test]
+    fn session_warning_requires_confirmed_non_deepseek_provider() {
+        let weekly = bal_period(100.0, "USAGE_PERIOD_TYPE_WEEKLY");
+
+        assert_eq!(
+            usage_warning_for_session(&weekly, None, true, false, None),
+            None,
+            "unknown provider must not expose an account quota"
+        );
+        assert_eq!(
+            usage_warning_for_session(&weekly, None, true, false, Some(true)),
+            None,
+            "DeepSeek API usage must not expose a Grok account quota"
+        );
+        assert_eq!(
+            usage_warning_for_session(&weekly, None, true, false, Some(false)),
+            Some(("Weekly limit left: 0%".to_string(), true)),
+            "a confirmed non-DeepSeek session keeps its existing warning"
         );
     }
 
@@ -796,7 +820,7 @@ mod tests {
         let theme = Theme::default();
         let b = bal(90.0);
         assert!(credit_bar_line_for_session(&b, false, &theme, true).is_none());
-        assert!(usage_warning_for_session(&b, None, true, true).is_none());
+        assert!(usage_warning_for_session(&b, None, true, true, Some(false)).is_none());
         // Build path still renders.
         assert!(credit_bar_line_for_session(&b, false, &theme, false).is_some());
     }

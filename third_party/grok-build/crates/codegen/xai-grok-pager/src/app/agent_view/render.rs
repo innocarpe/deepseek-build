@@ -2347,12 +2347,23 @@ impl AgentView {
         let flags: Vec<PromptFlag> =
             mode_flags(plan_label, self.session.permission_label(), &theme);
         let multiline = self.multiline_mode;
+        let is_deepseek_session = match (
+            self.session.session_id.as_ref(),
+            self.deepseek_status_session_id.as_ref(),
+            self.deepseek_status.as_ref(),
+        ) {
+            (Some(active), Some(status_session), Some(status)) if active == status_session => {
+                Some(status.is_deepseek)
+            }
+            _ => None,
+        };
         let warning = self.credit_balance.as_ref().and_then(|bal| {
             crate::views::credit_bar::usage_warning_for_session(
                 bal,
                 self.auto_topup.as_ref(),
                 self.billing_surface_visible,
                 self.chat_kind,
+                is_deepseek_session,
             )
         });
         let usage_warning_text: Option<String> = warning.as_ref().map(|(t, _)| t.clone());

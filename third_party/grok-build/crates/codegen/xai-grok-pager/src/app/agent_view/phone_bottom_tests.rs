@@ -14,6 +14,7 @@ use crate::app::agent::AgentState;
 use crate::scrollback::RenderBlock;
 use crate::scrollback::render::ScratchBuffer;
 use crate::theme::Theme;
+use crate::views::credit_bar::CreditBalance;
 use agent_client_protocol as acp;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -231,6 +232,31 @@ fn phone_pane_puts_cost_and_model_on_one_row_and_drops_the_hint_row() {
         Some("always-approve"),
     );
     assert_no_hint_row(&agent, &registry, &buf);
+}
+
+#[test]
+fn deepseek_phone_session_hides_grok_weekly_limit_warning() {
+    let mut agent = phone_agent();
+    agent.billing_surface_visible = true;
+    agent.credit_balance = Some(CreditBalance {
+        usage_pct: 100.0,
+        effective_usage_pct: 100.0,
+        period_end_display: None,
+        pay_as_you_go: false,
+        on_demand_cap_cents: None,
+        on_demand_used_cents: None,
+        prepaid_balance_cents: None,
+        period_type: Some("USAGE_PERIOD_TYPE_WEEKLY".into()),
+        is_unified_billing_user: None,
+    });
+
+    let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    let frame = frame_text(&buf);
+
+    assert!(
+        !frame.contains("Weekly limit left: 0%"),
+        "DeepSeek API usage must not show the Grok account allowance:\n{frame}"
+    );
 }
 
 #[test]

@@ -49,6 +49,106 @@ New majors require a **PRD-vN** + versions index update **before** coding the tr
 Minors do **not** get a new PRD unless behavior identity shifts — they extend the
 line's existing PRD (§Rules 1 of the index).
 
+## 1c. Bump level — MINOR / PATCH / none (fail-close)
+
+**Normative.** Which digit moves is read from what shipped, not chosen by
+habit. [`scripts/next-version.sh`](../../scripts/next-version.sh) renders the
+judgment from the git graph alone (no `gh`, no network), and
+[`scripts/release.sh`](../../scripts/release.sh) refuses a version below it
+unless the caller names a reason.
+
+### The distribution surface
+
+A change reaches users only through what the release artifacts carry: the
+`dsb` / `deepseek-build` CLI, the agent binary the npm `postinstall` fetches,
+and the npm package itself. In a merge, that surface is exactly these paths:
+
+| Path | Ships as |
+|------|----------|
+| `crates/` | the `dsb` / `deepseek-build` CLI and agent crates |
+| `third_party/` | the vendored Grok Build tree the agent binary is built from |
+| `npm/` | the npm wrapper, postinstall, version checks |
+| `package.json` | the npm manifest (`bin`, `files`, `postinstall`) |
+| `Cargo.toml`, `Cargo.lock` | the workspace and lock state both binaries build from |
+
+Everything else — `scripts/`, `skills/`, `docs/`, `.github/`, tests, root
+markdown — is repository harness: a merge touching only those paths changes
+nothing a user installs.
+
+### Levels
+
+| Level | Judgment since the last release tag |
+|-------|-------------------------------------|
+| **MINOR** | a `feat/` merge changed the distribution surface |
+| **PATCH** | the surface changed without a `feat/` (fix, perf, refactor, chore, …) |
+| **none** | only repository harness changed — no release is owed |
+| **MAJOR** | unchanged from §1b: a declared product line, gated by the version log. Never computed from the merges. |
+
+Raising above the judgment (`none` → PATCH → MINOR → MAJOR) is a product
+decision and needs no flag. Shipping below it needs the override below.
+
+### Inputs
+
+- **the merges**: the first-parent merges on the release ref since the newest
+  `v*` tag merged into it (the ref is `origin/main`, then `main`, then `HEAD`;
+  `--ref` names another). A merge whose subject is not the GitHub shape is
+  labelled `(unparsed)`; a direct commit on the ref is labelled `(direct)`.
+- **the type**: the `<type>/` prefix of the branch in the merge subject
+  (`Merge pull request #N from <owner>/<type>/<slug>`, [branches.md](./branches.md)).
+  An unreadable type is never `feat`.
+- **the paths**: `git diff --name-only <merge>^1 <merge>`. A merge with no
+  readable type, and a direct commit, floor at PATCH when they touch the
+  surface.
+
+### The tool
+
+```bash
+./scripts/next-version.sh                # per-merge lines, then "proposed: 6.1.11 (PATCH)"
+./scripts/next-version.sh --level        # none | patch | minor
+./scripts/next-version.sh --version      # 6.1.11; empty when the level is none
+./scripts/next-version.sh --check 6.2.0  # exit 0 at or above the judgment,
+                                         # 1 below it or not newer than the last tag,
+                                         # 2 when no judgment can be made
+```
+
+Measured 2026-09-28: run at each of the ten 6.1.x releases' pre-release merge,
+the tool proposes MINOR for 6.1.1–6.1.6 and 6.1.10 (feat merges on the
+surface, e.g. `#321` phone-band-composer) and PATCH for 6.1.7–6.1.9. The ten
+shipped as PATCH because no rule chose the digit; that is what this section
+replaces.
+
+### Fail-close and the override
+
+`release.sh` runs `--check` before its bump (a fetch of `origin/main` first).
+Exit 1 stops the release and prints the deciding merges. Anything else nonzero
+means no judgment was rendered — no `v*` tag merged yet (a first release), no
+repository, the tool missing — and the release continues with the reason
+printed. `--publish-only` skips the check, because the released work would
+read as unreleased there.
+
+Ship below the judgment only with the reason; it rides in the release PR body:
+
+```bash
+./scripts/release.sh 6.1.6 --level-override "the vendored build-script change is not user-visible"
+```
+
+A path rule cannot see intent. Measured example: `#301`
+(`feat/dsbdev-worktree-target`) touched
+`third_party/grok-build/crates/…/build.rs` — cargo rerun and protoc plumbing —
+while its product was a `scripts/` dev tool. The rule counts that as surface;
+the override is where a person records why the lower number is right anyway.
+
+Pinned by [`scripts/test-next-version.sh`](../../scripts/test-next-version.sh)
+(hermetic: throwaway repos and a fake `gh`; local-only by contract).
+
+### Limits
+
+- The judgment reads `origin/main` as it is when the release runs. A merge
+  that lands after the check is outside it; a resumed release re-checks unless
+  it is `--publish-only`.
+- Tags are immutable: the seven 6.1.x releases that shipped surface features
+  as PATCH stay as they are. The rule applies from the next release on.
+
 ## 2. Where the version lives
 
 | Surface | Source of truth |

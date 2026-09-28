@@ -29,7 +29,7 @@ Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** p
 
 ## Rules
 
-1. **One PRD per major line** (`PRD-v1`, `PRD-v2`, …). Minors (`2.0.1`) are changelog + release notes, not new PRDs unless behavior identity shifts.
+1. **One PRD per major line** (`PRD-v1`, `PRD-v2`, …). Later releases on a line (`6.1.10`, `6.2.0`) are changelog + release notes, not new PRDs, unless behavior identity shifts. Which digit moves is [versioning.md §1c](../../contributing/versioning.md).
 2. **Honesty table required** in each PRD: *claimed vs shipped* for that line.
 3. **L1/L2/L3 layers** ([HARNESS_PHILOSOPHY.md](../../architecture/HARNESS_PHILOSOPHY.md)) must appear in every major PRD’s architecture section.
 4. **Never unpublish** older npm majors; mark legacy in messaging only.

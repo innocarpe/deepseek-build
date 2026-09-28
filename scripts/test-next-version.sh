@@ -2,10 +2,11 @@
 # Regression: the bump level is read from the merges on main, and release.sh
 # refuses a version below that judgment without a named reason.
 #
-# Why this exists: all ten releases 6.1.1..6.1.10 shipped as PATCH. Run at each
-# release's pre-release merge, scripts/next-version.sh proposes MINOR for
-# 6.1.1-6.1.6 and 6.1.10 (feat/ merges on the distribution surface — e.g.
-# #321 phone-band-composer) and PATCH for 6.1.7-6.1.9. Nothing chose the patch
+# Why this exists: all ten pre-rule releases (published as 6.1.1..6.1.10,
+# renamed 6.2.0..6.8.0 on 2026-09-28) shipped as PATCH. Run at each release's
+# pre-release merge, scripts/next-version.sh proposes MINOR for 6.2.0-6.7.0 and
+# 6.8.0 (feat/ merges on the distribution surface — e.g. #321
+# phone-band-composer) and PATCH for 6.7.1-6.7.3. Nothing chose the patch
 # digit; there was no rule to choose with (docs/contributing/versioning.md §1c).
 #
 # Cases:

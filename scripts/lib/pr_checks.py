@@ -7,8 +7,9 @@ started, so the merge answered
 
     GraphQL: Pull Request is not mergeable (mergePullRequest)
 
-on 6.1.1 (PR #258), 6.1.7 (#311) and 6.1.10 (#323). Each time the release
-stopped with the PR open and a person merged it and resumed the script with
+on 6.2.0 (PR #258, published as 6.1.1), 6.7.1 (#311, published as 6.1.7) and
+6.8.0 (#323, published as 6.1.10). Each time the release stopped with the PR
+open and a person merged it and resumed the script with
 `--skip-bump --skip-pr`. Merging ahead of the checks also risks the worse
 shape: the tag and the prebuilt build starting from a merge whose CI has not
 finished.

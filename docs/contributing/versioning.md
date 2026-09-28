@@ -111,9 +111,10 @@ decision and needs no flag. Shipping below it needs the override below.
                                          # 2 when no judgment can be made
 ```
 
-Measured 2026-09-28: run at each of the ten 6.1.x releases' pre-release merge,
-the tool proposes MINOR for 6.1.1–6.1.6 and 6.1.10 (feat merges on the
-surface, e.g. `#321` phone-band-composer) and PATCH for 6.1.7–6.1.9. The ten
+Measured 2026-09-28: run at each of the ten releases' pre-release merge
+(published as `6.1.1`–`6.1.10`, renamed `6.2.0`–`6.8.0` below), the tool
+proposes MINOR for `6.2.0`–`6.7.0` and `6.8.0` (feat merges on the surface,
+e.g. `#321` phone-band-composer) and PATCH for `6.7.1`–`6.7.3`. The ten
 shipped as PATCH because no rule chose the digit; that is what this section
 replaces.
 
@@ -129,7 +130,7 @@ read as unreleased there.
 Ship below the judgment only with the reason; it rides in the release PR body:
 
 ```bash
-./scripts/release.sh 6.1.6 --level-override "the vendored build-script change is not user-visible"
+./scripts/release.sh 6.7.0 --level-override "the vendored build-script change is not user-visible"
 ```
 
 A path rule cannot see intent. Measured example: `#301`
@@ -146,8 +147,34 @@ Pinned by [`scripts/test-next-version.sh`](../../scripts/test-next-version.sh)
 - The judgment reads `origin/main` as it is when the release runs. A merge
   that lands after the check is outside it; a resumed release re-checks unless
   it is `--publish-only`.
-- Tags are immutable: the seven 6.1.x releases that shipped surface features
-  as PATCH stay as they are. The rule applies from the next release on.
+- Tags are immutable with one dated exception: the renumbering below moved
+  the ten 6.1.x tags to this rule's numbers at the same commits, leaving the
+  npm versions, the assets and the binaries untouched. The rule applies from
+  the next release on.
+
+### Renumbering (2026-09-28)
+
+The ten releases the measurement above reads shipped before this rule existed,
+so nothing picked their digits. On 2026-09-28 their GitHub tags and release
+names were moved to the numbers this rule picks, at the commits they already
+had. The npm versions, the release assets and the binaries keep the published
+strings — a shipped artifact is not rebuilt or republished for a rename — and
+the repository record (the CHANGELOG headings, the version-log rows and prose
+that names a release) uses the new number with the published one in
+parentheses.
+
+| Published tag | Renamed tag | Commit |
+|---------------|-------------|--------|
+| `v6.1.1` | `v6.2.0` | `1ef1e36b8c37897807a090a4c089fb9a71204865` |
+| `v6.1.2` | `v6.3.0` | `825cd115a2b32bb7fe57e0f1d830085cd92380fc` |
+| `v6.1.3` | `v6.4.0` | `c28fad5e76eafc35946cca423c763fa3b02e7387` |
+| `v6.1.4` | `v6.5.0` | `83e2af5c80a39d0aad27ccf0670138d1bc532ca1` |
+| `v6.1.5` | `v6.6.0` | `72bea610937215ca7e87ecca288e7b3130b471f4` |
+| `v6.1.6` | `v6.7.0` | `3635488f21b3d316d763f5c3dedc85430c77ccdf` |
+| `v6.1.7` | `v6.7.1` | `0d491b0493f4785f852124dfdc4c986102f3641b` |
+| `v6.1.8` | `v6.7.2` | `e6593f254b5093f539a8c18967ed12305c9fec30` |
+| `v6.1.9` | `v6.7.3` | `55bf8def886b082fefd5139a6137ba212f4808ff` |
+| `v6.1.10` | `v6.8.0` | `278f82ea1b56ffd8bc9b453198695577a46ea191` |
 
 ## 2. Where the version lives
 

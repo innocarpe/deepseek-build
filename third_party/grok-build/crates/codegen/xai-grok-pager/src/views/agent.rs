@@ -561,9 +561,9 @@ impl AgentViewLayout {
         });
         probe.scrollback.height.saturating_sub(SCROLLBACK_MIN_ROWS)
     }
-    /// Inner area width (for prompt height computation before full layout).
+    /// Inner area width: the pane minus the outer text inset, without the full layout split.
     ///
-    /// This computes just the inner width without the full layout split, since prompt height is needed as input to `compute()`.
+    /// Rows sized before `compute()` measure at the width they are drawn at; the prompt row's is [`Self::prompt_width`].
     pub fn inner_width(area: Rect, layout_cfg: &LayoutConfig, compact: bool) -> u16 {
         let vpad = layout_cfg.eff_outer_vpad(compact);
         let outer_block = Block::default().padding(Padding::new(
@@ -573,6 +573,17 @@ impl AgentViewLayout {
             vpad,
         ));
         outer_block.inner(area).width
+    }
+    /// Width of [`Self::prompt`], the row the composer and the blocking cards draw into.
+    ///
+    /// A phone's composer is a band across the frame, so on a phone the row is the whole pane; other panes keep the outer
+    /// text inset. The prompt height is an input to `compute()`, so it is measured before the split, at this width.
+    pub fn prompt_width(area: Rect, layout_cfg: &LayoutConfig, compact: bool) -> u16 {
+        if layout_cfg.narrow {
+            area.width
+        } else {
+            Self::inner_width(area, layout_cfg, compact)
+        }
     }
     /// Convert to PaneAreas for mouse hit-testing.
     pub fn pane_areas(&self) -> PaneAreas {
@@ -2432,6 +2443,32 @@ mod tests {
                 cols - 2 * LayoutConfig::MIN_HPAD,
                 "{cols} columns"
             );
+        }
+    }
+
+    /// The composer's height is an input to `compute()`, so it is measured
+    /// before the prompt row exists, at `prompt_width`. That width is the row's:
+    /// a phone draws its composer across the frame and measures it there too,
+    /// or the draft asks for a second row two columns before its first is full.
+    #[test]
+    fn prompt_width_is_the_width_of_the_prompt_row() {
+        for (cols, rows) in [(55u16, 41u16), (120, 40), (180, 50)] {
+            let area = Rect::new(0, 0, cols, rows);
+            for compact in [false, true] {
+                let mut layout_cfg = LayoutConfig::default();
+                layout_cfg.narrow = effective_narrow(cols, rows);
+                let layout = AgentViewLayout::compute(AgentViewLayoutParams {
+                    layout_cfg,
+                    compact,
+                    ..base_params(area)
+                });
+                assert_eq!(
+                    AgentViewLayout::prompt_width(area, &layout_cfg, compact),
+                    layout.prompt.width,
+                    "{cols}x{rows} compact={compact}: {:?}",
+                    layout.prompt,
+                );
+            }
         }
     }
 

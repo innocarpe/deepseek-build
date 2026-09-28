@@ -190,8 +190,8 @@ impl AgentView {
         }
     }
     /// The one-line freeform answer row, growing with what the user types.
-    fn freeform_editor_h(&self, inner_width: u16, cap: u16, style: &PromptStyle) -> u16 {
-        let question_text_w = crate::views::question_view::inline_text_width(inner_width);
+    fn freeform_editor_h(&self, prompt_width: u16, cap: u16, style: &PromptStyle) -> u16 {
+        let question_text_w = crate::views::question_view::inline_text_width(prompt_width);
         self.prompt
             .desired_height(question_text_w, style, false, cap)
     }
@@ -811,6 +811,9 @@ impl AgentView {
         }
         let compact = appearance.prompt.compact;
         let inner_width = AgentViewLayout::inner_width(area, layout_cfg, compact);
+        // The prompt row's inputs wrap at the width they are drawn at, which on a phone is the whole pane: measured at
+        // `inner_width` they asked for a row before the drawn text had filled one.
+        let prompt_width = AgentViewLayout::prompt_width(area, layout_cfg, compact);
         // Phone-width panes keep a one-row prompt info block (a plain divider) and
         // fold the model onto the DeepSeek status row. The shortcut-hint row stays
         // dropped, so the bottom stack is one row shorter than the desktop stack.
@@ -842,11 +845,11 @@ impl AgentView {
         let max_prompt_height = area.height / 2;
         let base_prompt_height = if !prompt_focused && appearance.prompt.collapse_unfocused {
             self.prompt
-                .desired_height(inner_width, &prompt_style, true, max_prompt_height)
+                .desired_height(prompt_width, &prompt_style, true, max_prompt_height)
                 .min(prompt_style.vpad_top + 1 + prompt_style.info_block(true, narrow))
         } else {
             self.prompt
-                .desired_height(inner_width, &prompt_style, true, max_prompt_height)
+                .desired_height(prompt_width, &prompt_style, true, max_prompt_height)
         };
         let overlay_content_w = inner_width.saturating_sub(QUESTION_VIEW_HPAD) as usize;
         let slot_card = self.blocking_card();
@@ -943,7 +946,7 @@ impl AgentView {
         let question_prompt_body_h = if question_view_h == 0 || !is_question_input_mode {
             0
         } else {
-            self.freeform_editor_h(inner_width, inline_prompt_max, &question_input_style)
+            self.freeform_editor_h(prompt_width, inline_prompt_max, &question_input_style)
         };
         let is_permission_followup = self.permission_queue.front().is_some_and(|p| {
             p.focus == crate::views::permission_view::PermissionFocus::FollowupInput
@@ -970,7 +973,7 @@ impl AgentView {
                 image_preview: !self.resize_hides_prompt_preview(),
                 band: false,
             };
-            let perm_text_w = crate::views::permission_view::inline_text_width(inner_width);
+            let perm_text_w = crate::views::permission_view::inline_text_width(prompt_width);
             self.prompt
                 .desired_height(perm_text_w, &style, false, perm_inline_prompt_max)
                 .max(1)

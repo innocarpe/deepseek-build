@@ -1306,3 +1306,118 @@ fn phone_scrollbar_column_holds_only_the_bar_while_scrolling() {
         }
     }
 }
+
+/// [`draw`], keeping the caret the frame puts on screen.
+fn draw_with_caret(agent: &mut AgentView, cols: u16, rows: u16) -> (Buffer, Option<(u16, u16)>) {
+    agent.last_terminal_size = (cols, rows);
+    let mut appearance = agent.scrollback.appearance().clone();
+    appearance.scrollback.layout.narrow = crate::views::agent::effective_narrow(cols, rows);
+    agent.scrollback.set_appearance(appearance);
+    let area = Rect::new(0, 0, cols, rows);
+    let mut buf = Buffer::empty(area);
+    let mut scratch = ScratchBuffer::new();
+    let registry = ActionRegistry::defaults();
+    let (caret, _) = agent.draw(
+        area,
+        &mut buf,
+        &registry,
+        &mut scratch,
+        None,
+        false,
+        BannerSlotParams::none(),
+        false,
+        &mut Vec::new(),
+        AppRenderParams::default(),
+    );
+    (buf, caret)
+}
+
+/// Type `text` into the composer one key at a time, the caret following it.
+fn type_keys(agent: &mut AgentView, text: &str) {
+    for ch in text.chars() {
+        agent.prompt.handle_key(&crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char(ch),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+    }
+}
+
+/// A draft of exactly `cols` columns: words of four `unit` glyphs with a space
+/// between them, and a one-column `.` closing an odd count of two-column
+/// glyphs.
+fn full_row_draft(unit: char, cols: usize) -> String {
+    let w = unicode_width::UnicodeWidthChar::width(unit).unwrap_or(1);
+    let (mut draft, mut used, mut in_word) = (String::new(), 0, 0);
+    while used + w <= cols {
+        if in_word == 4 && used + 1 + w <= cols {
+            draft.push(' ');
+            used += 1;
+            in_word = 0;
+        }
+        draft.push(unit);
+        used += w;
+        in_word += 1;
+    }
+    if used < cols {
+        draft.push('.');
+    }
+    draft
+}
+
+/// The iPhone report: typing to the end of the composer's text row opened an
+/// empty second row, the caret dropped onto it, and the row it left still had
+/// its right pad free. The phone draws the composer across the frame but
+/// measured it two columns narrower, so the box asked for the second row before
+/// the drawn row was full; and a full row sent the caret down before any text
+/// needed the room. A full row keeps one text row and the caret after its last
+/// glyph; the next character opens the second row — in English and Hangul.
+#[test]
+fn phone_composer_opens_a_row_only_for_the_character_after_a_full_row() {
+    let _guard = crate::theme::cache::pin_theme();
+    for (label, unit, next) in [("English", 'x', 's'), ("Hangul", '가', '요')] {
+        let mut agent = phone_agent();
+        let _ = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+        let text_cols = usize::from(agent.prompt.textarea_area().width);
+        let draft = full_row_draft(unit, text_cols);
+        assert_eq!(
+            unicode_width::UnicodeWidthStr::width(draft.as_str()),
+            text_cols,
+            "{label}: the draft fills the drawn text row: {draft:?}"
+        );
+        type_keys(&mut agent, &draft);
+
+        let (buf, caret) = draw_with_caret(&mut agent, PHONE_COLS, PHONE_ROWS);
+        let frame = frame_text(&buf);
+        let (top, bottom) = composer_band_rows(&buf);
+        let text = agent.prompt.textarea_area();
+        assert_eq!(
+            bottom - top - 1,
+            1,
+            "{label}: a full row is still one text row:\n{frame}"
+        );
+        assert_eq!(
+            caret,
+            Some((text.right(), top + 1)),
+            "{label}: the caret stays after the last glyph of the full row:\n{frame}"
+        );
+        assert!(
+            text.right() < PHONE_COLS,
+            "{label}: that column is the band's right pad:\n{frame}"
+        );
+
+        type_keys(&mut agent, &next.to_string());
+        let (buf, caret) = draw_with_caret(&mut agent, PHONE_COLS, PHONE_ROWS);
+        let frame = frame_text(&buf);
+        let (top, bottom) = composer_band_rows(&buf);
+        assert_eq!(
+            bottom - top - 1,
+            2,
+            "{label}: the next character opens the second row:\n{frame}"
+        );
+        assert_eq!(
+            caret.map(|(_, y)| y),
+            Some(top + 2),
+            "{label}: the caret follows it down:\n{frame}"
+        );
+    }
+}

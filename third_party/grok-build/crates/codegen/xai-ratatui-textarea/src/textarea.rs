@@ -688,24 +688,20 @@ impl TextArea {
         self.cursor_pos_with_state(area, TextAreaState::default())
     }
 
-    /// Compute the on-screen cursor position taking scrolling into account. Unlike [`screen_position_of`], this applies a
-    /// wrap-boundary adjustment: when the cursor sits at the exact wrap boundary (col == content width), it is shown at the
-    /// start of the next visual line instead of on the invisible right border.
+    /// Compute the on-screen cursor position taking scrolling into account.
+    ///
+    /// A caret after the last glyph of a full row stays on that row, one column past the content: the pending-wrap column a
+    /// terminal keeps. A row exists only once text is on it, so the caret moves down when the next character arrives and the
+    /// wrap puts that character there, not when the row fills. That column is `area.x + text_width(area)`, which is
+    /// `area.right()` when no scrollbar is reserved; a caller with no column right of `area` clamps.
     pub fn cursor_pos_with_state(&self, area: Rect, state: TextAreaState) -> Option<(u16, u16)> {
         let tw = self.text_width(area);
         let lines = self.wrapped_lines(tw);
         let effective_scroll = self.effective_scroll(area.height, &lines, state.scroll);
-        let mut i = Self::wrapped_line_index_by_start(&lines, self.cursor())?;
+        let i = Self::wrapped_line_index_by_start(&lines, self.cursor())?;
         let ls = lines.get(i)?;
-        let mut col = self.display_width_of_range(ls.start, self.cursor()) as u16;
-
-        // If the cursor sits at the exact wrap boundary (col == content width), show it at the start of the next visual line
-        // instead of on the invisible right border. When the cursor is at text.len() and the last line is exactly full, there is
-        // no next wrapped line — but we still want the cursor on a new row at column 0.
-        if col >= tw {
-            i += 1;
-            col = 0;
-        }
+        // Spaces the wrap folds into the end of a full row hang past the content edge; the caret stays at the edge with them.
+        let col = (self.display_width_of_range(ls.start, self.cursor()) as u16).min(tw);
 
         // If the cursor's visual line is outside the visible viewport, hide it.
         let scroll = effective_scroll as usize;
@@ -718,7 +714,7 @@ impl TextArea {
     }
 
     /// Compute the on-screen position of an arbitrary buffer byte offset. Returns `None` if the position is outside the
-    /// visible viewport. Does not apply cursor-specific wrap-boundary adjustments — see [`cursor_pos_with_state`] for cursor
+    /// visible viewport. Does not clamp hanging spaces to the content edge — see [`cursor_pos_with_state`] for cursor
     /// positioning.
     pub fn screen_position_of(
         &self,
@@ -3125,8 +3121,9 @@ impl TextArea {
         }
     }
 
-    /// Convenience: content width for wrapping (area width minus scrollbar if needed).
-    fn text_width(&self, area: Rect) -> u16 {
+    /// Content width for wrapping: the area width, minus the scrollbar and its padding once the text overflows `area`.
+    /// Text is drawn in `area.x .. area.x + text_width(area)`.
+    pub fn text_width(&self, area: Rect) -> u16 {
         self.content_width(area.width, area.height).0
     }
 }

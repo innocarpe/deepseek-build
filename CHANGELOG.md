@@ -4,6 +4,13 @@
 
 - Resuming or continuing a full-screen session restores its cumulative billing and Path A cache hit/miss totals from `usage.json` before accepting new requests. Older sessions without saved cache history report it as unknown, and sessions with chat history but no usage file report incomplete totals instead of claiming zero. When the legacy main-loop split is unknown, observed post-upgrade main-loop counts also survive repeated resumes without claiming complete history or inferring them from billing calls.
 
+- New-file `write` uses the target repository's `.gitattributes` `eol` policy
+  only when its filesystem backend confirms the target is on the host. Other
+  backends, including ACP client filesystems, use the platform default because
+  their host-path identity and target Git policy are unknown. Creation preserves
+  the supplied final-newline choice and reports the normalized content it
+  writes. Existing-file edit safety and line-ending behavior are unchanged.
+
 ## 6.8.3 — 2026-09-28
 
 - The `Jump to bottom` chip keeps its own opaque background and text style while scrolling over styled text, Hangul, or emoji. A wide glyph crossing its left edge can no longer suppress the chip's first cell. One column of background on each side gives the label a little air, and both padding cells hover and click along with the label at every supported width.

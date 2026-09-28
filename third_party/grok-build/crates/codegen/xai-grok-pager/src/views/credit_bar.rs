@@ -141,7 +141,7 @@ pub fn format_usage_summary(balance: &CreditBalance, autotopup: Option<&AutoTopu
 const LOW_BALANCE_CENTS: i64 = 1000;
 const PAY_AS_YOU_GO_CRITICAL_CENTS: i64 = 500;
 
-/// The prompt's usage/credits warning as `(text, critical)`, or `None`. `critical` renders yellow,
+/// The prompt's dollar-denominated credits warning as `(text, critical)`, or `None`. `critical` renders yellow,
 /// else grey; team users with `usage_visible = false` never warn. Gateway light-frontend (`kind:
 /// "chat"`) sessions must not show Build coding-credit warnings.
 pub fn usage_warning(
@@ -154,7 +154,7 @@ pub fn usage_warning(
 
 /// Like [`usage_warning`], but ties account billing warnings to the active session provider.
 /// Unknown provider status fails closed until the session is classified; DeepSeek API sessions
-/// must not display a Grok account allowance.
+/// must not display Grok coding-credit warnings.
 pub fn usage_warning_for_session(
     balance: &CreditBalance,
     autotopup: Option<&AutoTopupInfo>,
@@ -187,13 +187,9 @@ pub fn usage_warning_for_session(
             return None;
         }
 
-        let pct = balance.effective_usage_pct;
-        if pct > 90.0 {
-            // "Left" is the complement of floored usage, so it agrees with the floored summary: 99.994% shows "1% left", not "0%"
-            let remaining = (100 - pct.floor() as i64).max(0);
-            let label = balance.usage_label();
-            return Some((format!("{label} left: {remaining}%"), pct > 95.0));
-        }
+        // Subscription allowances belong in the explicit /usage summary, never
+        // beside the composer. This is independent of provider classification,
+        // billing visibility, warning severity, and terminal width.
         return None;
     };
 
@@ -424,33 +420,23 @@ mod tests {
     }
 
     #[test]
-    fn warning_uses_period_label() {
-        let weekly = bal_period(92.0, "USAGE_PERIOD_TYPE_WEEKLY");
-        assert_eq!(
-            usage_warning(&weekly, None, true),
-            Some(("Weekly limit left: 8%".to_string(), false))
-        );
-    }
-
-    #[test]
-    fn session_warning_requires_confirmed_non_deepseek_provider() {
-        let weekly = bal_period(100.0, "USAGE_PERIOD_TYPE_WEEKLY");
-
-        assert_eq!(
-            usage_warning_for_session(&weekly, None, true, false, None),
-            None,
-            "unknown provider must not expose an account quota"
-        );
-        assert_eq!(
-            usage_warning_for_session(&weekly, None, true, false, Some(true)),
-            None,
-            "DeepSeek API usage must not expose a Grok account quota"
-        );
-        assert_eq!(
-            usage_warning_for_session(&weekly, None, true, false, Some(false)),
-            Some(("Weekly limit left: 0%".to_string(), true)),
-            "a confirmed non-DeepSeek session keeps its existing warning"
-        );
+    fn subscription_quota_never_becomes_a_prompt_warning() {
+        for period in [
+            "USAGE_PERIOD_TYPE_WEEKLY",
+            "USAGE_PERIOD_TYPE_MONTHLY",
+            "USAGE_PERIOD_TYPE_UNSPECIFIED",
+        ] {
+            for pct in [0.0, 90.0, 92.0, 95.0, 97.0, 99.994, 100.0, 150.0] {
+                let quota = bal_period(pct, period);
+                assert_eq!(usage_warning(&quota, None, true), None);
+                for provider in [None, Some(true), Some(false)] {
+                    assert_eq!(
+                        usage_warning_for_session(&quota, None, true, false, provider),
+                        None
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -461,35 +447,6 @@ mod tests {
         // A true 100% still shows 100%.
         let full = bal_period(100.0, "USAGE_PERIOD_TYPE_WEEKLY");
         assert_eq!(format_usage_summary(&full, None), "Weekly limit: 100%");
-    }
-
-    #[test]
-    fn warning_percent_left_is_floor_complement() {
-        // 99.994% used floors to 99%, so it shows "1% left" (not "0% left"), and the warning and the floored summary always sum to 100
-        let almost = bal_period(99.994, "USAGE_PERIOD_TYPE_WEEKLY");
-        assert_eq!(
-            usage_warning(&almost, None, true),
-            Some(("Weekly limit left: 1%".to_string(), true))
-        );
-        // A true 100% (no credits) shows "0% left"
-        let full = bal_period(100.0, "USAGE_PERIOD_TYPE_WEEKLY");
-        assert_eq!(
-            usage_warning(&full, None, true),
-            Some(("Weekly limit left: 0%".to_string(), true))
-        );
-    }
-
-    #[test]
-    fn warning_usage_model_thresholds() {
-        assert_eq!(usage_warning(&bal(50.0), None, true), None);
-        assert_eq!(
-            usage_warning(&bal(92.0), None, true),
-            Some(("Usage left: 8%".to_string(), false))
-        );
-        assert_eq!(
-            usage_warning(&bal(97.0), None, true),
-            Some(("Usage left: 3%".to_string(), true))
-        );
     }
 
     #[test]
@@ -611,9 +568,9 @@ mod tests {
     }
 
     #[test]
-    fn warning_credits_take_precedence_over_usage() {
+    fn warning_credits_do_not_fall_back_to_subscription_quota() {
         // A credits user below 100% usage gets no warning: no usage-% warning, and credits aren't being spent yet
-        // A non-credits user would see "Usage left: 1%" at 99%
+        // Subscription allowance percentages never become prompt warnings.
         let b = CreditBalance {
             prepaid_balance_cents: Some(5000),
             ..bal(99.0)
@@ -622,15 +579,12 @@ mod tests {
             usage_warning(&b, Some(&topup(false, None, None)), true),
             None
         );
-        // Zero prepaid falls back to the usage model.
+        // Zero prepaid still must not expose an allowance warning.
         let zero = CreditBalance {
             prepaid_balance_cents: Some(0),
             ..bal(99.0)
         };
-        assert_eq!(
-            usage_warning(&zero, None, true),
-            Some(("Usage left: 1%".to_string(), true))
-        );
+        assert_eq!(usage_warning(&zero, None, true), None);
     }
 
     fn pay_as_you_go(usage_pct: f64, cap_cents: i64, used_cents: i64) -> CreditBalance {

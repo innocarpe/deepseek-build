@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The prompt no longer shows Grok subscription quota warnings such as `Weekly limit left`, on the welcome screen or in a conversation, at any pane width or provider/status state. Account balance, cache, model, permission mode, dollar-denominated credit warnings, and the explicit `/usage` summary keep their existing behavior.
+
 ## 6.8.1 — 2026-09-28
 
 - A folded prompt echo's last row runs to the edge before its ` …`. It used to stop where word wrapping had broken it: the word that did not fit had already moved to the hidden row, so the row ended early and, on a phone-width pane, the clock filled the gap (`BBB…B …   11:53 PM` for `AAA…A BBB…B CCC…C`). The row now carries on with the text that follows and is cut at the row's edge (`BBB…B CCC…C …`), so a full folded row shows no clock. A wide glyph (Hangul, CJK) that would straddle the cut stays out whole, a cut that lands on a space leaves one space before the ellipsis, and a line break in the prompt still ends the row. The echo keeps its two-row (three on a wide pane) fold. The row is cut by the cells the terminal paints, grapheme by grapheme, so Arabic lam-alef text, an emoji sequence and a tab do not push the ellipsis off the row or end it early; and the clock's room check counts those painted cells too, so a full row of Arabic text (a lam-alef pair is one column to the width table and two painted cells) no longer reads as short and gets the clock drawn over its end.

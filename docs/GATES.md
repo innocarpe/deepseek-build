@@ -40,3 +40,20 @@
 
 **Ultragoal (product):** **`owner-bar-5x`** → tag **`v5.0.0`** ([ULTRAGOAL_CHAIN.md](product/ULTRAGOAL_CHAIN.md) · [OWNER_BAR_5X_GOALS.md](product/OWNER_BAR_5X_GOALS.md)).  
 Do **not** resume `heart-3x` / `fleet-4x` as product SSOT. Gate: `./scripts/test-owner-bar.sh` (RED until fusion).
+
+## Verification — prompt quota removal (2026-09-28)
+
+The prompt quota removal rechecked the existing owner bar on the current Path A:
+`./scripts/test-owner-bar.sh` printed `PASS=60 FAIL=0 NOT_RUN=0`,
+`linkage_exit=0 forbidden_exit=0`, and `ALL PASS — owner bar green`.
+`./scripts/check-path-a-linkage.sh` also printed `PASS`. This is a regression
+verification; it does not flip a spec-readiness gate in the table above.
+
+All five quota regression tests passed in the full pager library run. That run
+printed `10285 passed; 2 failed; 5 ignored`; the two failures were the existing
+dashboard multiline footer assertions expecting `Shift+Enter` or `Alt+Enter`
+while macOS under `TERM_PROGRAM=Orca` renders `Opt+Enter`. Those dashboard files
+are outside this correction and remain unchanged.
+Repeating the same suite with the process-local terminal fixture
+`TERM_PROGRAM=ghostty ./scripts/vendor-cargo.sh test -p xai-grok-pager --lib`
+printed `10287 passed; 0 failed; 5 ignored`.

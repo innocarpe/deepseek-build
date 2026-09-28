@@ -229,3 +229,37 @@ completed with `conclusion=success` on source commit
 `035fe245e5b80b7ec28545d0df575578c4197d14`; its `grok test` job and
 `Test vendored workspace` step both succeeded. This entry records only the
 observation that run #36409062503 completed successfully.
+
+## Verification — current cache-resume source full vendored workspace run (2026-09-29)
+
+The [main full-vendor run #36468767878](https://github.com/innocarpe/deepseek-build/actions/runs/36468767878)
+completed with `conclusion=failure` on source SHA
+`aa6ff15c79d0a50825ef07da5317df8fcb5491d7`, the merge commit for cache PR #339.
+GitHub reports `createdAt=2026-09-28T18:56:46Z`; the `grok test` job started at
+`2026-09-28T19:20:26Z`; its `Test vendored workspace` step ran
+`cargo test --workspace --no-fail-fast`, started at `2026-09-28T19:23:44Z`,
+and completed with `conclusion=failure` at `2026-09-28T19:49:23Z`. The job
+completed at `2026-09-28T19:49:26Z`.
+
+The full job log for job `109094750211` reports one failed target,
+`xai-grok-pager --lib`: `10294 passed; 2 failed; 5 ignored`. The failures were
+`app::status_blocks::tests::session_usage_block_formats_tokens_and_cost`
+(snapshot `session_usage_block_full`) and
+`app::status_blocks::tests::session_usage_block_absent_cost_is_unknown_not_free`
+(snapshot `session_usage_block_absent_cost`). Both snapshot diffs show the
+rendered line `Note: main-loop response count before tracking is unknown.`
+missing from the expected snapshot. Cargo reported one failed target and the
+job annotation recorded exit code 101.
+
+Source comparison from `aa6ff15^1` to `aa6ff15` confirms that cache PR #339
+added this line in
+`third_party/grok-build/crates/codegen/xai-grok-pager/src/app/status_blocks.rs`
+when `usage.num_turns_known` is false; the merge did not update the two expected
+snapshot files. The observed full-vendor failure is therefore the pager
+snapshots missing the new status line from the merged source. This docs PR does
+not modify source or snapshots.
+
+This hosted result is separate from the historical local full-run failures
+above and from main run #36409062503, which completed successfully on
+`035fe245e5b80b7ec28545d0df575578c4197d14`. It does not establish that an earlier
+local failure was intermittent, fixed, or caused by a particular factor.

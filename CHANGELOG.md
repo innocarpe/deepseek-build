@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- On a phone-width pane the turn row above the composer (spinner, elapsed time, `[stop]`) now sits on the footer's edges, one column in from the frame on each side, instead of one column further in on the left and two on the right. The composer's draft starts on the footer's column too, one column closer to the frame edge, on the welcome screen and in a conversation. Desktop widths are unchanged.
+
 - The Tasks pane's right-hand strip — the elapsed time and the `[↗]` / `[✗]` buttons — no longer shows a box behind each glyph when the task label underneath is Korean or another wide (CJK) label. `ratatui` resets the cell after a wide grapheme to `Color::Reset`, and the overlay blanked its strip with a default-styled span before writing fg-only time/button spans, so those slots kept the reset background and the terminal painted its own default behind the glyph. The strip now carries the row's background and modifier: a focused selection keeps its band, a transient search-match invert no longer leaks into it, and the truncation ellipsis sits on the row background.
 
 - On a phone-width pane the top status row (branch, working directory, and the right-hand items) keeps one column of air at each screen edge instead of touching it. Its text now opens on the same column as the transcript's text and closes one column before the right edge; the transcript, task list, and composer band still span the frame, and desktop panes are unchanged.

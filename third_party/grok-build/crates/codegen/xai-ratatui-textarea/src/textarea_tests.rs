@@ -2378,30 +2378,124 @@ fn alt_arrow_navigation_splits_on_hyphen() {
     assert_eq!(t.cursor(), 0);
 }
 
+/// Type `text` one key at a time, the way the composer receives it.
+fn type_keys(t: &mut TextArea, text: &str) {
+    for c in text.chars() {
+        t.input(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+}
+
+/// Filling a row is not a reason to open the next one. The caret after the
+/// last glyph stays on the full row, in the column past the content, and the
+/// row count holds; the next character is what opens a row. Rows are cells:
+/// an ASCII letter takes one, a Hangul syllable two.
 #[test]
-fn cursor_at_wrap_boundary_shows_on_next_line() {
-    // When typing fills an entire line, the cursor sits at the exact wrap
-    // boundary.  It should be reported on the *next* visual line at col 0,
-    // not at col == width (which is the invisible right border).
+fn full_row_keeps_the_caret_until_the_next_character() {
+    // (typed text that fills a 6-column row exactly, the next character)
+    let cases = [
+        ("abc de", 'f', "English, the last word ending on the edge"),
+        ("가나다", '라', "Hangul, three two-column syllables"),
+        ("a 가나", '다', "English and Hangul mixed"),
+    ];
+    for (full, next, label) in cases {
+        let mut t = TextArea::new();
+        let area = Rect::new(0, 0, 6, 4);
+        type_keys(&mut t, full);
+        assert_eq!(
+            t.desired_height(area.width),
+            1,
+            "{label}: one row when full"
+        );
+        assert_eq!(
+            t.cursor_pos(area),
+            Some((6, 0)),
+            "{label}: the caret stays on the full row, past its last cell"
+        );
 
-    // Case 1: text exactly fills one line — cursor at text.len()
-    let mut t = ta_with("abcde");
-    let area = Rect::new(0, 0, 5, 3); // width 5
-    t.set_cursor(5); // cursor right after 'e'
+        type_keys(&mut t, &next.to_string());
+        assert_eq!(
+            t.desired_height(area.width),
+            2,
+            "{label}: the next character opens a row"
+        );
+        let (x, y) = t.cursor_pos(area).unwrap();
+        assert_eq!(
+            y, 1,
+            "{label}: the caret follows the character onto the new row"
+        );
+        assert!(
+            x > 0,
+            "{label}: the new row holds the character before the caret"
+        );
+    }
+}
 
-    let (x, y) = t.cursor_pos(area).unwrap();
-    assert_eq!(x, 0, "cursor x should be 0 (start of virtual next line)");
-    assert_eq!(y, 1, "cursor y should be 1 (next line)");
+/// A two-column syllable that meets one free column does not fit: it moves to
+/// the next row, and the caret goes with it. The row it left is not full, so
+/// before the syllable arrives the caret sits inside it.
+#[test]
+fn wide_glyph_on_the_last_free_column_moves_to_the_next_row() {
+    let mut t = TextArea::new();
+    let area = Rect::new(0, 0, 5, 4);
+    type_keys(&mut t, "abcd");
+    assert_eq!(t.cursor_pos(area), Some((4, 0)));
 
-    // Case 2: text wraps — cursor at the boundary between two wrapped lines
+    type_keys(&mut t, "가");
+    assert_eq!(t.desired_height(area.width), 2);
+    assert_eq!(t.cursor_pos(area), Some((2, 1)));
+}
+
+/// A space typed after a full row hangs past the content edge, and so does the
+/// caret; the word after it is what opens the next row.
+#[test]
+fn space_after_a_full_row_hangs_with_the_caret() {
+    let mut t = TextArea::new();
+    let area = Rect::new(0, 0, 5, 4);
+    type_keys(&mut t, "abcde ");
+    assert_eq!(t.desired_height(area.width), 1);
+    assert_eq!(t.cursor_pos(area), Some((5, 0)));
+
+    type_keys(&mut t, "f");
+    assert_eq!(t.desired_height(area.width), 2);
+    assert_eq!(t.cursor_pos(area), Some((1, 1)));
+}
+
+/// Where the text continues past a soft wrap, the byte at the boundary starts
+/// the next row, so a caret there sits at that row's start. A full row that
+/// ends at a newline has no such next byte: the caret stays on it rather than
+/// landing on the first cell of the line below.
+#[test]
+fn caret_at_a_row_boundary_follows_the_text_after_it() {
+    let area = Rect::new(0, 0, 5, 4);
+
     let mut t = ta_with("abcdefgh");
-    let area = Rect::new(0, 0, 5, 3); // width 5, wraps after 'e'
-    // cursor at position 5 = start of "fgh" = should be col 0, row 1
     t.set_cursor(5);
+    assert_eq!(t.cursor_pos(area), Some((0, 1)), "the caret before 'f'");
 
-    let (x, y) = t.cursor_pos(area).unwrap();
-    assert_eq!(x, 0, "cursor at wrap point should be col 0 of next line");
-    assert_eq!(y, 1, "cursor at wrap point should be on second visual line");
+    let mut t = ta_with("abcde\nxyz");
+    t.set_cursor(5);
+    assert_eq!(
+        t.cursor_pos(area),
+        Some((5, 0)),
+        "the caret before the newline"
+    );
+}
+
+/// The caret on a full last row stays visible while the textarea scrolls. A
+/// caret moved to a row past the text is outside the viewport and was hidden.
+#[test]
+fn caret_on_a_full_last_row_stays_visible_when_scrolled() {
+    let mut t = TextArea::new();
+    // Two rows in a one-row viewport: the scrollbar takes a column, so the
+    // content is 5 wide and the second row "fghij" is full.
+    let area = Rect::new(0, 0, 6, 1);
+    type_keys(&mut t, "abcdefghij");
+    let mut state = TextAreaState::default();
+    let mut buf = Buffer::empty(area);
+    ratatui::widgets::StatefulWidgetRef::render_ref(&(&t), area, &mut buf, &mut state);
+
+    assert_eq!(t.text_width(area), 5);
+    assert_eq!(t.cursor_pos_with_state(area, state), Some((5, 0)));
 }
 
 #[test]

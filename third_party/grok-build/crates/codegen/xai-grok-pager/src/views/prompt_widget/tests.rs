@@ -5564,3 +5564,113 @@
             "the divider closes the box:\n{frame}"
         );
     }
+
+    // ── Full rows: the caret stays until the next character ──
+
+    /// English text of exactly `cols` columns: words of one-column letters.
+    fn english_row(cols: usize) -> String {
+        let tail = " padding";
+        format!("{}{tail}", "x".repeat(cols - tail.len()))
+    }
+
+    /// Hangul text of exactly `cols` columns: two-column syllables with a space
+    /// between words, and a one-column `.` closing an odd count.
+    fn hangul_row(cols: usize) -> String {
+        let syllables = ['의', '견', '을', '줘'];
+        let (mut text, mut w) = (String::new(), 0);
+        for i in 0.. {
+            if w + 2 > cols {
+                break;
+            }
+            if i > 0 && i % syllables.len() == 0 && w + 3 <= cols {
+                text.push(' ');
+                w += 1;
+            }
+            text.push(syllables[i % syllables.len()]);
+            w += 2;
+        }
+        if w < cols {
+            text.push('.');
+        }
+        text
+    }
+
+    fn type_into(pw: &mut PromptWidget, text: &str) {
+        for ch in text.chars() {
+            pw.handle_key(&KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+    }
+
+    /// Draw `pw` as the phone composer at the height it asks for; returns the
+    /// height, the caret, and the textarea rect the draw used.
+    fn draw_phone_composer(pw: &mut PromptWidget, style: &PromptStyle) -> (u16, Option<(u16, u16)>, Rect) {
+        let info = PromptInfo {
+            model_name: PHONE_MODEL_LABEL,
+            ..Default::default()
+        };
+        let height = pw.desired_height(MEASURED_PHONE_COLS, style, true, 99);
+        let area = Rect::new(0, 0, MEASURED_PHONE_COLS, height);
+        let mut buf = Buffer::empty(area);
+        let res = pw.draw(&mut buf, area, None, style, Some(&info), None);
+        (height, res.cursor_pos, pw.textarea_area())
+    }
+
+    /// The iPhone report: typing up to the right edge of the phone composer
+    /// opened an empty row and dropped the caret onto it while the row still
+    /// had its right pad free. A full row keeps the caret: it sits in the
+    /// column after the last glyph, inside the band's right pad, and the box
+    /// keeps its height. The next character opens the row and takes the caret
+    /// down with it — for one-column English and two-column Hangul alike.
+    #[test]
+    fn phone_composer_keeps_the_caret_on_a_full_row_until_the_next_character() {
+        let _guard = crate::theme::cache::pin_theme();
+        let style = PromptStyle {
+            band: true,
+            ..PromptStyle::default()
+        };
+        let cols = usize::from(PromptWidget::new().content_width(MEASURED_PHONE_COLS, &style));
+        for (label, full, next) in [
+            ("English", english_row(cols), 's'),
+            ("Hangul", hangul_row(cols), '요'),
+        ] {
+            assert_eq!(
+                unicode_width::UnicodeWidthStr::width(full.as_str()),
+                cols,
+                "{label}: the draft fills the row exactly: {full:?}"
+            );
+            let mut pw = PromptWidget::new();
+            type_into(&mut pw, &full);
+            let (height, caret, ta) = draw_phone_composer(&mut pw, &style);
+            assert_eq!(height, 3, "{label}: border + one text row + divider, no row for the caret");
+            assert_eq!(
+                caret,
+                Some((ta.x + ta.width, ta.y)),
+                "{label}: the caret stays on the full row, in the column after its last glyph"
+            );
+            assert!(
+                ta.x + ta.width < MEASURED_PHONE_COLS,
+                "{label}: that column is the band's right pad, inside the frame"
+            );
+
+            type_into(&mut pw, &next.to_string());
+            let (height, caret, ta) = draw_phone_composer(&mut pw, &style);
+            assert_eq!(height, 4, "{label}: the next character opens the second row");
+            let (_, caret_y) = caret.expect("the caret is drawn");
+            assert_eq!(caret_y, ta.y + 1, "{label}: the caret follows the character down");
+        }
+    }
+
+    /// A chromeless prompt whose text reaches its area's right edge has no pad
+    /// column after a full row, so the caret takes the area's last column
+    /// instead of leaving the widget.
+    #[test]
+    fn chromeless_prompt_keeps_a_full_row_caret_inside_its_area() {
+        let style = PromptStyle::inline(ratatui::style::Color::Reset);
+        let mut pw = PromptWidget::new();
+        type_into(&mut pw, "full row");
+        let area = Rect::new(4, 2, 8, 3);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 20, 6));
+        let res = pw.draw(&mut buf, area, None, &style, None, None);
+        assert_eq!(pw.desired_height(area.width, &style, false, 99), 1);
+        assert_eq!(res.cursor_pos, Some((area.right() - 1, area.y)));
+    }

@@ -121,8 +121,12 @@ key. The merge left them unverified, and this table does not imply otherwise.
 
 ## 7. Line continuation — `6.1.0` DeepSeek-native depth
 
-**Status:** proposed. Board: [DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md](./DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md).
-Evidence: [research/dsh-deepseek-harness.md](../research/dsh-deepseek-harness.md).
+**Status:** Historical plan and release record; it is no longer proposed or
+active. The `v6.1.0` release was published on npm and GitHub Releases on
+2026-09-26. The board records landed items and retains the live spill
+demonstration as **not claimed**, so this status does not call the full board
+complete. See [DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md](./DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md)
+and the [current version index](./versions/README.md).
 
 `6.0.0` moved the base. The next question is narrower and belongs to the same
 line: **does the product actually exploit what this base now makes possible?**
@@ -214,9 +218,10 @@ specifies the appended stable body. This section does not add a
 
 ### Shipped — honesty table
 
-Filled from `main` at `e914dfb` (2026-09-26). The owner-readable file is
+This is a historical snapshot from `main` at `e914dfb` (2026-09-26), before
+the `v6.1.0` release was published. The owner-readable release summary is
 [CHANGELIST_6_1_0.md](./CHANGELIST_6_1_0.md). A row that is not **shipped**
-is not a claim of this cut.
+was not a claim of that cut.
 
 | Claim | Status | Evidence |
 |---|---|---|
@@ -230,6 +235,28 @@ is not a claim of this cut.
 | Spill demonstrated on a session that blew the context | **not claimed** | Present in the `1.0.41` tree (board §1). Not re-demonstrated |
 | Tag `v6.1.0` on npm | **not shipped** | `v6.0.2` tags `e914dfb`. `v6.1.0` does not exist |
 
+### Current release and `6.8.3` baseline status — verified 2026-09-29
+
+Root `Cargo.toml` and `package.json` are `6.8.3`; npm latest is `6.8.3`
+(published 2026-09-28), and GitHub Latest is `v6.8.3` (published
+2026-09-28). `v6.1.0` was subsequently published on 2026-09-26; the preceding
+table remains accurate only as the dated `e914dfb` snapshot.
+
+At the `6.8.3` source baseline used for this refresh, the TUI cache chip was
+session-cumulative within the running process.
+`app/agent_view/render.rs:1564-1566` and `:4613-4615` pass
+`ds.usage.totals.cached_read_tokens` and `input_tokens` to the chip formatter;
+`extensions/deepseek.rs:109-120` obtains that usage through
+`try_get_session_usage`, and `actor/mod.rs:368-369` returns the session ledger.
+`actor/state.rs:164-165,232` marked `session_usage` not persisted and initialized
+it empty, so that baseline chip did not restore cache usage into a new process.
+This is a dated `6.8.3` baseline trace, not a claim about later merged source.
+
+The live spill demonstration in exit criterion 4 remains **not claimed**. The
+`v6.1.0` publication is confirmed, but this status refresh did not verify the
+global-install clause in criterion 7. Keep the board historical and do not
+mark the full plan complete.
+
 ### 7.3 Exit criteria
 
 1. The wire-independent lifecycle is merged and **measured** on a live route.
@@ -242,4 +269,6 @@ is not a claim of this cut.
 6. Rows this line did **not** take are recorded with reasons — the ledger
    discipline [UPSTREAM_SYNC_LEDGER.md](./UPSTREAM_SYNC_LEDGER.md) established
    for vendor syncs, applied to harness ideas.
-7. Tag `v6.1.0` published to npm with a verified global install.
+7. Tag `v6.1.0` published to npm with a verified global install. **Publication
+   is confirmed** by the 2026-09-26 npm and GitHub release metadata; the global
+   install clause was not re-verified in this status refresh.

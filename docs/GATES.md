@@ -107,3 +107,14 @@ are outside this correction and remain unchanged.
 Repeating the same suite with the process-local terminal fixture
 `TERM_PROGRAM=ghostty ./scripts/vendor-cargo.sh test -p xai-grok-pager --lib`
 printed `10287 passed; 0 failed; 5 ignored`.
+
+## Verification — full vendored workspace follow-up (2026-09-28)
+
+The earlier [run #36404759770](https://github.com/innocarpe/deepseek-build/actions/runs/36404759770)
+remains a historical failure: its unchanged shell library had one
+`set_consent_answer_is_monotonic_per_account` failure. It is not the current
+workspace result. The later [main run #36409062503](https://github.com/innocarpe/deepseek-build/actions/runs/36409062503)
+completed with `conclusion=success` on source commit
+`035fe245e5b80b7ec28545d0df575578c4197d14`; its `grok test` job and
+`Test vendored workspace` step both succeeded. This entry records only the
+observation that run #36409062503 completed successfully.

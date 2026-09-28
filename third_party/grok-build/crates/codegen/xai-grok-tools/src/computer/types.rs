@@ -52,6 +52,15 @@ impl From<std::io::Error> for ComputerError {
 pub trait AsyncFileSystem: Send + Sync {
     async fn read_file(&self, path: &Path) -> Result<Vec<u8>, ComputerError>;
 
+    /// Whether an absolute path passed to this backend is guaranteed to name
+    /// that same path on the host filesystem. Callers may use host tools such
+    /// as Git only when this capability is true; virtual and client-backed
+    /// filesystems must keep the conservative default.
+    fn path_is_on_host_filesystem(&self, path: &Path) -> bool {
+        let _ = path;
+        false
+    }
+
     fn supports_bounded_read(&self) -> bool {
         false
     }

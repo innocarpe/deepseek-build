@@ -41,6 +41,56 @@
 **Ultragoal (product):** **`owner-bar-5x`** → tag **`v5.0.0`** ([ULTRAGOAL_CHAIN.md](product/ULTRAGOAL_CHAIN.md) · [OWNER_BAR_5X_GOALS.md](product/OWNER_BAR_5X_GOALS.md)).  
 Do **not** resume `heart-3x` / `fleet-4x` as product SSOT. Gate: `./scripts/test-owner-bar.sh` (RED until fusion).
 
+## Verification — jump-to-bottom chip (2026-09-28)
+
+The chip now owns its complete cell state and one padding column on each side;
+a wide scrollback glyph crossing its left boundary is erased before buffer
+diffing. The label ladder, last scrollback row, one-row height, hover colour,
+and hidden-state rules are unchanged. Full-view tests exercise 55x41 scrolling
+and padding clicks at the full, short, and arrow label widths. Primitive tests
+exercise inherited colours/modifiers/skip and wide-glyph diff output.
+
+`./scripts/test-owner-bar.sh` printed
+`PASS=60 FAIL=0 NOT_RUN=0 linkage_exit=0 forbidden_exit=0` and
+`ALL PASS — owner bar green`; `./scripts/check-path-a-linkage.sh` printed
+`PASS`. [PR #333 CI](https://github.com/innocarpe/deepseek-build/actions/runs/36401653117)
+on source commit `2ff1207` passed `required`, `grok clippy`, and `grok fmt`.
+The owner-bar run's 60 SHA-only changes in `OWNER_BAR_STATUS.tsv` were excluded;
+the gate result above remains the actual execution result.
+
+The existing [vendored workspace test run](https://github.com/innocarpe/deepseek-build/actions/runs/36404759770/job/108870717710)
+compiled and executed the actual pager on `2ff1207`: `10295 passed; 0 failed;
+5 ignored`. All 17 `follow_indicator_tests` / `jump_to_bottom_tests` passed,
+including both new primitive tests and both new full-frame scrolling/padding
+click tests. The **overall workspace run failed** (exit 101): its only failed
+target was the unchanged shell library (`7113 passed; 1 failed; 5 ignored`).
+`set_consent_answer_is_monotonic_per_account` reported that its config
+destination changed from `config.toml` to `dotfiles/config.toml` during
+`replay after the ack`. Shell/config sources are absent from this PR's diff;
+that separate failure is retained as a validation limitation, not described
+as a green workspace run. The successful pager results are reused without
+rerunning the workspace or local pager filters.
+
+An isolated Ratatui 0.29.0 harness copied the exact original/fixed helper,
+label ladder, Theme definitions, and two new primitive tests without swapping
+repository sources. The original produced `0 passed; 2 failed` (exit 101):
+inherited modifiers and a wide glyph suppressing the first chip cell. The
+fixed helper produced `2 passed; 0 failed` (exit 0). Its HQ wrapper printed
+`acquired` / `released rc=0`; cargo used `CARGO_BUILD_JOBS=1`,
+`vendor-cargo --jobs 1 --no-seed`, this worktree's `target/chip-source-repro`,
+and `--test-threads=1`. The negative run's temporary controller initially
+returned 1 because `--nocapture` separated test names from `FAILED`; the stored
+failure list and panic messages establish both intended failures, so it was
+not rerun.
+
+Local full pager compilation was **not completed**: seeded registry artifacts
+failed with `E0463`/`E0460`, and the coherent rebuild was interrupted (exit 130)
+to adopt the machine-wide HQ slot. Only this worktree's Rust metadata/libraries
+were invalidated; native build outputs remained cached. Remote pager execution
+above supersedes that unfinished local gate. No build-wrapper source changed,
+no physical iPhone smoke was performed, and this verification does not flip a
+spec-readiness gate.
+
 ## Verification — prompt quota removal (2026-09-28)
 
 The prompt quota removal rechecked the existing owner bar on the current Path A:

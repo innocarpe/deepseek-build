@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The `Jump to bottom` chip keeps its own opaque background and text style while scrolling over styled text, Hangul, or emoji. A wide glyph crossing its left edge can no longer suppress the chip's first cell. One column of background on each side gives the label a little air, and both padding cells hover and click along with the label at every supported width.
+
 ## 6.8.2 — 2026-09-28
 
 - The prompt no longer shows Grok subscription quota warnings such as `Weekly limit left`, on the welcome screen or in a conversation, at any pane width or provider/status state. Account balance, cache, model, permission mode, dollar-denominated credit warnings, and the explicit `/usage` summary keep their existing behavior.

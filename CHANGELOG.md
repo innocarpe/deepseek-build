@@ -2,9 +2,11 @@
 
 ## Unreleased
 
-- New-file `write` uses the target repository's `.gitattributes` `eol` policy,
-  falls back to the platform default when Git policy is unavailable, preserves
-  the supplied final-newline choice, and reports the normalized content it
+- New-file `write` uses the target repository's `.gitattributes` `eol` policy
+  only when its filesystem backend confirms the target is on the host. Other
+  backends, including ACP client filesystems, use the platform default because
+  their host-path identity and target Git policy are unknown. Creation preserves
+  the supplied final-newline choice and reports the normalized content it
   writes. Existing-file edit safety and line-ending behavior are unchanged.
 
 ## 6.8.3 — 2026-09-28

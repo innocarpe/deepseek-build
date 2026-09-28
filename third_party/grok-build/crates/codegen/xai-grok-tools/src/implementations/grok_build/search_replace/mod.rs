@@ -431,7 +431,12 @@ async fn handle_new_file_creation(
     let mut written_content = input.new_string.clone();
     if !is_memory_write {
         if !path_exists {
-            written_content = new_file_eol::for_new_file(path, &input.new_string).await;
+            written_content = new_file_eol::for_new_file(
+                path,
+                &input.new_string,
+                fs.path_is_on_host_filesystem(path),
+            )
+            .await;
         }
         if let Err(e) = fs.write_file(path, written_content.as_bytes()).await {
             return Ok(match e.io_error_kind() {
@@ -1218,6 +1223,15 @@ mod tests {
         assert!(status.success());
     }
 
+    fn platform_new_file_content(content: &str) -> String {
+        let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
+        if cfg!(windows) {
+            normalized.replace('\n', "\r\n")
+        } else {
+            normalized
+        }
+    }
+
     struct PermissionDeniedFs(Arc<std::sync::atomic::AtomicUsize>);
 
     #[async_trait::async_trait]
@@ -1405,11 +1419,62 @@ mod tests {
         match result {
             SearchReplaceOutput::EditsApplied(applied) => {
                 assert!(applied.tool_output_for_prompt.contains("has been created"));
-                let content = std::fs::read_to_string(tmp.path().join("new_file.txt")).unwrap();
-                assert_eq!(content, "new content\n");
+                let expected = platform_new_file_content("new content\n");
+                let path = tmp.path().join("new_file.txt");
+                assert_eq!(applied.new_string, expected);
+                assert_eq!(std::fs::read(&path).unwrap(), expected.as_bytes());
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
             }
             other => panic!("Expected EditsApplied, got {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn mock_filesystem_uses_platform_fallback_instead_of_host_git_attributes() {
+        let tmp = TempDir::new().unwrap();
+        init_git_repo(tmp.path());
+        let host_eol = if cfg!(windows) { "lf" } else { "crlf" };
+        std::fs::write(
+            tmp.path().join(".gitattributes"),
+            format!("*.txt text eol={host_eol}\n"),
+        )
+        .unwrap();
+
+        let mock = Arc::new(crate::computer::local::MockFs::new());
+        let mock_backend: Arc<dyn AsyncFileSystem> = mock.clone();
+        let mut resources = test_resources(tmp.path());
+        resources.insert(FileSystem(mock_backend));
+        let result = xai_tool_runtime::Tool::run(
+            &SearchReplaceTool,
+            test_ctx(resources.into_shared()),
+            make_input("virtual.txt", "", "one\ntwo"),
+        )
+        .await
+        .unwrap();
+
+        let expected = platform_new_file_content("one\ntwo");
+        let host_attribute_result = if cfg!(windows) {
+            "one\ntwo"
+        } else {
+            "one\r\ntwo"
+        };
+        assert_ne!(expected, host_attribute_result);
+        match result {
+            SearchReplaceOutput::EditsApplied(applied) => {
+                assert_eq!(applied.new_string, expected);
+                assert_eq!(applied.edits.details[0].new_string, expected);
+            }
+            other => panic!("Expected EditsApplied, got {other:?}"),
+        }
+
+        let mock_paths = mock.list_files().await;
+        assert_eq!(mock_paths.len(), 1);
+        assert!(mock_paths[0].ends_with("virtual.txt"));
+        assert_eq!(
+            mock.get_file(&mock_paths[0]).await.unwrap(),
+            expected.as_bytes()
+        );
+        assert!(!tmp.path().join("virtual.txt").exists());
     }
     /// Harness configs still send this field; it must keep validating under `deny_unknown_fields`.
     #[test]
@@ -2151,10 +2216,10 @@ mod tests {
             .unwrap();
         match result {
             SearchReplaceOutput::EditsApplied(_) => {
-                assert_eq!(
-                    std::fs::read_to_string(tmp.path().join("brand_new.txt")).unwrap(),
-                    "fresh\n"
-                );
+                let expected = platform_new_file_content("fresh\n");
+                let path = tmp.path().join("brand_new.txt");
+                assert_eq!(std::fs::read(&path).unwrap(), expected.as_bytes());
+                assert_eq!(std::fs::read_to_string(path).unwrap(), expected);
             }
             other => panic!("Expected EditsApplied, got {other:?}"),
         }
@@ -2387,10 +2452,10 @@ mod tests {
             .unwrap();
         match result {
             SearchReplaceOutput::EditsApplied(_) => {
-                assert_eq!(
-                    std::fs::read_to_string(tmp.path().join("brand_new_vc005.txt")).unwrap(),
-                    "fresh\n"
-                );
+                let expected = platform_new_file_content("fresh\n");
+                let path = tmp.path().join("brand_new_vc005.txt");
+                assert_eq!(std::fs::read(&path).unwrap(), expected.as_bytes());
+                assert_eq!(std::fs::read_to_string(path).unwrap(), expected);
             }
             other => panic!("Expected EditsApplied, got {other:?}"),
         }
@@ -2460,8 +2525,11 @@ mod tests {
         match result {
             SearchReplaceOutput::EditsApplied(applied) => {
                 assert!(applied.tool_output_for_prompt.contains("has been created"));
-                let content = std::fs::read_to_string(tmp.path().join("brand_new.txt")).unwrap();
-                assert_eq!(content, "fresh content\n");
+                let expected = platform_new_file_content("fresh content\n");
+                let path = tmp.path().join("brand_new.txt");
+                assert_eq!(applied.new_string, expected);
+                assert_eq!(std::fs::read(&path).unwrap(), expected.as_bytes());
+                assert_eq!(std::fs::read_to_string(path).unwrap(), expected);
             }
             other => panic!("Expected EditsApplied, got {:?}", other),
         }
@@ -2608,6 +2676,7 @@ mod tests {
         resources.insert(FileSystem(Arc::new(LocalFs)));
         resources.insert(NotificationHandle(handle));
         let input = make_input("new.txt", "", "brand new\n");
+        let path = tmp.path().join("new.txt");
         xai_tool_runtime::Tool::run(
             &tool,
             test_ctx_with_call_id(resources.into_shared(), "call-100"),
@@ -2619,9 +2688,11 @@ mod tests {
         match notification {
             crate::notification::types::ToolNotification::FileWritten(fw) => {
                 assert_eq!(fw.tool_call_id, "call-100");
-                assert_eq!(fw.content, "brand new\n");
+                let expected = platform_new_file_content("brand new\n");
+                assert_eq!(fw.content, expected);
                 assert!(fw.previous_content.is_none());
                 assert!(fw.is_new_file);
+                assert_eq!(std::fs::read(&path).unwrap(), expected.as_bytes());
             }
             other => panic!("Expected FileWritten notification, got {:?}", other),
         }

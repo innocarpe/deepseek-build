@@ -383,7 +383,9 @@ mod tests {
             file_version: None,
         };
         apply_path_a_edit(&mut store, PathAEditPolicy::product_default(), &req).unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "fn x() {}\n");
+        let expected = crate::file_eol::platform_default().restore("fn x() {}\n");
+        assert_eq!(std::fs::read(&path).unwrap(), expected.as_bytes());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
     }
 
     #[test]

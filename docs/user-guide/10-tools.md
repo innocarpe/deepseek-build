@@ -35,13 +35,17 @@ Evidence: [`docs/product/evidence/VC006_PATH_A_HEART_R0A_2026-08-08.md`](../prod
 (plus VC003 mint · VC004 require · VC005 write/bash invalidation)
 
 When `write` creates a path that does not exist, it resolves `text` and `eol`
-from the target repository's current `.gitattributes`. `eol=lf` and
+from the target repository's current `.gitattributes` when the filesystem
+backend confirms that the target is on the host. `eol=lf` and
 `eol=crlf` select the stored line endings unless `text` is unset; unsupported
-or unavailable Git attribute lookup uses the platform default. The model's
-CRLF is normalized to the selected convention, its final-newline choice is
-preserved, and the tool result reports the content that was written. This
-policy applies to creation only; existing-file edit and overwrite behavior
-remain governed by Spec 45.
+or unavailable Git attribute lookup uses the platform default. Git is queried
+only when the filesystem backend confirms that the path is on the host. The
+current ACP client-filesystem backend cannot guarantee that mapping or ask the
+client for Git attributes, so it uses the platform default even if its path
+string overlaps a host repository. The model's CRLF is normalized to the
+selected convention, its final-newline choice is preserved, and the tool result
+reports the content that was written. This policy applies to creation only;
+existing-file edit and overwrite behavior remain governed by Spec 45.
 
 ## Built-in surfaces (illustrative)
 

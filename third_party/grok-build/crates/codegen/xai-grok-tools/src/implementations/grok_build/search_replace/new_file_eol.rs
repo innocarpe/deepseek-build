@@ -27,17 +27,26 @@ impl LineEnding {
 
 /// Normalize content for a path that did not exist before this write.
 ///
-/// Attributes are resolved for each creation, so edits to `.gitattributes` take
-/// effect immediately and no attribute policy enters a stable prompt/cache.
-pub(super) async fn for_new_file(path: &Path, content: &str) -> String {
-    for_new_file_with(
-        path,
-        content,
-        std::ffi::OsStr::new("git"),
-        ATTR_LOOKUP_TIMEOUT,
-        platform_default(),
-    )
-    .await
+/// Attributes are resolved for each creation only when the filesystem backend
+/// confirms that `path` names the same target on the host. Virtual/client-backed
+/// filesystems use the platform fallback instead of host repository policy.
+pub(super) async fn for_new_file(
+    path: &Path,
+    content: &str,
+    path_is_on_host_filesystem: bool,
+) -> String {
+    if path_is_on_host_filesystem {
+        for_new_file_with(
+            path,
+            content,
+            std::ffi::OsStr::new("git"),
+            ATTR_LOOKUP_TIMEOUT,
+            platform_default(),
+        )
+        .await
+    } else {
+        platform_default().restore(content)
+    }
 }
 
 async fn for_new_file_with(

@@ -152,6 +152,10 @@ impl AsyncFileSystem for LocalFs {
         }
     }
 
+    fn path_is_on_host_filesystem(&self, path: &Path) -> bool {
+        path.is_absolute()
+    }
+
     fn supports_bounded_read(&self) -> bool {
         true
     }

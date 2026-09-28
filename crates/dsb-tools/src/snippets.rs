@@ -413,8 +413,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("new.txt");
         let mut store = SnippetStore::new();
-        assert_eq!(store.write_new(&path, "hi\n").unwrap(), "hi\n");
-        assert_eq!(fs::read_to_string(&path).unwrap(), "hi\n");
+        let expected = crate::file_eol::platform_default().restore("hi\n");
+        assert_eq!(store.write_new(&path, "hi\n").unwrap(), expected);
+        assert_eq!(fs::read(&path).unwrap(), expected.as_bytes());
+        assert_eq!(fs::read_to_string(&path).unwrap(), expected);
     }
 
     #[test]

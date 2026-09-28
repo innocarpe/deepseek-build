@@ -111,18 +111,23 @@ printed `10287 passed; 0 failed; 5 ignored`.
 ## Verification — new-file Git EOL policy (2026-09-29)
 
 Path A and the thin `dsb-tools` create paths now resolve `text` / `eol` from
-Git for each true new file. The lookup uses literal, NUL-delimited argv paths
-from the nearest existing parent, a bounded process/read deadline, and the
-platform fallback for unavailable or unsupported policy. The create result,
+Git for each true new file when the filesystem backend confirms the resolved
+path is on the host. The lookup uses literal, NUL-delimited argv paths from the
+nearest existing parent and a bounded process/read deadline. Backends without
+that guarantee, including the current ACP adapter, use the platform fallback;
+host `.gitattributes` are not assumed to describe their target. The create result,
 stored bytes, `FileWritten.content`, and `EditsApplied.new_string` share the
 same normalized content. Existing CRLF edits remain CRLF under a conflicting
 new-file attribute; snippet-safe overwrites and unreadable targets fail closed.
+Regression coverage includes real non-Git platform-fallback writes and a mock
+filesystem whose path overlaps a host Git repository with the opposite EOL
+attribute; it uses fallback and writes only to the mock backend.
 
 `cargo check -p dsb-tools --all-targets` passed and
-`cargo test -p dsb-tools --lib` printed `78 passed; 0 failed`. With the
+`cargo test -p dsb-tools --lib` printed `79 passed; 0 failed`. With the
 worktree cargo bin on `PATH`,
 `./scripts/vendor-cargo.sh check -p xai-grok-tools --all-targets` passed and
 `PATH="$HOME/.cargo/bin:$PATH" ./scripts/vendor-cargo.sh test -p xai-grok-tools --lib search_replace:: -- --test-threads=1`
-printed `124 passed; 0 failed; 3262 filtered out`.
+printed `125 passed; 0 failed; 3262 filtered out`.
 `./scripts/check-path-a-linkage.sh` printed `PASS`; `git diff --check` passed.
 This is feature verification and does not flip a spec-readiness gate.

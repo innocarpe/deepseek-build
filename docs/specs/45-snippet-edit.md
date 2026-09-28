@@ -95,7 +95,9 @@ Required tool arguments (normative names; wire schema in spec 40):
 | Force overwrite | Only if **user/policy** grants an explicit capability (e.g. permission scope or confirmed flag). **Not** a free model boolean that skips version checks without policy. If force is granted, still revalidate permissions and expire snippets for path. |
 
 For a path that does not exist, `write` selects its line ending from the target
-repository's current Git attributes. Query `text` and `eol` with
+repository's current Git attributes only when the filesystem backend confirms
+that the resolved path names that same target on the host filesystem. Query
+`text` and `eol` with
 `git check-attr -z text eol -- <path>` in the target path's repository context;
 pass the path as a separate argv item after `--`, so spaces, Unicode, and a
 leading `-` are ordinary path characters. The lookup must work when one or
@@ -112,6 +114,15 @@ when it conflicts. Preserve whether the supplied content ends with a newline;
 `write` never appends one. Existing-file `edit` and policy-authorized overwrite
 continue to preserve their existing-file behavior and snippet safety; this
 attribute lookup applies only to a path that did not exist before creation.
+
+Backends that cannot guarantee host-path identity use the platform default
+without running host Git. This includes the current ACP client-filesystem
+adapter: it sends paths through the client protocol and exposes neither a
+host-target guarantee nor a client-side attribute lookup. Thus, even when an
+ACP path string happens to overlap a host repository path, that host repository's
+`.gitattributes` is not applied. A future backend can enable repository policy
+only by providing a capability that guarantees the target path is on the host;
+until then, client-backed creation follows the platform fallback.
 
 ### 1.6 Invalidation / expiry
 
@@ -211,7 +222,9 @@ to an overwrite.
 | `write_new_file_git_eol_lf_crlf` | `eol=lf` and `eol=crlf` select those conventions on every platform |
 | `write_new_file_nested_and_quoted_attributes` | nested attributes and paths containing spaces/Unicode resolve through Git's NUL-delimited output |
 | `write_new_file_missing_parent` | attributes still resolve when the target's parent directories do not yet exist |
-| `write_new_file_attribute_fallbacks` | unspecified/invalid `eol`, `-text`, non-repository/outside paths, missing/failed/timed-out Git all use the platform default |
+| `write_new_file_attribute_fallbacks` | unspecified/invalid `eol`, `-text`, non-repository/outside paths, missing/failed/timed-out Git, and backends without confirmed host paths all use the platform default |
+| `write_new_file_non_git_platform_fallback` | a real new-file write outside Git stores and returns the platform-default bytes |
+| `write_new_file_virtual_fs_ignores_host_attributes` | a mock/client-backed path overlapping a host repository uses platform fallback, not the host `.gitattributes` |
 | `write_new_file_model_crlf_and_eof` | model CRLF is converted to the selected policy without changing whether the content ends in a newline |
 | `write_existing_file_preserves_eol_and_safety` | existing-file edits retain their current EOL and snippet-safe behavior regardless of attributes |
 

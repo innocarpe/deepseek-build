@@ -309,6 +309,29 @@ mod tests {
         );
     }
 
+    #[test]
+    fn non_repository_creation_writes_the_platform_fallback() {
+        let outside = TempDir::new().unwrap();
+        let path = outside.path().join("outside.txt");
+        let git_status = StdCommand::new("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .current_dir(outside.path())
+            .stdout(StdStdio::null())
+            .stderr(StdStdio::null())
+            .status()
+            .expect("git is required for the non-repository fallback test");
+        assert!(!git_status.success(), "fixture must be outside Git");
+
+        let supplied = "one\r\ntwo\n";
+        let expected = platform_default().restore(supplied);
+        let mut store = crate::snippets::SnippetStore::new();
+        let returned = store.write_new(&path, supplied).unwrap();
+
+        assert_eq!(returned, expected);
+        assert_eq!(std::fs::read(&path).unwrap(), expected.as_bytes());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+    }
+
     #[cfg(unix)]
     #[test]
     fn slow_git_is_terminated_within_the_lookup_bound() {

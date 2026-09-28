@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The composer opens a new row only for the character that needs it. Typing to the end of a row used to drop the caret onto an empty row below before anything was typed there, and on a phone-width pane the box grew that empty row two columns early, because the band is drawn across the frame but was measured two columns narrower. A full row now keeps the caret right after its last glyph, and the next character — a one-column letter or a two-column Hangul syllable — opens the row and takes the caret with it. A two-column glyph that meets a single free column still moves to the next row, as before. On a phone the permission follow-up and the question's freeform answer are measured the same way. Desktop row sizing is unchanged.
+
 - Resuming or continuing a full-screen session restores its cumulative billing and Path A cache hit/miss totals from `usage.json` before accepting new requests. Older sessions without saved cache history report it as unknown, and sessions with chat history but no usage file report incomplete totals instead of claiming zero. When the legacy main-loop split is unknown, observed post-upgrade main-loop counts also survive repeated resumes without claiming complete history or inferring them from billing calls.
 
 - New-file `write` uses the target repository's `.gitattributes` `eol` policy

@@ -596,9 +596,8 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
         4,
         "the echo band is a pad row each side and two text rows: {band:?}\n{frame}"
     );
-    assert_eq!(
+    assert!(
         band.windows(2).all(|w| w[1] == w[0] + 1),
-        true,
         "the band's rows are contiguous: {band:?}\n{frame}"
     );
     let clock_row = band[2];

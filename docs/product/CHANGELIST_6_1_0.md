@@ -30,7 +30,7 @@ cut and had not yet been published. It was published later, as recorded above.
 | What | Before → after |
 |---|---|
 | **A cache miss** | The turn could say only that the prefix epoch changed. On Path A, `turn.rs` now logs which of the five assembled documents moved (`prefix_change=`). Categories the assembly cannot see are called `unattributed`, not invented. |
-| **The session's cache total** | In the `6.1.0` snapshot, the in-memory ledger logged one `cache_session=` line per turn (`turn_end.rs`); the then-existing status chip was per-turn. At the `6.8.3` baseline, the TUI chip showed a session-cumulative percentage, but its ledger was not restored into a new process. |
+| **The session's cache total** | In the `6.1.0` snapshot, the in-memory ledger logged one `cache_session=` line per turn and the status chip was per-turn. The published `6.8.3` baseline later showed a session-cumulative chip but did not restore its ledger after restart. Unreleased `main` after [PR #339](https://github.com/innocarpe/deepseek-build/pull/339) restores cumulative usage from each session's `usage.json` before accepting new requests; this does not change what shipped in `v6.8.3`. |
 | **A request that does not match the log** | A divergent non-system item could still be sent. `check_request_projects_log` runs before `run_turn_via_sampler`. Divergence fails the turn. An item that cannot be serialized fails closed. |
 | **A later change of the stable system body** | The earlier system message stays byte-for-byte. The new body is appended. Replacing the `tools` array is not treated as a history event. |
 | **A deny that a later allow reopened** | `DenyOnly` abstains or denies. `combine_decisions` will not let an allow replace a deny. |
@@ -64,5 +64,5 @@ The ledger is board §7. Short form:
 
 - The `e914dfb` snapshot did not say `v6.1.0` was already on npm; the release followed on 2026-09-26.
 - At the `6.1.0` cut, the existing chip was per-turn. The later `6.8.3` baseline chip shows a session-cumulative percentage.
-- The `6.8.3` baseline did not restore the cache ledger into a new process. Reconcile this baseline note with merged source evidence before treating it as current.
+- The published `6.8.3` baseline did not restore the cache ledger after restart. Unreleased `main` after [PR #339](https://github.com/innocarpe/deepseek-build/pull/339) does; older sessions with no cache fields still have unknown cache history, and prior chat history without `usage.json` is marked incomplete.
 - It does not say a live cache-hit percentage was re-tuned. Spec 10 §1.9's mock threshold stays 90%.

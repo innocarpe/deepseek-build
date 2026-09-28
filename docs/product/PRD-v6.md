@@ -242,15 +242,22 @@ Root `Cargo.toml` and `package.json` are `6.8.3`; npm latest is `6.8.3`
 2026-09-28). `v6.1.0` was subsequently published on 2026-09-26; the preceding
 table remains accurate only as the dated `e914dfb` snapshot.
 
-At the `6.8.3` source baseline used for this refresh, the TUI cache chip was
-session-cumulative within the running process.
+At the published `6.8.3` source baseline used for this refresh, the TUI cache
+chip was session-cumulative within the running process.
 `app/agent_view/render.rs:1564-1566` and `:4613-4615` pass
 `ds.usage.totals.cached_read_tokens` and `input_tokens` to the chip formatter;
 `extensions/deepseek.rs:109-120` obtains that usage through
 `try_get_session_usage`, and `actor/mod.rs:368-369` returns the session ledger.
 `actor/state.rs:164-165,232` marked `session_usage` not persisted and initialized
-it empty, so that baseline chip did not restore cache usage into a new process.
-This is a dated `6.8.3` baseline trace, not a claim about later merged source.
+it empty, so published `v6.8.3` did not restore cache usage into a new process.
+
+Unreleased `main`, merged in [PR #339](https://github.com/innocarpe/deepseek-build/pull/339),
+loads the session summary from `usage.json` and restores cumulative billing and
+Path A cache hit/miss totals before the actor accepts new requests. The first
+new turn is measured against that restored baseline, so old usage is not added
+twice. Legacy sessions with no saved cache fields retain unknown cache history;
+existing chat history without a usage file is marked incomplete. This describes
+merged source, not the published `v6.8.3` release.
 
 The live spill demonstration in exit criterion 4 remains **not claimed**. The
 `v6.1.0` publication is confirmed, but this status refresh did not verify the

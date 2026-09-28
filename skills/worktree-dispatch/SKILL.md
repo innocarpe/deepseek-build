@@ -143,7 +143,10 @@ iOS showed the same empty cards. The commands live in
 
 - The user named `grok`, or named `codex` or `claude`: `orca-tab` §2.
   One `worktree create --agent <that name> --prompt …`. Do not also run a
-  bare create.
+  bare create. If the configured Codex launcher cannot supply a requested
+  model/effort, choose `orca-tab` §2a instead: inspect the inventory and
+  screen, then send the full command and brief into the same idle launcher
+  handle. Do not append a terminal for custom arguments.
 - The user named `dsb` or `deepseek-build`, or named no agent: `orca-tab`
   §3. `create` opens one shell; send `dsb` into that shell. Do not
   `terminal create` a second tab. `--agent dsb` is rejected. This repo's
@@ -151,9 +154,14 @@ iOS showed the same empty cards. The commands live in
   launch `codex` or `claude` unless the user named them.
 - The worktree already exists and only has a shell: send `dsb` or `grok`
   into that shell. Do not add a tab, and do not create a second tree.
-- A prompt-only tab sitting next to the agent: close that tab
-  (`orca terminal close --terminal <shell> --tab`) after the agent screen
-  shows it is working. One worktree, one tab.
+- A confirmed leftover idle shell sitting next to the agent: recovery is
+  `orca-tab` §3, after reading both screens. Preserve configured tabs
+  running real commands. `exited` / `screen-unavailable` is not tab removal;
+  verify actual tabs and terminal leaves with
+  `terminal list --include-visual-layouts`. The default owning-session
+  handoff ends with one tab, one terminal leaf, `totalCount: 1`, and the
+  same launcher handle. An explicit current-checkout request for another
+  worker is a separate intent.
 
 **Handoff when the session that creates the worktree already runs
 elsewhere.** The create is bare, the driving tab stays on the original

@@ -107,10 +107,10 @@ pub fn apply_path_a_edit(
 
     if is_create {
         // Create-new is write_new territory; still not free-form overwrite.
-        store
+        let written = store
             .write_new(path, &req.new_string)
             .map_err(|e| PathAEditError::Snippet(EditError::Io(e.to_string())))?;
-        return Ok(req.new_string.clone());
+        return Ok(written);
     }
 
     if policy.require_snippet {
@@ -384,6 +384,54 @@ mod tests {
         };
         apply_path_a_edit(&mut store, PathAEditPolicy::product_default(), &req).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "fn x() {}\n");
+    }
+
+    #[test]
+    fn path_a_create_returns_the_same_git_normalized_content_as_the_file() {
+        use std::process::{Command, Stdio};
+
+        let dir = tempdir().unwrap();
+        let status = Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(dir.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("git is required for the Path A new-file EOL test");
+        assert!(status.success());
+        let status = Command::new("git")
+            .args([
+                "config",
+                "--local",
+                "core.attributesFile",
+                if cfg!(windows) { "NUL" } else { "/dev/null" },
+            ])
+            .current_dir(dir.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        std::fs::write(dir.path().join(".gitattributes"), "*.txt text eol=crlf\n").unwrap();
+
+        let path = dir.path().join("nested").join("new file.txt");
+        let req = GrokPathEditRequest {
+            file_path: path.clone(),
+            old_string: String::new(),
+            new_string: "one\ntwo\r\n".into(),
+            replace_all: false,
+            snippet_id: None,
+            file_version: None,
+        };
+        let returned = apply_path_a_edit(
+            &mut SnippetStore::new(),
+            PathAEditPolicy::product_default(),
+            &req,
+        )
+        .unwrap();
+
+        assert_eq!(returned, "one\r\ntwo\r\n");
+        assert_eq!(std::fs::read(&path).unwrap(), returned.as_bytes());
     }
 
     #[test]

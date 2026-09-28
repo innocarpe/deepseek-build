@@ -223,15 +223,21 @@ impl SnippetStore {
         Ok(new_content)
     }
 
-    pub fn write_new(&mut self, path: &Path, content: &str) -> Result<(), WriteError> {
-        if path.exists() {
-            return Err(WriteError::Exists);
+    pub fn write_new(&mut self, path: &Path, content: &str) -> Result<String, WriteError> {
+        match fs::symlink_metadata(path) {
+            Ok(_) => return Err(WriteError::Exists),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(WriteError::Io(error.to_string())),
         }
-        if let Some(parent) = path.parent() {
+        let normalized = crate::file_eol::normalize_new_file(path, content);
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
             fs::create_dir_all(parent).map_err(|e| WriteError::Io(e.to_string()))?;
         }
-        atomic_write(path, content).map_err(|e| WriteError::Io(e.to_string()))?;
-        Ok(())
+        atomic_write(path, &normalized).map_err(|error| WriteError::Io(error.to_string()))?;
+        Ok(normalized)
     }
 }
 
@@ -407,8 +413,48 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("new.txt");
         let mut store = SnippetStore::new();
-        store.write_new(&path, "hi\n").unwrap();
+        assert_eq!(store.write_new(&path, "hi\n").unwrap(), "hi\n");
         assert_eq!(fs::read_to_string(&path).unwrap(), "hi\n");
+    }
+
+    #[test]
+    fn write_new_returns_the_git_normalized_bytes() {
+        use std::process::{Command, Stdio};
+
+        let dir = tempdir().unwrap();
+        let status = Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(dir.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("git is required for the new-file EOL test");
+        assert!(status.success());
+        let status = Command::new("git")
+            .args([
+                "config",
+                "--local",
+                "core.attributesFile",
+                if cfg!(windows) { "NUL" } else { "/dev/null" },
+            ])
+            .current_dir(dir.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let nested = dir.path().join("space β");
+        fs::create_dir(&nested).unwrap();
+        fs::write(nested.join(".gitattributes"), "*.txt text eol=crlf\n").unwrap();
+        let path = nested.join("not-yet-created").join("-new file.txt");
+        let mut store = SnippetStore::new();
+
+        let written = store.write_new(&path, "one\r\ntwo").unwrap();
+
+        assert_eq!(written, "one\r\ntwo");
+        assert_eq!(fs::read(&path).unwrap(), written.as_bytes());
+        assert!(!written.ends_with('\n'));
     }
 
     // --- Spec 45 §1.9: line endings -----------------------------------------

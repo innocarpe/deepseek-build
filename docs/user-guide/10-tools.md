@@ -34,6 +34,15 @@ npm/GitHub Latest remain **5.2.2** pending publish — see
 Evidence: [`docs/product/evidence/VC006_PATH_A_HEART_R0A_2026-08-08.md`](../product/evidence/VC006_PATH_A_HEART_R0A_2026-08-08.md)
 (plus VC003 mint · VC004 require · VC005 write/bash invalidation)
 
+When `write` creates a path that does not exist, it resolves `text` and `eol`
+from the target repository's current `.gitattributes`. `eol=lf` and
+`eol=crlf` select the stored line endings unless `text` is unset; unsupported
+or unavailable Git attribute lookup uses the platform default. The model's
+CRLF is normalized to the selected convention, its final-newline choice is
+preserved, and the tool result reports the content that was written. This
+policy applies to creation only; existing-file edit and overwrite behavior
+remain governed by Spec 45.
+
 ## Built-in surfaces (illustrative)
 
 ### Full-screen agent (Path A / Grok-derived)

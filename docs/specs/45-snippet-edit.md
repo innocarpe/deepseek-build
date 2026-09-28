@@ -94,6 +94,25 @@ Required tool arguments (normative names; wire schema in spec 40):
 | Path **exists** | Default: **deny** overwrite via `write`. Model must `read` + `edit` with `snippet_id`. |
 | Force overwrite | Only if **user/policy** grants an explicit capability (e.g. permission scope or confirmed flag). **Not** a free model boolean that skips version checks without policy. If force is granted, still revalidate permissions and expire snippets for path. |
 
+For a path that does not exist, `write` selects its line ending from the target
+repository's current Git attributes. Query `text` and `eol` with
+`git check-attr -z text eol -- <path>` in the target path's repository context;
+pass the path as a separate argv item after `--`, so spaces, Unicode, and a
+leading `-` are ordinary path characters. The lookup must work when one or
+more parent directories are about to be created by resolving from the nearest
+existing parent. A valid `eol=lf` or `eol=crlf` is honored unless `text` is
+explicitly unset (`-text`). Nested `.gitattributes` precedence is Git's.
+
+If `eol` is unspecified or invalid, `text` is unset, the target is outside a
+Git worktree, Git is unavailable, the command fails, or its bounded lookup
+times out, use the platform default (CRLF on Windows; LF on macOS/Linux). Do not
+cache the attribute result: each new-file creation observes the current
+working-tree policy. Normalize model-provided CRLF to the selected convention
+when it conflicts. Preserve whether the supplied content ends with a newline;
+`write` never appends one. Existing-file `edit` and policy-authorized overwrite
+continue to preserve their existing-file behavior and snippet safety; this
+attribute lookup applies only to a path that did not exist before creation.
+
 ### 1.6 Invalidation / expiry
 
 Expire (remove or mark unusable) snippets when:
@@ -144,8 +163,13 @@ model cannot act on. Without step 4, a single-line edit overwrites with LF and
 leaves the file with two conventions.
 
 Non-UTF-8 content still fails closed at `read` (§1.8); line-ending handling does
-not extend the snippet contract to binary files. `write` (create-new) writes the
-model's content as given — a new file has no convention to preserve.
+not extend the snippet contract to binary files. `write` for a path that did
+not exist applies the Git-attribute/platform policy in §1.5 and reports the
+normalized content it actually wrote. Existing-file edits and policy-authorized
+overwrites retain the existing behavior: existing-file `edit` EOL handling
+and snippet safety remain unchanged; policy-authorized overwrites keep their
+current authorization and write semantics. New-file conversion does not apply
+to an overwrite.
 
 ## 2. Non-goals
 
@@ -184,6 +208,12 @@ model's content as given — a new file has no convention to preserve.
 | `edit_lf_file_stays_lf` | negative guard: an LF file gains no `\r` |
 | `edit_normalizes_crlf_new_string` | `new_string` sent with `\r\n` does not double the `\r` on a CRLF file |
 | `edit_uniformizes_mixed_endings` | mixed file → all breaks become the snippet's `line_ending` |
+| `write_new_file_git_eol_lf_crlf` | `eol=lf` and `eol=crlf` select those conventions on every platform |
+| `write_new_file_nested_and_quoted_attributes` | nested attributes and paths containing spaces/Unicode resolve through Git's NUL-delimited output |
+| `write_new_file_missing_parent` | attributes still resolve when the target's parent directories do not yet exist |
+| `write_new_file_attribute_fallbacks` | unspecified/invalid `eol`, `-text`, non-repository/outside paths, missing/failed/timed-out Git all use the platform default |
+| `write_new_file_model_crlf_and_eof` | model CRLF is converted to the selected policy without changing whether the content ends in a newline |
+| `write_existing_file_preserves_eol_and_safety` | existing-file edits retain their current EOL and snippet-safe behavior regardless of attributes |
 
 ## 5. Implementation notes
 

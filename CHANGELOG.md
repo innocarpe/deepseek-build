@@ -4,6 +4,8 @@
 
 - On a phone-width pane the turn row above the composer (spinner, elapsed time, `[stop]`) now sits on the footer's edges, one column in from the frame on each side, instead of one column further in on the left and two on the right. The composer's draft starts on the footer's column too, one column closer to the frame edge, on the welcome screen and in a conversation. Desktop widths are unchanged.
 
+- On a phone-width pane the top status row (branch, working directory, and the right-hand items) keeps one column of air at each screen edge instead of touching it. Its text now opens on the same column as the transcript's text and closes one column before the right edge; the transcript, task list, and composer band still span the frame, and desktop panes are unchanged.
+
 - Resuming or continuing a full-screen session restores its cumulative billing and Path A cache hit/miss totals from `usage.json` before accepting new requests. Older sessions without saved cache history report it as unknown, and sessions with chat history but no usage file report incomplete totals instead of claiming zero. When the legacy main-loop split is unknown, observed post-upgrade main-loop counts also survive repeated resumes without claiming complete history or inferring them from billing calls.
 
 - New-file `write` uses the target repository's `.gitattributes` `eol` policy

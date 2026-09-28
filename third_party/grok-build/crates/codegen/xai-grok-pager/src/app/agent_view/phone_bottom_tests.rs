@@ -1248,6 +1248,29 @@ fn phone_compact_pinned_echo_selection_leaves_the_status_bar_alone() {
     );
 }
 
+/// The phone's top status row keeps one column of air at each frame edge: its
+/// location opens on column 1, like the transcript's text, and its right-hand
+/// items close one column before the last.
+#[test]
+fn phone_status_bar_text_stays_one_column_off_the_frame_edges() {
+    let _guard = crate::theme::cache::pin_theme();
+    let mut agent = phone_agent();
+    seed_scrolling_turns(&mut agent);
+    let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    let row = row_text(&buf, 0);
+    let cells: Vec<&str> = (0..PHONE_COLS)
+        .map(|x| buf.cell((x, 0)).unwrap().symbol())
+        .collect();
+    assert_eq!(cells[0], " ", "column 0 is air: {row:?}");
+    assert_ne!(cells[1], " ", "the location opens on column 1: {row:?}");
+    let last_text = (0..PHONE_COLS).rev().find(|&x| cells[x as usize] != " ");
+    assert_eq!(
+        last_text,
+        Some(PHONE_COLS - 2),
+        "the right-hand items close one column before the edge: {row:?}"
+    );
+}
+
 /// With the scrollbar drawn, the echo's band fills every column up to the bar —
 /// the transcript's own width plus the held-copy gutter the transcript leaves
 /// blank — in the flow and pinned alike, and the bar keeps its own column.

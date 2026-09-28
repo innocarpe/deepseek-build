@@ -85,6 +85,29 @@ pub(super) async fn actor_with_mock_sampler_configured(
     max_turns: Option<usize>,
     configure: impl FnOnce(&mut SessionActor),
 ) -> Arc<SessionActor> {
+    actor_with_mock_sampler_configured_and_events(
+        server,
+        persistence_tx,
+        gateway_tx,
+        max_turns,
+        configure,
+    )
+    .await
+    .0
+}
+
+/// The same Path A sampler fixture, retaining the event receiver for tests that assert emitted
+/// host notifications as well as the returned turn snapshot.
+pub(super) async fn actor_with_mock_sampler_configured_and_events(
+    server: &MockInferenceServer,
+    persistence_tx: tokio::sync::mpsc::UnboundedSender<PersistenceMsg>,
+    gateway_tx: tokio::sync::mpsc::UnboundedSender<xai_acp_lib::AcpClientMessage>,
+    max_turns: Option<usize>,
+    configure: impl FnOnce(&mut SessionActor),
+) -> (
+    Arc<SessionActor>,
+    tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
+) {
     let sampling_cfg = xai_grok_sampler::SamplerConfig {
         api_key: Some("test-key".to_string()),
         base_url: server.url(),
@@ -106,7 +129,8 @@ pub(super) async fn actor_with_mock_sampler_configured(
         sampler_event_tx,
     );
 
-    let mut actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+    let (mut actor, event_rx) =
+        create_test_actor_ex(0, 256_000, 85, gateway_tx, persistence_tx).await;
     actor.sampler_handle = sampler_handle;
     actor.max_turns = max_turns;
     *actor.agent.borrow_mut() = test_grok_build_agent_with_todo().await;
@@ -146,7 +170,7 @@ pub(super) async fn actor_with_mock_sampler_configured(
             }
         });
     }
-    actor
+    (actor, event_rx)
 }
 
 pub(super) async fn run_prompt(

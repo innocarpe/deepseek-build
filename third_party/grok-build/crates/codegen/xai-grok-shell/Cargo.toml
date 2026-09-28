@@ -52,6 +52,10 @@ glob = { workspace = true }
 globset = { workspace = true }
 kanal = "0.1"
 regex = { workspace = true }
+tree-sitter = { workspace = true }
+tree-sitter-go = "0.25.0"
+tree-sitter-python = "0.25.0"
+tree-sitter-rust = "0.24.0"
 # rmcp 2.1 + reqwest 0.13 are quarantined inside `xai-grok-mcp`. The remaining
 # MCP code in this crate (extensions/mcp.rs, mcp_doctor.rs) reaches rmcp model
 # types via `xai_grok_mcp::rmcp::model::*`. reqwest 0.13 is a private impl

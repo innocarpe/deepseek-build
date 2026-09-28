@@ -589,6 +589,60 @@ mod tests {
         assert_eq!(plan_git_head(GitRead::Failed, Some("main".into())), None);
     }
 
+    #[test]
+    fn turn_result_metadata_keeps_host_test_evidence_from_the_terminal_snapshot() {
+        let snapshot = crate::session::signals::TurnDeltaSnapshot {
+            current: crate::session::signals::SessionSignals::default(),
+            delta: crate::session::signals::SessionSignalsDelta {
+                test_criteria_changes_this_turn:
+                    crate::session::test_criteria::TestCriteriaChangeReport {
+                        changes: vec![crate::session::test_criteria::TestCriteriaChange {
+                            path: "tests/test_sample.py".into(),
+                            language: crate::session::test_criteria::TestLanguage::Pytest,
+                            change: crate::session::test_criteria::TestChangeKind::Modified,
+                            count: 1,
+                            previous_path: None,
+                        }],
+                        truncated: false,
+                    },
+                ..Default::default()
+            },
+            start_prompt_mode: None,
+            end_prompt_mode: None,
+            turn_input_tokens: 0,
+            turn_output_tokens: 0,
+            turn_cached_input_tokens: 0,
+            model_fingerprint: None,
+        };
+        let metadata = super::TurnResultArgs {
+            request_id: "cancelled-request".into(),
+            completed: false,
+            stop_reason: "Cancelled".into(),
+            total_tokens: Some(0),
+            error: None,
+            finished_at: "2026-09-29T00:00:00Z".into(),
+            turn_snapshot: Some(snapshot),
+            prompt_mode: "agent".into(),
+            subagents_spawned: vec![],
+        }
+        .into_metadata(None);
+
+        let bytes = serde_json::to_vec_pretty(&metadata).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            value
+                .pointer("/turn_delta/testCriteriaChangesThisTurn/changes/0/path")
+                .and_then(serde_json::Value::as_str),
+            Some("tests/test_sample.py")
+        );
+        assert_eq!(
+            value
+                .pointer("/turn_delta/testCriteriaChangesThisTurn/changes/0/change")
+                .and_then(serde_json::Value::as_str),
+            Some("modified")
+        );
+    }
+
     #[tokio::test]
     async fn dropped_claim_keeps_later_turn_ordered() {
         let order = crate::session::handle::RegistryWriteOrder::default();

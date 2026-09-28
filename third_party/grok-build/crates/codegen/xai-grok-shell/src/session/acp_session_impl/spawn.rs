@@ -726,6 +726,22 @@ pub(crate) async fn spawn_session_actor(
     let queue_exit_reminder_on_approved_exit = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let emit_local_background_tasks = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let background_tasks_snapshot_pending = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // `AcpFsAdapter` routes file operations to the client, where a path string need not name
+    // this host's file. Only derive a local Git root when the same backend selection below uses
+    // `LocalFs`; client-backed ACP writes are outside this evidence source's trust boundary.
+    let client_file_system_adapter =
+        uses_client_file_system_adapter(client_fs_capable, tool_context.gateway.is_some());
+    let test_criteria_repo_root = if client_file_system_adapter {
+        None
+    } else {
+        git2::Repository::discover(tool_context.cwd.as_path())
+            .ok()
+            .and_then(|repository| repository.workdir().map(|path| path.to_path_buf()))
+    };
+    let test_criteria_signals: Arc<
+        std::sync::OnceLock<crate::session::signals::SessionSignalsHandle>,
+    > = Arc::new(std::sync::OnceLock::new());
+    let test_criteria_signals_for_observer = Arc::clone(&test_criteria_signals);
     let tools_notification_handle = crate::tools::notification_bridge::spawn_notification_bridge(
         crate::tools::notification_bridge::NotificationBridgeConfig {
             gateway: gateway.clone(),
@@ -752,7 +768,15 @@ pub(crate) async fn spawn_session_actor(
             background_tasks_snapshot_pending: background_tasks_snapshot_pending.clone(),
             emit_local_background_tasks: emit_local_background_tasks.clone(),
         },
-    );
+    )
+    .with_file_written_observer(move |written| {
+        if let (Some(repo_root), Some(signals)) = (
+            test_criteria_repo_root.as_deref(),
+            test_criteria_signals_for_observer.get(),
+        ) {
+            signals.record_test_criteria_write(repo_root, written);
+        }
+    });
     let cursor_harness = false;
     let (terminal_backend_timer, terminal_backend_span) = spawn_await_step!("terminal_backend");
     let terminal_backend_guard = terminal_backend_span.enter();
@@ -826,7 +850,7 @@ pub(crate) async fn spawn_session_actor(
     }
     drop(terminal_backend_timer);
     let fs_backend: std::sync::Arc<dyn xai_grok_tools::computer::types::AsyncFileSystem> =
-        if client_fs_capable && tool_context.gateway.is_some() {
+        if client_file_system_adapter {
             std::sync::Arc::new(xai_grok_workspace::file_system::AcpFsAdapter::new(
                 tool_context.gateway.clone().unwrap(),
                 tool_context.session_id.clone().unwrap(),
@@ -1502,6 +1526,7 @@ pub(crate) async fn spawn_session_actor(
         feedback_config,
     ));
     let signals_handle = feedback_manager.signals_handle();
+    let _ = test_criteria_signals.set(signals_handle.clone());
     if let Some(persisted) = persisted_signals {
         signals_handle.restore_signals(persisted);
     } else {
@@ -3020,6 +3045,11 @@ fn resumed_prefix_carries_fallback_date(
         contains("<user_info>") && contains(crate::session::user_message::USER_INFO_DATE_MARKER)
     })
 }
+
+fn uses_client_file_system_adapter(client_fs_capable: bool, gateway_available: bool) -> bool {
+    client_fs_capable && gateway_available
+}
+
 #[cfg(test)]
 mod resumed_prefix_fallback_tests {
     use super::resumed_prefix_carries_fallback_date;
@@ -3112,6 +3142,19 @@ mod memory_storage_select_tests {
         );
     }
 }
+#[cfg(test)]
+mod test_criteria_file_system_selection_tests {
+    use super::uses_client_file_system_adapter;
+
+    #[test]
+    fn only_client_backed_acp_filesystem_selection_disables_host_path_observation() {
+        assert!(!uses_client_file_system_adapter(false, false));
+        assert!(!uses_client_file_system_adapter(false, true));
+        assert!(!uses_client_file_system_adapter(true, false));
+        assert!(uses_client_file_system_adapter(true, true));
+    }
+}
+
 #[cfg(test)]
 mod terminal_backend_select_tests {
     use super::{TerminalBackendKind, select_terminal_backend_kind};

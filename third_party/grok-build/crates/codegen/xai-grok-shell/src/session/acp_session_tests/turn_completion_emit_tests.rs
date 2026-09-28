@@ -1145,6 +1145,136 @@ async fn assert_no_turn_delta(rx: &mut mpsc::UnboundedReceiver<serde_json::Value
     );
 }
 
+async fn persistence_messages_through_terminal(
+    rx: &mut mpsc::UnboundedReceiver<PersistenceMsg>,
+) -> Vec<PersistenceMsg> {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let mut messages = Vec::new();
+        loop {
+            let message = rx.recv().await.expect("persistence channel remains open");
+            let terminal_seen = is_durable_turn_completed(&message);
+            messages.push(message);
+            if terminal_seen {
+                return messages;
+            }
+        }
+    })
+    .await
+    .expect("terminal settlement must persist without waiting for its own event ack")
+}
+
+fn start_test_persistence_sink(
+    mut persistence_rx: mpsc::UnboundedReceiver<PersistenceMsg>,
+) -> (
+    mpsc::UnboundedReceiver<PersistenceMsg>,
+    tokio::task::JoinHandle<()>,
+) {
+    let (persisted_tx, persisted_rx) = mpsc::unbounded_channel();
+    let consumer = tokio::task::spawn_local(async move {
+        while let Some(message) = persistence_rx.recv().await {
+            match message {
+                PersistenceMsg::FlushAndAck { respond_to } => {
+                    let _ = respond_to.send(Ok(()));
+                }
+                other => {
+                    let _ = persisted_tx.send(other);
+                }
+            }
+        }
+    });
+    (persisted_rx, consumer)
+}
+
+fn drain_gateway_host_test_notes(
+    rx: &mut mpsc::UnboundedReceiver<xai_acp_lib::AcpClientMessage>,
+) -> Vec<String> {
+    let mut notes = Vec::new();
+    while let Ok(message) = rx.try_recv() {
+        if let xai_acp_lib::AcpClientMessage::SessionNotification(args) = message {
+            if let acp::SessionUpdate::AgentMessageChunk(chunk) = &args.request.update
+                && crate::session::storage::is_host_turn_chunk(chunk)
+                && let acp::ContentBlock::Text(text) = &chunk.content
+            {
+                notes.push(text.text.clone());
+            }
+            let _ = args.response_tx.send(Ok(()));
+        }
+    }
+    notes
+}
+
+fn persisted_host_test_notes(messages: &[PersistenceMsg]) -> Vec<String> {
+    messages
+        .iter()
+        .filter_map(|message| {
+            let PersistenceMsg::Update(crate::session::storage::SessionUpdate::Acp(notification)) =
+                message
+            else {
+                return None;
+            };
+            let acp::SessionUpdate::AgentMessageChunk(chunk) = &notification.update else {
+                return None;
+            };
+            if !crate::session::storage::is_host_turn_chunk(chunk) {
+                return None;
+            }
+            let acp::ContentBlock::Text(text) = &chunk.content else {
+                panic!("host test evidence should be text");
+            };
+            Some(text.text.clone())
+        })
+        .collect()
+}
+
+fn record_test_change_receipt(
+    actor: &SessionActor,
+    root: &std::path::Path,
+    file_name: &str,
+    before: &str,
+    after: &str,
+) {
+    let absolute_path = root.join(file_name);
+    std::fs::write(&absolute_path, after).expect("fixture file write");
+    actor.signals_handle().record_test_criteria_write(
+        root,
+        &xai_grok_tools::notification::types::FileWritten {
+            tool_call_id: "path-a-write".into(),
+            absolute_path,
+            content: after.into(),
+            previous_content: Some(before.into()),
+            is_new_file: false,
+        },
+    );
+}
+
+fn serialized_turn_result(
+    request_id: &str,
+    completed: bool,
+    stop_reason: &str,
+    snapshot: &crate::session::signals::TurnDeltaSnapshot,
+) -> serde_json::Value {
+    let metadata = crate::upload::trace::TurnResultMetadata {
+        schema_version: "v1.17",
+        request_id: request_id.into(),
+        completed,
+        stop_reason: Some(stop_reason.into()),
+        total_tokens: Some(0),
+        input_tokens: Some(snapshot.turn_input_tokens),
+        cached_input_tokens: Some(snapshot.turn_cached_input_tokens),
+        output_tokens: Some(snapshot.turn_output_tokens),
+        error: None,
+        finished_at: chrono::Utc::now().to_rfc3339(),
+        signals: Some(snapshot.current.clone()),
+        turn_delta: Some(snapshot.delta.clone()),
+        resolved_model: None,
+        subagents_spawned: vec![],
+        start_prompt_mode: snapshot.start_prompt_mode.clone(),
+        end_prompt_mode: snapshot.end_prompt_mode.clone(),
+    };
+    let bytes = serde_json::to_vec_pretty(&metadata).expect("turn_result.json serialization");
+    serde_json::from_slice(&bytes).expect("turn_result.json JSON")
+}
+
 /// Queue `prompt_id` as a user row and promote it through the actor's own install path.
 /// Returns the prompt's RPC receiver; the promoted task is running (or about to) when this returns.
 async fn promote_prompt(
@@ -1363,8 +1493,8 @@ fn every_terminal_posts_one_delta_with_the_settled_outcome() {
                         result.as_ref().is_ok_and(|ok| matches!(
                             ok.completion_kind,
                             PromptCompletionKind::MaxTurnsReached { .. }
-                        ) && ok.turn_snapshot.is_none()),
-                        "{prompt_id}: {result:?}"
+                        ) && ok.turn_snapshot.is_some()),
+                        "{prompt_id}: max-turns terminal carries its cancelled turn snapshot: {result:?}"
                     ),
                     _ => assert!(result.is_err(), "{prompt_id}: {result:?}"),
                 }
@@ -1384,6 +1514,252 @@ fn every_terminal_posts_one_delta_with_the_settled_outcome() {
                 );
             }
             assert_no_turn_delta(&mut delta_rx, "one row per turn").await;
+        });
+    });
+}
+
+/// A real Path A write receipt reaches the host notification and terminal snapshot on both
+/// completion and user cancellation. The test reuses `create_test_actor_ex` and the shipped
+/// `handle_completion` / `cancel_running_task` handlers, while leaving the actor event channel
+/// without a consumer so terminal settlement cannot pass by relying on a test FlushReplay ack.
+#[test]
+fn path_a_completed_and_cancelled_turns_carry_test_change_evidence() {
+    use super::disk_full_tests::{block_on_session, current_thread_local};
+
+    block_on_session(|| {
+        current_thread_local(async {
+            let (gateway_tx, mut gateway_rx) = mpsc::unbounded_channel();
+            let (persistence_tx, persistence_rx) = mpsc::unbounded_channel::<PersistenceMsg>();
+            let (mut persisted_rx, persistence_sink) = start_test_persistence_sink(persistence_rx);
+            let (actor, event_rx) =
+                create_test_actor_ex(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            // Keep the event channel open, but deliberately do not read or acknowledge it. A
+            // terminal handler that queues FlushReplay and awaits its ack would block here.
+            let _undrained_event_rx = event_rx;
+            let actor = Arc::new(actor);
+            let fixture = tempfile::tempdir().expect("test Git worktree");
+            git2::Repository::init(fixture.path()).expect("initialize fixture repository");
+
+            let py_before = "@pytest.mark.parametrize('value', [1], ids=('before-secret',))\ndef test_private_case(value):\n    assert value == 'before-literal'\n";
+            let py_after = "@pytest.mark.parametrize('value', [2], ids=('after-secret',))\ndef test_private_case(value):\n    assert value == 'after-literal'\n";
+            let completed_id = "p-test-evidence-completed";
+            let (completed_input, completed_rx) = pending_input(completed_id);
+            *actor
+                .current_prompt_id
+                .lock()
+                .expect("current_prompt_id mutex poisoned") = Some(completed_id.into());
+            {
+                let mut state = actor.state.lock().await;
+                state.pending_inputs.push_back(completed_input);
+                state.running_task = Some(running_task_stub(completed_id));
+            }
+            actor.signals_handle().increment_turn();
+            record_test_change_receipt(
+                &actor,
+                fixture.path(),
+                "test_completion.py",
+                py_before,
+                py_after,
+            );
+            let completed_snapshot = actor
+                .take_completed_turn_snapshot(&super::turn::TurnSampling::default())
+                .await
+                .expect("completed Path A turn snapshot");
+            assert_eq!(
+                completed_snapshot
+                    .delta
+                    .test_criteria_changes_this_turn
+                    .changes
+                    .first()
+                    .map(|change| (change.path.as_str(), change.change)),
+                Some((
+                    "test_completion.py",
+                    crate::session::test_criteria::TestChangeKind::Modified
+                ))
+            );
+            let owned = tokio::time::timeout(
+                std::time::Duration::from_secs(4),
+                actor.handle_completion(
+                    completed_id.into(),
+                    TurnEpoch::default(),
+                    &completion_identity(&actor),
+                    Ok(PromptTurnOk {
+                        stop_reason: acp::StopReason::EndTurn,
+                        total_tokens: 0,
+                        turn_snapshot: Some(completed_snapshot),
+                        completion_kind: PromptCompletionKind::Completed,
+                        structured_output: None,
+                        usage: None,
+                        tool_overrides: None,
+                    }),
+                    Some(0),
+                ),
+            )
+            .await;
+            let owned = owned.expect(
+                "completion settlement must not wait for a FlushReplay ack from its own run loop",
+            );
+            assert!(owned, "the production completion handler owns the turn");
+            let completed = completed_rx
+                .await
+                .expect("completion response")
+                .expect("completed Path A turn");
+            let completed_snapshot = completed
+                .turn_snapshot
+                .as_ref()
+                .expect("completed response carries the finalized snapshot");
+            assert_eq!(
+                completed_snapshot
+                    .delta
+                    .test_criteria_changes_this_turn
+                    .changes
+                    .first()
+                    .map(|change| (change.path.as_str(), change.change)),
+                Some((
+                    "test_completion.py",
+                    crate::session::test_criteria::TestChangeKind::Modified
+                ))
+            );
+            let completed_messages = persistence_messages_through_terminal(&mut persisted_rx).await;
+            let mut completed_notes = persisted_host_test_notes(&completed_messages);
+            assert_eq!(
+                completed_notes.len(),
+                1,
+                "the host note persists exactly once"
+            );
+            let completed_note = completed_notes.pop().unwrap();
+            let gateway_completed_notes = drain_gateway_host_test_notes(&mut gateway_rx);
+            assert_eq!(gateway_completed_notes, vec![completed_note.clone()]);
+            let host_persisted_at = completed_messages
+                .iter()
+                .position(|message| {
+                    !persisted_host_test_notes(std::slice::from_ref(message)).is_empty()
+                })
+                .expect("the host note is persisted");
+            let terminal_persisted_at = completed_messages
+                .iter()
+                .position(is_durable_turn_completed)
+                .expect("the completed terminal is durably persisted");
+            assert!(host_persisted_at < terminal_persisted_at);
+            assert!(completed_note.contains("test_completion.py"));
+            assert!(completed_note.contains("modified"));
+            assert!(!completed_note.contains("test_private_case"));
+            assert!(!completed_note.contains("before-secret"));
+            assert!(!completed_note.contains("after-literal"));
+            let completed_json = serialized_turn_result(
+                "p-test-evidence-completed",
+                true,
+                "EndTurn",
+                completed_snapshot,
+            );
+            assert_eq!(
+                completed_json
+                    .pointer("/turn_delta/testCriteriaChangesThisTurn/changes/0/path")
+                    .and_then(serde_json::Value::as_str),
+                Some("test_completion.py")
+            );
+            assert_eq!(
+                completed_json
+                    .pointer("/turn_delta/testCriteriaChangesThisTurn/changes/0/change")
+                    .and_then(serde_json::Value::as_str),
+                Some("modified")
+            );
+            let completed_serialized = completed_json.to_string();
+            assert!(!completed_serialized.contains("test_private_case"));
+            assert!(!completed_serialized.contains("before-secret"));
+            assert!(!completed_serialized.contains("after-literal"));
+            let rust_before = "#[test]\n#[ignore]\nfn private_cancel_case() {}\n";
+            let rust_after = "#[test]\n#[should_panic]\nfn private_cancel_case() {}\n";
+            let cancelled_id = "p-test-evidence-cancelled";
+            let (cancelled_input, cancelled_rx) = pending_input(cancelled_id);
+            *actor
+                .current_prompt_id
+                .lock()
+                .expect("current_prompt_id mutex poisoned") = Some(cancelled_id.into());
+            {
+                let mut state = actor.state.lock().await;
+                state.pending_inputs.push_back(cancelled_input);
+                state.running_task = Some(running_task_stub(cancelled_id));
+            }
+            actor.signals_handle().increment_turn();
+            record_test_change_receipt(
+                &actor,
+                fixture.path(),
+                "cancelled_test.rs",
+                rust_before,
+                rust_after,
+            );
+            let cancel = tokio::time::timeout(
+                std::time::Duration::from_secs(4),
+                actor.cancel_running_task(esc()),
+            )
+            .await
+            .expect("cancel settlement must not wait for a FlushReplay ack from its own run loop");
+            assert!(cancel.settled);
+            let cancelled = cancelled_rx
+                .await
+                .expect("cancel response")
+                .expect("cancelled Path A turn");
+            assert!(matches!(
+                cancelled.completion_kind,
+                PromptCompletionKind::Cancelled { .. }
+            ));
+            let cancelled_snapshot = cancelled
+                .turn_snapshot
+                .as_ref()
+                .expect("cancelled response carries finalized test evidence");
+            assert_eq!(
+                cancelled_snapshot
+                    .delta
+                    .test_criteria_changes_this_turn
+                    .changes
+                    .first()
+                    .map(|change| (change.path.as_str(), change.change)),
+                Some((
+                    "cancelled_test.rs",
+                    crate::session::test_criteria::TestChangeKind::Modified
+                ))
+            );
+            let cancelled_messages = persistence_messages_through_terminal(&mut persisted_rx).await;
+            let mut cancelled_notes = persisted_host_test_notes(&cancelled_messages);
+            assert_eq!(
+                cancelled_notes.len(),
+                1,
+                "the cancellation note persists exactly once"
+            );
+            let cancelled_note = cancelled_notes.pop().unwrap();
+            let gateway_cancelled_notes = drain_gateway_host_test_notes(&mut gateway_rx);
+            assert_eq!(gateway_cancelled_notes, vec![cancelled_note.clone()]);
+            let host_persisted_at = cancelled_messages
+                .iter()
+                .position(|message| {
+                    !persisted_host_test_notes(std::slice::from_ref(message)).is_empty()
+                })
+                .expect("the host note is persisted");
+            let terminal_persisted_at = cancelled_messages
+                .iter()
+                .position(is_durable_turn_completed)
+                .expect("the cancelled terminal is durably persisted");
+            assert!(host_persisted_at < terminal_persisted_at);
+            assert!(cancelled_note.contains("cancelled_test.rs"));
+            assert!(cancelled_note.contains("modified"));
+            assert!(!cancelled_note.contains("private_cancel_case"));
+            let cancelled_json = serialized_turn_result(
+                "p-test-evidence-cancelled",
+                false,
+                "Cancelled",
+                cancelled_snapshot,
+            );
+            assert_eq!(
+                cancelled_json
+                    .pointer("/turn_delta/testCriteriaChangesThisTurn/changes/0/path")
+                    .and_then(serde_json::Value::as_str),
+                Some("cancelled_test.rs")
+            );
+            assert!(!cancelled_json.to_string().contains("private_cancel_case"));
+
+            persistence_sink.abort();
+            let _ = persistence_sink.await;
         });
     });
 }

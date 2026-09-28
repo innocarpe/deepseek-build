@@ -13,6 +13,9 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::doom_loop_telemetry::merge_tightest_trigger;
 use super::inference_metrics::{InferenceLatencyStats, compute_percentiles};
+use super::test_criteria::{
+    TestCriteriaChangeReport, TestCriteriaWriteReceipt, TurnTestCriteriaState, TurnWriteTracker,
+};
 
 /// Sample the process resident-set high-water mark in bytes.
 /// Uses `getrusage(RUSAGE_SELF)` on Unix; returns 0 if sampling fails or on non-Unix targets.
@@ -198,6 +201,12 @@ pub struct SessionSignalsDelta {
     /// PRs created during this turn (url/number/source/attribution).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub prs_created_this_turn: Vec<PrCreatedSignal>,
+    /// Host-observed test criterion changes from successful structured file writes.
+    #[serde(default, skip_serializing_if = "TestCriteriaChangeReport::is_empty")]
+    pub(crate) test_criteria_changes_this_turn: TestCriteriaChangeReport,
+    /// Pending final-content evidence, consumed by Path A before turn-result serialization.
+    #[serde(skip)]
+    pub(crate) test_criteria_end_state: TurnTestCriteriaState,
 }
 
 /// Session signals that inform feedback request heuristics.
@@ -412,7 +421,7 @@ pub struct SessionSignals {
 /// Events that can be sent to the signals actor.
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
-pub enum SignalEvent {
+pub(crate) enum SignalEvent {
     // === Turn/Message Events ===
     /// Increment turn count (user submitted a prompt)
     IncrementTurn,
@@ -550,6 +559,8 @@ pub enum SignalEvent {
     RecordPrCreated(PrCreatedSignal),
     /// Successful `gh pr merge` statement in a bash tool call.
     RecordPrMerged,
+    /// Successful structured write receipt used for per-turn test change evidence.
+    RecordTestCriteriaWrite(TestCriteriaWriteReceipt),
 
     // === Control Events ===
     /// Seed initial counts from persisted data (for session resume)
@@ -640,6 +651,17 @@ impl SessionSignalsHandle {
             tool_call_id: tool_call_id.into(),
             duration_ms,
         });
+    }
+
+    /// Record a bounded receipt from an in-process successful file write.
+    pub(crate) fn record_test_criteria_write(
+        &self,
+        repo_root: &std::path::Path,
+        written: &xai_grok_tools::notification::types::FileWritten,
+    ) {
+        if let Some(receipt) = TestCriteriaWriteReceipt::from_file_written(repo_root, written) {
+            let _ = self.tx.send(SignalEvent::RecordTestCriteriaWrite(receipt));
+        }
     }
 
     /// Record a bare echo/printf command for telemetry.
@@ -1010,6 +1032,10 @@ pub struct SessionSignalsActor {
     prs_created_this_turn: Vec<PrCreatedSignal>,
     /// Preserved across turn resets for feedback notifications.
     last_completed_turn_tool_outcomes: Vec<ToolOutcome>,
+    /// Structured successful writes observed since the previous turn snapshot.
+    test_criteria_tracker: TurnWriteTracker,
+    /// Whether the current interval between `IncrementTurn` and turn snapshot is active.
+    test_criteria_turn_active: bool,
 
     // === LOC Attribution state ===
     /// Distinct files touched by agent (for dedup)
@@ -1061,6 +1087,8 @@ impl SessionSignalsActor {
             turn_thinking_tokens: None,
             prs_created_this_turn: Vec::new(),
             last_completed_turn_tool_outcomes: Vec::new(),
+            test_criteria_tracker: TurnWriteTracker::default(),
+            test_criteria_turn_active: false,
             agent_files_set: HashSet::new(),
             human_files_set: HashSet::new(),
         };
@@ -1086,6 +1114,7 @@ impl SessionSignalsActor {
                     self.signals.turn_count += 1;
                     self.signals.user_message_count += 1;
                     self.turn_model_fingerprint = None;
+                    self.test_criteria_turn_active = true;
                 }
                 SignalEvent::RecordAssistantMessage => {
                     self.signals.assistant_message_count += 1;
@@ -1186,6 +1215,11 @@ impl SessionSignalsActor {
                 }
                 SignalEvent::RecordPrMerged => {
                     self.signals.pr_merged_count += 1;
+                }
+                SignalEvent::RecordTestCriteriaWrite(receipt) => {
+                    if self.test_criteria_turn_active {
+                        self.test_criteria_tracker.record(receipt);
+                    }
                 }
                 // === Error Events ===
                 SignalEvent::RecordError { error_type } => {
@@ -1332,6 +1366,7 @@ impl SessionSignalsActor {
                     respond_to,
                     completed,
                 } => {
+                    self.test_criteria_turn_active = false;
                     // Reconcile PR-create attribution now that every event of the turn has been processed (same channel, FIFO)
                     // Parallel tool results can record a create before a sibling commit lands
                     if self.signals.git_commit_count > 0 {
@@ -1433,6 +1468,8 @@ impl SessionSignalsActor {
                         delta_prs_merged: self.signals.pr_merged_count as i64
                             - prev.map_or(0, |p| p.pr_merged_count as i64),
                         prs_created_this_turn: std::mem::take(&mut self.prs_created_this_turn),
+                        test_criteria_changes_this_turn: TestCriteriaChangeReport::default(),
+                        test_criteria_end_state: self.test_criteria_tracker.take(),
                     };
 
                     // Deduplicate and cap tools_this_turn at 100 entries.

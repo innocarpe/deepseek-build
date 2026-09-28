@@ -288,3 +288,40 @@ This hosted result is separate from the historical local full-run failures
 above and from main run #36409062503, which completed successfully on
 `035fe245e5b80b7ec28545d0df575578c4197d14`. It does not establish that an earlier
 local failure was intermittent, fixed, or caused by a particular factor.
+
+## Verification — jump-to-bottom chip padding and right edge (2026-09-29)
+
+The chip's two padding columns now paint as half blocks (`▐` left, `▌` right —
+the chip's colour as the block's ink, the canvas as its background), so the
+padding reads at half its former width while both columns stay whole cells
+inside the click target. A wide glyph starting on the chip's last column can no
+longer leave a terminal-default cell just right of the chip: before painting,
+the chip repaints that exposed trailing cell in the glyph's own style (`bg`
+falls back to `theme.bg_base` when the glyph carries none), so the cell
+`Buffer::diff` forces out after the chip replaces the glyph's leading half
+carries a real background instead of the content's hidden `Cell::EMPTY`. Themes
+whose chip or canvas colour is `Color::Reset` (terminal-native) keep the plain
+padded cell, because a half block painted with default colours would ink the
+default foreground.
+
+Local evidence on this host, serially through the vendored wrapper:
+
+- `./scripts/vendor-cargo.sh fmt --all -- --check` — passed (`rc=0`).
+- `./scripts/vendor-cargo.sh --allow-concurrent check -p xai-grok-pager
+  --all-targets` — passed (`check_rc=0`).
+- `./scripts/vendor-cargo.sh test -p xai-grok-pager --lib follow_indicator_tests
+  -- --nocapture` — `8 passed; 0 failed` (`follow_rc=0`).
+- `./scripts/vendor-cargo.sh test -p xai-grok-pager --lib jump_to_bottom_tests
+  -- --nocapture` — `11 passed; 0 failed` (`jump_rc=0`), including the 55x41
+  frame dump `line 37      ▐Jump to bottom (click) ↓▌      8:28 AM`, the
+  emitted-cell checks on the chip's row, and the padding hover/click tests at
+  every label width.
+
+The first run of the two filters failed 3 of 11 (`jump_rc=101`): this host's
+test process can sit on the terminal-native (`Reset`) palette while
+`scrollback::blocks::thinking`'s palette test holds the process lock, and the
+frame tests read concrete colours. They now take
+`theme::cache::pin_theme()` like the other colour-sensitive frame tests, and the
+rerun above is the result. The pager's full `--lib` suite is not run locally on
+purpose (this host blocks in the CoreAudio voice probe, measured 2026-09-27);
+the broad run is CI's workspace `grok test`.

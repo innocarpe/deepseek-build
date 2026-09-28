@@ -126,6 +126,121 @@ fn missing_usage_file_for_an_existing_session_is_unknown_not_empty() {
 }
 
 #[tokio::test]
+async fn legacy_main_loop_subtotal_survives_repeated_resume_roundtrips() {
+    let info = Info {
+        id: acp::SessionId::new("usage-legacy-main-loop-subtotal"),
+        cwd: "/test".into(),
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Arc::new(JsonlStorageAdapter::with_root(dir.path().to_path_buf()));
+    storage
+        .init_session(&info, default_model_id())
+        .await
+        .unwrap();
+
+    // This old summary has aggregate billing calls but no main-loop/subagent split.
+    let legacy: crate::session::usage_file::SessionUsageFile =
+        serde_json::from_value(serde_json::json!({
+            "sessionId": info.id.to_string(),
+            "session": {
+                "inputTokens": 400,
+                "outputTokens": 40,
+                "totalTokens": 440,
+                "modelCalls": 4
+            }
+        }))
+        .unwrap();
+    storage.write_usage(&info, &legacy).await.unwrap();
+
+    let legacy = storage.read_usage(&info).await.unwrap().unwrap();
+    let (mut first_ledger, first_baseline) = restore_session_usage(Some(legacy), true);
+    assert_eq!(first_ledger.totals.model_calls, 4);
+    assert_eq!(first_ledger.main_loop_model_calls, 0);
+    assert!(!first_ledger.main_loop_model_calls_known);
+    let first_baseline = first_baseline.unwrap();
+
+    for _ in 0..2 {
+        first_ledger.record_main_loop_call(
+            "grok-4",
+            &cache_usage(Some(80), Some(20)),
+            Some(1_000),
+            Some(100),
+        );
+    }
+    assert_eq!(first_ledger.main_loop_model_calls, 2);
+    assert!(!first_ledger.main_loop_model_calls_known);
+    assert_eq!(first_ledger.totals.model_calls, 6);
+
+    let first_actor = test_actor_with_usage_baseline(info.clone(), storage.clone(), first_baseline);
+    let (respond_to, ack) = tokio::sync::oneshot::channel();
+    first_actor
+        .handle
+        .tx
+        .send(PersistenceMsg::UsageTurn {
+            turn_number: 1,
+            live: crate::session::usage_file::UsageSummary::from_ledger(&first_ledger),
+            respond_to,
+        })
+        .unwrap();
+    ack.await.unwrap().unwrap();
+    first_actor.stop().await;
+
+    let first_persist = storage.read_usage(&info).await.unwrap().unwrap();
+    assert_eq!(first_persist.session.model_calls, 6);
+    assert_eq!(first_persist.session.main_loop_model_calls, Some(2));
+    assert_eq!(
+        first_persist.session.main_loop_model_calls_known,
+        Some(false)
+    );
+    let first_resume = first_persist.session.to_ledger();
+    assert_eq!(first_resume.main_loop_model_calls, 2);
+    assert!(!first_resume.main_loop_model_calls_known);
+    assert_eq!(first_resume.totals.model_calls, 6);
+    assert!(!first_resume.cache_session.history_complete());
+
+    // A second process starts from the saved subtotal, records one more call,
+    // and must retain both the count and its incomplete-history marker.
+    let second_baseline = crate::session::usage_file::UsageSummary::from_ledger(&first_resume);
+    let mut second_ledger = first_resume;
+    second_ledger.record_main_loop_call(
+        "grok-4",
+        &cache_usage(Some(80), Some(20)),
+        Some(1_000),
+        Some(100),
+    );
+    let second_actor =
+        test_actor_with_usage_baseline(info.clone(), storage.clone(), second_baseline);
+    let (respond_to, ack) = tokio::sync::oneshot::channel();
+    second_actor
+        .handle
+        .tx
+        .send(PersistenceMsg::UsageTurn {
+            // The process-local cursor is empty, so the inherited row is not folded.
+            turn_number: 1,
+            live: crate::session::usage_file::UsageSummary::from_ledger(&second_ledger),
+            respond_to,
+        })
+        .unwrap();
+    ack.await.unwrap().unwrap();
+    second_actor.stop().await;
+
+    let second_persist = storage.read_usage(&info).await.unwrap().unwrap();
+    assert_eq!(second_persist.session.model_calls, 7);
+    assert_eq!(second_persist.session.main_loop_model_calls, Some(3));
+    assert_eq!(
+        second_persist.session.main_loop_model_calls_known,
+        Some(false)
+    );
+    assert_eq!(second_persist.turns.len(), 2);
+    assert_eq!(second_persist.turns[1].turn_number, 2);
+    let second_resume = second_persist.session.to_ledger();
+    assert_eq!(second_resume.main_loop_model_calls, 3);
+    assert!(!second_resume.main_loop_model_calls_known);
+    assert_eq!(second_resume.totals.model_calls, 7);
+    assert!(!second_resume.cache_session.history_complete());
+}
+
+#[tokio::test]
 async fn resume_restores_live_baseline_and_keeps_the_process_local_turn_cursor() {
     let info = Info {
         id: acp::SessionId::new("usage-resume-baseline"),
@@ -149,6 +264,7 @@ async fn resume_restores_live_baseline_and_keeps_the_process_local_turn_cursor()
     // Model an existing usage.json written before Path A's live ledger fields.
     historical.cache_session = None;
     historical.main_loop_model_calls = None;
+    historical.main_loop_model_calls_known = None;
     historical.api_duration_ms = 0;
     historical.turn_count = 1;
     let mut file = crate::session::usage_file::SessionUsageFile::new(info.id.to_string());
@@ -215,7 +331,8 @@ async fn resume_restores_live_baseline_and_keeps_the_process_local_turn_cursor()
     assert_eq!(saved.session.api_duration_ms, 5_000);
     assert_eq!(saved.session.cost_usd_ticks, Some(300));
     assert_eq!(saved.session.cost_missing_calls, 1);
-    assert_eq!(saved.session.main_loop_model_calls, None);
+    assert_eq!(saved.session.main_loop_model_calls, Some(2));
+    assert_eq!(saved.session.main_loop_model_calls_known, Some(false));
     let cache = saved.session.cache_session.as_ref().unwrap();
     assert_eq!(cache.hit_tokens(), 10);
     assert_eq!(cache.miss_tokens(), 40);

@@ -47,9 +47,14 @@ pub struct UsageSummary {
     pub api_duration_ms: u64,
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub cost_missing_calls: u64,
-    /// Absent in legacy files that did not distinguish main-loop from subagent calls.
+    /// Observed main-loop calls. This may be a subtotal when history is unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub main_loop_model_calls: Option<u64>,
+    /// Whether `main_loop_model_calls` covers the full session history. When
+    /// absent, an older schema's present count is complete and a missing count
+    /// is unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub main_loop_model_calls_known: Option<bool>,
     /// Absent in legacy files; absence means unknown history, not measured zero.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_session: Option<xai_chat_state::CacheSessionTotals>,
@@ -86,9 +91,10 @@ impl UsageSummary {
         let mut summary = Self::from_totals(&ledger.totals, ledger.incomplete);
         summary.primary_model_id = primary_model(&model_usage);
         summary.model_usage = model_usage;
-        summary.main_loop_model_calls = ledger
-            .main_loop_model_calls_known
-            .then_some(ledger.main_loop_model_calls);
+        // Keep the observed subtotal even when legacy history is unknown. The
+        // companion bit prevents a later resume from treating it as complete.
+        summary.main_loop_model_calls = Some(ledger.main_loop_model_calls);
+        summary.main_loop_model_calls_known = Some(ledger.main_loop_model_calls_known);
         summary.cache_session = Some(ledger.cache_session.clone());
         summary
     }
@@ -105,6 +111,7 @@ impl UsageSummary {
             api_duration_ms: totals.api_duration_ms,
             cost_missing_calls: totals.cost_missing_calls,
             main_loop_model_calls: None,
+            main_loop_model_calls_known: None,
             cache_session: None,
             cost_usd_ticks: totals.cost_usd_ticks,
             cost_is_partial: totals.cost_is_partial(),
@@ -128,13 +135,36 @@ impl UsageSummary {
             totals,
             by_model,
             main_loop_model_calls: self.main_loop_model_calls.unwrap_or_default(),
-            main_loop_model_calls_known: self.main_loop_model_calls.is_some(),
+            main_loop_model_calls_known: self.main_loop_calls_are_known(),
             incomplete: self.usage_is_incomplete,
             cache_session: self
                 .cache_session
                 .clone()
                 .unwrap_or_else(xai_chat_state::CacheSessionTotals::unknown_history),
         }
+    }
+
+    fn main_loop_calls_are_known(&self) -> bool {
+        self.main_loop_model_calls.is_some() && self.main_loop_model_calls_known.unwrap_or(true)
+    }
+
+    fn has_main_loop_tracking(&self) -> bool {
+        self.main_loop_model_calls.is_some() || self.main_loop_model_calls_known.is_some()
+    }
+
+    fn is_neutral_main_loop_summary(&self) -> bool {
+        !self.has_main_loop_tracking()
+            && self.input_tokens == 0
+            && self.output_tokens == 0
+            && self.cached_read_tokens == 0
+            && self.cache_creation_tokens == 0
+            && self.reasoning_tokens == 0
+            && self.model_calls == 0
+            && self.api_duration_ms == 0
+            && self.cost_missing_calls == 0
+            && self.cost_usd_ticks.is_none()
+            && self.turn_count == 0
+            && !self.usage_is_incomplete
     }
 
     fn to_totals(&self) -> xai_chat_state::UsageTotals {
@@ -214,14 +244,18 @@ impl UsageSummary {
             }
             (None, None) => None,
         };
+        let tracks_main_loop = self.has_main_loop_tracking() || other.has_main_loop_tracking();
         let main_loop_model_calls = match (self.main_loop_model_calls, other.main_loop_model_calls)
         {
             (Some(current), Some(delta)) => Some(current.saturating_add(delta)),
-            (Some(current), None) if !adds_calls => Some(current),
-            (None, Some(delta)) if !had_calls => Some(delta),
-            (None, None) if !had_calls && !adds_calls => None,
-            _ => None,
+            (Some(current), None) => Some(current),
+            (None, Some(delta)) => Some(delta),
+            (None, None) => None,
         };
+        let main_loop_model_calls_known = tracks_main_loop.then_some(
+            (self.is_neutral_main_loop_summary() || self.main_loop_calls_are_known())
+                && (other.is_neutral_main_loop_summary() || other.main_loop_calls_are_known()),
+        );
         Self {
             input_tokens: self.input_tokens.saturating_add(other.input_tokens),
             output_tokens: self.output_tokens.saturating_add(other.output_tokens),
@@ -239,6 +273,7 @@ impl UsageSummary {
                 .cost_missing_calls
                 .saturating_add(other.cost_missing_calls),
             main_loop_model_calls,
+            main_loop_model_calls_known,
             cache_session,
             cost_usd_ticks: merge_cost_ticks(self.cost_usd_ticks, other.cost_usd_ticks),
             cost_is_partial: self.cost_is_partial || other.cost_is_partial,
@@ -265,18 +300,22 @@ impl UsageSummary {
     }
 
     fn saturating_sub_row(&self, other: &Self) -> Self {
-        let had_previous_calls = other.model_calls > 0;
         let cache_session = match (&self.cache_session, &other.cache_session) {
             (Some(current), Some(previous)) => Some(current.saturating_sub(previous)),
             (Some(current), None) => Some(current.clone()),
             (None, _) => None,
         };
+        let tracks_main_loop = self.has_main_loop_tracking() || other.has_main_loop_tracking();
         let main_loop_model_calls = match (self.main_loop_model_calls, other.main_loop_model_calls)
         {
             (Some(current), Some(previous)) => Some(current.saturating_sub(previous)),
-            (Some(current), None) if !had_previous_calls => Some(current),
-            _ => None,
+            (Some(current), None) => Some(current),
+            (None, _) => None,
         };
+        let main_loop_model_calls_known = tracks_main_loop.then_some(
+            (self.is_neutral_main_loop_summary() || self.main_loop_calls_are_known())
+                && (other.is_neutral_main_loop_summary() || other.main_loop_calls_are_known()),
+        );
         Self {
             input_tokens: self.input_tokens.saturating_sub(other.input_tokens),
             output_tokens: self.output_tokens.saturating_sub(other.output_tokens),
@@ -294,6 +333,7 @@ impl UsageSummary {
                 .cost_missing_calls
                 .saturating_sub(other.cost_missing_calls),
             main_loop_model_calls,
+            main_loop_model_calls_known,
             cache_session,
             cost_usd_ticks: sub_cost_ticks(self.cost_usd_ticks, other.cost_usd_ticks),
             cost_is_partial: self.cost_is_partial || other.cost_is_partial,

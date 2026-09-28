@@ -116,8 +116,8 @@ pub struct PromptUsage {
     /// Main-agent loop rounds (same unit as `--max-turns`).
     #[serde(default, rename = "numTurns")]
     pub num_turns: u64,
-    /// False for legacy session summaries that counted subagents together with
-    /// main-loop calls and therefore cannot recover this split.
+    /// False when pre-tracking main-loop history is unknown. `numTurns` still
+    /// carries the observed subtotal; aggregate billing calls are not inferred.
     #[serde(default = "num_turns_known_by_default", rename = "numTurnsKnown")]
     pub num_turns_known: bool,
     /// Path A's main-loop cache counters. Missing means this wire producer did

@@ -2269,6 +2269,8 @@ async fn restored_ledger_reaches_session_usage_and_deepseek_status_requests() {
         ..Default::default()
     };
     ledger.record_main_loop_call("grok-4", &usage, Some(50), Some(200));
+    ledger.main_loop_model_calls_known = false;
+    ledger.cache_session.mark_history_unknown();
     let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
     let chat_state = xai_chat_state::ChatStateActor::spawn_with_pruning_and_usage(
         Vec::new(),
@@ -2310,11 +2312,15 @@ async fn restored_ledger_reaches_session_usage_and_deepseek_status_requests() {
     let status_json: serde_json::Value = serde_json::from_str(status_response.0.get()).unwrap();
     assert_eq!(
         status_json.pointer("/usage/cacheSession/historyComplete"),
-        Some(&serde_json::json!(true))
+        Some(&serde_json::json!(false))
     );
     assert_eq!(
         status_json.pointer("/usage/numTurns"),
         Some(&serde_json::json!(1))
+    );
+    assert_eq!(
+        status_json.pointer("/usage/numTurnsKnown"),
+        Some(&serde_json::json!(false))
     );
 }
 /// Session responses publish the values this session's spawn pinned.

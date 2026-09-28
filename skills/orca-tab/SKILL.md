@@ -9,8 +9,6 @@ These recipes are the procedure for opening a tab or launching an agent.
 They were checked against Orca CLI **1.4.211** (`orca --version` and
 `--help` for `terminal create`, `terminal send`, `terminal wait`,
 `terminal read`, and `worktree create`).
-The custom Codex launcher reuse in §2a was also exercised on **1.4.215**
-with `gpt-6-sol` and `xhigh`.
 
 **Do not run `orca skills get orca-cli` before §1–§4.** That guide is the
 whole CLI (248 lines on 1.4.211). Reading it is what stalls a turn whose
@@ -29,7 +27,6 @@ launches the tab and hands it a prompt.
 |-----|--------|
 | A tab in a worktree that already exists | §1 |
 | A new worktree whose agent is grok, codex, or claude | §2 |
-| Custom Codex model/effort that the configured launcher cannot supply | §2a |
 | A new worktree whose agent is dsb / deepseek-build | §3 |
 | A prompt into a tab you already have | §4 |
 | Browser, automations, artifacts, anything else | Then `orca skills get orca-cli` |
@@ -66,20 +63,9 @@ create for dsb.
 
 ## §1 Tab in an existing worktree
 
-First inspect the inventory and read the candidate tab's screen:
-
-```sh
-orca terminal list --worktree "path:$WT" --include-visual-layouts --json
-# If a terminal exists, take H from that inventory and read its screen.
-orca terminal read --terminal "$H" --screen --json
-```
-
-If that worktree already has an idle launcher shell, send the requested
-agent command into that same handle. Do not create another. A configured
-tab running a real command is owned work; do not send into it or close it.
-If no idle shell is available, preserve those tabs and report the state.
-`terminal create` is allowed only when `totalCount` is 0 and
-`visualLayouts` has no terminal leaf:
+If that worktree already has a prompt-only tab, send `dsb` or `grok` into
+that tab. Do not create another. `terminal create` is for a worktree with
+no tab.
 
 ```sh
 orca terminal create --worktree "path:$WT" --title "<short title>" --command dsb --json
@@ -92,10 +78,6 @@ worktree. From the control tower, pass `path:$WT` or `id:$WT_ID`.
 The handle is `result.terminal.handle`. If you cannot parse it, **do not
 create again**. Ask `orca terminal list --worktree "id:$WT_ID" --json`
 and use the tab that is already there.
-
-This recipe starts the worktree's owning session. An explicit request to
-add another worker to the current checkout is a separate intent; it does
-not justify appending a tab during a new-worktree handoff.
 
 Then §4. For `dsb`, do not treat `tui-idle` as the gate. Orca records no
 agent identity for it, so the wait times out while the TUI is already on
@@ -131,59 +113,6 @@ Branch rename and cleanup: `worktree-dispatch` §2 and §4. Then confirm
 with the screen read in §4. `tui-idle` can be true while a trust dialog
 is still up.
 
-### §2a Custom Codex model/effort — reuse the launcher
-
-Prefer §2 when Orca's configured Codex launcher supplies the requested
-model and effort. `worktree create --agent codex` has no per-call Codex
-model/effort forwarding. Otherwise choose this fallback instead of §2:
-bare create opens the launcher, and `terminal send` runs the full command
-inside it. Do not run both recipes.
-
-For an existing worktree, skip the create and start with its inventory.
-Set `$H` to the listed launcher only after its screen confirms an idle
-shell. Use that same handle for command, readiness, and brief delivery:
-
-```sh
-orca worktree create --repo path:"$TOWER" --name <slug> --no-parent --setup skip --json
-# Keep the complete result.worktree.id as WT_ID, and result.worktree.path as WT.
-orca terminal list --worktree "id:$WT_ID" --include-visual-layouts --json
-# Take H from the inventory; read before sending into it.
-orca terminal read --terminal "$H" --screen --json
-orca terminal send --terminal "$H" --text 'codex --model gpt-6-sol -c model_reasoning_effort="xhigh"' --enter --wait-submit 15 --json
-orca terminal wait --terminal "$H" --for tui-idle --timeout-ms 60000 --json
-orca terminal read --terminal "$H" --screen --json
-# Send only after readiness and the requested model/effort are confirmed.
-orca terminal send --terminal "$H" --text "Read <brief outside the repo> and do what it says." --enter --wait-submit 15 --json
-orca terminal list --worktree "id:$WT_ID" --include-visual-layouts --json
-```
-
-Before the brief, require `satisfied: true` and a visible input box with
-the requested model/effort (this example: `GPT-6-Sol xhigh`). Handle a
-recognised trust dialog with §4, then read again. If the wait is
-unsatisfied, retry it once with a larger timeout; if still unsatisfied,
-report the handoff as not started and do not send the brief.
-
-Configured default tabs may run real commands instead of providing an
-idle shell. Preserve their ownership, report that configuration, and do
-not send blind, close those tabs, or change global settings to force one
-tab. Only when the inventory has `totalCount: 0` and no terminal leaf may
-you create a terminal with the full command:
-
-```sh
-orca terminal create --worktree "id:$WT_ID" --title "<short title>" --command 'codex --model gpt-6-sol -c model_reasoning_effort="xhigh"' --json
-```
-
-In that empty-inventory case, use `result.terminal.handle` as `$H` and
-continue from the readiness wait above. Confirm the brief with §4.
-
-The final inventory must measure actual tabs and terminal leaves in
-`visualLayouts`, as well as `totalCount`. The default one-worker case
-has **one tab, one terminal leaf, `totalCount: 1`, and the same handle**.
-Report configured command tabs separately and preserve them. `exited` or
-`screen-unavailable` describes a process or screen, not durable tab
-removal; use the inventory to establish whether a tab exists. Later
-cleanup is not the normal way to obtain one worker tab.
-
 ## §3 New worktree — dsb
 
 `create` opens one launcher shell. That shell is the tab. Do not open a
@@ -195,9 +124,8 @@ orca worktree create --repo path:"$TOWER" --name <slug> --no-parent --setup skip
 ```
 
 Keep `result.worktree.id` and `result.worktree.path`. List that worktree's
-terminals with `--include-visual-layouts`, then read the candidate screen.
-The shell must be idle; preserve any configured tab running a real
-command and report when no idle launcher is available. Send `dsb` into it:
+terminals. The shell is the tab whose screen is a prompt. Send `dsb` into
+it:
 
 ```sh
 orca terminal send --terminal "$SHELL" --text dsb --enter --wait-submit 15 --json
@@ -215,12 +143,8 @@ the prompt after the agent screen shows it is working:
 orca terminal close --terminal "$SHELL" --tab --json
 ```
 
-This is recovery for a confirmed leftover idle shell, not the launch
-procedure. Do not close a tab running an agent or any other real command.
-The same recovery applies when §2 leaves a prompt next to `grok`.
-After brief delivery, use `terminal list --include-visual-layouts` to
-verify one tab, one terminal leaf, `totalCount: 1`, and the same handle in
-the default one-worker case. Preserve configured command tabs separately.
+Do not close the tab whose screen is the agent. The worktree should show
+one tab. The same close applies when §2 leaves a prompt next to `grok`.
 
 ## §4 Send, after the screen shows an input box
 
@@ -277,8 +201,6 @@ stays in `worktree-dispatch` §3b.
 | A binary path instead of `grok` or `dsb` | Skips the shell function |
 | `--agent dsb` | Rejected. dsb is §3: run `dsb` in the launcher shell |
 | `terminal create --command dsb` beside the launcher shell | Two tabs. The shell is the tab; send `dsb` into it |
-| Bare create, then `terminal create` to pass custom Codex argv | Two tabs. Inspect the launcher and send the full command into its same handle (§2a) |
-| Treat `exited` / `screen-unavailable` as tab removal | These describe a process or screen; measure tabs and leaves with `terminal list --include-visual-layouts` |
 | Create again when the handle did not parse | The tab already exists |
 | `--enter` while a dialog is up | Confirms the dialog's default |
 | Resend on silence | The first prompt may already be in |

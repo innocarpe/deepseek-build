@@ -209,6 +209,26 @@ pub(crate) fn session_usage_block_text(
     ));
     rows.push(format!("  Cost:           {}", format_cost(t)));
 
+    if let Some(cache) = &usage.cache_session {
+        rows.push(format!(
+            "  Cache session:  {} hit / {} miss",
+            group_thousands(cache.hit_tokens),
+            group_thousands(cache.miss_tokens),
+        ));
+        rows.push(format!(
+            "  Cache replies:  {} reported / {} unreported",
+            group_thousands(cache.reported),
+            group_thousands(cache.unreported),
+        ));
+        if !cache.history_complete {
+            rows.push("  Note: cache history before tracking is unknown.".to_string());
+        }
+    }
+
+    if !usage.num_turns_known {
+        rows.push("  Note: main-loop response count before tracking is unknown.".to_string());
+    }
+
     if usage.model_usage.len() > 1 {
         rows.push("  By model:".to_string());
         for (model, m) in &usage.model_usage {
@@ -273,7 +293,9 @@ fn join_header_rows(header: String, rows: Vec<String>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xai_grok_shell::extensions::notification::{PromptUsage, PromptUsageModel};
+    use xai_grok_shell::extensions::notification::{
+        PromptCacheSession, PromptUsage, PromptUsageModel,
+    };
 
     fn model_row(input: u64, output: u64, ticks: Option<i64>) -> PromptUsageModel {
         PromptUsageModel {
@@ -365,6 +387,33 @@ mod tests {
         let text = session_usage_block_text(&usage);
         assert!(text.contains("not reported for some calls"), "{text}");
         assert!(text.contains("usage is incomplete"), "{text}");
+    }
+
+    #[test]
+    fn session_usage_block_shows_restored_cache_totals_and_unknown_legacy_history() {
+        let usage = PromptUsage {
+            totals: model_row(100, 10, None),
+            num_turns_known: false,
+            cache_session: Some(PromptCacheSession {
+                hit_tokens: 70,
+                miss_tokens: 30,
+                reported: 2,
+                unreported: 1,
+                history_complete: false,
+            }),
+            ..Default::default()
+        };
+        let text = session_usage_block_text(&usage);
+        assert!(text.contains("Cache session:  70 hit / 30 miss"), "{text}");
+        assert!(text.contains("2 reported / 1 unreported"), "{text}");
+        assert!(
+            text.contains("cache history before tracking is unknown"),
+            "{text}"
+        );
+        assert!(
+            text.contains("main-loop response count before tracking is unknown"),
+            "{text}"
+        );
     }
 
     #[test]

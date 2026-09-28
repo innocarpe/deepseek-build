@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Resuming or continuing a full-screen session restores its cumulative billing and Path A cache hit/miss totals from `usage.json` before accepting new requests. Older sessions without saved cache history report it as unknown, and sessions with chat history but no usage file report incomplete totals instead of claiming zero.
+
 ## 6.8.3 — 2026-09-28
 
 - The `Jump to bottom` chip keeps its own opaque background and text style while scrolling over styled text, Hangul, or emoji. A wide glyph crossing its left edge can no longer suppress the chip's first cell. One column of background on each side gives the label a little air, and both padding cells hover and click along with the label at every supported width.

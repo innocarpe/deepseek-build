@@ -1499,6 +1499,7 @@ pub(crate) async fn run_shell_child(
         None,
         None,
         initial_child_tokens,
+        xai_chat_state::UsageLedger::default(),
         crate::session::StartupHints {
             inherited_prefix_len: Some(inherited_prefix_len),
             is_subagent: true,

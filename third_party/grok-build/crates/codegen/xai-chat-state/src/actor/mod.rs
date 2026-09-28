@@ -77,10 +77,33 @@ impl ChatStateActor {
         event_tx: mpsc::UnboundedSender<ChatStateEvent>,
         cancellation_token: tokio_util::sync::CancellationToken,
     ) -> ChatStateHandle {
+        Self::spawn_with_pruning_and_usage(
+            initial_conversation,
+            sampling_config,
+            pruning_config,
+            crate::usage::UsageLedger::default(),
+            persistence,
+            event_tx,
+            cancellation_token,
+        )
+    }
+
+    /// Spawn the actor with a restored cumulative session ledger.
+    pub fn spawn_with_pruning_and_usage(
+        initial_conversation: Vec<ConversationItem>,
+        sampling_config: SamplingConfig,
+        pruning_config: PruningConfig,
+        session_usage: crate::usage::UsageLedger,
+        persistence: Box<dyn ChatPersistence>,
+        event_tx: mpsc::UnboundedSender<ChatStateEvent>,
+        cancellation_token: tokio_util::sync::CancellationToken,
+    ) -> ChatStateHandle {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
 
+        let mut state = ChatState::new(initial_conversation, sampling_config);
+        state.session_usage = session_usage;
         let actor = ChatStateActor {
-            state: ChatState::new(initial_conversation, sampling_config),
+            state,
             pruning_config,
             persistence,
             cmd_rx,

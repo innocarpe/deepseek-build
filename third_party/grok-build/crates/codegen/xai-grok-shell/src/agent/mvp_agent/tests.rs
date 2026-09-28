@@ -2221,6 +2221,14 @@ fn session_usage_request(session_id: &str) -> acp::ExtRequest {
             .into(),
     )
 }
+fn deepseek_status_request(session_id: &str) -> acp::ExtRequest {
+    acp::ExtRequest::new(
+        "x.ai/deepseek/status",
+        serde_json::value::to_raw_value(&serde_json::json!({ "sessionId": session_id }))
+            .unwrap()
+            .into(),
+    )
+}
 #[tokio::test(flavor = "current_thread")]
 async fn session_usage_unknown_session_is_resource_not_found() {
     let agent = build_minimal_agent_for_tests();
@@ -2244,6 +2252,70 @@ async fn session_usage_dead_chat_state_actor_fails_closed() {
             .await
             .expect_err("dead chat-state actor");
     assert_eq!(err.code, acp::Error::internal_error().code);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn restored_ledger_reaches_session_usage_and_deepseek_status_requests() {
+    let agent = build_minimal_agent_for_tests();
+    let sid = acp::SessionId::new("usage-restored-ledger-sess");
+    let mut ledger = xai_chat_state::UsageLedger::default();
+    let usage = xai_grok_sampling_types::TokenUsage {
+        prompt_tokens: 100,
+        completion_tokens: 10,
+        total_tokens: 110,
+        cached_prompt_tokens: 80,
+        cache_hit_tokens: Some(80),
+        cache_miss_tokens: Some(20),
+        ..Default::default()
+    };
+    ledger.record_main_loop_call("grok-4", &usage, Some(50), Some(200));
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let chat_state = xai_chat_state::ChatStateActor::spawn_with_pruning_and_usage(
+        Vec::new(),
+        xai_grok_sampling_types::SamplingConfig::default(),
+        xai_chat_state::PruningConfig::default(),
+        ledger,
+        Box::new(xai_chat_state::persistence::NullChatPersistence),
+        event_tx,
+        tokio_util::sync::CancellationToken::new(),
+    );
+
+    let mut handle = make_test_handle("grok-4", false, None);
+    handle.info.id = sid.clone();
+    handle.chat_state_handle = chat_state;
+    agent.insert_resident(&sid, handle);
+
+    let usage_response =
+        crate::extensions::usage::handle(&agent, &session_usage_request(&sid.0))
+            .await
+            .unwrap();
+    let usage_json: serde_json::Value = serde_json::from_str(usage_response.0.get()).unwrap();
+    assert_eq!(
+        usage_json.pointer("/usage/cacheSession/hitTokens"),
+        Some(&serde_json::json!(80))
+    );
+    assert_eq!(
+        usage_json.pointer("/usage/cacheSession/missTokens"),
+        Some(&serde_json::json!(20))
+    );
+    assert_eq!(
+        usage_json.pointer("/usage/inputTokens"),
+        Some(&serde_json::json!(100))
+    );
+
+    let status_response =
+        crate::extensions::deepseek::handle(&agent, &deepseek_status_request(&sid.0))
+            .await
+            .unwrap();
+    let status_json: serde_json::Value = serde_json::from_str(status_response.0.get()).unwrap();
+    assert_eq!(
+        status_json.pointer("/usage/cacheSession/historyComplete"),
+        Some(&serde_json::json!(true))
+    );
+    assert_eq!(
+        status_json.pointer("/usage/numTurns"),
+        Some(&serde_json::json!(1))
+    );
 }
 /// Session responses publish the values this session's spawn pinned.
 #[tokio::test(flavor = "current_thread")]

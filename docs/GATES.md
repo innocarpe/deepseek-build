@@ -32,7 +32,7 @@
 ## Current product implication
 
 - **Wave A dogfood** through **`0.7.0` npm package** shipped on `main` (install + tools + sessions + surface min + npm wrappers).  
-- **Registry `npm publish`** is **CI-published** over OIDC trusted publishing ([ADR 0012](adr/0012-npm-trusted-publishing.md), amends [ADR 0007](adr/0007-npm-packaging.md)). The trusted publisher is **enrolled** (2026-09-25, `innocarpe/deepseek-build` + `publish-npm.yml`), but **no OIDC publish has run yet** — the next release is its first exercise.
+- **Registry `npm publish`** is **CI-published** over OIDC trusted publishing ([ADR 0012](adr/0012-npm-trusted-publishing.md), amends [ADR 0007](adr/0007-npm-packaging.md)). The trusted publisher was enrolled on 2026-09-25 for `innocarpe/deepseek-build` and `publish-npm.yml`. Its first successful exercise was [publish-npm run 36422527144](https://github.com/innocarpe/deepseek-build/actions/runs/36422527144) on 2026-09-28 for release ref `v6.8.3` at head `4432ba562f98365af89cbbda137381e595f92395`; the workflow and `publish` job succeeded, including the OIDC publish, package verification, and global install smoke.
 - Spec **40** is **ready-for-impl** (`docs/specs/40-core-tools-surface.md`); it is **not** a G-number gate (G3 remains 45+90).  
 - **2.x shell** shipped. **3.x / 4.x tags exist** as heart/L3 *attempts* — **owner-bar NOT MET** (Path A fusion incomplete).  
 - Spec-ready (this table) ≠ Path A enforced. Historical heart evidence is archive only: [HEART_3X_SPEC_BINDING.md](architecture/HEART_3X_SPEC_BINDING.md) · [WAVE_3x_PR_DAG.md](product/WAVE_3x_PR_DAG.md).  
@@ -143,6 +143,31 @@ Path-filtered jobs `fmt`, `clippy`, `test`, `semver`, `release verify retry`,
 `session close`, `vendor build queue`, `worktree ownership`, and `npm` were
 skipped. The separate `CI grok test` workflow runs on `main` pushes, so it was
 not part of this pre-merge PR run.
+
+## Verification — post-merge vendored run and legacy usage snapshots (2026-09-29)
+
+The post-merge `CI grok test` run
+[36468767878](https://github.com/innocarpe/deepseek-build/actions/runs/36468767878)
+tested merge head `aa6ff15c79d0a50825ef07da5317df8fcb5491d7` and exited 101.
+The complete job log, rather than the truncated `gh run view --log-failed`
+excerpt, showed that the only failed target was `xai-grok-pager --lib`:
+`session_usage_block_formats_tokens_and_cost` and
+`session_usage_block_absent_cost_is_unknown_not_free`. Both snapshots omitted
+the existing renderer's `Note: main-loop response count before tracking is
+unknown.` line. The complete vendor run also reported chat-state 393 passed,
+shell 7,140 passed / 0 failed / 5 ignored, tools 3,386 passed / 0 failed / 3
+ignored, and pager 10,294 passed / 2 failed / 5 ignored.
+
+The correction adds only that rendered line to the two affected snapshots;
+their token, cost, and alignment expectations remain unchanged. No renderer,
+knowledge flag, assertion, or test behavior was changed. The run was created at
+`2026-09-28T18:56:46Z`, its job started at `19:20:26Z`, and `Test vendored
+workspace` started at `19:23:44Z` and failed at `19:49:23Z` (job completed at
+`19:49:26Z`). These timestamps keep queue time separate from the test step.
+
+The targeted local snapshot rerun passed: `./scripts/vendor-cargo.sh test -p xai-grok-pager --lib session_usage_block_` reported 6 passed, 0 failed, 0 ignored. The corrective [full vendored workspace run #36479367295](https://github.com/innocarpe/deepseek-build/actions/runs/36479367295) completed successfully with no failed tests on source head `2775a2ace2eda23af284b03af552882d40efb8c9`; its `third_party/grok-build` tree was `c2b792a0e7e9cccb86e9233acd61b8a9ca9774e5`. Job `109120947540` completed at `2026-09-28T21:04:42Z`; `Test vendored workspace` ran from `20:30:09Z` through `21:04:40Z`. The full job log reports chat-state 393 passed, pager library 10,296 passed / 0 failed / 5 ignored, pager binary 39 passed, shell 7,140 passed / 0 failed / 5 ignored, and tools 3,386 passed / 0 failed / 3 ignored.
+
+The run tested the exact snapshot and source tree; the subsequent GATES-only evidence commit does not change `third_party/grok-build`. Verify that the final PR head and merge commit retain the same vendor tree hash; no full-suite rerun is needed for that documentation-only commit.
 
 ## Verification — new-file Git EOL policy (2026-09-29)
 

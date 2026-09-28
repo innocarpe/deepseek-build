@@ -77,7 +77,7 @@ Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** p
 | 2026-09-27 | **`6.7.2`** (published as `6.1.8`) phone echo clock only where the last row has room, pinned echo keeps its rows, wide-glyph gutter | PR #313 |
 | 2026-09-28 | **`6.7.3`** (published as `6.1.9`) phone prompt echo folds to two rows by its word-wrapped rows; npm 12 install guidance | PR #318 |
 | 2026-09-28 | **`6.8.0`** (published as `6.1.10`) phone composer band across the frame and a two-row footer (balance/cache against the model, tokens against the permission mode); the welcome screen draws the same band and footer | PR #323 |
-| 2026-09-28 | **`6.8.1`** first release on the renumbered 6.x line: the folded prompt echo's last row runs to the edge, the release PR waits for its checks, the bump-level rule | PR #_(fill in)_ |
+| 2026-09-28 | **`6.8.1`** first release on the renumbered 6.x line: the folded prompt echo's last row runs to the edge, the release PR waits for its checks, the bump-level rule | PR #329 |
 | 2026-09-25 | **`6.0.0`** Grok Build base ported `1.0.0` → `1.0.41` (41 releases, 472 upstream items) with the DeepSeek overlay re-derived by three-way merge; sync infra (`grok-sync` skill, runbook, ledger, inventory) added so the next sync is a procedure rather than a rediscovery | [CHANGELIST_6_0_0.md](../CHANGELIST_6_0_0.md) · [UPSTREAM_SYNC_LEDGER.md](../UPSTREAM_SYNC_LEDGER.md) |
 | 2026-08-07 | **`5.0.1`** widen the DeepSeek whale logo to official terminal proportions | PR #113 |
 | 2026-08-07 | **`4.0.4`** Image attachments on text-only DeepSeek endpoints (persist to session assets + OCR hint); DeepSeek status line with account balance & cache hit rate; G003 mint file_version on Path A read_file | PR #98 |

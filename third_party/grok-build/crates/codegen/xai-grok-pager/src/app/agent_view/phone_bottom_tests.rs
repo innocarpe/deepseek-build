@@ -538,12 +538,18 @@ fn phone_turn_row_and_draft_share_the_footer_edges() {
         (1, PHONE_COLS - 2),
         "the footer keeps one column each side:\n{frame}"
     );
-    assert_eq!(turn, footer, "the turn row sits on the footer's edges:\n{frame}");
+    assert_eq!(
+        turn, footer,
+        "the turn row sits on the footer's edges:\n{frame}"
+    );
     assert!(
         row_text(&buf, text_y).contains("phone draft"),
         "the band's middle row is the draft:\n{frame}"
     );
-    assert_eq!(text.0, footer.0, "the draft starts on the footer's column:\n{frame}");
+    assert_eq!(
+        text.0, footer.0,
+        "the draft starts on the footer's column:\n{frame}"
+    );
 }
 
 #[test]

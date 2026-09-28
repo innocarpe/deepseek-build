@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The Tasks pane's right-hand strip — the elapsed time and the `[↗]` / `[✗]` buttons — no longer shows a box behind each glyph when the task label underneath is Korean or another wide (CJK) label. `ratatui` resets the cell after a wide grapheme to `Color::Reset`, and the overlay blanked its strip with a default-styled span before writing fg-only time/button spans, so those slots kept the reset background and the terminal painted its own default behind the glyph. The strip now carries the row's background and modifier: a focused selection keeps its band, a transient search-match invert no longer leaks into it, and the truncation ellipsis sits on the row background.
+
 - Resuming or continuing a full-screen session restores its cumulative billing and Path A cache hit/miss totals from `usage.json` before accepting new requests. Older sessions without saved cache history report it as unknown, and sessions with chat history but no usage file report incomplete totals instead of claiming zero. When the legacy main-loop split is unknown, observed post-upgrade main-loop counts also survive repeated resumes without claiming complete history or inferring them from billing calls.
 
 - New-file `write` uses the target repository's `.gitattributes` `eol` policy

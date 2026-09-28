@@ -8,3 +8,4 @@ Session usage (since start or last resume):
   Total tokens:   110
   Model calls:    1 · API time: 1.0s
   Cost:           not available (not reported)
+  Note: main-loop response count before tracking is unknown.

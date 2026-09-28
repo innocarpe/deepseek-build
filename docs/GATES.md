@@ -144,6 +144,31 @@ Path-filtered jobs `fmt`, `clippy`, `test`, `semver`, `release verify retry`,
 skipped. The separate `CI grok test` workflow runs on `main` pushes, so it was
 not part of this pre-merge PR run.
 
+## Verification — post-merge vendored run and legacy usage snapshots (2026-09-29)
+
+The post-merge `CI grok test` run
+[36468767878](https://github.com/innocarpe/deepseek-build/actions/runs/36468767878)
+tested merge head `aa6ff15c79d0a50825ef07da5317df8fcb5491d7` and exited 101.
+The complete job log, rather than the truncated `gh run view --log-failed`
+excerpt, showed that the only failed target was `xai-grok-pager --lib`:
+`session_usage_block_formats_tokens_and_cost` and
+`session_usage_block_absent_cost_is_unknown_not_free`. Both snapshots omitted
+the existing renderer's `Note: main-loop response count before tracking is
+unknown.` line. The complete vendor run also reported chat-state 393 passed,
+shell 7,140 passed / 0 failed / 5 ignored, tools 3,386 passed / 0 failed / 3
+ignored, and pager 10,294 passed / 2 failed / 5 ignored.
+
+The correction adds only that rendered line to the two affected snapshots;
+their token, cost, and alignment expectations remain unchanged. No renderer,
+knowledge flag, assertion, or test behavior was changed. The run was created at
+`2026-09-28T18:56:46Z`, its job started at `19:20:26Z`, and `Test vendored
+workspace` started at `19:23:44Z` and failed at `19:49:23Z` (job completed at
+`19:49:26Z`). These timestamps keep queue time separate from the test step.
+
+The targeted local snapshot rerun is pending; no local pass is claimed here.
+The corrective hosted validation must run on the exact snapshot-correction
+head before merge.
+
 ## Verification — new-file Git EOL policy (2026-09-29)
 
 Path A and the thin `dsb-tools` create paths now resolve `text` / `eol` from

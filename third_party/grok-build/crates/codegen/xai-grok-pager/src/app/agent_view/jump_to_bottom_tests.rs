@@ -95,6 +95,9 @@ fn assert_inside(rect: Rect, area: Rect) {
 
 #[test]
 fn chip_sits_on_the_scrollback_last_row_over_the_gap_row() {
+    // Half-block padding needs concrete colours; hold the theme lock so no other test can put
+    // the process on the terminal-native palette mid-frame.
+    let _theme = crate::theme::cache::pin_theme();
     let mut agent = scrolled_up_agent(DESKTOP_COLS, DESKTOP_ROWS);
     let buf = draw(&mut agent, DESKTOP_COLS, DESKTOP_ROWS);
 
@@ -277,6 +280,9 @@ fn an_open_block_viewer_or_scrollback_search_hides_the_chip() {
 
 #[test]
 fn hovered_chip_brightens_its_text_over_the_gray_background() {
+    // The assertion samples `Theme::current()` before and after the draw; hold the lock so the
+    // palette cannot change between them.
+    let _theme = crate::theme::cache::pin_theme();
     let theme = crate::theme::Theme::current();
 
     let mut agent = scrolled_up_agent(DESKTOP_COLS, DESKTOP_ROWS);
@@ -296,6 +302,7 @@ fn hovered_chip_brightens_its_text_over_the_gray_background() {
 
 #[test]
 fn both_padding_cells_hover_and_click_in_full_frames_at_every_label_width() {
+    let _theme = crate::theme::cache::pin_theme();
     for cols in [PHONE_COLS, 26, 19] {
         for edge in [false, true] {
             let mut agent = scrolled_up_agent(cols, PHONE_ROWS);
@@ -344,6 +351,9 @@ fn both_padding_cells_hover_and_click_in_full_frames_at_every_label_width() {
 
 #[test]
 fn scrolling_styled_wide_text_keeps_the_chip_opaque_in_buffer_diff_output() {
+    // The frame's colours (chip, canvas, the exposed trailing cell's real background) are concrete
+    // only off the terminal-native palette; hold the theme lock for the whole scroll.
+    let _theme = crate::theme::cache::pin_theme();
     let mut agent = make_agent();
     for i in 0..40 {
         let prefix = if i % 2 == 0 { "" } else { "x" };

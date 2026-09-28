@@ -255,6 +255,14 @@ process, but is deliberately reset after restart so a reused incoming turn
 number cannot fold a new response into an inherited historical row. A turn
 number collision after restart is renumbered as a new row.
 
+The persisted main-loop response count also separates the observed subtotal
+from historical completeness. A legacy summary with no main-loop split starts
+with subtotal `0` and `numTurnsKnown=false`; new main-loop responses increase
+that subtotal, which is persisted and restored even while `numTurnsKnown` stays
+false. The status `numTurns` field reports the subtotal and its known flag says
+whether the full session count is available. Aggregate billing `modelCalls` is
+never used to infer the missing main-loop history.
+
 ### 1.6 Session replay
 
 Persist turns as JSONL (or equivalent) under user state dir. On load, **repair tool pairs** (spec 15) before send.
@@ -542,10 +550,11 @@ persist→resume cases in `crates/dsb-agent/src/loop_.rs`.
 
 | Test | Expect |
 |------|--------|
-| `usage_summary_roundtrips_the_path_a_ledger` | A `usage.json` disk round trip restores billing totals, per-model attribution, incomplete/cost state, main-loop response count, and hit/miss/reported/unreported cache totals. Subagent billing remains billing-only and does not become a main-loop response. |
+| `usage_summary_roundtrips_the_path_a_ledger` | A `usage.json` disk round trip restores billing totals, per-model attribution, incomplete/cost state, main-loop response count and its history-known bit, and hit/miss/reported/unreported cache totals. Subagent billing remains billing-only and does not become a main-loop response. |
 | `legacy_usage_without_cache_summary_is_unknown` | An older usage summary restores its known billing totals; missing Path A cache history is exposed as unknown/incomplete, never as measured zero. |
 | `missing_usage_file_for_nonempty_session_is_incomplete` | Existing chat history without `usage.json` starts with unknown cache/main-loop history and an incomplete bill; an empty new session starts with known zero. |
 | `resume_first_usage_write_uses_the_restored_summary_as_its_baseline` | After a disk round trip, the first new live summary adds only its post-resume delta to persisted billing and cache totals. |
+| `legacy_main_loop_subtotal_survives_repeated_resume_roundtrips` | A legacy billing-only call count is not inferred as main-loop calls; after two observed calls, the subtotal `2` persists across repeated process resumes while full history remains unknown. |
 | `late_interjection_folds_within_the_process_after_usage_roundtrip` | The same incoming turn's late interjection folds once into its current row and preserves the process-local cursor. |
 | `cross_process_turn_number_collision_is_renumbered` | A serialized usage file does not restore the process-local cursor; a reused turn number after restart creates a new row instead of folding into the inherited row. |
 | `malformed_cache_summary_fails_closed` | A present but partial or malformed Path A cache summary makes the usage file unreadable; it is not defaulted to a proven zero. |

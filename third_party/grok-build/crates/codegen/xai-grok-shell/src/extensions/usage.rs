@@ -121,8 +121,9 @@ mod tests {
     }
 
     #[test]
-    fn response_marks_legacy_cache_and_main_loop_history_unknown() {
-        let ledger = UsageLedger::unknown_history();
+    fn response_preserves_observed_turn_subtotal_with_unknown_history() {
+        let mut ledger = UsageLedger::unknown_history();
+        ledger.main_loop_model_calls = 2;
         let v = serde_json::to_value(&SessionUsageResponse {
             usage: PromptUsage::from(&ledger),
         })
@@ -131,6 +132,7 @@ mod tests {
             v.pointer("/usage/cacheSession/historyComplete"),
             Some(&serde_json::json!(false))
         );
+        assert_eq!(v.pointer("/usage/numTurns"), Some(&serde_json::json!(2)));
         assert_eq!(
             v.pointer("/usage/numTurnsKnown"),
             Some(&serde_json::json!(false))

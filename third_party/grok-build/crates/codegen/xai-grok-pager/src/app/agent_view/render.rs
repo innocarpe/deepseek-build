@@ -29,7 +29,7 @@ use crate::views::shortcuts_bar::{HintItem, PendingHint, ShortcutsBar};
 use crate::views::{agent, turn_status};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use std::collections::HashSet;
@@ -4538,13 +4538,20 @@ fn draw_scroll_arrow(
     hit.set(Some(Rect::new(center_x.saturating_sub(1), y, 3, 1)));
 }
 /// The jump-to-bottom chip's label ladder for a scrollback `width` columns wide: the full phrase,
-/// then the short form, then the bare arrow. Every form keeps one column of air on each side.
+/// then the short form, then the bare arrow. Every form reserves one padding cell on each side,
+/// painted as half cells of chip background ([`CHIP_PAD_LEFT`] / [`CHIP_PAD_RIGHT`]).
 fn jump_to_bottom_label(width: u16) -> Option<&'static str> {
     const LABELS: [&str; 3] = ["Jump to bottom (click) ↓", "Jump to bottom ↓", "▼"];
     LABELS
         .into_iter()
         .find(|label| unicode_width::UnicodeWidthStr::width(*label) as u16 + 2 <= width)
 }
+
+/// The chip's half-cell padding. Each pad keeps the chip's colour on the half that faces the label
+/// and the canvas on the outer half, so the chip reads with half a column of air on each side. The
+/// pad stays a whole cell, which keeps both ends inside the clickable rect.
+const CHIP_PAD_LEFT: &str = "\u{2590}"; // ▐ right half block
+const CHIP_PAD_RIGHT: &str = "\u{258C}"; // ▌ left half block
 /// Paint the jump-to-bottom chip centered on the last row of the scrollback `area` and return the
 /// rect it painted, or `None` when it is hidden or the area is too narrow for even the arrow.
 /// Callers set-or-clear the hit area on the returned rect, like [`draw_scroll_arrow`]: the hit must
@@ -4578,6 +4585,30 @@ fn draw_jump_to_bottom_chip(
     {
         cell.set_symbol(" ").set_skip(false);
     }
+    // A wide glyph starting on the chip's last column keeps its trailing half just outside the
+    // chip. Content painting resets that trailing cell to the terminal default and relies on the
+    // glyph's own width to suppress it in Buffer::diff; the chip replaces the glyph's leading half
+    // with a narrow block, the suppression lifts, and the stale blank reaches the terminal as a
+    // one-cell hole beside the chip. Repaint it in the glyph's own style, the way the left boundary
+    // keeps its style, so the exposed cell shows the canvas (or band) the glyph sat on.
+    let exposed_style = buf.cell((x + width - 1, y)).and_then(|lead| {
+        (unicode_width::UnicodeWidthStr::width(lead.symbol()) > 1).then(|| {
+            Style::default()
+                .fg(lead.fg)
+                .bg(if lead.bg == Color::Reset {
+                    theme.bg_base
+                } else {
+                    lead.bg
+                })
+                .add_modifier(lead.modifier)
+        })
+    });
+    if let Some(exposed_style) = exposed_style
+        && let Some(cell) = buf.cell_mut((x + width, y))
+    {
+        cell.reset();
+        cell.set_style(exposed_style);
+    }
     for column in x..x + width {
         if let Some(cell) = buf.cell_mut((column, y)) {
             // set_style patches the old attributes; an opaque overlay must own all cell state,
@@ -4587,6 +4618,19 @@ fn draw_jump_to_bottom_chip(
         }
     }
     buf.set_string(x + 1, y, label, style);
+    // One padding cell on each side reads as half a cell of air: the half nearer the label keeps
+    // the chip's colour, the outer half shows the canvas. Themes whose chip or canvas colour is
+    // `Reset` keep the plain padded cell — a half block painted with default colours would add a
+    // glyph, not air.
+    if !matches!(theme.bg_light, Color::Reset) && !matches!(theme.bg_base, Color::Reset) {
+        let pad_style = Style::default().fg(theme.bg_light).bg(theme.bg_base);
+        for (column, glyph) in [(x, CHIP_PAD_LEFT), (x + width - 1, CHIP_PAD_RIGHT)] {
+            if let Some(cell) = buf.cell_mut((column, y)) {
+                cell.set_symbol(glyph);
+                cell.set_style(pad_style);
+            }
+        }
+    }
     Some(Rect::new(x, y, width, 1))
 }
 /// Pad `msg` for the toast slot, truncating with a trailing ellipsis when it cannot fit in `avail_width` columns.
@@ -5431,7 +5475,10 @@ mod status_line_draw_tests {
 
 #[cfg(test)]
 mod follow_indicator_tests {
-    use super::{draw_jump_to_bottom_chip, draw_scroll_arrow, jump_to_bottom_label};
+    use super::{
+        CHIP_PAD_LEFT, CHIP_PAD_RIGHT, draw_jump_to_bottom_chip, draw_scroll_arrow,
+        jump_to_bottom_label,
+    };
     use crate::app::agent_view::HitArea;
     use crate::theme::Theme;
     use ratatui::backend::{Backend, TestBackend};
@@ -5446,7 +5493,7 @@ mod follow_indicator_tests {
     }
 
     #[test]
-    fn chip_label_ladder_keeps_a_column_of_air_either_side() {
+    fn chip_label_ladder_reserves_a_padding_cell_either_side() {
         assert_eq!(jump_to_bottom_label(26), Some("Jump to bottom (click) ↓"));
         assert_eq!(jump_to_bottom_label(25), Some("Jump to bottom ↓"));
         assert_eq!(jump_to_bottom_label(18), Some("Jump to bottom ↓"));
@@ -5459,10 +5506,22 @@ mod follow_indicator_tests {
     fn chip_paints_the_last_row_and_returns_the_rect_it_painted() {
         let area = Rect::new(5, 5, 40, 5);
         let mut buf = Buffer::empty(Rect::new(0, 0, 60, 12));
-        let rect = draw_jump_to_bottom_chip(&mut buf, &Theme::current(), area, true, false)
+        let theme = Theme::deepseeknight();
+        let rect = draw_jump_to_bottom_chip(&mut buf, &theme, area, true, false)
             .expect("40 columns hold the full phrase");
         assert_eq!(rect, Rect::new(12, 9, 26, 1));
         assert!(row_text(&buf, rect.y).contains("Jump to bottom (click) ↓"));
+        // Half a cell of air on each side: the half of the pad that faces the label keeps the
+        // chip's colour and the outer half shows the canvas, while the whole pad cell stays in
+        // the rect the caller turns into the click target.
+        for (x, glyph) in [(rect.x, CHIP_PAD_LEFT), (rect.right() - 1, CHIP_PAD_RIGHT)] {
+            let cell = &buf[(x, rect.y)];
+            assert_eq!(cell.symbol(), glyph);
+            assert_eq!(cell.fg, theme.bg_light);
+            assert_eq!(cell.bg, theme.bg_base);
+            assert_eq!(cell.modifier, Modifier::empty());
+            assert!(!cell.skip);
+        }
     }
 
     #[test]
@@ -5485,24 +5544,39 @@ mod follow_indicator_tests {
                     }
                     let rect = draw_jump_to_bottom_chip(&mut buf, &theme, area, true, hovered)
                         .expect("visible chip");
-                    for (i, ch) in " Jump to bottom (click) ↓ ".chars().enumerate() {
+                    let expected: Vec<String> = std::iter::once(CHIP_PAD_LEFT.to_string())
+                        .chain("Jump to bottom (click) ↓".chars().map(|c| c.to_string()))
+                        .chain(std::iter::once(CHIP_PAD_RIGHT.to_string()))
+                        .collect();
+                    for (i, symbol) in expected.iter().enumerate() {
                         let cell = &buf[(rect.x + i as u16, rect.y)];
+                        let padding = i == 0 || i == expected.len() - 1;
                         assert_eq!(
                             cell.fg,
-                            if hovered {
+                            if padding {
+                                theme.bg_light
+                            } else if hovered {
                                 theme.gray_bright
                             } else {
                                 theme.gray
+                            },
+                            "padding cells carry the chip background as ink, the label its text colour"
+                        );
+                        assert_eq!(
+                            cell.bg,
+                            if padding {
+                                theme.bg_base
+                            } else {
+                                theme.bg_light
                             }
                         );
-                        assert_eq!(cell.bg, theme.bg_light);
                         assert_eq!(
                             cell.modifier,
                             Modifier::empty(),
                             "underlying terminal attributes must not leak"
                         );
                         assert!(!cell.skip, "the chip must be emitted to the terminal");
-                        assert_eq!(cell.symbol(), ch.to_string());
+                        assert_eq!(cell.symbol(), symbol);
                     }
                 }
             }
@@ -5556,6 +5630,62 @@ mod follow_indicator_tests {
             );
             previous = next;
         }
+    }
+
+    #[test]
+    fn chip_repaints_the_trailing_cell_of_a_wide_glyph_on_its_right_edge() {
+        let area = Rect::new(0, 0, 55, 4);
+        let theme = Theme::deepseeknight();
+        let rect = draw_jump_to_bottom_chip(&mut Buffer::empty(area), &theme, area, true, false)
+            .expect("visible chip");
+        for (glyph_bg, expected_bg) in [(Color::Blue, Color::Blue), (Color::Reset, theme.bg_base)] {
+            let mut before = Buffer::empty(area);
+            before.set_string(
+                rect.right() - 1,
+                rect.y,
+                "한",
+                Style::default().fg(Color::Yellow).bg(glyph_bg),
+            );
+            let mut next = before.clone();
+            draw_jump_to_bottom_chip(&mut next, &theme, area, true, false).expect("visible chip");
+
+            assert_eq!(
+                next[(rect.right() - 1, rect.y)].symbol(),
+                CHIP_PAD_RIGHT,
+                "the chip still owns its right padding cell"
+            );
+            let trail = &next[(rect.right(), rect.y)];
+            assert_eq!(trail.symbol(), " ");
+            assert_eq!(
+                trail.bg, expected_bg,
+                "the exposed trailing cell must not fall back to the terminal default"
+            );
+            assert!(!trail.skip, "the trailing cell must be emittable");
+            assert!(
+                before
+                    .diff(&next)
+                    .iter()
+                    .any(|(x, y, _)| (*x, *y) == (rect.right(), rect.y)),
+                "the terminal must repaint the cell the chip exposed"
+            );
+        }
+    }
+
+    #[test]
+    fn reset_colour_themes_keep_a_plain_padding_cell() {
+        // With a `Reset` chip or canvas colour a half block would be inked in the terminal
+        // default's foreground instead of showing air, so the pad stays a plain cell.
+        let area = Rect::new(5, 5, 40, 5);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 60, 12));
+        let theme = Theme::terminal_default();
+        let rect =
+            draw_jump_to_bottom_chip(&mut buf, &theme, area, true, false).expect("visible chip");
+        for x in [rect.x, rect.right() - 1] {
+            let cell = &buf[(x, rect.y)];
+            assert_eq!(cell.symbol(), " ", "no half block without colours");
+            assert_eq!(cell.bg, theme.bg_light);
+        }
+        assert!(row_text(&buf, rect.y).contains("Jump to bottom (click) ↓"));
     }
 
     #[test]

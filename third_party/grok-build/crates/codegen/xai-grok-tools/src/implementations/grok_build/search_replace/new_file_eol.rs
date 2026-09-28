@@ -91,7 +91,7 @@ async fn git_attribute_line_ending(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
-    let mut child = command.spawn().ok()?;
+    let (mut child, process_group) = crate::util::global_process_scope().spawn(command).ok()?;
     let mut stdout = child.stdout.take()?.take(MAX_ATTR_OUTPUT_BYTES + 1);
     let mut output = Vec::new();
 
@@ -109,8 +109,8 @@ async fn git_attribute_line_ending(
     match result {
         Ok(ending) => ending,
         Err(_) => {
-            let _ = child.start_kill();
-            let _ = tokio::time::timeout(ATTR_REAP_TIMEOUT, child.wait()).await;
+            let _ = process_group.kill();
+            let _ = xai_tty_utils::reap_killed_bounded(&mut child, ATTR_REAP_TIMEOUT).await;
             None
         }
     }
@@ -136,19 +136,24 @@ fn git_query_path(path: &Path) -> Option<(PathBuf, PathBuf)> {
 }
 
 fn parse_check_attr_output(output: &[u8]) -> Option<LineEnding> {
-    let mut fields: Vec<&[u8]> = output.split(|byte| *byte == 0).collect();
-    if fields.last().is_some_and(|field| field.is_empty()) {
-        fields.pop();
-    }
-    if fields.len() != 6
-        || fields[0] != fields[3]
-        || fields[1] != b"text"
-        || fields[4] != b"eol"
-        || fields[2] == b"unset"
+    let mut fields = output.split(|byte| *byte == 0);
+    let path_text = fields.next()?;
+    let text_attribute = fields.next()?;
+    let text_value = fields.next()?;
+    let path_eol = fields.next()?;
+    let eol_attribute = fields.next()?;
+    let eol_value = fields.next()?;
+    if fields
+        .next()
+        .is_some_and(|trailing| !trailing.is_empty() || fields.next().is_some())
+        || path_text != path_eol
+        || text_attribute != b"text"
+        || eol_attribute != b"eol"
+        || text_value == b"unset"
     {
         return None;
     }
-    match fields[5] {
+    match eol_value {
         b"lf" => Some(LineEnding::Lf),
         b"crlf" => Some(LineEnding::Crlf),
         _ => None,

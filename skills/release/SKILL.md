@@ -25,6 +25,13 @@ log) is silently skipped.
 
 1. **SemVer only:** full `MAJOR.MINOR.PATCH` everywhere (tag `v4.0.4`, never
    `4.0`). Never claim a release "at 1.0" unless `1.0.0` shipped + verified.
+1b. **Pick the number from the merges (fail-close).** Run
+   `./scripts/next-version.sh` first: a `feat/` merge on the distribution
+   surface since the last tag judges MINOR, other surface changes PATCH, and a
+   harness-only range owes no release. `release.sh` refuses a version below
+   that judgment; shipping one anyway needs
+   `--level-override "<reason>"`, and the reason lands in the release PR body.
+   The rule and the surface table: `docs/contributing/versioning.md` §1c.
 2. **CHANGELOG invariant (fail-close):** `# Changelog` → `## Unreleased` at the
    very top → version sections newest-first. After any bump, run
    `./scripts/reorder-changelog.sh --check` — non-zero exit means fix first.
@@ -98,18 +105,23 @@ log) is silently skipped.
 ```bash
 # 1. Linked worktree off origin/main. Not the primary checkout.
 #    orca worktree create …  or:
-#    git worktree add -b chore/release-4.0.4 <path> origin/main
+#    git worktree add -b chore/release-4.1.0 <path> origin/main
 
-# 2. Bump + release orchestrator, with cwd = that worktree
-(cd <path> && ./scripts/release.sh 4.0.4 --desc "one-line release note")
+# 2. Pick the number from what shipped since the last tag (fail-close in
+#    release.sh; docs/contributing/versioning.md §1c). Prints the per-merge
+#    lines and, e.g., "proposed: 4.1.0 (MINOR)":
+(cd <path> && ./scripts/next-version.sh)
 
-# 3. Human verification — on npm 12 the flag is required: a blocked
+# 3. Bump + release orchestrator, with cwd = that worktree
+(cd <path> && ./scripts/release.sh 4.1.0 --desc "one-line release note")
+
+# 4. Human verification — on npm 12 the flag is required: a blocked
 #    postinstall still exits 0 and leaves the previous agent binary
-npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build@4.0.4
+npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build@4.1.0
 dsb --version
 ```
 
-`release.sh` stages: bump → MAJOR/README gate → verify → PR (`chore(release)`)
+`release.sh` stages: bump level → bump → MAJOR/README gate → verify → PR (`chore(release)`)
 → **wait for the PR's checks** → merge → tag → asset wait → **CI publishes over
 OIDC** (`publish-npm.yml`) → registry verified. No npm token and no one-time
 code are involved. The wait is the lesson of the 6.1.1 / 6.1.7 / 6.1.10 stops:
@@ -224,6 +236,7 @@ gh workflow run publish-npm.yml --ref v4.0.4
 | Publishing from a worktree whose HEAD ≠ tag | Ships unreleased/unmerged code as the binary |
 | Skipping asset check because CI "should" attach | CI queue routinely never runs; 404s for users |
 | `4.0` / `v4` in any public text | SemVer fail-close (Agents.md) |
+| Picking the number by habit (patch + 1) | All ten 6.1.x releases shipped MINOR-level work as PATCH; the judgment (`next-version.sh`) and the gate exist for this (`versioning.md` §1c) |
 | Bumping to a new MAJOR with no version-log row | Tag ships ahead of the documented story |
 | Claiming done after `npm publish` | Unverified global install is not a release |
 | Local publish when CI could publish | Loses provenance and leaves the irreversible step off the audit trail |

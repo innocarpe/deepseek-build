@@ -9,6 +9,7 @@ The default cycle for any product-affecting change is:
 
 ```
 fix on a branch → PR (pr-authoring skill) → merge (merge commit)
+→ ./scripts/next-version.sh (pick the number from what shipped)
 → ./scripts/release.sh <version>
 → npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build@<version>
 → verify
@@ -54,7 +55,8 @@ a tag ref cannot be restored by the next tag.
 | [`reorder-changelog.sh`](../../scripts/reorder-changelog.sh) | Reorder CHANGELOG.md to the invariant (Unreleased top, versions newest-first) without touching non-version sections; `--check` exits non-zero if out of order. Reorders only — it does not move items between sections. |
 | [`test-changelog-release.sh`](../../scripts/test-changelog-release.sh) | Hermetic regression test for the `Unreleased` move (`lib/changelog_release.py`); fixture CHANGELOGs in a temp dir, no network, no repo state |
 | [`lib/version_log.py`](../../scripts/lib/version_log.py) | Fill the decision-log row's `PR #_(fill in)_` with the release PR number; called by `release.sh` the moment `gh pr create` returns (idempotent, so a resumed release re-runs safely) |
-| [`release.sh`](../../scripts/release.sh) | Orchestrator: bump → MAJOR/README gate → verify → PR (`chore(release)`) → **wait for the PR's checks** → merge → tag `v{ver}` → wait for prebuilt assets → wait for CI publish → verify the registry. |
+| [`next-version.sh`](../../scripts/next-version.sh) | The bump-level judgment ([versioning.md §1c](./versioning.md)): reads the first-parent merges on `origin/main` since the newest tag — the `<type>/` prefix of each merge branch and the paths it changed — and prints one line per merge plus the proposed version. `--level` / `--version` for the machine forms, `--check <ver>` for the gate `release.sh` runs. `gh` is never involved. |
+| [`release.sh`](../../scripts/release.sh) | Orchestrator: bump level → bump → MAJOR/README gate → verify → PR (`chore(release)`) → **wait for the PR's checks** → merge → tag `v{ver}` → wait for prebuilt assets → wait for CI publish → verify the registry. |
 | [`lib/pr_checks.py`](../../scripts/lib/pr_checks.py) | The wait behind that merge — polls `gh pr view --json state,mergeable,statusCheckRollup` until every check the PR reports is complete with none failed and GitHub says `MERGEABLE`; the 6.1.1/6.1.7/6.1.10 "Pull Request is not mergeable" stop (§The merge waits for the release PR's checks) |
 | [`npm-emergency-publish.sh`](../../scripts/npm-emergency-publish.sh) | **Emergency path only.** Local interactive publish that drives `npm login --auth-type=web` and any emailed code through the `aside` browser agent, so no person has to supply a number. |
 | [`cache-guard.sh`](../../scripts/cache-guard.sh) | Release gate for spec 10 §1.9: overlay bench always, Path A bench only when `xai-grok-shell` is already compiled in the vendored target. Skips unless `DSB_RELEASE_CACHE_GUARD=1`; threshold via `DSB_CACHE_GUARD_THRESHOLD` (default 90). |
@@ -98,6 +100,7 @@ build (30–60+ minutes). The contract and test names are spec 10 §1.9 / §4.4.
 | Flag | Meaning |
 |------|---------|
 | `--desc "…"` | One-line note for the new CHANGELOG section **when `Unreleased` is empty** (the versions-README row uses it either way); the move reports when items outrank it |
+| `--level-override "<reason>"` | Ship a version below the computed bump level; the reason lands in the release PR body (`versioning.md` §1c). An empty reason is a usage error. |
 | `--no-publish` | Stop after assets are ready |
 | `--skip-bump` / `--skip-pr` / `--skip-tag` | Resume from a later stage |
 | `--publish-only` | Skip everything, wait for assets + publish |
@@ -106,6 +109,16 @@ build (30–60+ minutes). The contract and test names are spec 10 §1.9 / §4.4.
 | `--wait-all` | Retained for future matrix expansion; currently waits for the single `darwin-arm64` target |
 | `--timeout SEC` | Asset wait timeout (default 5400) |
 | `--checks-timeout SEC` | How long to wait for the release PR's checks before merging (default 3600) |
+
+### The bump level gate
+
+The number is a judgment of what shipped: `release.sh` fetches `origin/main`,
+runs `scripts/next-version.sh --check <version>` and, when the request sits
+below that judgment (exit 1), stops before the bump and prints the deciding
+merges. `--level-override "<reason>"` ships it anyway and the reason rides in
+the release PR body; `--publish-only` skips the check. No judgment can be made
+before the first tag — the release then warns and continues. Normative rules:
+[versioning.md §1c](./versioning.md).
 
 ### The merge waits for the release PR's checks
 

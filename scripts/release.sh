@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# Release orchestrator: bump -> PR -> merge -> tag -> wait for prebuilt assets
-# -> CI publishes to npm over OIDC -> verify the registry.
+# Release orchestrator: bump level -> bump -> PR -> merge -> tag -> wait for
+# prebuilt assets -> CI publishes to npm over OIDC -> verify the registry.
 #
 # The standard change cycle (see docs/contributing/release-cycle.md):
-#   fix -> PR (pr-authoring skill) -> merge -> ./scripts/release.sh <ver>
+#   fix -> PR (pr-authoring skill) -> merge -> ./scripts/next-version.sh picks
+#   the number -> ./scripts/release.sh <ver>
 #   -> npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build@<ver>
 #
 # Usage:
 #   ./scripts/release.sh 4.0.4 [--desc "one-line note"]
-#     [--no-publish] [--skip-bump] [--skip-pr] [--skip-tag] [--publish-only]
-#     [--local-publish] [--platform ID] [--timeout SEC] [--checks-timeout SEC]
-#     [--wait-all]
+#     [--level-override "<reason>"] [--no-publish] [--skip-bump] [--skip-pr]
+#     [--skip-tag] [--publish-only] [--local-publish] [--platform ID]
+#     [--timeout SEC] [--checks-timeout SEC] [--wait-all]
 #
 # Publishing (ADR 0012): the tag push triggers .github/workflows/publish-npm.yml,
 # which publishes via OIDC trusted publishing — no npm token and no one-time
@@ -30,6 +31,7 @@ fi
 
 VERSION=""
 DESC=""
+LEVEL_OVERRIDE=""; OVERRIDE_SET=0; PUBLISH_ONLY=0
 SKIP_BUMP=0; SKIP_PR=0; SKIP_TAG=0; NO_PUBLISH=0; WAIT_ALL=0; LOCAL_PUBLISH=0
 PLATFORM=""; TIMEOUT=5400
 # How long to wait for the release PR's checks before merging, and how often to
@@ -51,7 +53,13 @@ while [[ $# -gt 0 ]]; do
     --skip-tag) SKIP_TAG=1; shift ;;
     --no-publish) NO_PUBLISH=1; shift ;;
     --local-publish) LOCAL_PUBLISH=1; shift ;;
-    --publish-only) SKIP_BUMP=1; SKIP_PR=1; SKIP_TAG=1; shift ;;
+    --level-override)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --level-override needs a reason" >&2
+        exit 1
+      fi
+      LEVEL_OVERRIDE="$2"; OVERRIDE_SET=1; shift 2 ;;
+    --publish-only) SKIP_BUMP=1; SKIP_PR=1; SKIP_TAG=1; PUBLISH_ONLY=1; shift ;;
     --platform) PLATFORM="$2"; shift 2 ;;
     --timeout) TIMEOUT="$2"; shift 2 ;;
     --checks-timeout) CHECKS_TIMEOUT="$2"; shift 2 ;;
@@ -80,6 +88,46 @@ for pair in "checks timeout=$CHECKS_TIMEOUT" "checks interval=$CHECKS_INTERVAL";
     exit 1
   fi
 done
+if [[ "$OVERRIDE_SET" -eq 1 && -z "$LEVEL_OVERRIDE" ]]; then
+  echo "error: --level-override needs a non-empty reason (it is recorded in the release PR body)" >&2
+  exit 1
+fi
+
+# --- 0. bump level -----------------------------------------------------------
+# The version is a judgment of what shipped, not a habit: the first-parent
+# merges on origin/main since the last release tag decide whether this release
+# moves MINOR or PATCH, and a harness-only range owes no release at all
+# (docs/contributing/versioning.md §1c). A request below that judgment stops
+# here unless the caller names a reason; --level-override "<reason>" ships it
+# anyway and the reason rides in the release PR body. --publish-only resumes a
+# release whose number was already decided, so it skips the judgment (the
+# released work would read as unreleased there).
+if [[ "$PUBLISH_ONLY" -eq 0 ]]; then
+  echo "== bump level =="
+  git fetch -q origin main 2>/dev/null || \
+    echo "warn: could not fetch origin main; the level check reads the local ref"
+  LEVEL_RC=0
+  LEVEL_OUT="$("$ROOT/scripts/next-version.sh" --check "$VERSION" 2>&1)" || LEVEL_RC=$?
+  printf '%s\n' "$LEVEL_OUT"
+  # Exit 1 is the tool's judgment: the requested version is below the merges
+  # (or not newer than the last tag). Anything else nonzero means no judgment
+  # was rendered — no tag merged yet (a first release), no repository, the
+  # tool missing — and there is nothing to compare, so the release continues
+  # with the reason printed.
+  if [[ "$LEVEL_RC" -eq 1 ]]; then
+    if [[ "$OVERRIDE_SET" -eq 1 ]]; then
+      echo "warn: shipping below the computed bump level — override reason: $LEVEL_OVERRIDE"
+    else
+      echo "error: $VERSION is below the computed bump level" >&2
+      echo "  the number comes from ./scripts/next-version.sh; to ship this one anyway:" >&2
+      echo "    $0 $VERSION --level-override \"<why this version is right>\"" >&2
+      echo "  the reason is recorded in the release PR body." >&2
+      exit 1
+    fi
+  elif [[ "$LEVEL_RC" -ne 0 ]]; then
+    echo "warn: the bump level could not be computed (next-version.sh exit $LEVEL_RC) — continuing without the level gate" >&2
+  fi
+fi
 
 # --- 1. bump ----------------------------------------------------------------
 if [[ "$SKIP_BUMP" -eq 0 ]]; then
@@ -142,6 +190,13 @@ if [[ "$SKIP_PR" -eq 0 ]]; then
   git commit -m "chore(release): bump ${OLD_VER:-$VERSION} to $VERSION" || true
   git push -u origin "$BRANCH"
 
+  OVERRIDE_SECTION=""
+  if [[ "$OVERRIDE_SET" -eq 1 ]]; then
+    OVERRIDE_SECTION="### Bump-level override
+- Shipping \`$VERSION\` below the level the merges since the last tag computed (\`./scripts/next-version.sh\`).
+- Reason: $LEVEL_OVERRIDE"
+  fi
+
   BODY="$(mktemp)"
   cat > "$BODY" <<EOF
 ## Summary
@@ -157,6 +212,7 @@ tag, prebuilt attach, npm publish.
 
 ### Out of scope
 - No behavior change; release mechanics only.
+$OVERRIDE_SECTION
 
 ## Testing
 - [ ] \`node npm/scripts/check-version-match.js\` → ok ($VERSION)

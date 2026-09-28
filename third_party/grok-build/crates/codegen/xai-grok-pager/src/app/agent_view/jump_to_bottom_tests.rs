@@ -8,11 +8,15 @@
 use super::test_fixtures::make_agent;
 use super::{AgentView, AppRenderParams, BannerSlotParams};
 use crate::actions::ActionRegistry;
+use crate::app::app_view::InputOutcome;
 use crate::scrollback::block::RenderBlock;
 use crate::scrollback::render::ScratchBuffer;
 use crate::scrollback::search::ScrollbackSearchState;
+use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::backend::{Backend, TestBackend};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
 
 /// The measured iPhone Orca pane.
 const PHONE_COLS: u16 = 55;
@@ -102,8 +106,10 @@ fn chip_sits_on_the_scrollback_last_row_over_the_gap_row() {
         "the chip owns the last scrollback row"
     );
     assert_eq!(rect.height, 1);
-    // 24 columns: 21 chars + space + `↓` (U+2193, one terminal column).
-    assert_eq!(rect.width, 24, "the hit covers the whole phrase");
+    assert_eq!(
+        rect.width, 26,
+        "the hit covers the phrase and both padding cells"
+    );
     assert_inside(rect, sb);
     assert!(
         row_text(&buf, rect.y).contains(FULL_LABEL),
@@ -165,7 +171,7 @@ fn phone_width_keeps_the_full_phrase_on_one_line_inside_the_scrollback() {
 
     let sb = agent.pane_areas.scrollback;
     let rect = agent.hit_follow_indicator.rect.expect("chip visible");
-    assert_eq!(rect.width, 24, "55 columns hold the full phrase");
+    assert_eq!(rect.width, 26, "55 columns hold the padded full phrase");
     assert_eq!(rect.y, sb.bottom() - 1);
     assert_inside(rect, sb);
     eprintln!(
@@ -195,7 +201,7 @@ fn a_scrollback_below_the_full_phrase_widens_to_the_short_form() {
         "fixture: one reserved outer column either side"
     );
     let rect = agent.hit_follow_indicator.rect.expect("chip visible");
-    assert_eq!(rect.width, 16, "the short form's width");
+    assert_eq!(rect.width, 18, "the padded short form's width");
     assert_eq!(rect.y, sb.bottom() - 1);
     assert_inside(rect, sb);
     let frame = frame_text(&buf);
@@ -214,7 +220,7 @@ fn a_scrollback_below_the_short_form_falls_back_to_the_bare_arrow() {
 
     let sb = agent.pane_areas.scrollback;
     let rect = agent.hit_follow_indicator.rect.expect("chip visible");
-    assert_eq!(rect.width, 1, "the arrow is one column");
+    assert_eq!(rect.width, 3, "the arrow keeps a padding cell on each side");
     assert_eq!(rect.y, sb.bottom() - 1);
     assert_inside(rect, sb);
     let row = row_text(&buf, rect.y);
@@ -274,4 +280,113 @@ fn hovered_chip_brightens_its_text_over_the_gray_background() {
     let hovered = buf.cell((rect.x, rect.y)).expect("chip cell");
     assert_eq!(hovered.fg, theme.gray_bright);
     assert_eq!(hovered.bg, theme.bg_light);
+}
+
+#[test]
+fn both_padding_cells_hover_and_click_in_full_frames_at_every_label_width() {
+    for cols in [PHONE_COLS, 26, 19] {
+        for edge in [false, true] {
+            let mut agent = scrolled_up_agent(cols, PHONE_ROWS);
+            let buf = draw(&mut agent, cols, PHONE_ROWS);
+            let rect = agent.hit_follow_indicator.rect.expect("chip visible");
+            let x = if edge { rect.right() - 1 } else { rect.x };
+            assert_eq!(buf[(x, rect.y)].symbol(), " ", "painted padding");
+            assert_eq!(buf[(x, rect.y)].bg, crate::theme::Theme::current().bg_light);
+            assert!(!agent.hit_follow_indicator.contains(rect.x - 1, rect.y));
+            assert!(!agent.hit_follow_indicator.contains(rect.right(), rect.y));
+            let mouse = |kind| MouseEvent {
+                kind,
+                column: x,
+                row: rect.y,
+                modifiers: KeyModifiers::NONE,
+            };
+            agent.handle_mouse(&mouse(MouseEventKind::Moved));
+            assert!(agent.hit_follow_indicator.hovered);
+            let hovered = draw(&mut agent, cols, PHONE_ROWS);
+            assert_eq!(
+                hovered[(rect.x + 1, rect.y)].fg,
+                crate::theme::Theme::current().gray_bright
+            );
+            assert!(matches!(
+                agent.handle_mouse(&mouse(MouseEventKind::Down(MouseButton::Left))),
+                InputOutcome::Changed
+            ));
+            assert!(
+                agent.scrollback.is_follow_mode(),
+                "padding clicks return to bottom"
+            );
+            let hidden = draw(&mut agent, cols, PHONE_ROWS);
+            assert!(agent.hit_follow_indicator.rect.is_none());
+            assert!(!agent.hit_follow_indicator.hovered);
+            assert!(!frame_text(&hidden).contains("Jump to bottom"));
+        }
+    }
+}
+
+#[test]
+fn scrolling_styled_wide_text_keeps_the_chip_opaque_in_buffer_diff_output() {
+    let mut agent = make_agent();
+    for i in 0..40 {
+        let prefix = if i % 2 == 0 { "" } else { "x" };
+        let text = match i % 3 {
+            0 => format!("**{prefix}{}**", "가".repeat(45)),
+            1 => format!("`{prefix}{}`", "🍊".repeat(45)),
+            _ => format!("{prefix}{}", "한".repeat(45)),
+        };
+        agent
+            .scrollback
+            .push_block(RenderBlock::agent_message(text));
+    }
+    let mut previous = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    let mut backend = TestBackend::new(PHONE_COLS, PHONE_ROWS);
+    backend
+        .draw(Buffer::empty(previous.area).diff(&previous).into_iter())
+        .unwrap();
+    agent.scrollback.scroll_up(5);
+    let mut saw_crossing_glyph = false;
+    let mut saw_styled_text = false;
+    for _ in 0..12 {
+        // Paint the same frame without the chip to measure the content it covers.
+        let mut appearance = agent.scrollback.appearance().clone();
+        let indicator = appearance.scrollback.scroll.follow_indicator;
+        appearance.scrollback.scroll.follow_indicator = crate::appearance::FollowIndicator::None;
+        agent.scrollback.set_appearance(appearance.clone());
+        let underneath = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+        appearance.scrollback.scroll.follow_indicator = indicator;
+        agent.scrollback.set_appearance(appearance);
+        let next = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+        let rect = agent
+            .hit_follow_indicator
+            .rect
+            .expect("scrolled-up chip visible");
+        saw_crossing_glyph |=
+            unicode_width::UnicodeWidthStr::width(underneath[(rect.x - 1, rect.y)].symbol()) > 1;
+        saw_styled_text |=
+            (rect.x..rect.right()).any(|x| !underneath[(x, rect.y)].modifier.is_empty());
+        backend.draw(previous.diff(&next).into_iter()).unwrap();
+        let theme = crate::theme::Theme::current();
+        for (i, ch) in format!(" {FULL_LABEL} ").chars().enumerate() {
+            let x = rect.x + i as u16;
+            let cell = &backend.buffer()[(x, rect.y)];
+            assert_eq!(
+                cell.symbol(),
+                ch.to_string(),
+                "scrolling lost chip column {x}"
+            );
+            assert_eq!(cell.fg, theme.gray);
+            assert_eq!(cell.bg, theme.bg_light);
+            assert_eq!(cell.modifier, Modifier::empty());
+            assert!(!cell.skip);
+        }
+        previous = next;
+        agent.scrollback.scroll_up(1);
+    }
+    assert!(
+        saw_crossing_glyph,
+        "fixture must cross the chip's left boundary with a wide glyph"
+    );
+    assert!(
+        saw_styled_text,
+        "fixture must scroll formatted text under the chip"
+    );
 }

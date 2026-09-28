@@ -41,6 +41,24 @@
 **Ultragoal (product):** **`owner-bar-5x`** → tag **`v5.0.0`** ([ULTRAGOAL_CHAIN.md](product/ULTRAGOAL_CHAIN.md) · [OWNER_BAR_5X_GOALS.md](product/OWNER_BAR_5X_GOALS.md)).  
 Do **not** resume `heart-3x` / `fleet-4x` as product SSOT. Gate: `./scripts/test-owner-bar.sh` (RED until fusion).
 
+## Verification — jump-to-bottom chip (2026-09-28)
+
+The chip now owns its complete cell state and one padding column on each side;
+a wide scrollback glyph crossing its left boundary is erased before buffer
+diffing. The label ladder, last scrollback row, one-row height, hover colour,
+and hidden-state rules are unchanged. Full-view tests exercise 55x41 scrolling
+and padding clicks at the full, short, and arrow label widths. Primitive tests
+exercise inherited colours/modifiers/skip and wide-glyph diff output.
+
+At PR opening, `./scripts/test-owner-bar.sh` printed
+`PASS=60 FAIL=0 NOT_RUN=0 linkage_exit=0 forbidden_exit=0` and
+`ALL PASS — owner bar green`; `./scripts/check-path-a-linkage.sh` printed
+`PASS`. Vendored fmt passed. Pager compile and test results are still pending:
+seeded registry artifacts failed with `E0463`/`E0460` before the pager compiled,
+so only this worktree's Rust metadata/libraries were invalidated for a coherent
+rebuild. Native build outputs remain cached. No build-wrapper source changed,
+and this verification does not flip a spec-readiness gate.
+
 ## Verification — prompt quota removal (2026-09-28)
 
 The prompt quota removal rechecked the existing owner bar on the current Path A:

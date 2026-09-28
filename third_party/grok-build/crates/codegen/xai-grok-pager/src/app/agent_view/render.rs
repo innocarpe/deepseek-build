@@ -4552,7 +4552,7 @@ fn draw_jump_to_bottom_chip(
         return None;
     }
     let label = jump_to_bottom_label(area.width)?;
-    let width = unicode_width::UnicodeWidthStr::width(label) as u16;
+    let width = unicode_width::UnicodeWidthStr::width(label) as u16 + 2;
     let y = area.bottom().saturating_sub(1);
     let x = area.x + area.width.saturating_sub(width) / 2;
     let style = Style::default()
@@ -4562,12 +4562,23 @@ fn draw_jump_to_bottom_chip(
             theme.gray
         })
         .bg(theme.bg_light);
-    for (i, ch) in label.chars().enumerate() {
-        if let Some(cell) = buf.cell_mut((x + i as u16, y)) {
-            cell.set_char(ch);
+    // A wide scrollback glyph starting just before the chip would make Buffer::diff skip its
+    // first cell. Erase that glyph's leading half, keeping the surrounding scrollback style.
+    if x > buf.area.x
+        && let Some(cell) = buf.cell_mut((x - 1, y))
+        && unicode_width::UnicodeWidthStr::width(cell.symbol()) > 1
+    {
+        cell.set_symbol(" ").set_skip(false);
+    }
+    for column in x..x + width {
+        if let Some(cell) = buf.cell_mut((column, y)) {
+            // set_style patches the old attributes; an opaque overlay must own all cell state,
+            // including REVERSED/DIM/HIDDEN and skip, before painting its background and text.
+            cell.reset();
             cell.set_style(style);
         }
     }
+    buf.set_string(x + 1, y, label, style);
     Some(Rect::new(x, y, width, 1))
 }
 /// Pad `msg` for the toast slot, truncating with a trailing ellipsis when it cannot fit in `avail_width` columns.
@@ -5415,8 +5426,10 @@ mod follow_indicator_tests {
     use super::{draw_jump_to_bottom_chip, draw_scroll_arrow, jump_to_bottom_label};
     use crate::app::agent_view::HitArea;
     use crate::theme::Theme;
+    use ratatui::backend::{Backend, TestBackend};
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
+    use ratatui::style::{Color, Modifier, Style};
 
     fn row_text(buf: &Buffer, y: u16) -> String {
         (0..buf.area.width)
@@ -5440,8 +5453,101 @@ mod follow_indicator_tests {
         let mut buf = Buffer::empty(Rect::new(0, 0, 60, 12));
         let rect = draw_jump_to_bottom_chip(&mut buf, &Theme::current(), area, true, false)
             .expect("40 columns hold the full phrase");
-        assert_eq!(rect, Rect::new(13, 9, 24, 1));
+        assert_eq!(rect, Rect::new(12, 9, 26, 1));
         assert!(row_text(&buf, rect.y).contains("Jump to bottom (click) ↓"));
+    }
+
+    #[test]
+    fn chip_replaces_underlying_colors_modifiers_and_skip_state() {
+        let area = Rect::new(5, 5, 40, 5);
+        for theme in [
+            Theme::deepseeknight(),
+            Theme::deepseeknight_neutral(),
+            Theme::deepseeknight_v2(),
+        ] {
+            assert_ne!(theme.bg_light, Color::Reset, "an opaque chip background");
+            for hovered in [false, true] {
+                for (fg, bg) in [(Color::Reset, Color::Red), (Color::Cyan, Color::Reset)] {
+                    let mut buf = Buffer::empty(Rect::new(0, 0, 60, 12));
+                    for x in area.x..area.right() {
+                        buf[(x, 9)]
+                            .set_char('x')
+                            .set_style(Style::default().fg(fg).bg(bg).add_modifier(Modifier::all()))
+                            .set_skip(true);
+                    }
+                    let rect = draw_jump_to_bottom_chip(&mut buf, &theme, area, true, hovered)
+                        .expect("visible chip");
+                    for (i, ch) in " Jump to bottom (click) ↓ ".chars().enumerate() {
+                        let cell = &buf[(rect.x + i as u16, rect.y)];
+                        assert_eq!(
+                            cell.fg,
+                            if hovered {
+                                theme.gray_bright
+                            } else {
+                                theme.gray
+                            }
+                        );
+                        assert_eq!(cell.bg, theme.bg_light);
+                        assert_eq!(
+                            cell.modifier,
+                            Modifier::empty(),
+                            "underlying terminal attributes must not leak"
+                        );
+                        assert!(!cell.skip, "the chip must be emitted to the terminal");
+                        assert_eq!(cell.symbol(), ch.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn chip_diff_emits_its_first_cell_after_a_straddling_wide_glyph() {
+        let area = Rect::new(0, 0, 55, 4);
+        let theme = Theme::deepseeknight();
+        let mut previous = Buffer::empty(area);
+        let rect = draw_jump_to_bottom_chip(&mut previous.clone(), &theme, area, true, false)
+            .expect("visible chip");
+        let mut backend = TestBackend::new(area.width, area.height);
+        for glyph in ["한", "🍊", "x", "가", " "] {
+            let mut next = Buffer::empty(area);
+            let underlying = Style::default()
+                .fg(Color::Yellow)
+                .bg(Color::Blue)
+                .add_modifier(Modifier::REVERSED);
+            next.set_string(rect.x - 1, rect.y, glyph, underlying);
+            next.set_string(rect.right() - 1, rect.y, "한", underlying);
+            let left = next[(rect.x - 1, rect.y)].clone();
+            draw_jump_to_bottom_chip(&mut next, &theme, area, true, false);
+
+            let updates = previous.diff(&next);
+            if previous[(rect.x, rect.y)] != next[(rect.x, rect.y)] {
+                assert!(
+                    updates.iter().any(|(x, y, _)| (*x, *y) == (rect.x, rect.y)),
+                    "the wide glyph must not suppress the chip's first cell: {glyph:?}"
+                );
+            }
+            backend
+                .draw(updates.into_iter())
+                .expect("render buffer diff");
+            for x in rect.x..rect.right() {
+                assert_eq!(
+                    backend.buffer()[(x, rect.y)],
+                    next[(x, rect.y)],
+                    "terminal output lost chip cell {x} behind {glyph:?}"
+                );
+            }
+            let mut expected_left = left;
+            if unicode_width::UnicodeWidthStr::width(glyph) > 1 {
+                expected_left.set_symbol(" ");
+            }
+            assert_eq!(
+                next[(rect.x - 1, rect.y)],
+                expected_left,
+                "erase only a glyph crossing the left boundary, preserving its style"
+            );
+            previous = next;
+        }
     }
 
     #[test]

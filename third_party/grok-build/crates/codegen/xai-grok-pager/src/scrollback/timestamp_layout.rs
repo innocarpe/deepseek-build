@@ -18,18 +18,20 @@ use crate::appearance::AppearanceConfig;
 /// Widest short clock (`"12:59 PM"`).
 pub(crate) const TIMESTAMP_SHORT_MAX_COLS: u16 = 8;
 
-/// The clock ends one column inside the entry's right edge.
+/// Narrow panes without a held-copy gutter keep one column at the clock's right edge.
 pub(crate) const CLOCK_EDGE_INSET: u16 = 1;
+
+/// Wide panes keep two blank columns between the body and the clock.
+const WIDE_CLOCK_GAP: u16 = 2;
 
 /// Columns between a clock's last glyph and its entry's right edge.
 ///
-/// [`CLOCK_EDGE_INSET`], except on a phone pane that keeps the held-copy
-/// gutter: the transcript already leaves that column blank right of every entry
-/// (the frame paints it in the echo's band), so it is the clock's column of air
-/// and the clock closes on the entry's last column, as tight to the right as
-/// the text's own one column on the left.
+/// Wide panes close on the entry's last column; the frame already keeps the
+/// outer gutter. Phone panes keep [`CLOCK_EDGE_INSET`], except when the held-copy
+/// gutter provides that column of air outside every entry (the frame paints it
+/// in the echo's band).
 pub(crate) fn clock_edge_inset(appearance: &AppearanceConfig) -> u16 {
-    if appearance.scrollback.layout.narrow && appearance.scrollback.display.selection_buttons {
+    if !appearance.scrollback.layout.narrow || appearance.scrollback.display.selection_buttons {
         0
     } else {
         CLOCK_EDGE_INSET
@@ -37,11 +39,10 @@ pub(crate) fn clock_edge_inset(appearance: &AppearanceConfig) -> u16 {
 }
 
 /// Columns a wide pane takes from the first content line only: the short clock,
-/// one blank column before it, and [`CLOCK_EDGE_INSET`].
-pub(crate) const TIMESTAMP_FIRST_LINE_RESERVE: u16 =
-    TIMESTAMP_SHORT_MAX_COLS + 1 + CLOCK_EDGE_INSET;
+/// [`WIDE_CLOCK_GAP`] before it, and no extra inset at the entry's right edge.
+pub(crate) const TIMESTAMP_FIRST_LINE_RESERVE: u16 = TIMESTAMP_SHORT_MAX_COLS + WIDE_CLOCK_GAP;
 
-/// Columns a wide pane takes from the first content line so the short clock and one blank column fit.
+/// Columns a wide pane takes from the first content line so the short clock and its gap fit.
 /// Narrow panes, and `show_timestamps == false`, reserve nothing.
 pub(crate) fn wide_first_line_reserve(appearance: &AppearanceConfig) -> u16 {
     if appearance.show_timestamps && !appearance.scrollback.layout.narrow {
@@ -136,10 +137,10 @@ pub(crate) fn timestamp_anchor(
     entry.created_at
 }
 
-/// One blank column between the last body glyph and the clock.
-fn fits(text_cols: u16, clock: &str, row_span: u16, edge_inset: u16) -> bool {
+/// The body-to-clock gap and right inset must fit along with the clock.
+fn fits(text_cols: u16, clock: &str, row_span: u16, gap: u16, edge_inset: u16) -> bool {
     text_cols
-        .saturating_add(1)
+        .saturating_add(gap)
         .saturating_add(clock_cols(clock))
         .saturating_add(edge_inset)
         <= row_span
@@ -186,9 +187,10 @@ impl ClockPlan {
 
         let short = short_clock(ts);
         let long = long_clock(ts);
+        let gap = if narrow { 1 } else { WIDE_CLOCK_GAP };
         let edge_inset = clock_edge_inset(q.appearance);
-        let short_fits = fits(q.line_cols, &short, q.row_span, edge_inset);
-        let long_fits = fits(q.line_cols, &long, q.row_span, edge_inset);
+        let short_fits = fits(q.line_cols, &short, q.row_span, gap, edge_inset);
+        let long_fits = fits(q.line_cols, &long, q.row_span, gap, edge_inset);
         let expanded = q.allow_long && q.entry.timestamp_expanded;
         let want_long = expanded || (q.allow_long && q.hovered);
 

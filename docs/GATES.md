@@ -127,6 +127,8 @@ attribute; it uses fallback and writes only to the mock backend.
 `cargo test -p dsb-tools --lib` printed `79 passed; 0 failed`. With the
 worktree cargo bin on `PATH`,
 `./scripts/vendor-cargo.sh check -p xai-grok-tools --all-targets` passed and
+`./scripts/vendor-cargo.sh check -p xai-grok-workspace --all-targets` passed,
+compiling the ACP adapter against the conservative capability default. The
 `PATH="$HOME/.cargo/bin:$PATH" ./scripts/vendor-cargo.sh test -p xai-grok-tools --lib search_replace:: -- --test-threads=1`
 printed `125 passed; 0 failed; 3262 filtered out`.
 `./scripts/check-path-a-linkage.sh` printed `PASS`; `git diff --check` passed.

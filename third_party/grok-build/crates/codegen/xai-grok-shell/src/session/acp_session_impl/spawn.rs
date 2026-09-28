@@ -238,6 +238,7 @@ pub(crate) async fn spawn_session_actor(
     initial_prompt_texts: Vec<String>,
     fs_notify_config: Option<ClientFsConfig>,
     initial_total_tokens: u64,
+    initial_session_usage: xai_chat_state::UsageLedger,
     mut startup_hints: StartupHints,
     client_type: ClientType,
     auto_compact_threshold_percent: u8,
@@ -625,10 +626,11 @@ pub(crate) async fn spawn_session_actor(
         hard_clear_age_turns: session_pruning_config.hard_clear_age_turns,
     };
     let (chat_state_event_tx, chat_state_event_rx) = mpsc::unbounded_channel();
-    let chat_state_handle = xai_chat_state::ChatStateActor::spawn_with_pruning(
+    let chat_state_handle = xai_chat_state::ChatStateActor::spawn_with_pruning_and_usage(
         conversation.clone(),
         chat_state_sampling_config,
         actor_pruning_config,
+        initial_session_usage,
         Box::new(super::chat_persistence::ChannelChatPersistence::new(
             persistence.tx.clone(),
         )),
@@ -2559,6 +2561,7 @@ pub(crate) async fn spawn_session_on_thread(
     rewind_points_path: Option<std::path::PathBuf>,
     fs_notify_config: Option<ClientFsConfig>,
     initial_total_tokens: u64,
+    initial_session_usage: xai_chat_state::UsageLedger,
     startup_hints: StartupHints,
     client_type: ClientType,
     auto_compact_threshold_percent: u8,
@@ -2774,6 +2777,7 @@ pub(crate) async fn spawn_session_on_thread(
                     initial_prompt_texts,
                     fs_notify_config,
                     initial_total_tokens,
+                    initial_session_usage,
                     startup_hints,
                     client_type,
                     auto_compact_threshold_percent,

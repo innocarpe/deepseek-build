@@ -502,6 +502,8 @@ mod tests {
             totals: Default::default(),
             model_usage: Default::default(),
             num_turns: 1,
+            num_turns_known: true,
+            cache_session: None,
             usage_is_incomplete: false,
         };
         let free = "subscription:free-usage-exhausted quota hit";

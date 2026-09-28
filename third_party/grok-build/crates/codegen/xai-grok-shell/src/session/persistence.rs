@@ -3090,6 +3090,30 @@ pub struct PersistedInfo {
     /// Persisted goal mode orchestration state (None for sessions without goal mode)
     pub goal_mode_state: Option<crate::session::goal_tracker::GoalOrchestration>,
     pub workflow_runs: Vec<crate::session::workflow::store::RestoredWorkflowRun>,
+    /// Cumulative bill and Path A cache ledger restored from `usage.json`.
+    pub restored_session_usage: xai_chat_state::UsageLedger,
+}
+
+fn restore_session_usage(
+    usage_file: Option<crate::session::usage_file::SessionUsageFile>,
+    has_prior_history: bool,
+) -> (
+    xai_chat_state::UsageLedger,
+    Option<crate::session::usage_file::UsageSummary>,
+) {
+    match usage_file {
+        Some(file) => {
+            let ledger = file.session.to_ledger();
+            let baseline = crate::session::usage_file::UsageSummary::from_ledger(&ledger);
+            (ledger, Some(baseline))
+        }
+        None if has_prior_history => {
+            let ledger = xai_chat_state::UsageLedger::unknown_history();
+            let baseline = crate::session::usage_file::UsageSummary::from_ledger(&ledger);
+            (ledger, Some(baseline))
+        }
+        None => (xai_chat_state::UsageLedger::default(), None),
+    }
 }
 
 /// On NotFound, try pulling from backend. Returns pulled info or the original error.
@@ -3153,6 +3177,11 @@ pub(crate) async fn load_light(
 
     let updates_file_path = storage.updates_file_path(&loaded_info);
     let rewind_points_file_path = storage.rewind_points_file_path(&loaded_info);
+    let has_prior_history = !persisted.chat_history.is_empty()
+        || persisted.summary.num_messages > 0
+        || persisted.summary.num_chat_messages > 0;
+    let (restored_session_usage, restored_usage_baseline) =
+        restore_session_usage(storage.read_usage(&loaded_info).await?, has_prior_history);
 
     let persisted_info = PersistedInfo {
         summary: persisted.summary,
@@ -3165,6 +3194,7 @@ pub(crate) async fn load_light(
         announcement_state: persisted.announcement_state,
         goal_mode_state: persisted.goal_mode_state,
         workflow_runs: persisted.workflow_runs,
+        restored_session_usage: restored_session_usage.clone(),
     };
 
     let (handle, rx, summary_tx, disk_full_tx) = actor_channel();
@@ -3200,7 +3230,7 @@ pub(crate) async fn load_light(
             disk_full_notified: false,
             dirty_files: Default::default(),
             pending_write_error: None,
-            last_usage_live: None,
+            last_usage_live: restored_usage_baseline,
             last_usage_turn: None,
             last_incoming_turn: None,
         };

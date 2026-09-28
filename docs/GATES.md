@@ -108,6 +108,42 @@ Repeating the same suite with the process-local terminal fixture
 `TERM_PROGRAM=ghostty ./scripts/vendor-cargo.sh test -p xai-grok-pager --lib`
 printed `10287 passed; 0 failed; 5 ignored`.
 
+## Verification — Path A resume cache usage (2026-09-29)
+
+Path A now restores the cumulative usage ledger from `usage.json` before the
+session actor accepts requests. The first resumed write subtracts that restored
+baseline, preserving saved billing totals while adding only new usage. The
+incoming-turn fold cursor remains process-local: late interjections fold into
+the same-process row, and a turn-number collision after restart is renumbered.
+Legacy cache/main-loop fields and a missing usage file on an existing session
+remain explicitly unknown/incomplete; explicit new-schema zeros remain known.
+The main-loop response subtotal observed after an upgrade is still persisted
+while its known flag remains false, and billing `modelCalls` is never used to
+infer the missing legacy split. A malformed present summary is rejected rather
+than restored as an unknown ledger.
+
+Local production-crate verification passed using the per-worktree vendored
+target and serialized build wrapper:
+
+- `./scripts/vendor-cargo.sh check --all-targets` — passed.
+- `./scripts/vendor-cargo.sh fmt --all -- --check` — passed.
+- `./scripts/vendor-cargo.sh test -p xai-chat-state cache_session_sums_reported_halves_and_skips_unreported` — 1 passed.
+- `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib session::usage_file::tests` — 16 passed, including disk round-trip, legacy/explicit-zero distinction, malformed present-summary rejection, and process-local cursor collision.
+- `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib resume_restores_live_baseline` — 1 passed; persisted billing/cache values were not double-counted, and a same-process late interjection folded into the current row.
+- `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib restored_ledger_reaches_session_usage_and_deepseek_status_requests` — 1 passed through both production status extensions.
+- `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib response_preserves_observed_turn_subtotal_with_unknown_history` — 1 passed.
+- `./scripts/vendor-cargo.sh test -p xai-grok-pager --lib session_usage_block_shows_restored_cache_totals_and_unknown_legacy_history` — 1 passed.
+- `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib legacy_main_loop_subtotal_survives_repeated_resume_roundtrips` — 1 passed; two post-upgrade calls survive the first disk resume, a third survives another resume, the old billing count remains separate, and historical completeness stays false.
+
+These are targeted local results, not a gate-table status change. Hosted PR CI
+for #339 completed successfully at source head
+`9a9c58f8af1afdc8412f83629d38430fb25d149f` ([run 36466155902](https://github.com/innocarpe/deepseek-build/actions/runs/36466155902)):
+`CI / required`, `changes`, `grok fmt`, `grok clippy`, and `changelog move` passed.
+Path-filtered jobs `fmt`, `clippy`, `test`, `semver`, `release verify retry`,
+`session close`, `vendor build queue`, `worktree ownership`, and `npm` were
+skipped. The separate `CI grok test` workflow runs on `main` pushes, so it was
+not part of this pre-merge PR run.
+
 ## Verification — new-file Git EOL policy (2026-09-29)
 
 Path A and the thin `dsb-tools` create paths now resolve `text` / `eol` from

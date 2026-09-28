@@ -248,6 +248,158 @@ fn turn_lookup_returns_matching_row() {
 }
 
 #[test]
+fn path_a_usage_summary_roundtrips_the_live_ledger() {
+    let mut ledger = UsageLedger::default();
+    ledger.record_main_loop_call(
+        "grok-4",
+        &TokenUsage {
+            prompt_tokens: 100,
+            completion_tokens: 10,
+            cache_hit_tokens: Some(80),
+            cache_miss_tokens: Some(20),
+            cached_prompt_tokens: 80,
+            ..TokenUsage::default()
+        },
+        Some(1_000),
+        Some(100),
+    );
+    ledger.record_main_loop_call("grok-4", &tu(50, 5), Some(2_000), None);
+    ledger.record_subagent(
+        &[(
+            "subagent-model".into(),
+            xai_chat_state::UsageTotals {
+                input_tokens: 7,
+                output_tokens: 2,
+                model_calls: 1,
+                api_duration_ms: 3_000,
+                cost_usd_ticks: Some(25),
+                ..Default::default()
+            },
+        )],
+        true,
+    );
+
+    let mut file = SessionUsageFile::new("sess-path-a");
+    file.session = UsageSummary::from_ledger(&ledger);
+    let bytes = serde_json::to_vec(&file).unwrap();
+    let restored: SessionUsageFile = serde_json::from_slice(&bytes).unwrap();
+    let ledger = restored.session.to_ledger();
+
+    assert_eq!(ledger.totals.input_tokens, 157);
+    assert_eq!(ledger.totals.output_tokens, 17);
+    assert_eq!(ledger.totals.model_calls, 3);
+    assert_eq!(ledger.totals.api_duration_ms, 6_000);
+    assert_eq!(ledger.totals.cost_usd_ticks, Some(125));
+    assert_eq!(ledger.totals.cost_missing_calls, 1);
+    assert_eq!(ledger.main_loop_model_calls, 2);
+    assert!(ledger.main_loop_model_calls_known);
+    assert_eq!(ledger.cache_session.hit_tokens(), 80);
+    assert_eq!(ledger.cache_session.miss_tokens(), 20);
+    assert_eq!(ledger.cache_session.reported(), 1);
+    assert_eq!(ledger.cache_session.unreported(), 1);
+    assert!(ledger.cache_session.history_complete());
+    assert_eq!(ledger.by_model["subagent-model"].model_calls, 1);
+    assert_eq!(
+        ledger.main_loop_model_calls, 2,
+        "subagent calls stay excluded"
+    );
+    assert!(ledger.incomplete);
+}
+
+#[test]
+fn absent_legacy_fields_are_unknown_even_when_old_model_calls_are_zero() {
+    let legacy: SessionUsageFile = serde_json::from_value(serde_json::json!({
+        "sessionId": "legacy-empty-count",
+        "session": {
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "modelCalls": 0
+        }
+    }))
+    .unwrap();
+    let restored = legacy.session.to_ledger();
+    assert!(!restored.main_loop_model_calls_known);
+    assert!(!restored.cache_session.history_complete());
+
+    let explicit_zero: SessionUsageFile = serde_json::from_value(serde_json::json!({
+        "sessionId": "new-empty-count",
+        "session": {
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "modelCalls": 0,
+            "mainLoopModelCalls": 0,
+            "cacheSession": {
+                "hitTokens": 0,
+                "missTokens": 0,
+                "reported": 0,
+                "unreported": 0,
+                "historyComplete": true
+            }
+        }
+    }))
+    .unwrap();
+    let restored = explicit_zero.session.to_ledger();
+    assert!(restored.main_loop_model_calls_known);
+    assert_eq!(restored.main_loop_model_calls, 0);
+    assert!(restored.cache_session.history_complete());
+    assert_eq!(restored.cache_session.hit_tokens(), 0);
+}
+
+#[test]
+fn legacy_usage_without_cache_summary_keeps_billing_and_marks_cache_unknown() {
+    let legacy: SessionUsageFile = serde_json::from_value(serde_json::json!({
+        "sessionId": "legacy-bill",
+        "session": {
+            "inputTokens": 123,
+            "outputTokens": 45,
+            "totalTokens": 168,
+            "modelCalls": 4,
+            "costUsdTicks": 900
+        }
+    }))
+    .unwrap();
+    let restored = legacy.session.to_ledger();
+    assert_eq!(restored.totals.input_tokens, 123);
+    assert_eq!(restored.totals.output_tokens, 45);
+    assert_eq!(restored.totals.cost_usd_ticks, Some(900));
+    assert!(!restored.cache_session.history_complete());
+    assert!(!restored.main_loop_model_calls_known);
+}
+
+#[test]
+fn malformed_partial_cache_summary_is_not_defaulted_to_zero() {
+    let malformed = serde_json::json!({
+        "session": {
+            "modelCalls": 1,
+            "cacheSession": {
+                "hitTokens": 10,
+                "missTokens": 0,
+                "historyComplete": true
+            }
+        }
+    });
+    assert!(serde_json::from_value::<SessionUsageFile>(malformed).is_err());
+}
+
+#[test]
+fn serialized_usage_does_not_restore_the_process_local_apply_cursor() {
+    let mut file = SessionUsageFile::new("sess-cursor");
+    let first = live(&[("grok-4", 100, 20, Some(50))]);
+    file.apply_turn(1, "t1", &first, None);
+
+    let bytes = serde_json::to_vec(&file).unwrap();
+    let mut resumed: SessionUsageFile = serde_json::from_slice(&bytes).unwrap();
+    let next = live(&[("grok-4", 10, 2, Some(5))]);
+    let written = resumed.apply_turn(1, "resume-turn", &next, None);
+
+    assert_eq!(written, 2);
+    assert_eq!(resumed.turns.len(), 2);
+    assert_eq!(resumed.turns[0].usage.input_tokens, 100);
+    assert_eq!(resumed.turns[1].usage.input_tokens, 10);
+    assert_eq!(resumed.session.input_tokens, 110);
+}
+
+#[test]
 fn covers_detects_same_process_vs_reset_ledger() {
     let bigger = live(&[("m", 10, 1, None), ("m", 5, 1, None)]);
     let smaller = live(&[("m", 5, 1, None)]);

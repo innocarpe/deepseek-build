@@ -209,12 +209,10 @@ cache_session=hit=<n>,miss=<n>,rate=<pct>,reported=<n>,unreported=<n>
 - The counter is per session, reset on a new session, and never reset by a
   turn. "A new session" means a new conversation, not a new process: a
   resumed conversation is the same session (spec 100 §1.1 item 4 resumes by
-  id), so its counter is **stored with the session** and continues. Keeping it
-  in process memory only would make every resume silently restart the totals,
-  which is the cost question this section exists to answer. A file written
-  before this contract carries no counter and starts at zero — the evidence of
-  those turns was never recorded, and inventing it would be a measurement of
-  nothing.
+  id), so its counter is stored with the session and continues. The overlay
+  stores its counter in session metadata; Path A stores it in `usage.json`.
+  Older Path A usage files have no cache evidence: retain their billing totals
+  and report cache history as unknown, not as a measured zero.
 
 **The accumulation unit is the model response, not the user turn.** A turn that
 runs tool rounds makes several requests, and each carries its own usage, so the
@@ -243,12 +241,27 @@ with `reported=0` on every turn is not a measurement, and printing it would
 read like one.
 
 Surface: the REPL / `run` turn line (spec 20 routing line already prints there).
-Path A logs the same line once per turn from its in-memory session ledger
+Path A logs the same line once per turn from its session ledger
 (`shell.turn.cache_session`), after that turn's main-loop responses have been
-counted. The pager's hit-percentage chip is unchanged. The Path A counter is
-not written to the session file; a new process starts it at zero, the same
-way Path A's existing hit sum does. The persisted counter remains the overlay
-record on the REPL / `run` path.
+counted. If an older session's cache history is unknown, the line adds
+`history=unknown` when it has new reported evidence. Its restored ledger also
+feeds the existing session usage/status extensions. The pager's hit-percentage
+chip is unchanged.
+
+Path A persistence uses the cumulative ledger summary as the baseline for the
+first write after resume. The process-local incoming/written turn cursor stays
+process-local: it folds a late interjection into the row written by this
+process, but is deliberately reset after restart so a reused incoming turn
+number cannot fold a new response into an inherited historical row. A turn
+number collision after restart is renumbered as a new row.
+
+The persisted main-loop response count also separates the observed subtotal
+from historical completeness. A legacy summary with no main-loop split starts
+with subtotal `0` and `numTurnsKnown=false`; new main-loop responses increase
+that subtotal, which is persisted and restored even while `numTurnsKnown` stays
+false. The status `numTurns` field reports the subtotal and its known flag says
+whether the full session count is available. Aggregate billing `modelCalls` is
+never used to infer the missing main-loop history.
 
 ### 1.6 Session replay
 
@@ -532,6 +545,22 @@ persist→resume cases in `crates/dsb-agent/src/loop_.rs`.
 | `path_a_project_instructions_have_no_finer_axis` | `project_instructions` with no detail line and no instruction text |
 | `path_a_axes_stay_in_section_order` | Moved axes join in §1.1 order |
 | `path_a_epoch_moved_without_component_change_is_unattributed` | Epoch differs, component hashes do not: `unattributed`, not a new axis |
+
+### 4.8 Path A usage restore
+
+| Test | Expect |
+|------|--------|
+| `usage_summary_roundtrips_the_path_a_ledger` | A `usage.json` disk round trip restores billing totals, per-model attribution, incomplete/cost state, main-loop response count and its history-known bit, and hit/miss/reported/unreported cache totals. Subagent billing remains billing-only and does not become a main-loop response. |
+| `legacy_usage_without_cache_summary_is_unknown` | An older usage summary restores its known billing totals; missing Path A cache history is exposed as unknown/incomplete, never as measured zero. |
+| `missing_usage_file_for_nonempty_session_is_incomplete` | Existing chat history without `usage.json` starts with unknown cache/main-loop history and an incomplete bill; an empty new session starts with known zero. |
+| `resume_first_usage_write_uses_the_restored_summary_as_its_baseline` | After a disk round trip, the first new live summary adds only its post-resume delta to persisted billing and cache totals. |
+| `legacy_main_loop_subtotal_survives_repeated_resume_roundtrips` | A legacy billing-only call count is not inferred as main-loop calls; after two observed calls, the subtotal `2` persists across repeated process resumes while full history remains unknown. |
+| `late_interjection_folds_within_the_process_after_usage_roundtrip` | The same incoming turn's late interjection folds once into its current row and preserves the process-local cursor. |
+| `cross_process_turn_number_collision_is_renumbered` | A serialized usage file does not restore the process-local cursor; a reused turn number after restart creates a new row instead of folding into the inherited row. |
+| `malformed_cache_summary_fails_closed` | A present but partial or malformed Path A cache summary makes the usage file unreadable; it is not defaulted to a proven zero. |
+
+Runner: Path A's vendored `xai-grok-shell` usage/persistence and session restore
+tests, plus the actual Path A resume/request/status regression.
 
 ## 5. Implementation notes
 

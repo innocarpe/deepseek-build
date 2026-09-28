@@ -165,7 +165,9 @@ knowledge flag, assertion, or test behavior was changed. The run was created at
 workspace` started at `19:23:44Z` and failed at `19:49:23Z` (job completed at
 `19:49:26Z`). These timestamps keep queue time separate from the test step.
 
-The targeted local snapshot rerun passed: `./scripts/vendor-cargo.sh test -p xai-grok-pager --lib session_usage_block_` reported 6 passed, 0 failed, 0 ignored. The corrective full workspace workflow must still run on the exact snapshot-correction head before merge.
+The targeted local snapshot rerun passed: `./scripts/vendor-cargo.sh test -p xai-grok-pager --lib session_usage_block_` reported 6 passed, 0 failed, 0 ignored. The corrective [full vendored workspace run #36479367295](https://github.com/innocarpe/deepseek-build/actions/runs/36479367295) completed successfully with no failed tests on source head `2775a2ace2eda23af284b03af552882d40efb8c9`; its `third_party/grok-build` tree was `c2b792a0e7e9cccb86e9233acd61b8a9ca9774e5`. Job `109120947540` completed at `2026-09-28T21:04:42Z`; `Test vendored workspace` ran from `20:30:09Z` through `21:04:40Z`. The full job log reports chat-state 393 passed, pager library 10,296 passed / 0 failed / 5 ignored, pager binary 39 passed, shell 7,140 passed / 0 failed / 5 ignored, and tools 3,386 passed / 0 failed / 3 ignored.
+
+The run tested the exact snapshot and source tree; the subsequent GATES-only evidence commit does not change `third_party/grok-build`. Verify that the final PR head and merge commit retain the same vendor tree hash; no full-suite rerun is needed for that documentation-only commit.
 
 ## Verification — new-file Git EOL policy (2026-09-29)
 

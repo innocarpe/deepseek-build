@@ -417,13 +417,16 @@ impl AgentViewLayout {
         };
         chunks.next();
         let mut scrollback = chunks.next().unwrap_or_default();
-        // A phone's status bar, task list and transcript own the whole width,
-        // and so does its composer (below), a band like the prompt echo's.
-        // Other panes keep their configured outer text inset. The status bar's hit rects come from the rect it renders into,
-        // so they move with it.
+        // A phone's task list and transcript own the whole width, and so does
+        // its composer (below), a band like the prompt echo's. The status bar
+        // paints no band, so its text keeps one column of air at each frame
+        // edge, the column the transcript's text starts on. Other panes keep
+        // their configured outer text inset. The status bar's hit rects come
+        // from the rect it renders into, so they move with it.
         if layout_cfg.narrow {
-            status_bar.x = area.x;
-            status_bar.width = area.width;
+            let inset = LayoutConfig::MIN_HPAD;
+            status_bar.x = area.x + inset;
+            status_bar.width = area.width.saturating_sub(inset * 2);
             if tasks.height > 0 {
                 tasks.x = area.x;
                 tasks.width = area.width;
@@ -2338,7 +2341,8 @@ mod tests {
         );
     }
 
-    /// The phone status bar, transcript and composer reach both frame edges. A
+    /// The phone transcript and composer reach both frame edges; the status
+    /// bar's text stays one column in from them, as on desktop. A
     /// phone ends on its two-row footer with no floor under it; a desktop pane
     /// keeps one status row and the frame's floor row under it, spanning the
     /// frame. Either way six rows are not transcript.
@@ -2367,8 +2371,11 @@ mod tests {
             let edge_inset = if narrow { 0 } else { LayoutConfig::MIN_HPAD };
             assert_eq!(
                 (layout.status_bar.x, layout.status_bar.right()),
-                (area.x + edge_inset, area.right() - edge_inset),
-                "{cols}x{rows}: a phone status bar spans the frame, got {:?}",
+                (
+                    area.x + LayoutConfig::MIN_HPAD,
+                    area.right() - LayoutConfig::MIN_HPAD
+                ),
+                "{cols}x{rows}: the status bar keeps one column of air at each edge, got {:?}",
                 layout.status_bar,
             );
             if narrow {

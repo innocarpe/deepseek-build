@@ -32,7 +32,7 @@
 ## Current product implication
 
 - **Wave A dogfood** through **`0.7.0` npm package** shipped on `main` (install + tools + sessions + surface min + npm wrappers).  
-- **Registry `npm publish`** is **CI-published** over OIDC trusted publishing ([ADR 0012](adr/0012-npm-trusted-publishing.md), amends [ADR 0007](adr/0007-npm-packaging.md)). The trusted publisher is **enrolled** (2026-09-25, `innocarpe/deepseek-build` + `publish-npm.yml`), but **no OIDC publish has run yet** — the next release is its first exercise.
+- **Registry `npm publish`** is **CI-published** over OIDC trusted publishing ([ADR 0012](adr/0012-npm-trusted-publishing.md), amends [ADR 0007](adr/0007-npm-packaging.md)). The trusted publisher was enrolled on 2026-09-25 for `innocarpe/deepseek-build` and `publish-npm.yml`. Its first successful exercise was [publish-npm run 36422527144](https://github.com/innocarpe/deepseek-build/actions/runs/36422527144) on 2026-09-28 for release ref `v6.8.3` at head `4432ba562f98365af89cbbda137381e595f92395`; the workflow and `publish` job succeeded, including the OIDC publish, package verification, and global install smoke.
 - Spec **40** is **ready-for-impl** (`docs/specs/40-core-tools-surface.md`); it is **not** a G-number gate (G3 remains 45+90).  
 - **2.x shell** shipped. **3.x / 4.x tags exist** as heart/L3 *attempts* — **owner-bar NOT MET** (Path A fusion incomplete).  
 - Spec-ready (this table) ≠ Path A enforced. Historical heart evidence is archive only: [HEART_3X_SPEC_BINDING.md](architecture/HEART_3X_SPEC_BINDING.md) · [WAVE_3x_PR_DAG.md](product/WAVE_3x_PR_DAG.md).  
@@ -165,9 +165,7 @@ knowledge flag, assertion, or test behavior was changed. The run was created at
 workspace` started at `19:23:44Z` and failed at `19:49:23Z` (job completed at
 `19:49:26Z`). These timestamps keep queue time separate from the test step.
 
-The targeted local snapshot rerun is pending; no local pass is claimed here.
-The corrective hosted validation must run on the exact snapshot-correction
-head before merge.
+The targeted local snapshot rerun passed: `./scripts/vendor-cargo.sh test -p xai-grok-pager --lib session_usage_block_` reported 6 passed, 0 failed, 0 ignored. The corrective full workspace workflow must still run on the exact snapshot-correction head before merge.
 
 ## Verification — new-file Git EOL policy (2026-09-29)
 

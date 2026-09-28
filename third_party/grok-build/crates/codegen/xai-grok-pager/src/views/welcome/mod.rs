@@ -2927,6 +2927,54 @@ mod tests {
     }
 
     #[test]
+    fn welcome_prompt_never_renders_grok_quota_at_any_width() {
+        let _guard = crate::theme::cache::pin_theme();
+        let auth = AuthState::Done;
+        let trust = TrustState::Done;
+        for usage_pct in [92.0, 100.0] {
+            let balance = crate::views::credit_bar::CreditBalance {
+                usage_pct,
+                effective_usage_pct: usage_pct,
+                period_end_display: None,
+                pay_as_you_go: false,
+                on_demand_cap_cents: None,
+                on_demand_used_cents: None,
+                prepaid_balance_cents: None,
+                period_type: Some("USAGE_PERIOD_TYPE_WEEKLY".into()),
+                is_unified_billing_user: None,
+            };
+            for width in [55, 61, 62, 80, 120, 180] {
+                for compact in [false, true] {
+                    let mut params = render_params(&auth, &trust, None);
+                    params.prompt_focus = WelcomePromptFocus::Focused;
+                    params.credit_balance = Some(&balance);
+                    params.model_name = "DeepSeek V4.1 Flash";
+                    params.compact = compact;
+                    let area = Rect::new(0, 0, width, 41);
+                    let mut buf = Buffer::empty(area);
+                    let mut prompt = PromptWidget::new();
+                    prompt.textarea.insert_str("quota regression draft");
+                    let mut picker = PickerState::default();
+                    let result = render_welcome(area, &mut buf, &params, &mut prompt, &mut picker);
+                    let text = buffer_text(&buf);
+                    assert!(result.prompt_rect.is_some(), "prompt not rendered");
+                    assert!(
+                        !text.contains("Weekly limit"),
+                        "welcome quota at width={width}, compact={compact}, usage={usage_pct}:\n{text}"
+                    );
+                    assert!(
+                        text.contains("quota regression draft"),
+                        "draft missing:\n{text}"
+                    );
+                    if width == 180 {
+                        assert!(text.contains(params.model_name), "model missing:\n{text}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn narrow_welcome_keeps_the_normal_tip_above_the_prompt() {
         let auth = AuthState::Done;
         let trust = TrustState::Done;

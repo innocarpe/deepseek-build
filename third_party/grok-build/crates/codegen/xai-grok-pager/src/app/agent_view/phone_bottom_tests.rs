@@ -9,7 +9,9 @@
 //! `views::prompt_widget`'s tests pin the widget in isolation; these frames pin the
 //! whole-view stack (the hint row is a layout row owned by `render`).
 
-use super::{AgentView, AppRenderParams, BannerSlotParams, test_fixtures};
+use super::{
+    AgentView, AppRenderParams, BannerSlotParams, PromptInputMode, PromptMode, test_fixtures,
+};
 use crate::actions::ActionRegistry;
 use crate::app::agent::AgentState;
 use crate::scrollback::RenderBlock;
@@ -252,8 +254,90 @@ fn phone_pane_ends_on_a_two_row_footer_and_drops_the_hint_row() {
 }
 
 #[test]
-fn deepseek_phone_session_hides_grok_weekly_limit_warning() {
+fn prompt_never_renders_grok_quota_across_widths_providers_and_modes() {
+    let _guard = crate::theme::cache::pin_theme();
+    for (cols, rows) in [(55, 41), (61, 41), (62, 41), (80, 40), (120, 40), (180, 50)] {
+        for usage_pct in [92.0, 100.0] {
+            for status in [
+                "missing",
+                "deepseek",
+                "grok",
+                "stale-deepseek",
+                "stale-grok",
+                "unbound-grok",
+                "no-session",
+            ] {
+                for mode in ["normal", "queued", "bash", "remember"] {
+                    let mut agent = phone_agent();
+                    agent.session.session_id = Some(acp::SessionId::new("active"));
+                    agent.deepseek_status_session_id = agent.session.session_id.clone();
+                    match status {
+                        "missing" => agent.deepseek_status = None,
+                        "no-session" => agent.session.session_id = None,
+                        "unbound-grok" => agent.deepseek_status_session_id = None,
+                        "stale-deepseek" | "stale-grok" => {
+                            agent.deepseek_status_session_id =
+                                Some(acp::SessionId::new("previous"));
+                        }
+                        _ => {}
+                    }
+                    if let Some(provider) = agent.deepseek_status.as_mut() {
+                        provider.is_deepseek = matches!(status, "deepseek" | "stale-deepseek");
+                    }
+                    agent.billing_surface_visible = true;
+                    agent.credit_balance = Some(CreditBalance {
+                        usage_pct,
+                        effective_usage_pct: usage_pct,
+                        period_end_display: None,
+                        pay_as_you_go: false,
+                        on_demand_cap_cents: None,
+                        on_demand_used_cents: None,
+                        prepaid_balance_cents: None,
+                        period_type: Some("USAGE_PERIOD_TYPE_WEEKLY".into()),
+                        is_unified_billing_user: None,
+                    });
+                    let label = match mode {
+                        "queued" => {
+                            agent.prompt_mode = PromptMode::EditingQueued {
+                                id: 0,
+                                original: String::new(),
+                                server_id: None,
+                                kind: crate::app::agent::QueueEntryKind::Prompt,
+                            };
+                            "editing queued #1"
+                        }
+                        "bash" => {
+                            agent.prompt_input_mode = PromptInputMode::Bash;
+                            "Run shell command"
+                        }
+                        "remember" => {
+                            agent.prompt_input_mode = PromptInputMode::Remember;
+                            "Save memory note"
+                        }
+                        _ => "Flash",
+                    };
+                    let buf = draw(&mut agent, cols, rows);
+                    let frame = frame_text(&buf);
+                    assert!(
+                        !frame.contains("Weekly limit") && !frame.contains("limit left"),
+                        "quota at {cols}x{rows}, usage={usage_pct}, status={status}, mode={mode}:\n{frame}"
+                    );
+                    assert!(
+                        frame.contains(label),
+                        "prompt label {label:?} missing:\n{frame}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn prompt_stays_quota_free_when_the_model_and_provider_change() {
+    let _guard = crate::theme::cache::pin_theme();
     let mut agent = phone_agent();
+    agent.session.session_id = Some(acp::SessionId::new("active"));
+    agent.deepseek_status_session_id = agent.session.session_id.clone();
     agent.billing_surface_visible = true;
     agent.credit_balance = Some(CreditBalance {
         usage_pct: 100.0,
@@ -266,14 +350,38 @@ fn deepseek_phone_session_hides_grok_weekly_limit_warning() {
         period_type: Some("USAGE_PERIOD_TYPE_WEEKLY".into()),
         is_unified_billing_user: None,
     });
-
-    let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
-    let frame = frame_text(&buf);
-
-    assert!(
-        !frame.contains("Weekly limit left: 0%"),
-        "DeepSeek API usage must not show the Grok account allowance:\n{frame}"
-    );
+    for (id, label, is_deepseek) in [
+        (MODEL_ID, MODEL_LABEL, true),
+        ("grok-code", "Grok Code", false),
+        (MODEL_ID, MODEL_LABEL, true),
+    ] {
+        let id = acp::ModelId::new(id);
+        agent.session.models.available.insert(
+            id.clone(),
+            acp::ModelInfo::new(id.clone(), label.to_string()),
+        );
+        agent.session.models.current = Some(id);
+        agent.deepseek_status.as_mut().unwrap().is_deepseek = is_deepseek;
+        for (cols, rows) in [(PHONE_COLS, PHONE_ROWS), (DESKTOP_COLS, DESKTOP_ROWS)] {
+            let buf = draw(&mut agent, cols, rows);
+            let frame = frame_text(&buf);
+            assert!(
+                !frame.contains("Weekly limit"),
+                "after switch to {label}:\n{frame}"
+            );
+            assert!(frame.contains(label), "current model missing:\n{frame}");
+            if is_deepseek {
+                assert!(
+                    frame.contains("$15.87") && frame.contains("cache 88%"),
+                    "cost chips missing:\n{frame}"
+                );
+            }
+            assert!(
+                frame.contains("always-approve"),
+                "permission missing:\n{frame}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -488,9 +596,8 @@ fn phone_frame_pads_the_prompt_areas_by_one_cell() {
         4,
         "the echo band is a pad row each side and two text rows: {band:?}\n{frame}"
     );
-    assert_eq!(
+    assert!(
         band.windows(2).all(|w| w[1] == w[0] + 1),
-        true,
         "the band's rows are contiguous: {band:?}\n{frame}"
     );
     let clock_row = band[2];

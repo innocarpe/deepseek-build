@@ -496,6 +496,56 @@ fn phone_pane_drops_the_hint_row_mid_turn_too() {
     assert_no_hint_row(&agent, &registry, &buf);
 }
 
+/// First and last non-blank columns of row `y`.
+fn ink_span(buf: &Buffer, y: u16) -> Option<(u16, u16)> {
+    let inked = |x: &u16| buf.cell((*x, y)).is_some_and(|c| c.symbol() != " ");
+    let first = (0..buf.area.width).find(inked)?;
+    let last = (0..buf.area.width).rev().find(inked)?;
+    Some((first, last))
+}
+
+/// Mid-turn, the turn row above the composer and the draft inside it sit on the
+/// footer's edges: the spinner starts on the balance's column and `[stop]`
+/// ends on the model's, and the draft starts on the balance's column too — the
+/// band has no side rule to keep text off, so one column from the frame is the
+/// same air the footer keeps.
+#[test]
+fn phone_turn_row_and_draft_share_the_footer_edges() {
+    let mut agent = phone_agent();
+    agent.session.state = AgentState::TurnRunning;
+    agent.prompt.set_text("phone draft");
+    let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    let frame = frame_text(&buf);
+    let (band_top, _) = composer_band_rows(&buf);
+    let turn_y = band_top - 1;
+    let text_y = band_top + 1;
+    let footer_y = PHONE_ROWS - 2;
+    let spans = [turn_y, text_y, footer_y, footer_y + 1].map(|y| ink_span(&buf, y));
+    eprintln!(
+        "phone {PHONE_COLS}x{PHONE_ROWS} mid-turn — (first, last) ink column of the turn row, \
+         the draft, footer one and footer two: {spans:?}\n{}",
+        bottom_rows(&buf, 6)
+    );
+    let [turn, text, footer, footer2] = spans.map(|s| s.expect("inked row"));
+    assert!(
+        row_text(&buf, turn_y).contains("[stop]"),
+        "the row above the band is the turn row:\n{frame}"
+    );
+    assert_eq!(footer.0, footer2.0, "{frame}");
+    assert_eq!(footer.1, footer2.1, "{frame}");
+    assert_eq!(
+        (footer.0, footer.1),
+        (1, PHONE_COLS - 2),
+        "the footer keeps one column each side:\n{frame}"
+    );
+    assert_eq!(turn, footer, "the turn row sits on the footer's edges:\n{frame}");
+    assert!(
+        row_text(&buf, text_y).contains("phone draft"),
+        "the band's middle row is the draft:\n{frame}"
+    );
+    assert_eq!(text.0, footer.0, "the draft starts on the footer's column:\n{frame}");
+}
+
 #[test]
 fn desktop_pane_keeps_the_label_on_the_divider_and_the_hint_row() {
     for (cols, rows) in [(80u16, 40u16), (DESKTOP_COLS, DESKTOP_ROWS), (180, 50)] {

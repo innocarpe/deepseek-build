@@ -107,3 +107,28 @@ are outside this correction and remain unchanged.
 Repeating the same suite with the process-local terminal fixture
 `TERM_PROGRAM=ghostty ./scripts/vendor-cargo.sh test -p xai-grok-pager --lib`
 printed `10287 passed; 0 failed; 5 ignored`.
+
+## Verification — Path A resume cache usage (2026-09-29)
+
+Path A now restores the cumulative usage ledger from `usage.json` before the
+session actor accepts requests. The first resumed write subtracts that restored
+baseline, preserving saved billing totals while adding only new usage. The
+incoming-turn fold cursor remains process-local: late interjections fold into
+the same-process row, and a turn-number collision after restart is renumbered.
+Legacy cache/main-loop fields and a missing usage file on an existing session
+remain explicitly unknown/incomplete; explicit new-schema zeros remain known.
+
+Local production-crate verification passed under the per-worktree vendored
+target and the serialized HQ heavy slot:
+
+- `./scripts/vendor-cargo.sh check --all-targets` — passed.
+- `./scripts/vendor-cargo.sh fmt --all -- --check` — passed.
+- `./scripts/vendor-cargo.sh test -p xai-chat-state cache_session_sums_reported_halves_and_skips_unreported` — 1 passed.
+- `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib session::usage_file::tests` — 16 passed, including disk round-trip, legacy/explicit-zero distinction, malformed partial data, and process-local cursor collision.
+- `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib resume_restores_live_baseline` — 1 passed; persisted billing/cache values were not double-counted, and a same-process late interjection folded into the current row.
+- `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib restored_ledger_reaches_session_usage_and_deepseek_status_requests` — 1 passed through both production status extensions.
+- `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib response_marks_legacy_cache_and_main_loop_history_unknown` — 1 passed.
+- `./scripts/vendor-cargo.sh test -p xai-grok-pager --lib session_usage_block_shows_restored_cache_totals_and_unknown_legacy_history` — 1 passed.
+
+These are targeted local results, not a gate-table status change. PR CI evidence
+will be appended here after the hosted checks complete.

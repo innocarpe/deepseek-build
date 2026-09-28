@@ -22,7 +22,15 @@ fn test_actor_with_remote_sync(
     storage: Arc<dyn StorageAdapter>,
     remote_sync: Option<RemoteSync>,
 ) -> ActorGuard {
-    test_actor_inner(info, storage, remote_sync, false)
+    test_actor_inner(info, storage, remote_sync, false, None)
+}
+
+fn test_actor_with_usage_baseline(
+    info: Info,
+    storage: Arc<dyn StorageAdapter>,
+    last_usage_live: crate::session::usage_file::UsageSummary,
+) -> ActorGuard {
+    test_actor_inner(info, storage, None, false, Some(last_usage_live))
 }
 
 fn test_actor_inner(
@@ -30,6 +38,7 @@ fn test_actor_inner(
     storage: Arc<dyn StorageAdapter>,
     remote_sync: Option<RemoteSync>,
     mark_summary_done: bool,
+    last_usage_live: Option<crate::session::usage_file::UsageSummary>,
 ) -> ActorGuard {
     let (tx, rx) = mpsc::unbounded_channel();
     let (disk_full_tx, disk_full_rx) = tokio::sync::watch::channel(false);
@@ -61,7 +70,7 @@ fn test_actor_inner(
             disk_full_notified: false,
             dirty_files: Default::default(),
             pending_write_error: None,
-            last_usage_live: None,
+            last_usage_live,
             last_usage_turn: None,
             last_incoming_turn: None,
         }
@@ -84,6 +93,150 @@ fn notification(info: &Info, text: &str) -> acp::SessionNotification {
 
 fn neutral_update(info: &Info, text: &str) -> SessionUpdate {
     SessionUpdate::Acp(Box::new(notification(info, text)))
+}
+
+fn cache_usage(hit: Option<u32>, miss: Option<u32>) -> xai_grok_sampling_types::TokenUsage {
+    xai_grok_sampling_types::TokenUsage {
+        prompt_tokens: 100,
+        completion_tokens: 5,
+        total_tokens: 105,
+        cached_prompt_tokens: hit.unwrap_or(0),
+        cache_creation_prompt_tokens: 0,
+        reasoning_tokens: 0,
+        cache_hit_tokens: hit,
+        cache_miss_tokens: miss,
+    }
+}
+
+#[test]
+fn missing_usage_file_for_an_existing_session_is_unknown_not_empty() {
+    let (restored, baseline) = restore_session_usage(None, true);
+    assert!(restored.incomplete);
+    assert!(!restored.main_loop_model_calls_known);
+    assert!(!restored.cache_session.history_complete());
+    let baseline = baseline.unwrap();
+    assert!(baseline.usage_is_incomplete);
+    assert_eq!(baseline.cache_session.unwrap().reported(), 0);
+
+    let (fresh, baseline) = restore_session_usage(None, false);
+    assert!(!fresh.incomplete);
+    assert!(fresh.main_loop_model_calls_known);
+    assert!(fresh.cache_session.history_complete());
+    assert!(baseline.is_none());
+}
+
+#[tokio::test]
+async fn resume_restores_live_baseline_and_keeps_the_process_local_turn_cursor() {
+    let info = Info {
+        id: acp::SessionId::new("usage-resume-baseline"),
+        cwd: "/test".into(),
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Arc::new(JsonlStorageAdapter::with_root(dir.path().to_path_buf()));
+    storage
+        .init_session(&info, default_model_id())
+        .await
+        .unwrap();
+
+    let mut historical = xai_chat_state::UsageLedger::default();
+    historical.record_main_loop_call(
+        "grok-4",
+        &cache_usage(Some(70), Some(30)),
+        Some(1_000),
+        Some(100),
+    );
+    let mut historical = crate::session::usage_file::UsageSummary::from_ledger(&historical);
+    // Model an existing usage.json written before Path A's live ledger fields.
+    historical.cache_session = None;
+    historical.main_loop_model_calls = None;
+    historical.api_duration_ms = 0;
+    historical.turn_count = 1;
+    let mut file = crate::session::usage_file::SessionUsageFile::new(info.id.to_string());
+    file.session = historical.clone();
+    file.turns.push(crate::session::usage_file::TurnUsage {
+        turn_number: 1,
+        ended_at: "t1".into(),
+        usage: historical,
+    });
+    storage.write_usage(&info, &file).await.unwrap();
+
+    // This is the same disk restore that load_light uses. Normalizing through
+    // the restored ledger also preserves legacy unknown fields in the baseline.
+    let restored_file = storage.read_usage(&info).await.unwrap().unwrap();
+    let restored_ledger = restored_file.session.to_ledger();
+    let baseline = crate::session::usage_file::UsageSummary::from_ledger(&restored_ledger);
+
+    let mut after_first = restored_ledger.clone();
+    after_first.record_main_loop_call(
+        "grok-4",
+        &cache_usage(Some(10), Some(40)),
+        Some(2_000),
+        Some(200),
+    );
+    let first_live = crate::session::usage_file::UsageSummary::from_ledger(&after_first);
+    let mut after_interjection = after_first;
+    after_interjection.record_main_loop_call("grok-4", &cache_usage(None, None), Some(3_000), None);
+    let interjected_live =
+        crate::session::usage_file::UsageSummary::from_ledger(&after_interjection);
+
+    let actor = test_actor_with_usage_baseline(info.clone(), storage.clone(), baseline);
+    let (respond_to, ack) = tokio::sync::oneshot::channel();
+    actor
+        .handle
+        .tx
+        .send(PersistenceMsg::UsageTurn {
+            // Reuses an inherited row number after restart. The process-local
+            // cursor is empty, so persist_usage_turn renumbers this new row.
+            turn_number: 1,
+            live: first_live,
+            respond_to,
+        })
+        .unwrap();
+    ack.await.unwrap().unwrap();
+
+    let (respond_to, ack) = tokio::sync::oneshot::channel();
+    actor
+        .handle
+        .tx
+        .send(PersistenceMsg::UsageTurn {
+            // The same incoming turn within this process folds into row 2.
+            turn_number: 1,
+            live: interjected_live,
+            respond_to,
+        })
+        .unwrap();
+    ack.await.unwrap().unwrap();
+    actor.stop().await;
+
+    let saved = storage.read_usage(&info).await.unwrap().unwrap();
+    assert_eq!(saved.session.input_tokens, 300);
+    assert_eq!(saved.session.output_tokens, 15);
+    assert_eq!(saved.session.model_calls, 3);
+    assert_eq!(saved.session.api_duration_ms, 5_000);
+    assert_eq!(saved.session.cost_usd_ticks, Some(300));
+    assert_eq!(saved.session.cost_missing_calls, 1);
+    assert_eq!(saved.session.main_loop_model_calls, None);
+    let cache = saved.session.cache_session.as_ref().unwrap();
+    assert_eq!(cache.hit_tokens(), 10);
+    assert_eq!(cache.miss_tokens(), 40);
+    assert_eq!(cache.reported(), 1);
+    assert_eq!(cache.unreported(), 1);
+    assert!(!cache.history_complete());
+
+    assert_eq!(saved.turns.len(), 2);
+    assert_eq!(saved.turns[0].turn_number, 1);
+    assert_eq!(saved.turns[1].turn_number, 2);
+    assert_eq!(saved.turns[1].usage.input_tokens, 200);
+    assert_eq!(saved.turns[1].usage.model_calls, 2);
+    assert_eq!(
+        saved.turns[1]
+            .usage
+            .cache_session
+            .as_ref()
+            .unwrap()
+            .unreported(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -1889,6 +2042,7 @@ async fn reset_title_to_auto_then_generated_title_is_adopted() {
         storage.clone(),
         Some(remote_sync),
         true, /* mark_summary_done: production load after a titled session */
+        None,
     );
 
     let pre_reset_chunk = PersistenceContentChunk::new(vec![acp::ContentBlock::Text(
@@ -2062,7 +2216,7 @@ async fn reset_title_to_auto_adopts_in_flight_generation_as_auto() {
         .await
         .unwrap();
 
-    let actor = test_actor_inner(info.clone(), storage.clone(), None, false);
+    let actor = test_actor_inner(info.clone(), storage.clone(), None, false, None);
 
     actor
         .handle
@@ -2145,7 +2299,7 @@ async fn non_resident_reset_then_load_regenerates() {
         "production load would mark_done() if display_title stayed set"
     );
 
-    let actor = test_actor_inner(info.clone(), storage, None, has_title);
+    let actor = test_actor_inner(info.clone(), storage, None, has_title, None);
     actor
         .handle
         .tx

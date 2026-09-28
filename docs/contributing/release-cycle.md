@@ -57,7 +57,7 @@ a tag ref cannot be restored by the next tag.
 | [`lib/version_log.py`](../../scripts/lib/version_log.py) | Fill the decision-log row's `PR #_(fill in)_` with the release PR number; called by `release.sh` the moment `gh pr create` returns (idempotent, so a resumed release re-runs safely) |
 | [`next-version.sh`](../../scripts/next-version.sh) | The bump-level judgment ([versioning.md §1c](./versioning.md)): reads the first-parent merges on `origin/main` since the newest tag — the `<type>/` prefix of each merge branch and the paths it changed — and prints one line per merge plus the proposed version. `--level` / `--version` for the machine forms, `--check <ver>` for the gate `release.sh` runs. `gh` is never involved. |
 | [`release.sh`](../../scripts/release.sh) | Orchestrator: bump level → bump → MAJOR/README gate → verify → PR (`chore(release)`) → **wait for the PR's checks** → merge → tag `v{ver}` → wait for prebuilt assets → wait for CI publish → verify the registry. |
-| [`lib/pr_checks.py`](../../scripts/lib/pr_checks.py) | The wait behind that merge — polls `gh pr view --json state,mergeable,statusCheckRollup` until every check the PR reports is complete with none failed and GitHub says `MERGEABLE`; the 6.1.1/6.1.7/6.1.10 "Pull Request is not mergeable" stop (§The merge waits for the release PR's checks) |
+| [`lib/pr_checks.py`](../../scripts/lib/pr_checks.py) | The wait behind that merge — polls `gh pr view --json state,mergeable,statusCheckRollup` until every check the PR reports is complete with none failed and GitHub says `MERGEABLE`; the 6.2.0/6.7.1/6.8.0 (published as 6.1.1/6.1.7/6.1.10) "Pull Request is not mergeable" stop (§The merge waits for the release PR's checks) |
 | [`npm-emergency-publish.sh`](../../scripts/npm-emergency-publish.sh) | **Emergency path only.** Local interactive publish that drives `npm login --auth-type=web` and any emailed code through the `aside` browser agent, so no person has to supply a number. |
 | [`cache-guard.sh`](../../scripts/cache-guard.sh) | Release gate for spec 10 §1.9: overlay bench always, Path A bench only when `xai-grok-shell` is already compiled in the vendored target. Skips unless `DSB_RELEASE_CACHE_GUARD=1`; threshold via `DSB_CACHE_GUARD_THRESHOLD` (default 90). |
 
@@ -130,8 +130,10 @@ so the merge answered
 GraphQL: Pull Request is not mergeable (mergePullRequest)
 ```
 
-on three releases — `6.1.1` (`#258`), `6.1.7` (`#311`) and `6.1.10` (`#323`).
-`6.1.6` (`#303`) stopped at the same place with `Base branch was modified`.
+on three releases — `6.2.0` (`#258`, published as `6.1.1`), `6.7.1` (`#311`,
+published as `6.1.7`) and `6.8.0` (`#323`, published as `6.1.10`). `6.7.0`
+(`#303`, published as `6.1.6`) stopped at the same place with
+`Base branch was modified`.
 Each time a person merged the PR and resumed with
 `./scripts/release.sh <ver> --skip-bump --skip-pr`.
 

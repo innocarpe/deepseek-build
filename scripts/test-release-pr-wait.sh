@@ -5,9 +5,9 @@
 # `gh pr create` returned and GitHub, still computing mergeability while the
 # checks were starting, answered
 #
-#   6.1.6  (PR #303)  Base branch was modified
-#   6.1.7  (PR #311)  GraphQL: Pull Request is not mergeable (mergePullRequest)
-#   6.1.10 (PR #323)  GraphQL: Pull Request is not mergeable (mergePullRequest)
+#   6.7.0  (PR #303, published as 6.1.6)   Base branch was modified
+#   6.7.1  (PR #311, published as 6.1.7)   GraphQL: Pull Request is not mergeable (mergePullRequest)
+#   6.8.0  (PR #323, published as 6.1.10)  GraphQL: Pull Request is not mergeable (mergePullRequest)
 #
 # Each time a person merged the PR and resumed the script by hand.
 #

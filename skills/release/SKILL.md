@@ -124,7 +124,8 @@ dsb --version
 `release.sh` stages: bump level → bump → MAJOR/README gate → verify → PR (`chore(release)`)
 → **wait for the PR's checks** → merge → tag → asset wait → **CI publishes over
 OIDC** (`publish-npm.yml`) → registry verified. No npm token and no one-time
-code are involved. The wait is the lesson of the 6.1.1 / 6.1.7 / 6.1.10 stops:
+code are involved. The wait is the lesson of the 6.2.0 / 6.7.1 / 6.8.0
+(published as 6.1.1 / 6.1.7 / 6.1.10) stops:
 the merge fired before GitHub finished computing mergeability ("Pull Request is
 not mergeable") and left the PR for a person to merge and resume. A failed
 check now stops the release before the merge call, with the PR and the resume
@@ -236,7 +237,7 @@ gh workflow run publish-npm.yml --ref v4.0.4
 | Publishing from a worktree whose HEAD ≠ tag | Ships unreleased/unmerged code as the binary |
 | Skipping asset check because CI "should" attach | CI queue routinely never runs; 404s for users |
 | `4.0` / `v4` in any public text | SemVer fail-close (Agents.md) |
-| Picking the number by habit (patch + 1) | All ten 6.1.x releases shipped MINOR-level work as PATCH; the judgment (`next-version.sh`) and the gate exist for this (`versioning.md` §1c) |
+| Picking the number by habit (patch + 1) | All ten pre-rule releases (`6.2.0`–`6.8.0`, published as `6.1.1`–`6.1.10`) shipped MINOR-level work as PATCH; the judgment (`next-version.sh`) and the gate exist for this (`versioning.md` §1c) |
 | Bumping to a new MAJOR with no version-log row | Tag ships ahead of the documented story |
 | Claiming done after `npm publish` | Unverified global install is not a release |
 | Local publish when CI could publish | Loses provenance and leaves the irreversible step off the audit trail |

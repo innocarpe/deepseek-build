@@ -252,8 +252,9 @@ EOF
 
   # Wait for the PR's checks before merging. Merging the instant `gh pr create`
   # returned lost the race against GitHub computing mergeability and the checks
-  # starting: 6.1.1 (#258), 6.1.7 (#311) and 6.1.10 (#323) answered "GraphQL:
-  # Pull Request is not mergeable (mergePullRequest)", and the release stopped
+  # starting: 6.2.0 (#258, published as 6.1.1), 6.7.1 (#311, published as
+  # 6.1.7) and 6.8.0 (#323, published as 6.1.10) answered "GraphQL: Pull
+  # Request is not mergeable (mergePullRequest)", and the release stopped
   # with the PR open for a person to merge. A red check must stop it here,
   # before the merge call, with what is left to do printed below.
   if ! python3 "$ROOT/scripts/lib/pr_checks.py" --pr "$PR_NUM" \

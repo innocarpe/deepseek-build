@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- New-file `write` uses the target repository's `.gitattributes` `eol` policy
+  only when its filesystem backend confirms the target is on the host. Other
+  backends, including ACP client filesystems, use the platform default because
+  their host-path identity and target Git policy are unknown. Creation preserves
+  the supplied final-newline choice and reports the normalized content it
+  writes. Existing-file edit safety and line-ending behavior are unchanged.
+
 - Completed and cancelled Path A turns can report host-observed changes to supported Rust, Go, and pytest declarations when an in-process structured file write succeeds on host-backed `LocalFs`. Rust attributes and pytest decorators are included in declaration fingerprints. Existing dirty content is the baseline; inconsistent write metadata, client-backed ACP writes, formatting/comment-only changes, and same-signature file moves are omitted. The bounded note and turn record expose only relative path, language, category, and count—never test names, source text, literals, or hashes—and do not claim that tests ran or passed.
 
 ## 6.8.3 — 2026-09-28

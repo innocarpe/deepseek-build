@@ -403,9 +403,9 @@ impl ToolExecutor {
             .map_err(|e| ToolError::Other(e.to_string()))?;
         self.check(&scopes)?;
         match self.snippets.write_new(&full, content) {
-            Ok(()) => Ok(ToolResponse {
+            Ok(written) => Ok(ToolResponse {
                 ok: true,
-                content: json!({"ok": true, "path": path}).to_string(),
+                content: json!({"ok": true, "path": path, "content": written}).to_string(),
                 mutated: true,
             }),
             Err(WriteError::Exists) => Ok(ToolResponse {
@@ -1058,6 +1058,51 @@ mod tests {
         // second write covered by session grant without another callback fire if scopes granted
         policy.apply_grants(ex.grants.session_scopes());
         assert_eq!(decide(&policy, &[Scope::WriteInCwd]), Decision::Allow);
+    }
+
+    #[test]
+    fn write_response_reports_the_normalized_content_written() {
+        use std::process::{Command, Stdio};
+
+        let dir = tempdir().unwrap();
+        let status = Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(dir.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("git is required for the new-file EOL test");
+        assert!(status.success());
+        let status = Command::new("git")
+            .args([
+                "config",
+                "--local",
+                "core.attributesFile",
+                if cfg!(windows) { "NUL" } else { "/dev/null" },
+            ])
+            .current_dir(dir.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        std::fs::write(dir.path().join(".gitattributes"), "*.txt text eol=lf\n").unwrap();
+
+        let mut ex = ToolExecutor::new(dir.path().to_path_buf(), policy_allow_write());
+        let req = ToolRequest {
+            name: ToolName::Write,
+            arguments: json!({"path": "new.txt", "content": "one\r\ntwo"}),
+        };
+
+        let response = ex.execute(&req).unwrap();
+        let value: Value = serde_json::from_str(&response.content).unwrap();
+
+        assert!(response.ok);
+        assert_eq!(value["content"], "one\ntwo");
+        assert_eq!(
+            std::fs::read(dir.path().join("new.txt")).unwrap(),
+            b"one\ntwo"
+        );
     }
 
     #[test]

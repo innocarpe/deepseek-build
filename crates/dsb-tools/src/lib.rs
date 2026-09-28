@@ -7,6 +7,7 @@
 //! - Daily coding: `grep` + dogfood profile (`dogfood_coding_policy`)
 
 mod bg_shell;
+mod file_eol;
 mod grants;
 mod mcp;
 mod path_a_edit;

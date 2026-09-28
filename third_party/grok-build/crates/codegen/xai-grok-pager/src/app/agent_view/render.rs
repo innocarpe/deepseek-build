@@ -2075,9 +2075,14 @@ impl AgentView {
         if turn_status_height > 0 {
             // The status row is a text row like any block's: accent column plus the
             // block pad on the left, the block pad on the right, so its inset matches
-            // the scrollback's text band at every width.
+            // the scrollback's text band at every width. A phone's row is chrome
+            // like its footer instead: both edges sit on the footer's, one column
+            // in from the frame, so the spinner and `[stop]` line up with the
+            // balance and the model below the composer.
             let (pad_left, pad_right) = if dock_on {
                 (crate::views::welcome::PROMPT_GUTTER, 0)
+            } else if layout_cfg.narrow {
+                (0, 0)
             } else {
                 (
                     HorizontalLayout::ACCENT + layout_cfg.block_pad_left,

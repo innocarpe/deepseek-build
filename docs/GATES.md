@@ -135,8 +135,14 @@ target and serialized build wrapper:
 - `./scripts/vendor-cargo.sh test -p xai-grok-pager --lib session_usage_block_shows_restored_cache_totals_and_unknown_legacy_history` — 1 passed.
 - `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib legacy_main_loop_subtotal_survives_repeated_resume_roundtrips` — 1 passed; two post-upgrade calls survive the first disk resume, a third survives another resume, the old billing count remains separate, and historical completeness stays false.
 
-These are targeted local results, not a gate-table status change. PR CI evidence
-will be appended here after the hosted checks complete.
+These are targeted local results, not a gate-table status change. Hosted PR CI
+for #339 completed successfully at source head
+`9a9c58f8af1afdc8412f83629d38430fb25d149f` ([run 36466155902](https://github.com/innocarpe/deepseek-build/actions/runs/36466155902)):
+`CI / required`, `changes`, `grok fmt`, `grok clippy`, and `changelog move` passed.
+Path-filtered jobs `fmt`, `clippy`, `test`, `semver`, `release verify retry`,
+`session close`, `vendor build queue`, `worktree ownership`, and `npm` were
+skipped. The separate `CI grok test` workflow runs on `main` pushes, so it was
+not part of this pre-merge PR run.
 
 ## Verification — new-file Git EOL policy (2026-09-29)
 

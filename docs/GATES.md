@@ -107,3 +107,46 @@ are outside this correction and remain unchanged.
 Repeating the same suite with the process-local terminal fixture
 `TERM_PROGRAM=ghostty ./scripts/vendor-cargo.sh test -p xai-grok-pager --lib`
 printed `10287 passed; 0 failed; 5 ignored`.
+
+## Verification — custom Codex single worker tab (2026-09-28)
+
+[PR #335](https://github.com/innocarpe/deepseek-build/pull/335) updates the
+consuming `skills/orca-tab/SKILL.md` §2a and its dispatch entrypoint.
+Agent-first creation stays preferred; custom model/effort arguments are
+sent into the existing idle launcher handle. This follows the correction
+in [Orca PR #23625](https://github.com/stablyai/orca/pull/23625), which was
+open for maintainer review when this consumer unit was verified. The
+recipe uses commands already available in installed Orca `1.4.215`.
+
+The `single-worker-codex-skill` owning session was started through its
+launcher with `codex --model gpt-6-sol -c model_reasoning_effort="xhigh"`.
+At `2026-09-28T12:58:53Z`, `terminal list --include-visual-layouts`
+measured **one visual tab, one terminal leaf, and `totalCount=1`**.
+The handle was `term_eed2d9b6-d4f9-468b-a027-7138a3e4d3aa`; its
+`terminal read --screen` showed `GPT-6-Sol xhigh` and a running session.
+The running Codex process's model/effort arguments were checked separately.
+This is the owning session's initial observation, not a second test
+launch or a measurement of another session's worktree.
+
+The post-edit inventory at `2026-09-28T13:09:32Z` again measured **one
+tab, one terminal leaf, and `totalCount=1`**, with the same handle, tab ID,
+and leaf ID. The same handle's screen still showed `GPT-6-Sol xhigh`.
+
+Local checks ran serially through
+`hq heavy --label 'dsb single-worker-codex-skill targeted' -- ...`:
+`test-orca-tab-one-tab.sh` printed
+`ok: live skills/orca-tab/SKILL.md keeps all 3 pinned sentences` and its
+missing-sentence controls passed; `check-session-close.sh` printed `pass`;
+`test-session-close.py` and `test-check-worktree-ownership.sh` printed only
+`ok` verdicts. `quick_validate.py` printed `Skill is valid!` for both
+changed skills. `git diff --check` exited 0 with no output. The wrapper
+printed `acquired` and `released ... rc=0` after one waiter; no other slot
+holder was interrupted. No new wording-only assertions were added; the
+owning session itself supplies the live topology evidence. Cargo and full
+runtime builds were not run for this skill-only correction.
+
+Configured command tabs retain their owners; `exited` and
+`screen-unavailable` are not proof of durable tab removal. An explicit
+request for another worker in the current checkout is outside the
+new-worktree owning-session recipe. This guidance verification does not
+flip a spec-readiness gate or remeasure runtime owner-bar behavior.

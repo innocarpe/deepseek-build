@@ -68,6 +68,27 @@ Hermetic public-entry dogfood: multi-read parallel + mixed mutate serial
 ./scripts/test-path-a-vc010-r0a.sh
 ```
 
+## Host-observed test changes (Path A)
+
+At a completed or cancelled Path A turn, the host may append a short note when
+successful structured file writes on host-backed `LocalFs` changed supported test declarations. The turn record
+stores only relative paths, language, change category, and counts; it does not
+include test names, source text, literals, or content hashes. The first
+successful write's before-content is the baseline, so existing dirty tests are
+not attributed from `HEAD` or a worktree diff. A test moved to another file
+with the same name and token signature is unchanged. Formatting and comments
+are ignored.
+
+The current conventions are Rust `#[test]` / `#[tokio::test]`, including
+preceding attributes such as `#[ignore]` and `#[should_panic]` in the
+fingerprint; Go top-level `Test*` functions with `*testing.T`; and default
+pytest module functions and class methods, including decorated definitions.
+Decorator and attribute token edits count as declaration changes. Shell/MCP/external writes,
+client-backed ACP filesystem writes, non-Git projects, inconsistent write receipts,
+unsupported conventions, parse failures, and oversized files are omitted. This is host
+evidence about observed writes; it does not say that tests ran or passed and it
+does not judge semantic strength. See [Spec 130](../specs/130-test-change-evidence.md).
+
 ## CLI helpers
 
 ```bash

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Completed and cancelled Path A turns can report host-observed changes to supported Rust, Go, and pytest declarations when an in-process structured file write succeeds on host-backed `LocalFs`. Rust attributes and pytest decorators are included in declaration fingerprints. Existing dirty content is the baseline; inconsistent write metadata, client-backed ACP writes, formatting/comment-only changes, and same-signature file moves are omitted. The bounded note and turn record expose only relative path, language, category, and count—never test names, source text, literals, or hashes—and do not claim that tests ran or passed.
+
 ## 6.8.3 — 2026-09-28
 
 - The `Jump to bottom` chip keeps its own opaque background and text style while scrolling over styled text, Hangul, or emoji. A wide glyph crossing its left edge can no longer suppress the chip's first cell. One column of background on each side gives the label a little air, and both padding cells hover and click along with the label at every supported width.

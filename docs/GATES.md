@@ -107,3 +107,48 @@ are outside this correction and remain unchanged.
 Repeating the same suite with the process-local terminal fixture
 `TERM_PROGRAM=ghostty ./scripts/vendor-cargo.sh test -p xai-grok-pager --lib`
 printed `10287 passed; 0 failed; 5 ignored`.
+
+## Verification — host-observed test change evidence
+
+Spec 130 defines bounded Path A reporting from successful in-process
+`FileWritten` receipts. The first receipt supplies each path's baseline; a
+receipt-chain mismatch or final-content mismatch omits that path. The report
+counts modified, deleted, added, and renamed criteria by relative file scope
+without exposing test names, source, literals, hashes, or absolute paths.
+Supported conventions are Rust `#[test]` / `#[tokio::test]` (with preceding
+attributes fingerprinted), Go `Test*` with `*testing.T`, and default pytest
+module functions and `Test*` class methods (including decorated definitions;
+decorator tokens are fingerprinted).
+Formatting/comment-only writes, a same-name/same-signature file move, net-zero
+write/revert, failed writes without a receipt, non-Git projects, unsupported
+conventions, parse failures, and oversized inputs produce no attribution.
+The host note and turn delta do not establish test execution, passing tests, or
+semantic strengthening/weakening.
+
+Coverage is in `session/test_criteria.rs` (baseline, dirty pre-existing file,
+successful modified/deleted/added writes, source/literal-free output, net-zero
+revert, test-file move, failed write, chain/final-content mismatch, non-Git,
+language conventions, pytest decorator and Rust attribute changes, parser/size
+bounds, and report truncation) plus
+`notification/handle_tests.rs` (synchronous observer and tee propagation) and
+`session/signals_tests.rs` (turn-delta serialization),
+`session/acp_session_tests/turn_completion_emit_tests.rs` (actual Path A
+completion/cancellation settlement handlers, result snapshot and turn-delta
+evidence), and `agent/mvp_agent/turn_end.rs` (`TurnResultArgs` to durable
+`turn_result.json` JSON mapping). The settlement fixture keeps the actor event
+receiver open and undrained: it can accept `FlushReplay`, but no test sink can
+acknowledge it. It exercises the shipped common completion/cancel handlers with
+host-backed receipts, without a sampler or the run-loop select branch.
+
+Local validation on 2026-09-29, through the worktree-pinned vendor wrapper:
+
+- `./scripts/vendor-cargo.sh fmt --all` — passed.
+- `./scripts/vendor-cargo.sh --jobs 4 check -p xai-grok-shell --all-targets` — passed.
+- `./scripts/vendor-cargo.sh clippy -p xai-grok-shell --all-targets -- -D warnings` and `./scripts/vendor-cargo.sh clippy -p xai-grok-tools --all-targets -- -D warnings` — passed.
+- `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib test_criteria -- --nocapture` — 13 passed.
+- `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib path_a_completed_and_cancelled_turns_carry_test_change_evidence -- --nocapture` — 1 passed; completion and cancellation each finished within the 4-second bound, and each host note appeared once in gateway and persistence before its durable terminal.
+- `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib successful_test_write_receipt_is_serialized_as_source_free_turn_evidence -- --nocapture` — 1 passed.
+- `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib turn_result_metadata_keeps_host_test_evidence_from_the_terminal_snapshot -- --nocapture` — 1 passed.
+- `./scripts/vendor-cargo.sh test -p xai-grok-tools --lib file_written_observer_runs_only_for_successful_write_notifications -- --nocapture` and `... tee_preserves_file_written_observers ...` — 1 passed each.
+- With `PATH` resolving both `cargo` and `rustc`, the default-stack `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib` run aborted with stack overflow at `agent::mvp_agent::tests::a_cancelled_installer_withdraws_its_unstamped_actor`; the same test also failed in isolation at the default stack. The repository CI job in `.github/workflows/ci-grok-test.yml` sets `RUST_MIN_STACK=16777216` because SessionActor turn futures can exceed Rust's 2 MiB default. Re-running `RUST_MIN_STACK=16777216 ./scripts/vendor-cargo.sh test -p xai-grok-shell --lib a_cancelled_installer_withdraws_its_unstamped_actor -- --nocapture` passed.
+- The full `RUST_MIN_STACK=16777216 ./scripts/vendor-cargo.sh test -p xai-grok-shell --lib` run reported 7,110 passed, 8 failed, and 5 ignored. The failures were `agent::mvp_agent::tests::exhausted_fetch_decides_on_the_local_layers`, `claude_import::tests::gate_load_claude_env_returns_empty_when_marker_set`, `session::workflow::registry::tests::save_through_symlinked_session_root_stays_in_canonical_project`, `session::worktree::tests::create_worktree_for_resume_honors_git_ref`, `session::worktree::tests::create_worktree_for_resume_produces_independent_worktree`, `util::config::consent::tests::set_consent_answer_is_monotonic_per_account`, `util::config::mcp::tests::delete_mcp_server_config_at_follows_user_symlink`, and `util::config::persist::tests::no_home_cwd_config_resolves_slot_not_follow`. These tests are outside this unit and unmodified; no cause is attributed here. The local run is not claimed as a full-suite pass. The workflow uses `ubuntu-latest`; its PR check remains the CI result.

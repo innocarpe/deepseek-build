@@ -1715,7 +1715,10 @@ impl SessionActor {
                     ),
                 };
                 let turn_snapshot = match completion_kind {
-                    PromptCompletionKind::Completed | PromptCompletionKind::StationarityEnded => {
+                    PromptCompletionKind::Completed
+                    | PromptCompletionKind::StationarityEnded
+                    | PromptCompletionKind::Cancelled { .. }
+                    | PromptCompletionKind::MaxTurnsReached { .. } => {
                         self.take_completed_turn_snapshot(&turn_sampling).await
                     }
                     _ => None,
@@ -2489,11 +2492,20 @@ impl SessionActor {
         sampling: &TurnSampling,
     ) -> Option<TurnDeltaSnapshot> {
         let mut snapshot = self.signals_handle().take_turn_end_snapshot().await?;
+        self.attach_test_criteria_report(&mut snapshot).await;
         snapshot.turn_input_tokens = sampling.input_tokens;
         snapshot.turn_output_tokens = sampling.output_tokens;
         snapshot.turn_cached_input_tokens = sampling.cache_read_tokens;
         self.apply_prompt_modes_to_snapshot(&mut snapshot);
         Some(snapshot)
+    }
+
+    /// Finalize successful write receipts and attach bounded evidence to the same snapshot used
+    /// by terminal host output, analytics, and the durable turn result.
+    pub(super) async fn attach_test_criteria_report(&self, snapshot: &mut TurnDeltaSnapshot) {
+        let evidence = std::mem::take(&mut snapshot.delta.test_criteria_end_state);
+        let report = crate::session::test_criteria::finalize(evidence).await;
+        snapshot.delta.test_criteria_changes_this_turn = report;
     }
     /// Persist the turn-end `snapshot` and post it as the turn's analytics delta.
     /// `None` (signals actor shut down) posts nothing.
@@ -2503,7 +2515,7 @@ impl SessionActor {
         snapshot: Option<&TurnDeltaSnapshot>,
         turn_duration_ms: Option<u64>,
         turn_outcome: prod_mc_cli_chat_proxy_types::feedback_types::TurnOutcome,
-    ) {
+    ) -> Option<TurnDeltaSnapshot> {
         if let Some(snap) = snapshot {
             for pr in &snap.delta.prs_created_this_turn {
                 xai_grok_telemetry::session_ctx::log_event(xai_grok_telemetry::events::PrCreated {
@@ -2524,6 +2536,7 @@ impl SessionActor {
                 turn_outcome,
             )
             .await;
+        snapshot.cloned()
     }
     /// Emitted whether or not the reminder is armed, so cohorts compare on identical properties.
     /// Runs at turn end and when a cancel aborts the turn task (under the state lock, before a

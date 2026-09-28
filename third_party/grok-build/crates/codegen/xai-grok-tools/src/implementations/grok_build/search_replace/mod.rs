@@ -12,6 +12,7 @@
 //! - `ToolCallId` — notification correlation (optional, defaults empty)
 //! - `TemplateRenderer` — resolve client-facing tool/param names in error messages (optional)
 pub(crate) mod helpers;
+mod new_file_eol;
 mod versions;
 use crate::notification::types::FileWritten;
 use crate::types::output::{
@@ -373,16 +374,25 @@ async fn handle_new_file_creation(
     snippet_safe: bool,
     allow_force_write_overwrite: bool,
 ) -> Result<SearchReplaceOutput, xai_tool_runtime::ToolError> {
-    // Path existence for Spec 45 write law: any readable existing path (incl. empty).
-    let path_exists = fs.read_file(path).await.is_ok();
-    let file_nonempty = match fs.read_file(path).await {
-        Ok(bytes) => !bytes.is_empty(),
-        Err(_) => false,
+    // Only a real NotFound makes this a create. Other read errors are unknown,
+    // so fail closed rather than treating an unreadable existing file as new.
+    let existing_bytes = match fs.read_file(path).await {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.io_error_kind() == Some(std::io::ErrorKind::NotFound) => None,
+        Err(error) => {
+            return Ok(SearchReplaceOutput::InvalidInput(format!(
+                "path_existence_unverifiable: cannot safely create or overwrite {} because the target could not be read: {error}",
+                input.file_path
+            )));
+        }
     };
-    let old_text = match fs.read_file(path).await {
-        Ok(bytes) => Some(String::from_utf8_lossy(&bytes).to_string()),
-        Err(_) => None,
-    };
+    let path_exists = existing_bytes.is_some();
+    let file_nonempty = existing_bytes
+        .as_ref()
+        .is_some_and(|bytes| !bytes.is_empty());
+    let old_text = existing_bytes
+        .as_ref()
+        .map(|bytes| String::from_utf8_lossy(bytes).to_string());
     // VC005 / ADR 0010 §6.1: under snippet_safe, existing path empty-old write is
     // denied unless host/policy force is granted.
     if snippet_safe && path_exists && !allow_force_write_overwrite {
@@ -418,36 +428,49 @@ async fn handle_new_file_creation(
         Ok(crate::types::memory_v2::MemoryV2Write::Outside) => false,
         Err(error) => return Ok(SearchReplaceOutput::InvalidInput(error)),
     };
-    if !is_memory_write && let Err(e) = fs.write_file(path, input.new_string.as_bytes()).await {
-        return Ok(match e.io_error_kind() {
-            Some(std::io::ErrorKind::NotFound) => {
-                let display_dcwd = display_cwd_or_cwd(cwd, display_cwd);
-                let display_path = display_dcwd.join(&input.file_path);
-                let msg = crate::util::format_not_found_error(
-                    &display_path,
-                    path,
-                    cwd,
-                    &display_dcwd,
-                    hints_enabled,
-                )
-                .await;
-                SearchReplaceOutput::FileNotFound(msg)
-            }
-            Some(std::io::ErrorKind::AlreadyExists) => SearchReplaceOutput::InvalidInput(format!(
-                "Error: cannot create {}. A component of the path already exists as a file where a directory is expected.",
-                input.file_path
-            )),
-            Some(std::io::ErrorKind::InvalidFilename) => {
-                SearchReplaceOutput::FilenameTooLong(format!(
-                    "Error: file name exceeds the {NAME_MAX}-character limit. \
+    let mut written_content = input.new_string.clone();
+    if !is_memory_write {
+        if !path_exists {
+            written_content = new_file_eol::for_new_file(
+                path,
+                &input.new_string,
+                fs.path_is_on_host_filesystem(path),
+            )
+            .await;
+        }
+        if let Err(e) = fs.write_file(path, written_content.as_bytes()).await {
+            return Ok(match e.io_error_kind() {
+                Some(std::io::ErrorKind::NotFound) => {
+                    let display_dcwd = display_cwd_or_cwd(cwd, display_cwd);
+                    let display_path = display_dcwd.join(&input.file_path);
+                    let msg = crate::util::format_not_found_error(
+                        &display_path,
+                        path,
+                        cwd,
+                        &display_dcwd,
+                        hints_enabled,
+                    )
+                    .await;
+                    SearchReplaceOutput::FileNotFound(msg)
+                }
+                Some(std::io::ErrorKind::AlreadyExists) => {
+                    SearchReplaceOutput::InvalidInput(format!(
+                        "Error: cannot create {}. A component of the path already exists as a file where a directory is expected.",
+                        input.file_path
+                    ))
+                }
+                Some(std::io::ErrorKind::InvalidFilename) => {
+                    SearchReplaceOutput::FilenameTooLong(format!(
+                        "Error: file name exceeds the {NAME_MAX}-character limit. \
                      Please use a shorter file name.",
-                ))
-            }
-            _ => SearchReplaceOutput::InvalidInput(format!(
-                "Error: failed to write {}: {e}",
-                input.file_path
-            )),
-        });
+                    ))
+                }
+                _ => SearchReplaceOutput::InvalidInput(format!(
+                    "Error: failed to write {}: {e}",
+                    input.file_path
+                )),
+            });
+        }
     }
     // Force overwrite of an existing path is not a brand-new file.
     let is_overwrite =
@@ -458,7 +481,7 @@ async fn handle_new_file_creation(
         notification_handle.send_file_written(FileWritten {
             tool_call_id: tool_call_id.to_string(),
             absolute_path: path.to_path_buf(),
-            content: input.new_string.clone(),
+            content: written_content.clone(),
             previous_content: Some(old_text.clone()),
             is_new_file: false,
         });
@@ -466,7 +489,7 @@ async fn handle_new_file_creation(
         notification_handle.send_file_written(FileWritten {
             tool_call_id: tool_call_id.to_string(),
             absolute_path: path.to_path_buf(),
-            content: input.new_string.clone(),
+            content: written_content.clone(),
             previous_content: None,
             is_new_file: true,
         });
@@ -479,7 +502,7 @@ async fn handle_new_file_creation(
     let edits = vec![SearchReplaceEditDetail {
         old_string: input.old_string.clone(),
         old_line: 1,
-        new_string: input.new_string.clone(),
+        new_string: written_content.clone(),
         new_line: 1,
         context_before: String::new(),
         context_after: String::new(),
@@ -488,7 +511,7 @@ async fn handle_new_file_creation(
     Ok(SearchReplaceOutput::EditsApplied(
         SearchReplaceEditsApplied {
             old_string: input.old_string.clone(),
-            new_string: input.new_string.clone(),
+            new_string: written_content,
             tool_output_for_prompt,
             tool_output_for_prompt_concise: Some(tool_output_for_prompt_concise),
             absolute_path: path.to_path_buf(),
@@ -1168,10 +1191,72 @@ impl xai_tool_runtime::Tool for SearchReplaceTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::computer::types::{AsyncFileSystem, ComputerError};
     use crate::types::tool_metadata::{test_ctx, test_ctx_with_call_id};
     use crate::{computer::local::LocalFs, types::resources::Resources};
     use std::sync::Arc;
     use tempfile::TempDir;
+
+    fn init_git_repo(cwd: &std::path::Path) {
+        use std::process::{Command, Stdio};
+
+        let status = Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(cwd)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("git is required for the new-file EOL test");
+        assert!(status.success());
+        let status = Command::new("git")
+            .args([
+                "config",
+                "--local",
+                "core.attributesFile",
+                if cfg!(windows) { "NUL" } else { "/dev/null" },
+            ])
+            .current_dir(cwd)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    fn platform_new_file_content(content: &str) -> String {
+        let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
+        if cfg!(windows) {
+            normalized.replace('\n', "\r\n")
+        } else {
+            normalized
+        }
+    }
+
+    struct PermissionDeniedFs(Arc<std::sync::atomic::AtomicUsize>);
+
+    #[async_trait::async_trait]
+    impl AsyncFileSystem for PermissionDeniedFs {
+        async fn read_file(&self, _path: &std::path::Path) -> Result<Vec<u8>, ComputerError> {
+            Err(ComputerError::io_with_kind(
+                "test unreadable target",
+                std::io::ErrorKind::PermissionDenied,
+            ))
+        }
+
+        async fn write_file(
+            &self,
+            _path: &std::path::Path,
+            _data: &[u8],
+        ) -> Result<(), ComputerError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn delete_file(&self, _path: &std::path::Path) -> Result<(), ComputerError> {
+            Ok(())
+        }
+    }
+
     /// Set up Resources with real filesystem for tests.
     fn test_resources(cwd: &std::path::Path) -> Resources {
         let mut resources = Resources::new();
@@ -1334,11 +1419,62 @@ mod tests {
         match result {
             SearchReplaceOutput::EditsApplied(applied) => {
                 assert!(applied.tool_output_for_prompt.contains("has been created"));
-                let content = std::fs::read_to_string(tmp.path().join("new_file.txt")).unwrap();
-                assert_eq!(content, "new content\n");
+                let expected = platform_new_file_content("new content\n");
+                let path = tmp.path().join("new_file.txt");
+                assert_eq!(applied.new_string, expected);
+                assert_eq!(std::fs::read(&path).unwrap(), expected.as_bytes());
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
             }
             other => panic!("Expected EditsApplied, got {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn mock_filesystem_uses_platform_fallback_instead_of_host_git_attributes() {
+        let tmp = TempDir::new().unwrap();
+        init_git_repo(tmp.path());
+        let host_eol = if cfg!(windows) { "lf" } else { "crlf" };
+        std::fs::write(
+            tmp.path().join(".gitattributes"),
+            format!("*.txt text eol={host_eol}\n"),
+        )
+        .unwrap();
+
+        let mock = Arc::new(crate::computer::local::MockFs::new());
+        let mock_backend: Arc<dyn AsyncFileSystem> = mock.clone();
+        let mut resources = test_resources(tmp.path());
+        resources.insert(FileSystem(mock_backend));
+        let result = xai_tool_runtime::Tool::run(
+            &SearchReplaceTool,
+            test_ctx(resources.into_shared()),
+            make_input("virtual.txt", "", "one\ntwo"),
+        )
+        .await
+        .unwrap();
+
+        let expected = platform_new_file_content("one\ntwo");
+        let host_attribute_result = if cfg!(windows) {
+            "one\ntwo"
+        } else {
+            "one\r\ntwo"
+        };
+        assert_ne!(expected, host_attribute_result);
+        match result {
+            SearchReplaceOutput::EditsApplied(applied) => {
+                assert_eq!(applied.new_string, expected);
+                assert_eq!(applied.edits.details[0].new_string, expected);
+            }
+            other => panic!("Expected EditsApplied, got {other:?}"),
+        }
+
+        let mock_paths = mock.list_files().await;
+        assert_eq!(mock_paths.len(), 1);
+        assert!(mock_paths[0].ends_with("virtual.txt"));
+        assert_eq!(
+            mock.get_file(&mock_paths[0]).await.unwrap(),
+            expected.as_bytes()
+        );
+        assert!(!tmp.path().join("virtual.txt").exists());
     }
     /// Harness configs still send this field; it must keep validating under `deny_unknown_fields`.
     #[test]
@@ -1489,7 +1625,7 @@ mod tests {
             .unwrap();
         match result {
             SearchReplaceOutput::InvalidInput(msg) => {
-                assert!(msg.contains("already exists as a file"), "got: {msg}");
+                assert!(msg.contains("path_existence_unverifiable"), "got: {msg}");
             }
             other => panic!("Expected InvalidInput, got {:?}", other),
         }
@@ -2080,10 +2216,10 @@ mod tests {
             .unwrap();
         match result {
             SearchReplaceOutput::EditsApplied(_) => {
-                assert_eq!(
-                    std::fs::read_to_string(tmp.path().join("brand_new.txt")).unwrap(),
-                    "fresh\n"
-                );
+                let expected = platform_new_file_content("fresh\n");
+                let path = tmp.path().join("brand_new.txt");
+                assert_eq!(std::fs::read(&path).unwrap(), expected.as_bytes());
+                assert_eq!(std::fs::read_to_string(path).unwrap(), expected);
             }
             other => panic!("Expected EditsApplied, got {other:?}"),
         }
@@ -2316,10 +2452,10 @@ mod tests {
             .unwrap();
         match result {
             SearchReplaceOutput::EditsApplied(_) => {
-                assert_eq!(
-                    std::fs::read_to_string(tmp.path().join("brand_new_vc005.txt")).unwrap(),
-                    "fresh\n"
-                );
+                let expected = platform_new_file_content("fresh\n");
+                let path = tmp.path().join("brand_new_vc005.txt");
+                assert_eq!(std::fs::read(&path).unwrap(), expected.as_bytes());
+                assert_eq!(std::fs::read_to_string(path).unwrap(), expected);
             }
             other => panic!("Expected EditsApplied, got {other:?}"),
         }
@@ -2389,8 +2525,11 @@ mod tests {
         match result {
             SearchReplaceOutput::EditsApplied(applied) => {
                 assert!(applied.tool_output_for_prompt.contains("has been created"));
-                let content = std::fs::read_to_string(tmp.path().join("brand_new.txt")).unwrap();
-                assert_eq!(content, "fresh content\n");
+                let expected = platform_new_file_content("fresh content\n");
+                let path = tmp.path().join("brand_new.txt");
+                assert_eq!(applied.new_string, expected);
+                assert_eq!(std::fs::read(&path).unwrap(), expected.as_bytes());
+                assert_eq!(std::fs::read_to_string(path).unwrap(), expected);
             }
             other => panic!("Expected EditsApplied, got {:?}", other),
         }
@@ -2537,6 +2676,7 @@ mod tests {
         resources.insert(FileSystem(Arc::new(LocalFs)));
         resources.insert(NotificationHandle(handle));
         let input = make_input("new.txt", "", "brand new\n");
+        let path = tmp.path().join("new.txt");
         xai_tool_runtime::Tool::run(
             &tool,
             test_ctx_with_call_id(resources.into_shared(), "call-100"),
@@ -2548,13 +2688,126 @@ mod tests {
         match notification {
             crate::notification::types::ToolNotification::FileWritten(fw) => {
                 assert_eq!(fw.tool_call_id, "call-100");
-                assert_eq!(fw.content, "brand new\n");
+                let expected = platform_new_file_content("brand new\n");
+                assert_eq!(fw.content, expected);
                 assert!(fw.previous_content.is_none());
                 assert!(fw.is_new_file);
+                assert_eq!(std::fs::read(&path).unwrap(), expected.as_bytes());
             }
             other => panic!("Expected FileWritten notification, got {:?}", other),
         }
     }
+
+    #[tokio::test]
+    async fn create_uses_one_normalized_value_for_file_result_and_notification() {
+        let tmp = TempDir::new().unwrap();
+        init_git_repo(tmp.path());
+        std::fs::write(tmp.path().join(".gitattributes"), "*.txt text eol=lf\n").unwrap();
+        let (handle, mut rx) = ToolNotificationHandle::channel();
+        let tool = SearchReplaceTool;
+        let mut resources = test_resources(tmp.path());
+        resources.insert(NotificationHandle(handle));
+        let input = make_input("space β/-new file.txt", "", "one\r\ntwo");
+
+        let result = xai_tool_runtime::Tool::run(
+            &tool,
+            test_ctx_with_call_id(resources.into_shared(), "create-eol"),
+            input,
+        )
+        .await
+        .unwrap();
+
+        let expected = "one\ntwo";
+        let written = std::fs::read(tmp.path().join("space β/-new file.txt")).unwrap();
+        assert_eq!(written, expected.as_bytes());
+        match result {
+            SearchReplaceOutput::EditsApplied(applied) => {
+                assert_eq!(applied.new_string, expected);
+                assert_eq!(applied.edits.details[0].new_string, expected);
+            }
+            other => panic!("Expected EditsApplied, got {other:?}"),
+        }
+        match rx.try_recv().unwrap() {
+            crate::notification::types::ToolNotification::FileWritten(notification) => {
+                assert_eq!(notification.content, expected);
+                assert!(notification.is_new_file);
+            }
+            other => panic!("Expected FileWritten notification, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn unreadable_existing_path_fails_closed_without_writing() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let tmp = TempDir::new().unwrap();
+        let writes = Arc::new(AtomicUsize::new(0));
+        let tool = SearchReplaceTool;
+        let mut resources = test_resources(tmp.path());
+        resources.insert(FileSystem(Arc::new(PermissionDeniedFs(writes.clone()))));
+        resources.insert(Params(SearchReplaceParams {
+            snippet_safe: true,
+            ..Default::default()
+        }));
+
+        let result = xai_tool_runtime::Tool::run(
+            &tool,
+            test_ctx(resources.into_shared()),
+            make_input("unreadable.txt", "", "must not be written"),
+        )
+        .await
+        .unwrap();
+
+        match result {
+            SearchReplaceOutput::InvalidInput(message) => {
+                assert!(message.contains("path_existence_unverifiable"));
+            }
+            other => panic!("Expected fail-closed InvalidInput, got {other:?}"),
+        }
+        assert_eq!(writes.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn existing_crlf_edit_ignores_new_file_attributes_and_snippet_safe_still_denies_write() {
+        let tmp = TempDir::new().unwrap();
+        init_git_repo(tmp.path());
+        std::fs::write(tmp.path().join(".gitattributes"), "*.txt text eol=lf\n").unwrap();
+        let path = tmp.path().join("existing.txt");
+        std::fs::write(&path, b"old\r\nline\r\n").unwrap();
+        let tool = SearchReplaceTool;
+        let mut resources = test_resources(tmp.path());
+        resources.insert(Params(SearchReplaceParams {
+            skip_read_before_edit: true,
+            ..Default::default()
+        }));
+        let result = xai_tool_runtime::Tool::run(
+            &tool,
+            test_ctx(resources.into_shared()),
+            make_input("existing.txt", "old", "new"),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(result, SearchReplaceOutput::EditsApplied(_)));
+        assert_eq!(std::fs::read(&path).unwrap(), b"new\r\nline\r\n");
+
+        let mut resources = test_resources(tmp.path());
+        resources.insert(Params(SearchReplaceParams {
+            snippet_safe: true,
+            ..Default::default()
+        }));
+        let denied = xai_tool_runtime::Tool::run(
+            &tool,
+            test_ctx(resources.into_shared()),
+            make_input("existing.txt", "", "overwrite denied"),
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(denied, SearchReplaceOutput::InvalidInput(message) if message.contains("path_exists_use_edit"))
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"new\r\nline\r\n");
+    }
+
     fn build_gitignore(root: &std::path::Path, patterns: &[&str]) -> ignore::gitignore::Gitignore {
         let mut builder = ignore::gitignore::GitignoreBuilder::new(root);
         for pattern in patterns {

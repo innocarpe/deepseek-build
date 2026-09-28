@@ -1,8 +1,9 @@
 //! `x.ai/session/usage`: cumulative session token and cost totals as [`PromptUsage`].
 //!
-//! Reads the in-memory [`xai_chat_state::UsageLedger`] (main-loop and folded subagent spend).
+//! Reads the session xai_chat_state::UsageLedger (main-loop and folded subagent spend),
+//! restored from usage.json before a resumed session accepts requests.
 //! Partial costs are scrubbed, since an absent cost does not mean free.
-//! Totals reset when a session is resumed in a new agent process.
+//! Totals continue across a session resume; legacy cache history remains explicit as unknown.
 
 use agent_client_protocol as acp;
 use serde::{Deserialize, Serialize};
@@ -78,7 +79,10 @@ mod tests {
     #[test]
     fn response_serializes_ledger_as_prompt_usage_wire_shape() {
         let mut ledger = UsageLedger::default();
-        ledger.record_main_loop_call("grok-build", &usage(100, 10), Some(50), Some(20_000_000));
+        let mut reported = usage(100, 10);
+        reported.cache_hit_tokens = Some(70);
+        reported.cache_miss_tokens = Some(30);
+        ledger.record_main_loop_call("grok-build", &reported, Some(50), Some(20_000_000));
         let v = serde_json::to_value(&SessionUsageResponse {
             usage: PromptUsage::from(&ledger),
         })
@@ -93,6 +97,18 @@ mod tests {
         );
         assert_eq!(v.pointer("/usage/numTurns"), Some(&serde_json::json!(1)));
         assert_eq!(
+            v.pointer("/usage/numTurnsKnown"),
+            Some(&serde_json::json!(true))
+        );
+        assert_eq!(
+            v.pointer("/usage/cacheSession/hitTokens"),
+            Some(&serde_json::json!(70))
+        );
+        assert_eq!(
+            v.pointer("/usage/cacheSession/missTokens"),
+            Some(&serde_json::json!(30))
+        );
+        assert_eq!(
             v.pointer("/usage/costUsdTicks"),
             Some(&serde_json::json!(20_000_000))
         );
@@ -102,6 +118,29 @@ mod tests {
         );
         let rt: SessionUsageResponse = serde_json::from_value(v).unwrap();
         assert_eq!(rt.usage.totals.cost_usd_ticks, Some(20_000_000));
+    }
+
+    #[test]
+    fn response_preserves_observed_turn_subtotal_with_unknown_history() {
+        let mut ledger = UsageLedger::unknown_history();
+        ledger.main_loop_model_calls = 2;
+        let v = serde_json::to_value(&SessionUsageResponse {
+            usage: PromptUsage::from(&ledger),
+        })
+        .unwrap();
+        assert_eq!(
+            v.pointer("/usage/cacheSession/historyComplete"),
+            Some(&serde_json::json!(false))
+        );
+        assert_eq!(v.pointer("/usage/numTurns"), Some(&serde_json::json!(2)));
+        assert_eq!(
+            v.pointer("/usage/numTurnsKnown"),
+            Some(&serde_json::json!(false))
+        );
+        assert_eq!(
+            v.pointer("/usage/usageIsIncomplete"),
+            Some(&serde_json::json!(true))
+        );
     }
 
     #[test]

@@ -681,6 +681,7 @@ impl MvpAgent {
                     chat_history,
                     rewind_points_file_path: None,
                     initial_total_tokens: 0,
+                    initial_session_usage: xai_chat_state::UsageLedger::default(),
                     origin_client: origin_client.clone(),
                     client_code_nav_enabled,
                     client_terminal,
@@ -1063,6 +1064,7 @@ impl MvpAgent {
             announcement_state: persisted_announcement_state,
             goal_mode_state: _persisted_goal_mode,
             workflow_runs: persisted_workflow_runs,
+            restored_session_usage,
         } = persistence_info;
         let persisted_base_url = self
             .resolve_sampling_config_for_model(&summary.current_model_id, origin_client.clone())
@@ -1249,6 +1251,7 @@ impl MvpAgent {
                         chat_history,
                         rewind_points_file_path,
                         initial_total_tokens,
+                        initial_session_usage: restored_session_usage,
                         origin_client: origin_client.clone(),
                         client_code_nav_enabled,
                         client_terminal,

@@ -108,6 +108,117 @@ Repeating the same suite with the process-local terminal fixture
 `TERM_PROGRAM=ghostty ./scripts/vendor-cargo.sh test -p xai-grok-pager --lib`
 printed `10287 passed; 0 failed; 5 ignored`.
 
+## Verification — Path A resume cache usage (2026-09-29)
+
+Path A now restores the cumulative usage ledger from `usage.json` before the
+session actor accepts requests. The first resumed write subtracts that restored
+baseline, preserving saved billing totals while adding only new usage. The
+incoming-turn fold cursor remains process-local: late interjections fold into
+the same-process row, and a turn-number collision after restart is renumbered.
+Legacy cache/main-loop fields and a missing usage file on an existing session
+remain explicitly unknown/incomplete; explicit new-schema zeros remain known.
+The main-loop response subtotal observed after an upgrade is still persisted
+while its known flag remains false, and billing `modelCalls` is never used to
+infer the missing legacy split. A malformed present summary is rejected rather
+than restored as an unknown ledger.
+
+Local production-crate verification passed using the per-worktree vendored
+target and serialized build wrapper:
+
+- `./scripts/vendor-cargo.sh check --all-targets` — passed.
+- `./scripts/vendor-cargo.sh fmt --all -- --check` — passed.
+- `./scripts/vendor-cargo.sh test -p xai-chat-state cache_session_sums_reported_halves_and_skips_unreported` — 1 passed.
+- `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib session::usage_file::tests` — 16 passed, including disk round-trip, legacy/explicit-zero distinction, malformed present-summary rejection, and process-local cursor collision.
+- `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib resume_restores_live_baseline` — 1 passed; persisted billing/cache values were not double-counted, and a same-process late interjection folded into the current row.
+- `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib restored_ledger_reaches_session_usage_and_deepseek_status_requests` — 1 passed through both production status extensions.
+- `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib response_preserves_observed_turn_subtotal_with_unknown_history` — 1 passed.
+- `./scripts/vendor-cargo.sh test -p xai-grok-pager --lib session_usage_block_shows_restored_cache_totals_and_unknown_legacy_history` — 1 passed.
+- `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib legacy_main_loop_subtotal_survives_repeated_resume_roundtrips` — 1 passed; two post-upgrade calls survive the first disk resume, a third survives another resume, the old billing count remains separate, and historical completeness stays false.
+
+These are targeted local results, not a gate-table status change. Hosted PR CI
+for #339 completed successfully at source head
+`9a9c58f8af1afdc8412f83629d38430fb25d149f` ([run 36466155902](https://github.com/innocarpe/deepseek-build/actions/runs/36466155902)):
+`CI / required`, `changes`, `grok fmt`, `grok clippy`, and `changelog move` passed.
+Path-filtered jobs `fmt`, `clippy`, `test`, `semver`, `release verify retry`,
+`session close`, `vendor build queue`, `worktree ownership`, and `npm` were
+skipped. The separate `CI grok test` workflow runs on `main` pushes, so it was
+not part of this pre-merge PR run.
+
+## Verification — new-file Git EOL policy (2026-09-29)
+
+Path A and the thin `dsb-tools` create paths now resolve `text` / `eol` from
+Git for each true new file when the filesystem backend confirms the resolved
+path is on the host. The lookup uses literal, NUL-delimited argv paths from the
+nearest existing parent and a bounded process/read deadline. Backends without
+that guarantee, including the current ACP adapter, use the platform fallback;
+host `.gitattributes` are not assumed to describe their target. The create result,
+stored bytes, `FileWritten.content`, and `EditsApplied.new_string` share the
+same normalized content. Existing CRLF edits remain CRLF under a conflicting
+new-file attribute; snippet-safe overwrites and unreadable targets fail closed.
+Regression coverage includes real non-Git platform-fallback writes and a mock
+filesystem whose path overlaps a host Git repository with the opposite EOL
+attribute; it uses fallback and writes only to the mock backend.
+
+`cargo check -p dsb-tools --all-targets` passed and
+`cargo test -p dsb-tools --lib` printed `79 passed; 0 failed`. With the
+worktree cargo bin on `PATH`,
+`./scripts/vendor-cargo.sh check -p xai-grok-tools --all-targets` passed and
+`./scripts/vendor-cargo.sh check -p xai-grok-workspace --all-targets` passed,
+compiling the ACP adapter against the conservative capability default. The
+`PATH="$HOME/.cargo/bin:$PATH" ./scripts/vendor-cargo.sh test -p xai-grok-tools --lib search_replace:: -- --test-threads=1`
+printed `125 passed; 0 failed; 3262 filtered out`.
+`./scripts/check-path-a-linkage.sh` printed `PASS`; `git diff --check` passed.
+This is feature verification and does not flip a spec-readiness gate.
+
+## Verification — host-observed test change evidence
+
+Spec 130 defines bounded Path A reporting from successful in-process
+`FileWritten` receipts. The first receipt supplies each path's baseline; a
+receipt-chain mismatch or final-content mismatch omits that path. The report
+counts modified, deleted, added, and renamed criteria by relative file scope
+without exposing test names, source, literals, hashes, or absolute paths.
+Supported conventions are Rust `#[test]` / `#[tokio::test]` (with preceding
+attributes fingerprinted), Go `Test*` with `*testing.T`, and default pytest
+module functions and `Test*` class methods (including decorated definitions;
+decorator tokens are fingerprinted).
+Formatting/comment-only writes, a same-name/same-signature file move, net-zero
+write/revert, failed writes without a receipt, non-Git projects, unsupported
+conventions, parse failures, and oversized inputs produce no attribution.
+The host note and turn delta do not establish test execution, passing tests, or
+semantic strengthening/weakening.
+
+Coverage is in `session/test_criteria.rs` (baseline, dirty pre-existing file,
+successful modified/deleted/added writes, source/literal-free output, net-zero
+revert, test-file move, failed write, chain/final-content mismatch, non-Git,
+language conventions, pytest decorator and Rust attribute changes, parser/size
+bounds, and report truncation) plus
+`notification/handle_tests.rs` (synchronous observer and tee propagation) and
+`session/signals_tests.rs` (turn-delta serialization),
+`session/acp_session_tests/turn_completion_emit_tests.rs` (actual Path A
+completion/cancellation settlement handlers, result snapshot and turn-delta
+evidence), and `agent/mvp_agent/turn_end.rs` (`TurnResultArgs` to durable
+`turn_result.json` JSON mapping). The settlement fixture keeps the actor event
+receiver open and undrained: it can accept `FlushReplay`, but no test sink can
+acknowledge it. It exercises the shipped common completion/cancel handlers with
+host-backed receipts, without a sampler or the run-loop select branch.
+
+Local validation on 2026-09-29, through the worktree-pinned vendor wrapper:
+
+- `./scripts/vendor-cargo.sh fmt --all` — passed.
+- `./scripts/vendor-cargo.sh --jobs 4 check -p xai-grok-shell --all-targets` — passed.
+- `./scripts/vendor-cargo.sh clippy -p xai-grok-shell --all-targets -- -D warnings` and `./scripts/vendor-cargo.sh clippy -p xai-grok-tools --all-targets -- -D warnings` — passed.
+- `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib test_criteria -- --nocapture` — 13 passed.
+- `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib path_a_completed_and_cancelled_turns_carry_test_change_evidence -- --nocapture` — 1 passed; completion and cancellation each finished within the 4-second bound, and each host note appeared once in gateway and persistence before its durable terminal.
+- `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib successful_test_write_receipt_is_serialized_as_source_free_turn_evidence -- --nocapture` — 1 passed.
+- `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib turn_result_metadata_keeps_host_test_evidence_from_the_terminal_snapshot -- --nocapture` — 1 passed.
+- `./scripts/vendor-cargo.sh test -p xai-grok-tools --lib file_written_observer_runs_only_for_successful_write_notifications -- --nocapture` and `... tee_preserves_file_written_observers ...` — 1 passed each.
+- With `PATH` resolving both `cargo` and `rustc`, the default-stack `./scripts/vendor-cargo.sh test -p xai-grok-shell --lib` run aborted with stack overflow at `agent::mvp_agent::tests::a_cancelled_installer_withdraws_its_unstamped_actor`; the same test also failed in isolation at the default stack. The repository CI job in `.github/workflows/ci-grok-test.yml` sets `RUST_MIN_STACK=16777216` because SessionActor turn futures can exceed Rust's 2 MiB default. Re-running `RUST_MIN_STACK=16777216 ./scripts/vendor-cargo.sh test -p xai-grok-shell --lib a_cancelled_installer_withdraws_its_unstamped_actor -- --nocapture` passed.
+- The full `RUST_MIN_STACK=16777216 ./scripts/vendor-cargo.sh test -p xai-grok-shell --lib` run reported 7,110 passed, 8 failed, and 5 ignored. The failures were `agent::mvp_agent::tests::exhausted_fetch_decides_on_the_local_layers`, `claude_import::tests::gate_load_claude_env_returns_empty_when_marker_set`, `session::workflow::registry::tests::save_through_symlinked_session_root_stays_in_canonical_project`, `session::worktree::tests::create_worktree_for_resume_honors_git_ref`, `session::worktree::tests::create_worktree_for_resume_produces_independent_worktree`, `util::config::consent::tests::set_consent_answer_is_monotonic_per_account`, `util::config::mcp::tests::delete_mcp_server_config_at_follows_user_symlink`, and `util::config::persist::tests::no_home_cwd_config_resolves_slot_not_follow`. This local run is not claimed as a full-suite pass.
+- Fresh-process reruns through `scripts/vendor-cargo.sh` with `RUST_MIN_STACK=16777216` passed for `agent::mvp_agent::tests::exhausted_fetch_decides_on_the_local_layers`, both `session::worktree::tests::create_worktree_for_resume_*` tests, `util::config::consent::tests::set_consent_answer_is_monotonic_per_account`, and `util::config::mcp::tests::delete_mcp_server_config_at_follows_user_symlink`. These five did not reproduce individually. That is an observation consistent with an interaction in the combined run, not proof of a parallel-only cause.
+- `claude_import::tests::gate_load_claude_env_returns_empty_when_marker_set` failed in its fresh process under the ordinary local environment. The shell test seeds its own marker cache, while the workspace reader has a separate marker gate; `RUST_MIN_STACK=16777216 _GROK_CLAUDE_MARKER_OVERRIDE=1 ./scripts/vendor-cargo.sh test -p xai-grok-shell --lib claude_import::tests::gate_load_claude_env_returns_empty_when_marker_set -- --nocapture` passed. The relevant shell/workspace source and test blobs are identical to base `dd0c8b938211e1c5d587c0dbaafff8baa20fe62d`; no test or production code was changed here.
+- `session::workflow::registry::tests::save_through_symlinked_session_root_stays_in_canonical_project` and `util::config::persist::tests::no_home_cwd_config_resolves_slot_not_follow` failed with `/var/...` versus `/private/var/...` path spellings under `RUST_MIN_STACK=16777216`. With only `TMPDIR` changed to the canonical realpath of the existing temp directory, both passed in the same already-built test binary. Their relevant shell source/test blobs also match base `dd0c8b938211e1c5d587c0dbaafff8baa20fe62d`; the observed failure is the temp-path alias affecting those assertions.
+- `.github/workflows/ci.yml` runs the vendored PR checks `grok fmt` and strict `grok clippy`; it does not run the vendored shell test suite. `.github/workflows/ci-grok-test.yml` runs the full vendored suite on a `main` push after merge (or by manual dispatch), with `RUST_MIN_STACK=16777216`; it is not a PR check. Record the PR checks and the post-merge full-suite result separately.
+
 ## Verification — full vendored workspace follow-up (2026-09-28)
 
 The earlier [run #36404759770](https://github.com/innocarpe/deepseek-build/actions/runs/36404759770)

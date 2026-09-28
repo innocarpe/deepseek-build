@@ -75,6 +75,13 @@ persists/resumes JSONL line-mode runs. The TUI-only flags (`--resume` /
 `--continue` / `--minimal` / `--fullscreen`) are rejected on `run` / `chat` /
 `repl` with a pointer to `--session`.
 
+The TUI stores cumulative billing and cache hit/miss usage in the session's
+`usage.json`. A resumed or continued session restores those totals before its
+next request, so later turns continue the same session totals. Older sessions
+without saved cache counters show cache history as unknown; a session with
+chat history but no usage file reports incomplete usage rather than treating
+the missing history as zero.
+
 ## Limits
 
 - Stable prefix (system/tools) is **not** stored in the session file — rebuilt each process from current code/config (cache epoch may change across upgrades).

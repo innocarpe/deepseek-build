@@ -34,6 +34,19 @@ npm/GitHub Latest remain **5.2.2** pending publish — see
 Evidence: [`docs/product/evidence/VC006_PATH_A_HEART_R0A_2026-08-08.md`](../product/evidence/VC006_PATH_A_HEART_R0A_2026-08-08.md)
 (plus VC003 mint · VC004 require · VC005 write/bash invalidation)
 
+When `write` creates a path that does not exist, it resolves `text` and `eol`
+from the target repository's current `.gitattributes` when the filesystem
+backend confirms that the target is on the host. `eol=lf` and
+`eol=crlf` select the stored line endings unless `text` is unset; unsupported
+or unavailable Git attribute lookup uses the platform default. Git is queried
+only when the filesystem backend confirms that the path is on the host. The
+current ACP client-filesystem backend cannot guarantee that mapping or ask the
+client for Git attributes, so it uses the platform default even if its path
+string overlaps a host repository. The model's CRLF is normalized to the
+selected convention, its final-newline choice is preserved, and the tool result
+reports the content that was written. This policy applies to creation only;
+existing-file edit and overwrite behavior remain governed by Spec 45.
+
 ## Built-in surfaces (illustrative)
 
 ### Full-screen agent (Path A / Grok-derived)
@@ -67,6 +80,27 @@ Hermetic public-entry dogfood: multi-read parallel + mixed mutate serial
 ```bash
 ./scripts/test-path-a-vc010-r0a.sh
 ```
+
+## Host-observed test changes (Path A)
+
+At a completed or cancelled Path A turn, the host may append a short note when
+successful structured file writes on host-backed `LocalFs` changed supported test declarations. The turn record
+stores only relative paths, language, change category, and counts; it does not
+include test names, source text, literals, or content hashes. The first
+successful write's before-content is the baseline, so existing dirty tests are
+not attributed from `HEAD` or a worktree diff. A test moved to another file
+with the same name and token signature is unchanged. Formatting and comments
+are ignored.
+
+The current conventions are Rust `#[test]` / `#[tokio::test]`, including
+preceding attributes such as `#[ignore]` and `#[should_panic]` in the
+fingerprint; Go top-level `Test*` functions with `*testing.T`; and default
+pytest module functions and class methods, including decorated definitions.
+Decorator and attribute token edits count as declaration changes. Shell/MCP/external writes,
+client-backed ACP filesystem writes, non-Git projects, inconsistent write receipts,
+unsupported conventions, parse failures, and oversized files are omitted. This is host
+evidence about observed writes; it does not say that tests ran or passed and it
+does not judge semantic strength. See [Spec 130](../specs/130-test-change-evidence.md).
 
 ## CLI helpers
 

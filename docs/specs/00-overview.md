@@ -25,6 +25,7 @@ Behavioral contracts for what DeepSeek Build **must** do when implemented.
 | 100 | [Sessions](./100-sessions.md) | L1 | **ready-for-impl** (min; **G6a**) |
 | 110 | [Plan mode (light)](./110-plan-mode.md) | L1 | **ready-for-impl** (**G6d**) |
 | 120 | Project config | All → config owner | TODO |
+| 130 | [Test change evidence](./130-test-change-evidence.md) | L1 + L3 | **ready-for-impl** |
 
 ## MVP cut
 

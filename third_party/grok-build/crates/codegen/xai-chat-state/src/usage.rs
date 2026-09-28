@@ -1,4 +1,5 @@
-//! Per-prompt and per-session billing ledgers (not serialized).
+//! In-memory per-prompt and per-session ledgers. The session usage file owns
+//! their durable summary representation.
 //!
 //! `total_tokens()` is input + output: Responses wire `total` is live context
 //! length. Compaction and other side calls never call `record_main_loop_call`.
@@ -108,18 +109,34 @@ fn merge_cost_ticks(a: Option<i64>, b: Option<i64>) -> Option<i64> {
 /// Same arithmetic as the overlay counter in `dsb-agent`: a response with no
 /// cache fields increments `unreported` and adds nothing to the token sums.
 /// A missing half of the pair stays missing rather than becoming `0`.
-/// This copy lives on the in-memory session ledger because `xai-grok-shell`
-/// does not depend on `dsb-agent`. It is not serialized; the persisted copy
-/// is the overlay's, on the REPL / `run` path.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// This copy lives on the Path A session ledger because `xai-grok-shell`
+/// does not depend on `dsb-agent`. `xai-grok-shell` serializes it in the
+/// session's usage summary.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CacheSessionTotals {
     hit_tokens: u64,
     miss_tokens: u64,
     reported: u64,
     unreported: u64,
+    /// False when the session predates durable Path A cache totals.
+    history_complete: bool,
 }
 
 impl CacheSessionTotals {
+    /// Cache tracking starts with a known empty history for a new session.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// A legacy session has billing data but no evidence for its earlier cache history.
+    pub fn unknown_history() -> Self {
+        Self {
+            history_complete: false,
+            ..Self::default()
+        }
+    }
+
     pub fn record(&mut self, usage: &TokenUsage) {
         if usage.cache_hit_tokens.is_none() && usage.cache_miss_tokens.is_none() {
             self.unreported = self.unreported.saturating_add(1);
@@ -138,6 +155,51 @@ impl CacheSessionTotals {
         self.reported > 0
     }
 
+    pub fn hit_tokens(&self) -> u64 {
+        self.hit_tokens
+    }
+
+    pub fn miss_tokens(&self) -> u64 {
+        self.miss_tokens
+    }
+
+    pub fn reported(&self) -> u64 {
+        self.reported
+    }
+
+    pub fn unreported(&self) -> u64 {
+        self.unreported
+    }
+
+    pub fn history_complete(&self) -> bool {
+        self.history_complete
+    }
+
+    /// A newly observed delta cannot fill a gap in a legacy session's history.
+    pub fn mark_history_unknown(&mut self) {
+        self.history_complete = false;
+    }
+
+    pub fn saturating_add(&self, other: &Self) -> Self {
+        Self {
+            hit_tokens: self.hit_tokens.saturating_add(other.hit_tokens),
+            miss_tokens: self.miss_tokens.saturating_add(other.miss_tokens),
+            reported: self.reported.saturating_add(other.reported),
+            unreported: self.unreported.saturating_add(other.unreported),
+            history_complete: self.history_complete && other.history_complete,
+        }
+    }
+
+    pub fn saturating_sub(&self, other: &Self) -> Self {
+        Self {
+            hit_tokens: self.hit_tokens.saturating_sub(other.hit_tokens),
+            miss_tokens: self.miss_tokens.saturating_sub(other.miss_tokens),
+            reported: self.reported.saturating_sub(other.reported),
+            unreported: self.unreported.saturating_sub(other.unreported),
+            history_complete: self.history_complete && other.history_complete,
+        }
+    }
+
     pub fn rate_label(&self) -> String {
         let total = u128::from(self.hit_tokens) + u128::from(self.miss_tokens);
         if total == 0 {
@@ -148,31 +210,74 @@ impl CacheSessionTotals {
     }
 
     /// `cache_session=hit=<n>,miss=<n>,rate=<pct>,reported=<n>,unreported=<n>`
+    /// plus `history=unknown` when the session predates durable tracking.
     pub fn log_label(&self) -> String {
-        format!(
+        let mut label = format!(
             "cache_session=hit={},miss={},rate={},reported={},unreported={}",
             self.hit_tokens,
             self.miss_tokens,
             self.rate_label(),
             self.reported,
             self.unreported
-        )
+        );
+        if !self.history_complete {
+            label.push_str(",history=unknown");
+        }
+        label
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+impl Default for CacheSessionTotals {
+    fn default() -> Self {
+        Self {
+            hit_tokens: 0,
+            miss_tokens: 0,
+            reported: 0,
+            unreported: 0,
+            history_complete: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UsageLedger {
     pub totals: UsageTotals,
     pub by_model: IndexMap<String, UsageTotals>,
     /// Main-agent loop rounds for `num_turns` (subagents excluded).
     pub main_loop_model_calls: u64,
+    /// False when restoring a legacy summary that did not distinguish main-loop calls.
+    pub main_loop_model_calls_known: bool,
     /// Bill may under-count (drain timeout, nested subagent incomplete, apply failure).
     pub incomplete: bool,
     /// §1.5.2 counter for main-loop responses. Not part of the billed chip.
     pub cache_session: CacheSessionTotals,
 }
 
+impl Default for UsageLedger {
+    fn default() -> Self {
+        Self {
+            totals: UsageTotals::default(),
+            by_model: IndexMap::new(),
+            main_loop_model_calls: 0,
+            main_loop_model_calls_known: true,
+            incomplete: false,
+            cache_session: CacheSessionTotals::default(),
+        }
+    }
+}
+
 impl UsageLedger {
+    /// A prior session exists, but its persisted usage summary is absent.
+    /// Keep all historical aggregates explicitly unknown/incomplete.
+    pub fn unknown_history() -> Self {
+        Self {
+            main_loop_model_calls_known: false,
+            incomplete: true,
+            cache_session: CacheSessionTotals::unknown_history(),
+            ..Self::default()
+        }
+    }
+
     /// Fold one main-agent-loop model call. This is the only writer of
     /// `main_loop_model_calls` (the wire `numTurns`); side calls such as
     /// compaction must not use it.

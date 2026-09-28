@@ -1,5 +1,6 @@
 use super::*;
 use crate::notification::ScheduledTaskRemovedReason;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn removed(task_id: &str) -> ScheduledTaskRemoved {
     ScheduledTaskRemoved {
@@ -126,4 +127,64 @@ async fn capped_channel_evicts_lossy_event_for_terminal_event() {
     handle.send(ToolNotification::ScheduledTaskRemoved(removed("terminal")));
 
     assert_eq!(task_id(&receiver.recv().await.unwrap()), "terminal");
+}
+
+#[tokio::test]
+async fn file_written_observer_runs_only_for_successful_write_notifications() {
+    let (handle, mut receiver) = ToolNotificationHandle::channel();
+    let observed = Arc::new(AtomicUsize::new(0));
+    let observer_count = Arc::clone(&observed);
+    let handle = handle.with_file_written_observer(move |written| {
+        assert_eq!(
+            written.absolute_path,
+            std::path::PathBuf::from("/tmp/example.rs")
+        );
+        observer_count.fetch_add(1, Ordering::SeqCst);
+    });
+
+    handle.send_scheduled_task_created(created("task"));
+    handle.send_file_written(FileWritten {
+        tool_call_id: "call-1".into(),
+        absolute_path: "/tmp/example.rs".into(),
+        content: "#[test] fn check() {}".into(),
+        previous_content: Some("#[test] fn check() { assert!(true); }".into()),
+        is_new_file: false,
+    });
+
+    assert_eq!(observed.load(Ordering::SeqCst), 1);
+    assert!(matches!(
+        receiver.recv().await,
+        Some(ToolNotification::ScheduledTaskCreated(_))
+    ));
+    assert!(matches!(
+        receiver.recv().await,
+        Some(ToolNotification::FileWritten(_))
+    ));
+}
+
+#[tokio::test]
+async fn tee_preserves_file_written_observers() {
+    let (observed_handle, observed_rx) = ToolNotificationHandle::channel();
+    drop(observed_rx);
+    let (plain_handle, mut plain_rx) = ToolNotificationHandle::channel();
+    let observed = Arc::new(AtomicUsize::new(0));
+    let observer_count = Arc::clone(&observed);
+    let observed_handle = observed_handle.with_file_written_observer(move |_| {
+        observer_count.fetch_add(1, Ordering::SeqCst);
+    });
+    let combined = ToolNotificationHandle::tee(vec![observed_handle, plain_handle.clone()]);
+
+    combined.send_file_written(FileWritten {
+        tool_call_id: "call-2".into(),
+        absolute_path: "/tmp/example.rs".into(),
+        content: "".into(),
+        previous_content: None,
+        is_new_file: true,
+    });
+
+    assert_eq!(observed.load(Ordering::SeqCst), 1);
+    assert!(matches!(
+        plain_rx.recv().await,
+        Some(ToolNotification::FileWritten(_))
+    ));
 }

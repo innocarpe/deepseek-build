@@ -116,6 +116,18 @@ pub struct PromptUsage {
     /// Main-agent loop rounds (same unit as `--max-turns`).
     #[serde(default, rename = "numTurns")]
     pub num_turns: u64,
+    /// False when pre-tracking main-loop history is unknown. `numTurns` still
+    /// carries the observed subtotal; aggregate billing calls are not inferred.
+    #[serde(default = "num_turns_known_by_default", rename = "numTurnsKnown")]
+    pub num_turns_known: bool,
+    /// Path A's main-loop cache counters. Missing means this wire producer did
+    /// not expose the Path A ledger; an incomplete history is explicit.
+    #[serde(
+        default,
+        rename = "cacheSession",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cache_session: Option<PromptCacheSession>,
     /// Bill may under-count (open subagents, usage not applied, or drain timeout).
     #[serde(
         default,
@@ -123,6 +135,33 @@ pub struct PromptUsage {
         skip_serializing_if = "std::ops::Not::not"
     )]
     pub usage_is_incomplete: bool,
+}
+
+fn num_turns_known_by_default() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptCacheSession {
+    pub hit_tokens: u64,
+    pub miss_tokens: u64,
+    pub reported: u64,
+    pub unreported: u64,
+    /// False when earlier session responses predate persisted Path A counters.
+    pub history_complete: bool,
+}
+
+impl From<&xai_chat_state::CacheSessionTotals> for PromptCacheSession {
+    fn from(cache: &xai_chat_state::CacheSessionTotals) -> Self {
+        Self {
+            hit_tokens: cache.hit_tokens(),
+            miss_tokens: cache.miss_tokens(),
+            reported: cache.reported(),
+            unreported: cache.unreported(),
+            history_complete: cache.history_complete(),
+        }
+    }
 }
 
 impl PromptUsage {
@@ -298,6 +337,8 @@ impl From<&xai_chat_state::UsageLedger> for PromptUsage {
                 .map(|(k, v)| (k.clone(), PromptUsageModel::from(v)))
                 .collect(),
             num_turns: ledger.main_loop_model_calls,
+            num_turns_known: ledger.main_loop_model_calls_known,
+            cache_session: Some(PromptCacheSession::from(&ledger.cache_session)),
             usage_is_incomplete: ledger.incomplete,
         };
         usage.scrub_untrustworthy_costs();
@@ -2788,6 +2829,8 @@ mod tests {
             },
             model_usage: model_usage.clone(),
             num_turns: 2,
+            num_turns_known: true,
+            cache_session: None,
             usage_is_incomplete: false,
         };
         let mut result = serde_json::json!({});
@@ -2820,6 +2863,8 @@ mod tests {
             },
             model_usage,
             num_turns: 1,
+            num_turns_known: true,
+            cache_session: None,
             usage_is_incomplete: true,
         };
         incomplete.scrub_untrustworthy_costs();
@@ -2893,6 +2938,8 @@ mod tests {
             },
             model_usage: Default::default(),
             num_turns: 1,
+            num_turns_known: true,
+            cache_session: None,
             usage_is_incomplete: false,
         };
         usage.scrub_untrustworthy_costs();
@@ -2927,6 +2974,8 @@ mod tests {
             },
             model_usage,
             num_turns: 1,
+            num_turns_known: true,
+            cache_session: None,
             usage_is_incomplete: false,
         };
         let mut result = serde_json::json!({});

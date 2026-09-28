@@ -862,6 +862,7 @@ impl SessionActor {
             },
             CancelFinalization::Rewind => None,
         };
+        let mut cancelled_turn_snapshot = None;
         if rewound_input.is_none()
             && let Some(prompt_id) = cancelled_prompt_id.or(no_task_pinned_prompt_id)
         {
@@ -872,22 +873,24 @@ impl SessionActor {
             }
             // `cancelTrigger` lets clients tell a send-now cancel from a Ctrl+C/Esc one
             // `MidTurnAbort` matches what the prompt's RPC resolves with below, so the event and the RPC agree
-            self.emit_turn_completed(
-                prompt_id,
-                &Ok(acp::StopReason::Cancelled),
-                cancelled_usage.clone(),
-                trigger.as_ref().map(crate::session::CancelTrigger::as_str),
-                // A no-task pinned cancel reaches here too; only a torn-down task is a mid-turn abort.
-                tore_down_task.then(|| {
-                    crate::session::commands::meta_category_str(
-                        crate::session::events::CancellationCategory::MidTurnAbort,
-                    )
-                }),
-                None,
-                cancel_elapsed_ms,
-                None,
-            )
-            .await;
+            cancelled_turn_snapshot = self
+                .emit_turn_completed(
+                    prompt_id,
+                    &Ok(acp::StopReason::Cancelled),
+                    cancelled_usage.clone(),
+                    trigger.as_ref().map(crate::session::CancelTrigger::as_str),
+                    // A no-task pinned cancel reaches here too; only a torn-down task is a mid-turn abort.
+                    tore_down_task.then(|| {
+                        crate::session::commands::meta_category_str(
+                            crate::session::events::CancellationCategory::MidTurnAbort,
+                        )
+                    }),
+                    None,
+                    cancel_elapsed_ms,
+                    None,
+                )
+                .await
+                .filter(|snapshot| !snapshot.delta.test_criteria_changes_this_turn.is_empty());
         }
 
         if let Some(input) = rewound_input {
@@ -912,7 +915,7 @@ impl SessionActor {
         let message_result = Ok(PromptTurnOk {
             stop_reason: acp::StopReason::Cancelled,
             total_tokens,
-            turn_snapshot: None,
+            turn_snapshot: cancelled_turn_snapshot.clone(),
             completion_kind: PromptCompletionKind::Cancelled {
                 category: Some(crate::session::events::CancellationCategory::MidTurnAbort),
                 context: None,
@@ -936,7 +939,11 @@ impl SessionActor {
                 .send(Ok(PromptTurnOk {
                     stop_reason: acp::StopReason::Cancelled,
                     total_tokens,
-                    turn_snapshot: None,
+                    turn_snapshot: if idx == 0 {
+                        cancelled_turn_snapshot.clone()
+                    } else {
+                        None
+                    },
                     completion_kind: PromptCompletionKind::Cancelled {
                         // Running turn only, matching events.jsonl's category; queued prompts were removed, not mid-turn aborted
                         category: is_running_turn

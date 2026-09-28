@@ -243,3 +243,48 @@ Local validation on 2026-09-29, through the worktree-pinned vendor wrapper:
 - `claude_import::tests::gate_load_claude_env_returns_empty_when_marker_set` failed in its fresh process under the ordinary local environment. The shell test seeds its own marker cache, while the workspace reader has a separate marker gate; `RUST_MIN_STACK=16777216 _GROK_CLAUDE_MARKER_OVERRIDE=1 ./scripts/vendor-cargo.sh test -p xai-grok-shell --lib claude_import::tests::gate_load_claude_env_returns_empty_when_marker_set -- --nocapture` passed. The relevant shell/workspace source and test blobs are identical to base `dd0c8b938211e1c5d587c0dbaafff8baa20fe62d`; no test or production code was changed here.
 - `session::workflow::registry::tests::save_through_symlinked_session_root_stays_in_canonical_project` and `util::config::persist::tests::no_home_cwd_config_resolves_slot_not_follow` failed with `/var/...` versus `/private/var/...` path spellings under `RUST_MIN_STACK=16777216`. With only `TMPDIR` changed to the canonical realpath of the existing temp directory, both passed in the same already-built test binary. Their relevant shell source/test blobs also match base `dd0c8b938211e1c5d587c0dbaafff8baa20fe62d`; the observed failure is the temp-path alias affecting those assertions.
 - `.github/workflows/ci.yml` runs the vendored PR checks `grok fmt` and strict `grok clippy`; it does not run the vendored shell test suite. `.github/workflows/ci-grok-test.yml` runs the full vendored suite on a `main` push after merge (or by manual dispatch), with `RUST_MIN_STACK=16777216`; it is not a PR check. Record the PR checks and the post-merge full-suite result separately.
+
+## Verification — full vendored workspace follow-up (2026-09-28)
+
+The earlier [run #36404759770](https://github.com/innocarpe/deepseek-build/actions/runs/36404759770)
+remains a historical failure: its unchanged shell library had one
+`set_consent_answer_is_monotonic_per_account` failure. It is not the current
+workspace result. The later [main run #36409062503](https://github.com/innocarpe/deepseek-build/actions/runs/36409062503)
+completed with `conclusion=success` on source commit
+`035fe245e5b80b7ec28545d0df575578c4197d14`; its `grok test` job and
+`Test vendored workspace` step both succeeded. This entry records only the
+observation that run #36409062503 completed successfully.
+
+## Verification — current cache-resume source full vendored workspace run (2026-09-29)
+
+The [main full-vendor run #36468767878](https://github.com/innocarpe/deepseek-build/actions/runs/36468767878)
+completed with `conclusion=failure` on source SHA
+`aa6ff15c79d0a50825ef07da5317df8fcb5491d7`, the merge commit for cache PR #339.
+GitHub reports `createdAt=2026-09-28T18:56:46Z`; the `grok test` job started at
+`2026-09-28T19:20:26Z`; its `Test vendored workspace` step ran
+`cargo test --workspace --no-fail-fast`, started at `2026-09-28T19:23:44Z`,
+and completed with `conclusion=failure` at `2026-09-28T19:49:23Z`. The job
+completed at `2026-09-28T19:49:26Z`.
+
+The full job log for job `109094750211` reports one failed target,
+`xai-grok-pager --lib`: `10294 passed; 2 failed; 5 ignored`. The failures were
+`app::status_blocks::tests::session_usage_block_formats_tokens_and_cost`
+(snapshot `session_usage_block_full`) and
+`app::status_blocks::tests::session_usage_block_absent_cost_is_unknown_not_free`
+(snapshot `session_usage_block_absent_cost`). Both snapshot diffs show the
+rendered line `Note: main-loop response count before tracking is unknown.`
+missing from the expected snapshot. Cargo reported one failed target and the
+job annotation recorded exit code 101.
+
+Source comparison from `aa6ff15^1` to `aa6ff15` confirms that cache PR #339
+added this line in
+`third_party/grok-build/crates/codegen/xai-grok-pager/src/app/status_blocks.rs`
+when `usage.num_turns_known` is false; the merge did not update the two expected
+snapshot files. The observed full-vendor failure is therefore the pager
+snapshots missing the new status line from the merged source. This docs PR does
+not modify source or snapshots.
+
+This hosted result is separate from the historical local full-run failures
+above and from main run #36409062503, which completed successfully on
+`035fe245e5b80b7ec28545d0df575578c4197d14`. It does not establish that an earlier
+local failure was intermittent, fixed, or caused by a particular factor.

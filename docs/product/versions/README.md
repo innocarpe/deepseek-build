@@ -4,6 +4,11 @@
 **SemVer:** Always full `MAJOR.MINOR.PATCH` ([versioning.md](../../contributing/versioning.md))
 **Code truth:** root `Cargo.toml` / `package.json` on `main`
 
+**Current release (verified 2026-09-29):** root `Cargo.toml` and `package.json`
+are `6.8.3`; [npm latest](https://www.npmjs.com/package/@innocarpe/deepseek-build)
+is `6.8.3`, and [GitHub Latest](https://github.com/innocarpe/deepseek-build/releases/tag/v6.8.3)
+is `v6.8.3`. Both were published on 2026-09-28.
+
 When agents or humans start a train, **pick the major line first**, then the PRD for that line. Do not invent a new major without updating this index + a `PRD-vN.md`.
 
 **Product completeness gate (fail-close):**
@@ -20,8 +25,8 @@ Tags and line PRDs do **not** override that file.
 | **2.x** | [PRD-v2.md](../PRD-v2.md) | **Shipped shell cut** | Grok-derived full-screen agent + DeepSeek entry/UI/npm |
 | **3.x** | [PRD-v3.md](../PRD-v3.md) | **Tagged `3.0.0` — owner-bar NOT MET** | Heart fusion *attempt*; Path A fusion incomplete (library / dead wiring) — [OWNER_BAR_ACCEPTANCE.md](../OWNER_BAR_ACCEPTANCE.md) |
 | **4.x** | [PRD-v4.md](../PRD-v4.md) | **Tagged `4.0.0`–`4.0.2` — owner-bar NOT MET** | L3 productization *attempt*; machinery + docs, not full product identity |
-| **5.x** | [PRD-v5.md](../PRD-v5.md) | **Owner-bar MET (`5.0.0`)** · **vision-complete `5.5.0` merged on `main`** · **`5.5.2` release cut** (publication follows the merged tag workflow) | Owner-bar cut [CUT_5_0_0](../evidence/CUT_5_0_0_2026-08-07.md) · completed vision board [VISION_COMPLETE_5X_GOALS.md](../VISION_COMPLETE_5X_GOALS.md) |
-| **6.x** | [PRD-v6.md](../PRD-v6.md) | **Base refresh cut (`6.0.0`)** · **`6.1.0` DeepSeek-native depth proposed** | Grok Build ported `1.0.0` → `1.0.41`; the product's own overlay re-derived on the new base. Owner-readable: [CHANGELIST_6_0_0.md](../CHANGELIST_6_0_0.md). **Continuation ([PRD-v6 §7](../PRD-v6.md)):** keep a cached prefix alive while the session changes, make cache misses attributable and measured, enforce the context contract with runtime invariants, spill oversized tool results. Board: [DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md](../DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md) · Evidence: [research/dsh-deepseek-harness.md](../../research/dsh-deepseek-harness.md) |
+| **5.x** | [PRD-v5.md](../PRD-v5.md) | Historical line · **Owner-bar MET (`5.0.0`)** · **vision-complete `5.5.0` published** · later 5.x cuts recorded below | Owner-bar cut [CUT_5_0_0](../evidence/CUT_5_0_0_2026-08-07.md) · completed vision board [VISION_COMPLETE_5X_GOALS.md](../VISION_COMPLETE_5X_GOALS.md) |
+| **6.x** | [PRD-v6.md](../PRD-v6.md) | **Current published release `6.8.3`** · DeepSeek-native depth cut **`6.1.0` published** · no active ultragoal train | Grok Build ported `1.0.0` → `1.0.41`; the product's own overlay was re-derived on the new base. Owner-readable: [CHANGELIST_6_0_0.md](../CHANGELIST_6_0_0.md). **Historical continuation ([PRD-v6 §7](../PRD-v6.md)):** cache-preserving context lifecycle, attribution, runtime invariants, and spill. Board: [DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md](../DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md) · Evidence: [research/dsh-deepseek-harness.md](../../research/dsh-deepseek-harness.md). The board is historical, not proposed; it still does not claim the live spill demonstration complete. |
 
 Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** product major PRDs.
 
@@ -66,7 +71,7 @@ Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** p
 | 2026-09-25 | **`6.0.0`** Grok Build base ported 1.0.0 to 1.0.41 with the DeepSeek overlay re-derived; sync infrastructure | PR #208 |
 | 2026-09-26 | **`6.0.1`** Phone-width prompt echo folds to one row. | PR #237 |
 | 2026-09-26 | **`6.0.2`** Path A names the component that moved on a cache epoch change, the session line keeps DeepSeek cache misses, and the vendored cache guard is scored on Path A request bytes. The 6.1.0 depth train was not taken. | PR #241 |
-| 2026-09-26 | **`6.1.0`** DeepSeek-native depth: a cache miss names which assembled document moved, the session logs a cache total, a request that diverges from the log fails the turn, and a stable-body change appends instead of rewriting the cached prefix. CHANGELIST_6_1_0.md. | PR #244 |
+| 2026-09-26 | **`6.1.0`** DeepSeek-native depth: a cache miss names which assembled document moved, the session logs a cache total, a request that diverges from the log fails the turn, and a stable-body change appends instead of rewriting the cached prefix. Published to npm and GitHub Releases as `v6.1.0`. [CHANGELIST_6_1_0.md](../CHANGELIST_6_1_0.md). | PR #244 |
 | 2026-09-26 | **`6.2.0`** (published as `6.1.1`) dsb no longer receives or displays xAI/Grok announcements (the shell strips them at the settings boundary; the pager never merges the remote layer) | PR #258 |
 | 2026-09-26 | **`6.3.0`** (published as `6.1.2`) The frame is flush at every width (no outer margin rows, no block side pads); the phone-only echo fold, arrow and block-vpad gates are unchanged. | PR #263 |
 | 2026-09-26 | **`6.4.0`** (published as `6.1.3`) Phone-frame polish: symmetric text gutters, a single bottom band, a two-line prompt echo; OpenRouter sessions pin their provider. | PR #269 |
@@ -79,7 +84,7 @@ Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** p
 | 2026-09-28 | **`6.8.0`** (published as `6.1.10`) phone composer band across the frame and a two-row footer (balance/cache against the model, tokens against the permission mode); the welcome screen draws the same band and footer | PR #323 |
 | 2026-09-28 | **`6.8.1`** first release on the renumbered 6.x line: the folded prompt echo's last row runs to the edge, the release PR waits for its checks, the bump-level rule | PR #329 |
 | 2026-09-28 | **`6.8.2`** Remove prompt subscription quota warnings and tighten the desktop clock right margin | PR #332 |
-| 2026-09-28 | **`6.8.3`** Opaque Jump to bottom chip with clickable side padding | PR #334 |
+| 2026-09-28 | **`6.8.3`** Opaque Jump to bottom chip with clickable side padding; published as npm latest and GitHub Latest `v6.8.3` | PR #334 |
 | 2026-09-25 | **`6.0.0`** Grok Build base ported `1.0.0` → `1.0.41` (41 releases, 472 upstream items) with the DeepSeek overlay re-derived by three-way merge; sync infra (`grok-sync` skill, runbook, ledger, inventory) added so the next sync is a procedure rather than a rediscovery | [CHANGELIST_6_0_0.md](../CHANGELIST_6_0_0.md) · [UPSTREAM_SYNC_LEDGER.md](../UPSTREAM_SYNC_LEDGER.md) |
 | 2026-08-07 | **`5.0.1`** widen the DeepSeek whale logo to official terminal proportions | PR #113 |
 | 2026-08-07 | **`4.0.4`** Image attachments on text-only DeepSeek endpoints (persist to session assets + OCR hint); DeepSeek status line with account balance & cache hit rate; G003 mint file_version on Path A read_file | PR #98 |
@@ -99,8 +104,6 @@ Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** p
 | [REPLAN_2.0.md](../REPLAN_2.0.md) | Historical replan that defined 2.0.0 intent |
 | [KNOWN_LIMITS.md](../KNOWN_LIMITS.md) | Runtime honesty for current SemVer on disk |
 | [CHANGELOG.md](../../../CHANGELOG.md) | Per-release notes |
-
-
 
 
 

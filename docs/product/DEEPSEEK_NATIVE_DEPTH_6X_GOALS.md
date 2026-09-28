@@ -1,14 +1,17 @@
-# DeepSeek-native depth — **`6.1.0`** (line continuation, not a new major)
+# DeepSeek-native depth — **`6.1.0` release record** (historical, not a new major)
 
 > [!NOTE]
-> **PROPOSED.** This board has no execution authority until its PR merges and
-> the owner accepts it. It is a **continuation of the `6.x` line**
+> **Historical plan; no longer proposed or active.** `v6.1.0` was published to
+> npm and GitHub Releases on 2026-09-26. The live spill demonstration in exit
+> criterion 4 remains **not claimed**, so this board is not marked fully
+> complete. As of 2026-09-29 there is no active product ultragoal train.
+> This was a **continuation of the `6.x` line**
 > ([PRD-v6.md](./PRD-v6.md) §7), not a new major line.
 
 | Field | Value |
 |-------|--------|
 | **Plan id** | `deepseek-native-depth-6x` |
-| **SemVer path** | **`6.1.0`**, then later `6.x` minors as work lands |
+| **SemVer path** | **`6.1.0`** (published 2026-09-26); later `6.x` minors followed |
 | **Belongs to** | [PRD-v6.md](./PRD-v6.md) §7 — the `6.x` line |
 | **Base** | `main` after the `1.0.0` → `1.0.41` port ([PR #200](https://github.com/innocarpe/deepseek-build/pull/200), merged `593a1e4`). The board's units are written against that tree. |
 | **North star** | [VISION.md](./VISION.md) + [HARNESS_PHILOSOPHY.md](../architecture/HARNESS_PHILOSOPHY.md) |
@@ -16,6 +19,18 @@
 | **PR planning** | [ULTRAGOAL_PR_PLANNING.md](./ULTRAGOAL_PR_PLANNING.md) |
 | **Cold start** | [ULTRAGOAL_PROMPT_COLD_START_DEEPSEEK_DEPTH_6X.md](./ULTRAGOAL_PROMPT_COLD_START_DEEPSEEK_DEPTH_6X.md) |
 | **Ledger** | [UPSTREAM_SYNC_LEDGER.md](./UPSTREAM_SYNC_LEDGER.md) — this board's *not taken* list is its harness-idea counterpart |
+
+### Code trace at the `6.8.3` baseline — 2026-09-29
+
+At the `6.8.3` baseline used for this refresh, the TUI cache chip showed the
+session-cumulative percentage for the running process.
+`xai-grok-pager/src/app/agent_view/render.rs:1564-1566,4613-4615` passes
+`cached_read_tokens` and `input_tokens` from `ds.usage` to the formatter;
+`xai-grok-shell/src/extensions/deepseek.rs:109-120` reads that usage from the
+session ledger. `xai-chat-state/src/actor/state.rs:164-165,232` says the ledger
+was not persisted and initializes it empty. This describes the `6.8.3`
+baseline only. The current-source wording must be reconciled with the cache
+resume unit's merged code evidence before this board is used as current status.
 
 **Do not** plan releases as `5.0.1`–`5.7.0` or `6.0.0` — those targets are used
 on `main`, tagged, or owned by another lane.
@@ -54,7 +69,7 @@ table below is the corrected inventory, with the evidence path for each.
 | Context attached *beside* a tool result | **Present in this tree.** `PostToolUse` `additional_context` is a separate `ConversationItem` via `wrap_hook_note` (`reminders.rs`), pushed in `tool_calls.rs` after the tool result. `post_tool_use_delivery_tests.rs` asserts block/context do not replace `model_output` | **Dropped** — already on the live path. Re-measured 2026-09-26; the 1.0.41 note that said absent is stale |
 | Guard that may deny but never allow | **Present as of the Wave 1 unit.** `DenyOnly` in `permission/policy.rs` has deny and abstain. `combine_decisions` uses it, so an allow on either side cannot replace a reject or policy deny | **Taken** |
 | Cache-miss **attribution** | **Present on Path A.** `observe_path_a_prefix_change` hashes the five documents `assemble_spec10_path_a_turn` concatenates, and `turn.rs` logs `prefix_change=` when the epoch differs from this session's previous assembly in this process. PR #235 | **Taken** |
-| Session-cumulative cache surface | **Present as a log line.** `Usage.prompt_cache_miss_tokens` is kept. `CacheSessionTotals` on the in-memory session ledger logs `cache_session=` from `emit_turn_completed`. The chip at `agent_status.rs` is still the per-turn percentage. The counter is not persisted. PR #238 | **Taken** |
+| Session-cumulative cache surface | **Present as a log line.** `Usage.prompt_cache_miss_tokens` is kept. `CacheSessionTotals` on the in-memory session ledger logs `cache_session=` from `emit_turn_completed`. At this earlier snapshot the chip was per-turn and the counter was not persisted; the later `6.8.3` baseline chip is traced above. PR #238 | **Taken** |
 | Scored cache regression bench | **Present for the overlay mock.** Spec 10 §1.9, `crates/dsb-agent/tests/cache_guard.rs`, PR #229. It scores `dsb-context` bytes, not the bytes Path A sends. A live threshold is per route (wire inventory §6) | **Taken** for the mock |
 | A changed prompt/tool set appended after cached history | **Present for the stable body.** Spec 10 §1.10 / `place_stable_body`. A later body is appended; the earlier system message stays byte-for-byte. A `tools` array replacement is not a history event | **Taken** — U3.1 |
 
@@ -99,8 +114,8 @@ Ordered by dependency, not importance. One worktree, one branch, one PR each
 
 | Unit | Deliverable | Dep |
 |---|---|---|
-| **U0.1** | This board and PRD-v6 §7, corrected against the `1.0.41` measurement | — |
-| **U0.2** | **Wire-inventory investigation.** On `api_backend = "chat_completions"`, trace and measure: does `prompt_cache_key` reach the wire; what the DeepSeek usage payload reports for cache reads; whether an in-history prompt/tool update can be expressed at all. **Produces evidence, not a decision.** | none (Cargo-only, reads existing config and client code) |
+| **U0.1** | **Done.** This board and PRD-v6 §7 were corrected against the `1.0.41` measurement before the `6.1.0` cut | — |
+| **U0.2** | **Done.** Wire-inventory investigation on `api_backend = "chat_completions"`: cache-key reachability, DeepSeek usage fields, and in-history prompt/tool updates are recorded in [chat-completions-wire-inventory-2026-09-25.md](../research/chat-completions-wire-inventory-2026-09-25.md) §6 and PRD-v6 §7.2 | none (Cargo-only, reads existing config and client code) |
 
 **U0.2 decides the fate of three units.** If cache keys are inert on this
 backend, the cache units are redefined as "make the key reach the wire first";
@@ -162,7 +177,7 @@ evidence lives in the research note.
 |---|---|
 | U2.1 cache-key reachability | Closed. No further wire change. A key is unnecessary on the official host too. |
 | U2.2 cache-miss attribution | Landed on Path A. `observe_path_a_prefix_change` hashes the five documents `assemble_spec10_path_a_turn` already concatenates, and `turn.rs` logs `prefix_change=` only when the epoch differs from this session's previous assembly in this process. `unattributed` is the coverage bug, not a sixth component. PR #209 remains the overlay (`crates/`) path. |
-| U2.3 cumulative cache surface | Landed on Path A for the log line. `Usage.prompt_cache_miss_tokens` is kept, and `emit_turn_completed` logs `cache_session=` from the in-memory session ledger. The pager chip is unchanged. The persisted counter remains the overlay (`dsb-agent`) on the REPL / `run` path. |
+| U2.3 cumulative cache surface | Landed on Path A for the log line. `Usage.prompt_cache_miss_tokens` is kept, and `emit_turn_completed` logs `cache_session=` from the in-memory session ledger. At the 2026-09-26 snapshot the pager chip was unchanged. The overlay's REPL / `run` counter is a separate Path B surface and does not establish TUI restart persistence. |
 | Scored cache bench (board §1) | The live OpenRouter spread (641/712/768) was the wide-threshold reason. That reason does not hold on `api.deepseek.com` same-byte replays (A, B, G exact; D moved once). Re-review any live threshold per route. Do not retune spec 10 §1.9's mock 90% from this table. |
 | U3.1 in-history prompt/tool update | Premise confirmed on the official host for `deepseek-chat`. Two cold heads: 0/1512 each. Same-byte append: 1280/244 twice (84%, 6.2× uncached input versus the rewrite). Tool updates remain a `tools` array, and that array did not zero the cache. |
 
@@ -178,12 +193,12 @@ evidence lives in the research note.
 
 | Unit | Deliverable | Dep |
 |---|---|---|
-| **U2.1** | **Cache-key reachability.** Whatever U0.2 finds: make the product's cache key actually land on its backend, or record why it cannot | U0.2 |
+| **U2.1** | **Closed by evidence.** `prompt_cache_key` is unnecessary on the official host; sending it did not change the observed hit. No transport change was needed | U0.2 |
 | **U2.2** | **Done.** Cache-miss attribution on Path A. On an epoch change, `turn.rs` logs which of the five assembled documents moved. Categories the assembly cannot see are not invented. Spec 10 Path A attribution | U0.2 · U2.1 |
-| **U2.3** | **Done for the Path A log.** `prompt_cache_miss_tokens` is kept on Chat Completions `Usage`. The §1.5.2 line is logged once per turn from the in-memory session ledger. The chip is unchanged. The persisted REPL / `run` counter stays in `dsb-agent` | U0.2 |
+| **U2.3** | **Done; resume persistence is in Unreleased `main`.** Path A persists and restores the cumulative session usage ledger from `usage.json` before new requests, so the existing cache display reads restored totals after resume. The published `v6.8.3` baseline did not restore that ledger. Legacy cache history can remain unknown; prior chat history without a usage file is marked incomplete. Turn-fold cursors remain process-local. [PR #339](https://github.com/innocarpe/deepseek-build/pull/339) | U0.2 |
 
-> **Coordination note.** A separate session on `feat/cache-attribution` is
-> already working on attribution, the cumulative surface and a bench
+> **Historical coordination note (2026-09-25).** A separate session on `feat/cache-attribution` was
+> then working on attribution, the cumulative surface and a bench
 > (`docs/specs/10-cache-contract.md` + `crates/dsb-context/`, uncommitted at the
 > time of writing). Its brief states *"this unit only touches `crates/` — the
 > cache layer is the product workspace"*. **That premise is false for Path A**:
@@ -193,10 +208,10 @@ evidence lives in the research note.
 > work into the vendored tree, or it delivers the spec + tests and this board
 > carries the Path A wiring.
 
-#### Coordination for `cache-session-totals` and `cache-regression-bench` (2026-09-25)
+#### Historical coordination for `cache-session-totals` and `cache-regression-bench` (2026-09-25)
 
-Two worktrees are open for the units the spec left pending. Both were clean
-at `1b9bb1c` when this was written (no commit ahead of that pin):
+The note below recorded two worktrees as open for the units the spec left
+pending. Both were clean at `1b9bb1c` when it was written (no commit ahead of that pin):
 `feat/cache-session-totals` (spec 10 §1.5.2) and
 `feat/cache-regression-bench` (spec 10 §1.9). Both briefs take the product
 workspace (`crates/`) as the place the cache layer lives. That is the same
@@ -270,14 +285,14 @@ only tests `dsb-context` is Path B evidence under OWNER_BAR §2.1.
 
 | Unit | Deliverable | Dep |
 |---|---|---|
-| **U3.1** | **Stable-body update appended after cached history.** Spec 10 §1.10. A later change of the assembled body appends a system message and leaves the earlier one byte-for-byte. A `tools` array replacement is not a history event. `replace_or_insert_system_head` is outside this unit | U0.2 |
+| **U3.1** | **Done.** Spec 10 §1.10 appends a later stable-body change after cached history and leaves the earlier system message byte-for-byte. A `tools` array replacement is not a history event; `replace_or_insert_system_head` is outside this unit | U0.2 |
 
 ### Wave 4 — honesty and cut
 
 | Unit | Deliverable | Dep |
 |---|---|---|
 | **U4.1** | **Done.** §7 is the *not taken* ledger: each dsh idea this train declined, with the evidence path and the reason. The discipline [UPSTREAM_SYNC_LEDGER.md](./UPSTREAM_SYNC_LEDGER.md) set for vendor syncs, applied to harness ideas | — |
-| **U4.2** | Honesty table and owner summary are in [CHANGELIST_6_1_0.md](./CHANGELIST_6_1_0.md) and PRD-v6 §7. The tag `v6.1.0` is not cut | claimed units |
+| **U4.2** | **Release published.** The honesty table and owner summary are in [CHANGELIST_6_1_0.md](./CHANGELIST_6_1_0.md) and PRD-v6 §7; npm and GitHub published `v6.1.0` on 2026-09-26. The verified-global-install part of exit criterion 7 is not re-asserted by this status refresh | claimed units |
 
 ---
 
@@ -341,5 +356,5 @@ This is the harness-idea counterpart of [UPSTREAM_SYNC_LEDGER.md](./UPSTREAM_SYN
 | Webhook runtime, session query tools, schedule, deliverables | [dsh-deepseek-harness.md](../research/dsh-deepseek-harness.md) §5 | **Not taken** | Surfaces with no current product need. |
 | Cordis / HMR / live profile patching | [dsh-deepseek-harness.md](../research/dsh-deepseek-harness.md) §5 | **Not taken** | Patches replace whole config rows. Not a model for this repo. |
 | Spill, compaction cache alignment, snippet staleness, task-output surface | This board §1 | **Not re-implemented** | Measured present in the `1.0.41` tree. The snippet contract is stricter than dsh's path-scoped version token. |
-| New TUI surfaces | This board §0 | **Not taken** | The train is depth. The §1.5.2 chip stays the existing per-turn percentage. The new session line is a log, not a new pane. |
+| New TUI surfaces | This board §0 | **Not taken** | The `6.1.0` train added no TUI cache pane. At that cut the chip was per-turn; published `v6.8.3` later made it session-cumulative within one process. Unreleased `main` now restores the cumulative usage ledger on resume ([PR #339](https://github.com/innocarpe/deepseek-build/pull/339)); it changes the existing chip and `/usage` totals, not the pane inventory. |
 | A new major line / a new PRD | [versions/README.md](./versions/README.md) §Rules 1 | **Not taken** | Identity did not shift. The Messages condition in §0 did not fire. |

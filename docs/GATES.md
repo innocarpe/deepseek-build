@@ -317,11 +317,21 @@ Local evidence on this host, serially through the vendored wrapper:
   emitted-cell checks on the chip's row, and the padding hover/click tests at
   every label width.
 
-The first run of the two filters failed 3 of 11 (`jump_rc=101`): this host's
-test process can sit on the terminal-native (`Reset`) palette while
-`scrollback::blocks::thinking`'s palette test holds the process lock, and the
-frame tests read concrete colours. They now take
-`theme::cache::pin_theme()` like the other colour-sensitive frame tests, and the
-rerun above is the result. The pager's full `--lib` suite is not run locally on
-purpose (this host blocks in the CoreAudio voice probe, measured 2026-09-27);
-the broad run is CI's workspace `grok test`.
+The first run of the two filters failed 3 of 11 `jump_to_bottom_tests`
+(`jump_rc=101`); the failure output prints `left: Reset` / `right: Reset` for
+the chip colours, i.e. those tests read a `Reset` palette in that process. They
+now take `theme::cache::pin_theme()` like the other colour-sensitive frame
+tests, which pins the process to `GrokNight` at truecolor; the 11/11 rerun above
+is the result.
+
+Observation vs inference: the `Reset` palette in the failing run and the 11/11
+rerun are measured. Why the palette was `Reset` is **inferred**, not measured —
+this host's dsb tool shell exports `NO_COLOR=1` and `TERM=dumb` (`env`),
+`color_support` maps `NO_COLOR` to `ColorLevel::None`
+(`theme/color_support.rs:98-100`), and `quantize_color` maps every colour to
+`Color::Reset` at that level (`theme/color_support.rs:232`), so
+`Theme::current()` in an agent shell resolves to the all-`Reset` palette. No
+cross-test interference is claimed: the filtered run executes only the filtered
+tests. The pager's full `--lib` suite is not run locally on purpose (this host
+blocks in the CoreAudio voice probe, measured 2026-09-27); the broad run is CI's
+workspace `grok test`.

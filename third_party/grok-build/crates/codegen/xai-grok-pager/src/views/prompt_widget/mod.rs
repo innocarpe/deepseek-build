@@ -3515,12 +3515,19 @@ impl PromptWidget {
         // Finalized draft stays editable during voice; hide the caret only when the box is empty and interim is standing in for it
         let hide_caret_for_empty_interim = self.textarea.text().is_empty()
             && voice.is_some_and(|v| v.interim.is_some_and(|t| !t.trim().is_empty()));
-        let cursor_pos = if style.focused && !hide_caret_for_empty_interim {
+        // A caret after a full row sits in the column past the text (see `TextArea::cursor_pos_with_state`): the chrome's right
+        // pad, or the scrollbar gutter.
+        let caret = if style.focused && !hide_caret_for_empty_interim {
             self.textarea
                 .cursor_pos_with_state(ta_area, self.textarea_state)
         } else {
             None
         };
+        // Ghost text continues the caret's row inside the text columns; a caret on the content edge leaves it no room.
+        let content_right = ta_area.x + self.textarea.text_width(ta_area);
+        // A chromeless prompt whose text reaches its area's right edge has no column past the text, so the caret the terminal
+        // draws takes the last one there rather than leaving the widget. Ghost text keeps measuring from the unclamped caret.
+        let cursor_pos = caret.map(|(cx, cy)| (cx.min(area.right().saturating_sub(1)), cy));
 
         // Ghost suffixes (shell completion / predicted prompt)
         // Voice interim owns the end-of-text cells when shown, so skip both ghosts then
@@ -3529,9 +3536,9 @@ impl PromptWidget {
                 && self.textarea.cursor() == self.textarea.text().len()
                 && !slash_active
                 && !slash_has_inline_ghost
-                && let Some((cx, cy)) = cursor_pos
+                && let Some((cx, cy)) = caret
             {
-                let avail = (ta_area.x + ta_area.width).saturating_sub(cx) as usize;
+                let avail = content_right.saturating_sub(cx) as usize;
                 if avail > 0 {
                     let truncated = crate::render::line_utils::truncate_str(ghost, avail);
                     buf.set_string(cx, cy, &truncated, theme.ghost_text_style().bg(bg));
@@ -3539,9 +3546,9 @@ impl PromptWidget {
             }
 
             if let Some(ghost) = self.prompt_suggestion_ghost()
-                && let Some((cx, cy)) = cursor_pos
+                && let Some((cx, cy)) = caret
             {
-                let avail = (ta_area.x + ta_area.width).saturating_sub(cx) as usize;
+                let avail = content_right.saturating_sub(cx) as usize;
                 if avail > 0 {
                     let truncated = crate::render::line_utils::truncate_str(ghost, avail);
                     buf.set_string(cx, cy, &truncated, theme.ghost_text_style().bg(bg));

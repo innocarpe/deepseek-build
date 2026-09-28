@@ -29,6 +29,8 @@ mod fullscreen_external_editor_round_trip;
 mod initial_prompt_positional_auto_submits;
 #[path = "pty_e2e/input_echoes_at_idle_prompt.rs"]
 mod input_echoes_at_idle_prompt;
+#[path = "pty_e2e/phone_composer_full_row.rs"]
+mod phone_composer_full_row;
 #[path = "pty_e2e/phone_footer_two_rows.rs"]
 mod phone_footer_two_rows;
 #[path = "pty_e2e/plan_overlay_slash_runs_command.rs"]

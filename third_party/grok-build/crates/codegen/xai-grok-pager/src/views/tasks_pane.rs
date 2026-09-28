@@ -696,6 +696,12 @@ impl Default for TasksPane {
 
 /// Fill overlay cells with spaces so label text doesn't bleed through. The user then sees that the
 /// row was truncated rather than just clipped silently.
+///
+/// The blanks re-apply the row's own background and modifier instead of inheriting the cell's:
+/// `Buffer::set_stringn` resets the cell after a width-2 grapheme to `Cell::EMPTY`
+/// (`bg = Color::Reset`), and the overlay's time/button spans set fg only, so a slot that once sat
+/// behind a wide (CJK) label glyph kept `Color::Reset` and the terminal drew its default
+/// background there — one gray box per overlay glyph that landed on such a slot.
 fn clear_overlay_area(buf: &mut Buffer, area: Rect, y: u16, overlay_w: u16) {
     let clamped = overlay_w.min(area.width);
     if clamped == 0 {
@@ -704,25 +710,42 @@ fn clear_overlay_area(buf: &mut Buffer, area: Rect, y: u16, overlay_w: u16) {
     let clear_x = area.x + area.width - clamped;
 
     // Detect truncation BEFORE clearing: a non-blank cell at `clear_x` means the label is wider than the row minus the overlay reservation
-    // Capture the style at `clear_x - 1` (the cell that will host the ellipsis) so the inserted `…` matches the label color
+    // Capture the color at `clear_x - 1` (the cell that will host the ellipsis) so the inserted `…` matches the label color
     let needs_ellipsis = clear_x > area.x
         && buf
             .cell((clear_x, y))
             .map(|c| !c.symbol().trim().is_empty())
             .unwrap_or(false);
-    let ellipsis_style = if needs_ellipsis {
+    let ellipsis_fg = if needs_ellipsis {
         buf.cell((clear_x - 1, y))
-            .map(|c| c.style())
-            .unwrap_or_default()
+            .map(|c| c.fg)
+            .unwrap_or(Color::Reset)
     } else {
-        Style::default()
+        Color::Reset
     };
 
-    let blanks = " ".repeat(clamped as usize);
-    buf.set_span(clear_x, y, &Span::raw(blanks), clamped);
+    // Row style sampled from the row's first column: the prefix and the frame's background fill
+    // reach it, so it carries the row background (theme or selection) rather than a reset slot.
+    // Its modifier carries over too, so the blanks drop transient inverts (a search match) but
+    // keep a reverse-video selection with the rest of the row.
+    let base = buf.cell((area.x, y)).map(|c| c.style()).unwrap_or_default();
+    let row_bg = base.bg.unwrap_or(Color::Reset);
+    let row_modifier = base.add_modifier;
 
-    if needs_ellipsis {
-        buf.set_span(clear_x - 1, y, &Span::styled("\u{2026}", ellipsis_style), 1);
+    for x in clear_x..area.right() {
+        let Some(cell) = buf.cell_mut((x, y)) else {
+            continue;
+        };
+        cell.set_char(' ');
+        cell.bg = row_bg;
+        cell.modifier = row_modifier;
+    }
+
+    if needs_ellipsis && let Some(cell) = buf.cell_mut((clear_x - 1, y)) {
+        cell.set_char('\u{2026}');
+        cell.fg = ellipsis_fg;
+        cell.bg = row_bg;
+        cell.modifier = row_modifier;
     }
 }
 
@@ -1803,6 +1826,10 @@ impl TasksPane {
 #[cfg(test)]
 #[path = "tasks_pane_status_tests.rs"]
 mod status_tests;
+
+#[cfg(test)]
+#[path = "tasks_pane_overlay_bg_tests.rs"]
+mod overlay_bg_tests;
 
 #[cfg(test)]
 mod tests {

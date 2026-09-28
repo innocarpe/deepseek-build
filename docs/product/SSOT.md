@@ -44,3 +44,4 @@ Run: `./scripts/check-semver.sh` and `npm run version-check` when npm exists.
 | 3.x | [PRD-v3.md](./PRD-v3.md) | Tagged heart-fusion *attempt* — **not owner-bar green** (see owner bar) |
 | 4.x | [PRD-v4.md](./PRD-v4.md) | Tagged L3 productization *attempt* — **not owner-bar green** |
 | **5.x** | [PRD-v5.md](./PRD-v5.md) | **Owner-bar complete product** (`owner-bar-5x`) — only when [OWNER_BAR_P0_LEDGER.md](./OWNER_BAR_P0_LEDGER.md) all PASS |
+| **6.x** | [PRD-v6.md](./PRD-v6.md) | Current release line; `6.8.3` is the verified source, npm latest, and GitHub Latest version. The `6.1.0` DeepSeek-native depth release is historical; its board does not claim the spill demonstration complete. |

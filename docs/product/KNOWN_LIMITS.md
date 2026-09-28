@@ -16,15 +16,17 @@
 | **4.0.0 / 4.0.1 (tagged)** | L3 productization *attempt* — machinery + docs; **owner-bar NOT MET**. Historical only — **not** the current residual story. |
 | **5.0.0** | Owner-bar complete product — [OWNER_BAR_P0_LEDGER.md](./OWNER_BAR_P0_LEDGER.md) all PASS on Path A. |
 | **5.0.1 / 5.1.0** | Patches/chrome after owner-bar; **not** vision-complete. |
-| **5.2.0 – 5.2.2** | Published packaging line on npm / GitHub Latest as of this stabilization pass (**`5.2.2`**). Includes early vision floor work. |
+| **5.2.0 – 5.2.2** | Published packaging line on npm / GitHub Latest at the earlier stabilization pass (**`5.2.2`**). Includes early vision floor work. |
 | **5.3.0** | Spec 45 Path A `snippet_id` Deep Code cut (VC006) — merged on `main`. |
 | **5.4.0** | L3 Path A R0A train cut (VC010–VC013) — merged on `main`. |
-| **5.5.0** | Vision-complete freeze cut (VC015) — merged on `main`; release publish pending, so not live npm/GitHub Latest yet. |
+| **5.5.0** | Vision-complete freeze cut (VC015) — merged and published to npm + GitHub Releases on 2026-08-08. |
+| **6.1.0** | DeepSeek-native depth release — published to npm + GitHub Releases on 2026-09-26; its historical board leaves the live spill demonstration unclaimed. |
+| **6.8.3** | Current workspace version, npm latest, and GitHub Latest as verified on 2026-09-29. |
 
-**Floor rule:** source checkouts of `main` carry **`5.5.0`** while live install
-from npm/GitHub Latest can still report **`5.2.2`**. Treat source SemVer and
-registry SemVer as different until the maintainer-controlled release lane
-publishes `5.5.0`.
+**Current version check (2026-09-29):** root `Cargo.toml` and `package.json`
+carry **`6.8.3`**; npm `latest` is **`6.8.3`**, and GitHub Latest is
+**`v6.8.3`** (published 2026-09-28). No source/registry version mismatch was
+observed at this check. The `5.2.2` and `5.5.0` rows above are historical.
 
 User-facing behavior for the vision stack is documented under [user-guide](../user-guide/README.md). Docs pass evidence: [VC014_USER_GUIDE_KNOWN_LIMITS_2026-08-08.md](./evidence/VC014_USER_GUIDE_KNOWN_LIMITS_2026-08-08.md).
 
@@ -62,8 +64,9 @@ Only items below are treated as **open residual** for vision honesty. Do **not**
 |-------|---------|-------|
 | **Interactive TTY worktree create** | Product flag forward + headless no-create + opt-in stamp proven; **interactive create after process `exec`** not asserted as sole green | VC012 residual · carried by VC013 |
 | **Non-darwin packaging / assets** | Prebuilt platform is **`darwin-arm64`** (Apple Silicon macOS) only; other targets deferred | Install / ADR 0009 · [05-npm.md](../user-guide/05-npm.md) |
-| **Release publish lane** | npm publish remains maintainer-gated per ADR 0007. A maintainer-controlled `v5.5.0` tag push triggers `release-prebuilt` for GitHub Release assets. Docs and main merges do **not** auto-publish | Release lane |
-| **Source vs live SemVer lag** | `main` carries **`5.5.0`** while npm / GitHub Latest remain **`5.2.2`** until the release lane completes | Floor re-check every session |
+| **Release publish lane** | A maintainer-approved `vMAJOR.MINOR.PATCH` tag starts the release workflows. `publish-npm.yml` waits for the matching release asset, verifies the packaged version, then publishes automatically with OIDC; no separate manual npm publish is needed. Run [#36422527144](https://github.com/innocarpe/deepseek-build/actions/runs/36422527144) published `v6.8.3` successfully, including its trusted-publishing step. A main merge alone does not publish | ADR 0012 · `.github/workflows/publish-npm.yml` |
+| **Source vs live SemVer drift** | None measured on 2026-09-29: workspace version fields, npm `latest`, and GitHub Latest all report `6.8.3`. Recheck after release changes | Current version check above |
+| **Session usage after process restart** | Published `6.8.3`: the TUI chip was session-cumulative only while the process ran; the actor ledger was not restored. Unreleased `main` after [PR #339](https://github.com/innocarpe/deepseek-build/pull/339) restores cumulative billing and Path A cache hit/miss totals from the session's `usage.json` before new requests. Legacy sessions without saved cache fields retain unknown cache history; existing chat history without `usage.json` is marked incomplete instead of being treated as complete zero totals. Turn-fold cursors remain process-local. This change is merged source, not part of published `v6.8.3` | Vendored `session/usage_file.rs`, `session/persistence.rs`, `session/acp_session_impl/spawn.rs`; PR #339 |
 | **Explicit parent `expire_all` after spawn** | V3-60-3 is **closed** via Path A parent **`snippet_stale`** after implement-class worker mutates the same path (VC015). Product-default **table clear** (`expire_all`) on parent after worker is **not** separately proven as a Path A sole green path | Spec 60 spirit · VC015 honesty |
 
 ### L2 scope notes (not blockers if over-claimed elsewhere)
@@ -102,10 +105,16 @@ Binding map: [HEART_3X_SPEC_BINDING.md](../architecture/HEART_3X_SPEC_BINDING.md
 - **`4.0.1`+ packaging design:** `npm i -g` downloads **prebuilt** natives from GitHub Releases (ADR 0009) — seconds, no Rust on default path.
 - Source compile only with `DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD=1` or `./scripts/install.sh` (dev).
 - Prebuilt platform: **`darwin-arm64` only** (see residual table).
-- **npm registry publish** remains **human-gated** (ADR 0007).
-- **GitHub Release assets** for `5.5.0` are produced by `release-prebuilt` after
-  a maintainer-controlled `v5.5.0` tag push; a main merge alone is not a
-  published Release.
+- **npm registry publish** is authorized by a maintainer-approved
+  `vMAJOR.MINOR.PATCH` tag. That tag starts the release workflows; after the
+  matching GitHub Release asset is attached and the packaged-version check
+  passes, `publish-npm.yml` publishes to npm automatically with OIDC trusted
+  publishing. The `v6.8.3` publish run succeeded on 2026-09-28 ([run
+  #36422527144](https://github.com/innocarpe/deepseek-build/actions/runs/36422527144)).
+  ADR 0012 amends ADR 0007; there is no separate human-triggered npm publish.
+- **GitHub Release assets** are produced by `release-prebuilt` after a
+  maintainer-controlled version-tag push; a main merge alone is not a published
+  Release. `v6.8.3` is the latest published release at the current version check.
 
 ### Auth / network
 
@@ -130,8 +139,8 @@ Do **not** run vendor-full cargo as everyday gate (disk bomb).
 
 ## Explicit non-claims
 
-- **Not** vision-complete freeze shipped (**5.5.0** on npm / GitHub Latest) until the release lane publishes; main `5.5.0` ≠ live registry.
+- **Not** claiming that `5.5.0` is the current release; npm and GitHub Latest are `6.8.3` as of the check above.
 - **Not** reopening **V3-60-3** as residual: it is **closed** by VC015 public Path A R0A (`snippet_stale` after implement-class same-path mutation). Still **not** claiming product-default parent table `expire_all` after every spawn as a separate sole green path (honesty residual above).
 - **Not** “interactive TTY worktree create sole green” closed without fresh Path A R0A — that remains an evidenced residual (VC012 / residual table).
-- **Not** claiming live npm/GitHub Latest already ships main `5.5.0`.
+- **Not** claiming that matching version fields close any Path A or owner-bar residual.
 - **Not** conflating thin Path B unit greens with Path A sole proof.

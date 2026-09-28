@@ -8,24 +8,25 @@
 
 ## Product chain status
 
-**Next (proposed, not yet accepted):** `deepseek-native-depth-6x` — the
-DeepSeek-native depth train, a **continuation of the `6.x` line**
-([PRD-v6 §7](./PRD-v6.md)), not a new major. Its board is a proposal until that
-PR merges and the owner accepts it; `main` carries **`5.7.0`**, and the
-**`6.0.0` base port** (PR #200) owns the vendor tree until it lands.
+**Active:** none. As verified on 2026-09-29, `main` and `package.json` carry
+**`6.8.3`**, npm latest is **`6.8.3`**, and GitHub Latest is **`v6.8.3`**;
+both external releases were published on 2026-09-28. The earlier
+**`vision-complete-5x`** train completed and shipped `5.5.0` on 2026-08-08.
 
-**Active:** none. The **`vision-complete-5x`** train is complete on `main` at
-**`5.5.0`**; npm/GitHub Latest publication remains a separate release lane.
+The historical **`deepseek-native-depth-6x`** cut was published as `6.1.0` on
+2026-09-26. Its proposal state is closed, but the board is not marked fully
+complete: the live spill demonstration in exit criterion 4 remains unclaimed.
+This is a historical record, not an active next train.
 
 | Order | Plan / stage | Role | Prompt / board |
 |-------|--------------|------|----------------|
-| **next** | **`deepseek-native-depth-6x`** → **`6.1.0`** | **Proposed** — cache-preserving context lifecycle, cache attribution + measurement, runtime invariants, spill | [PRD-v6.md](./PRD-v6.md) §7 · [DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md](./DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md) · [research/dsh-deepseek-harness.md](../research/dsh-deepseek-harness.md) |
-| **1** | **`vision-complete-5x`** | **Complete on `main` at `5.5.0`** — release publish pending | [VISION_COMPLETE_5X_GOALS.md](./VISION_COMPLETE_5X_GOALS.md) · [WAVE_5x_VISION_PR_DAG.md](./WAVE_5x_VISION_PR_DAG.md) · [VISION.md](./VISION.md) |
+| **historical** | **`deepseek-native-depth-6x`** → **`6.1.0`** | Published 2026-09-26; individual landed items are recorded on the board. Exit criterion 4 remains not claimed, so the full board is not called complete. | [PRD-v6.md](./PRD-v6.md) §7 · [DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md](./DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md) · [research/dsh-deepseek-harness.md](../research/dsh-deepseek-harness.md) |
+| **1** | **`vision-complete-5x`** | **Complete and published at `5.5.0`** on npm + GitHub Releases (2026-08-08) | [VISION_COMPLETE_5X_GOALS.md](./VISION_COMPLETE_5X_GOALS.md) · [WAVE_5x_VISION_PR_DAG.md](./WAVE_5x_VISION_PR_DAG.md) · [VISION.md](./VISION.md) |
 | — | **`owner-bar-5x`** | **Complete** owner-bar product cut **`5.0.0`** | [CUT_5_0_0_2026-08-07.md](./evidence/CUT_5_0_0_2026-08-07.md) · [OWNER_BAR_5X_GOALS.md](./OWNER_BAR_5X_GOALS.md) · [PRD-v5.md](./PRD-v5.md) |
 
-**SemVer floor:** `main` carries **`5.5.0`** after the completed vision train.
-npm/GitHub Latest still carry **`5.2.2`** until publish completes. Do not
-re-plan `5.0.1` through `5.5.0` as future feature cuts.
+**SemVer floor:** at the 2026-09-29 check, `main` and `package.json` carry
+**`6.8.3`**, npm latest is **`6.8.3`**, and GitHub Latest is **`v6.8.3`**.
+Do not re-plan `5.0.1` through `5.5.0` as future feature cuts.
 
 ```text
 G001 TruthHarness (RED gate)
@@ -45,7 +46,7 @@ plan-id without a fresh PRD/board update.
 
 | Plan id | Role | Owner-bar? |
 |---------|------|------------|
-| **`vision-complete-5x`** | 5.5.0 vision-complete stack merged on `main`; publish lane pending | **YES** |
+| **`vision-complete-5x`** | 5.5.0 vision-complete stack merged and published on npm + GitHub Releases | **YES** |
 | **`owner-bar-5x`** | 5.0.0 owner-bar complete product cut | **YES** |
 | **`fleet-4x`** | 4.0.0 L3 productization *attempt* — tagged `v4.0.0`; install/UX `4.0.1`/`4.0.2` | **NO** |
 | **`heart-3x`** | 3.0.0 heart fusion *attempt* — tagged `v3.0.0` | **NO** |

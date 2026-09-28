@@ -4,10 +4,13 @@ This file is standing instructions for any coding agent working in this repo.
 
 ## Current phase
 
-**No active product ultragoal train.** The **`vision-complete-5x`** train is
-completed on `main` at **`5.5.0`** and published to npm and GitHub Latest
-(`5.5.0`, 2026-08-08). Do **not** re-plan
-`5.0.1` through `5.5.0` as future feature cuts.
+**No active product ultragoal train.** As verified on 2026-09-29, `main` and
+`package.json` carry **`6.8.3`**, npm latest is **`6.8.3`**, and GitHub Latest
+is **`v6.8.3`** (both published 2026-09-28). The earlier
+**`vision-complete-5x`** train completed at **`5.5.0`** and was published to
+npm and GitHub Releases on 2026-08-08. Do **not** re-plan
+`5.0.1` through `5.5.0` as future feature cuts, and do not infer a new train
+from the current release.
 
 **Archived board:** [`docs/product/VISION_COMPLETE_5X_GOALS.md`](docs/product/VISION_COMPLETE_5X_GOALS.md) · DAG [`WAVE_5x_VISION_PR_DAG.md`](docs/product/WAVE_5x_VISION_PR_DAG.md)
 
@@ -27,7 +30,8 @@ completed on `main` at **`5.5.0`** and published to npm and GitHub Latest
 - **2.x shipped shell** — [PRD-v2](docs/product/PRD-v2.md)
 - **3.x tagged hearts *attempt*** — [PRD-v3](docs/product/PRD-v3.md) (`3.0.0`) — **not owner-bar green**
 - **4.x tagged L3 *attempt*** — [PRD-v4](docs/product/PRD-v4.md) (`4.0.0`+) — **not owner-bar green**
-- **5.x** owner-bar **`5.0.0`** + vision-complete **`5.5.0` on `main`** — [PRD-v5](docs/product/PRD-v5.md) · [VISION_COMPLETE_5X_GOALS](docs/product/VISION_COMPLETE_5X_GOALS.md)
+- **5.x** owner-bar **`5.0.0`** + vision-complete **`5.5.0` published** — [PRD-v5](docs/product/PRD-v5.md) · [VISION_COMPLETE_5X_GOALS](docs/product/VISION_COMPLETE_5X_GOALS.md)
+- **6.x** current release **`6.8.3`** — [PRD-v6](docs/product/PRD-v6.md); the historical DeepSeek-native depth cut **`6.1.0`** shipped, while its board still has an unclaimed live spill demonstration and is not an active or fully closed plan.
 
 
 **SSOT priority:** [`docs/product/SSOT.md`](docs/product/SSOT.md)

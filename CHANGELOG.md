@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 6.8.3 — 2026-09-28
+
 - The `Jump to bottom` chip keeps its own opaque background and text style while scrolling over styled text, Hangul, or emoji. A wide glyph crossing its left edge can no longer suppress the chip's first cell. One column of background on each side gives the label a little air, and both padding cells hover and click along with the label at every supported width.
 
 ## 6.8.2 — 2026-09-28

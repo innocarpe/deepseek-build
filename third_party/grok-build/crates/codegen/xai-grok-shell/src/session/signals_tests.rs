@@ -78,6 +78,46 @@ async fn test_pr_metrics_counters_and_turn_delta() {
     let json = serde_json::to_string(&turn.delta).unwrap();
     assert!(json.contains("\"deltaPrsCreated\":0"));
     assert!(!json.contains("prsCreatedThisTurn"));
+    assert!(!json.contains("testCriteriaChangesThisTurn"));
+
+    handle.shutdown();
+    actor_handle.await.unwrap();
+}
+
+#[tokio::test]
+async fn successful_test_write_receipt_is_serialized_as_source_free_turn_evidence() {
+    let directory = tempfile::tempdir().unwrap();
+    git2::Repository::init(directory.path()).unwrap();
+    let test_path = directory.path().join("existing_test.rs");
+    let before = "#[test]\nfn check_contract() { assert_eq!(1, 2); }\n";
+    let after = "#[test]\nfn check_contract() { assert_eq!(1, 3); }\n";
+    std::fs::write(&test_path, after).unwrap();
+
+    let (handle, actor) = SessionSignalsActor::new();
+    let actor_handle = tokio::spawn(actor.run());
+    handle.increment_turn();
+    handle.record_test_criteria_write(
+        directory.path(),
+        &xai_grok_tools::notification::types::FileWritten {
+            tool_call_id: "receipt".into(),
+            absolute_path: test_path,
+            content: after.into(),
+            previous_content: Some(before.into()),
+            is_new_file: false,
+        },
+    );
+    let mut snapshot = handle.take_turn_end_snapshot().await.unwrap();
+    let pending = std::mem::take(&mut snapshot.delta.test_criteria_end_state);
+    let report = crate::session::test_criteria::finalize(pending).await;
+    assert!(report.user_note().unwrap().contains("modified"));
+    snapshot.delta.test_criteria_changes_this_turn = report;
+
+    let json = serde_json::to_string(&snapshot.delta).unwrap();
+    assert!(json.contains("testCriteriaChangesThisTurn"));
+    assert!(json.contains("existing_test.rs"));
+    assert!(json.contains("modified"));
+    assert!(!json.contains("check_contract"));
+    assert!(!json.contains("assert_eq"));
 
     handle.shutdown();
     actor_handle.await.unwrap();

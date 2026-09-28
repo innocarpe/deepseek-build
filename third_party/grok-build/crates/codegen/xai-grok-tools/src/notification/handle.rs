@@ -97,6 +97,8 @@ enum ToolNotificationTarget {
     Acknowledged(tokio::sync::mpsc::UnboundedSender<AcknowledgedToolNotification>),
 }
 
+type FileWrittenObserver = Arc<dyn Fn(&FileWritten) + Send + Sync>;
+
 struct CappedNotificationQueue {
     queue: parking_lot::Mutex<VecDeque<ToolNotification>>,
     capacity: usize,
@@ -177,6 +179,7 @@ impl Drop for CappedToolNotificationReceiver {
 #[derive(Clone)]
 pub struct ToolNotificationHandle {
     targets: Arc<[ToolNotificationTarget]>,
+    file_written_observers: Arc<[FileWrittenObserver]>,
 }
 
 impl Default for ToolNotificationHandle {
@@ -195,6 +198,7 @@ impl ToolNotificationHandle {
     pub fn new(sender: tokio::sync::mpsc::UnboundedSender<ToolNotification>) -> Self {
         Self {
             targets: Arc::from([ToolNotificationTarget::Plain(sender)]),
+            file_written_observers: Arc::from(Vec::<FileWrittenObserver>::new()),
         }
     }
 
@@ -215,6 +219,7 @@ impl ToolNotificationHandle {
         (
             Self {
                 targets: Arc::from([ToolNotificationTarget::Bounded(sender)]),
+                file_written_observers: Arc::from(Vec::<FileWrittenObserver>::new()),
             },
             receiver,
         )
@@ -231,6 +236,7 @@ impl ToolNotificationHandle {
         (
             Self {
                 targets: Arc::from([ToolNotificationTarget::Capped(Arc::clone(&queue))]),
+                file_written_observers: Arc::from(Vec::<FileWrittenObserver>::new()),
             },
             CappedToolNotificationReceiver { queue },
         )
@@ -244,6 +250,7 @@ impl ToolNotificationHandle {
         (
             Self {
                 targets: Arc::from([ToolNotificationTarget::Acknowledged(sender)]),
+                file_written_observers: Arc::from(Vec::<FileWrittenObserver>::new()),
             },
             receiver,
         )
@@ -260,9 +267,27 @@ impl ToolNotificationHandle {
             .iter()
             .flat_map(|handle| handle.targets.iter().cloned())
             .collect::<Vec<_>>();
+        let file_written_observers = handles
+            .iter()
+            .flat_map(|handle| handle.file_written_observers.iter().cloned())
+            .collect::<Vec<_>>();
         Self {
             targets: Arc::from(targets),
+            file_written_observers: Arc::from(file_written_observers),
         }
+    }
+
+    /// Observe successful structured file-write notifications synchronously before fan-out.
+    ///
+    /// Observers should extract bounded metadata and must not retain file contents.
+    pub fn with_file_written_observer(
+        mut self,
+        observer: impl Fn(&FileWritten) + Send + Sync + 'static,
+    ) -> Self {
+        let mut observers = self.file_written_observers.to_vec();
+        observers.push(Arc::new(observer));
+        self.file_written_observers = Arc::from(observers);
+        self
     }
 
     pub(crate) fn durable_targets(&self) -> DurableNotificationTargets {
@@ -276,6 +301,11 @@ impl ToolNotificationHandle {
     }
 
     pub fn send(&self, notification: ToolNotification) {
+        if let ToolNotification::FileWritten(written) = &notification {
+            for observer in self.file_written_observers.iter() {
+                observer(written);
+            }
+        }
         let last = self.targets.len().saturating_sub(1);
         let mut notification = Some(notification);
         for (index, target) in self.targets.iter().enumerate() {

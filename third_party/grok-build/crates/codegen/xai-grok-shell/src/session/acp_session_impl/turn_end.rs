@@ -401,7 +401,7 @@ impl SessionActor {
         cancellation_context: Option<serde_json::Value>,
         elapsed_ms: Option<u64>,
         snapshot: Option<&TurnDeltaSnapshot>,
-    ) {
+    ) -> Option<TurnDeltaSnapshot> {
         let (stop_reason, agent_result, error_kind) =
             crate::sampling::error::prompt_complete_fields(mapped);
         // Spec 10 §1.5.2, once per turn, after the rounds have been counted
@@ -428,6 +428,32 @@ impl SessionActor {
             extra.insert("cancellationContext".to_string(), ctx);
         }
         let extra_meta = (!extra.is_empty()).then_some(extra);
+        let mut taken;
+        let snapshot = match snapshot {
+            Some(snapshot) => Some(snapshot),
+            None => {
+                taken = self.signals_handle().take_unfinished_turn_snapshot().await;
+                if let Some(snapshot) = taken.as_mut() {
+                    self.attach_test_criteria_report(snapshot).await;
+                    self.apply_prompt_modes_to_snapshot(snapshot);
+                }
+                taken.as_ref()
+            }
+        };
+
+        if let Some(note) =
+            snapshot.and_then(|snapshot| snapshot.delta.test_criteria_changes_this_turn.user_note())
+        {
+            // Completion and cancellation settle inside the run loop after it flushed its local
+            // ReplayBuffer. Emit directly onto the persistence/gateway rail here: enqueueing a
+            // SessionEvent and waiting for FlushReplay would wait for the same loop that is
+            // awaiting this terminal handler to process that event.
+            self.emit_host_test_criteria_note(&prompt_id, &note).await;
+        }
+
+        // Persist and emit the host note before the terminal. The caller flushed the run loop's
+        // ReplayBuffer inline before entering this terminal path, so the direct notification
+        // keeps order without asking that loop for another flush acknowledgement.
         self.send_xai_notification_with_extra_meta(
             crate::session::turn_completion::build_turn_completed(
                 prompt_id.clone(),
@@ -448,26 +474,38 @@ impl SessionActor {
             Ok(_) => feedback_types::TurnOutcome::Completed,
             Err(_) => feedback_types::TurnOutcome::Error,
         };
-        let taken;
-        let snapshot = match snapshot {
-            Some(snapshot) => Some(snapshot),
-            None => {
-                taken = self
-                    .signals_handle()
-                    .take_unfinished_turn_snapshot()
-                    .await
-                    .map(|mut snapshot| {
-                        self.apply_prompt_modes_to_snapshot(&mut snapshot);
-                        snapshot
-                    });
-                taken.as_ref()
-            }
-        };
-        self.report_turn_delta(&prompt_id, snapshot, elapsed_ms, turn_outcome)
+        let turn_snapshot = self
+            .report_turn_delta(&prompt_id, snapshot, elapsed_ms, turn_outcome)
             .await;
 
         // Cost, context occupancy and the turn timer all moved during the turn.
         self.emit_status_snapshot_detached();
+        turn_snapshot
+    }
+
+    /// Emit a terminal test-evidence note directly after the run loop's inline replay flush.
+    /// This must not enqueue a `FlushReplay` event: completion/cancel settlement is awaited by
+    /// that same run loop.
+    async fn emit_host_test_criteria_note(&self, prompt_id: &str, text: &str) {
+        self.close_rewind_window().await;
+        let mut chunk_meta = serde_json::Map::new();
+        chunk_meta.insert(
+            crate::session::storage::HOST_TURN_META_KEY.into(),
+            serde_json::json!(true),
+        );
+        let update = acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new(acp::ContentBlock::Text(acp::TextContent::new(
+                text.to_string(),
+            )))
+            .meta(Some(chunk_meta)),
+        );
+        let mut meta = self.build_notification_meta();
+        if let Some(meta) = meta.as_object_mut() {
+            meta.insert("promptId".to_string(), serde_json::json!(prompt_id));
+        }
+        let notification = acp::SessionNotification::new(self.session_info.id.clone(), update)
+            .meta(meta.as_object().cloned());
+        self.emit_notification_direct(notification).await;
     }
 
     /// Telemetry error category; delegates to `stop_failure_error_type` so the two classifications cannot drift.

@@ -1421,3 +1421,300 @@ fn phone_composer_opens_a_row_only_for_the_character_after_a_full_row() {
         );
     }
 }
+
+/// The card's drawn band on screen: the contiguous run of accent-bar rows that
+/// ends at the lowest one. A blocking card paints its left-edge accent bar on
+/// every row of its area, so the run is the area.
+fn accent_band_rows(buf: &Buffer, x: u16) -> (u16, u16) {
+    let glyph = crate::glyphs::accent_bar();
+    let has = |y: u16| buf.cell((x, y)).is_some_and(|c| c.symbol() == glyph);
+    let bottom = (0..buf.area.height)
+        .rev()
+        .find(|&y| has(y))
+        .unwrap_or_else(|| panic!("no card band in\n{}", frame_text(buf)));
+    let mut top = bottom;
+    while top > 0 && has(top - 1) {
+        top -= 1;
+    }
+    (top, bottom)
+}
+
+/// The band's rows that carry anything but the accent bar.
+fn band_content_rows(buf: &Buffer, (top, bottom): (u16, u16), x: u16) -> Vec<u16> {
+    (top..=bottom)
+        .filter(|&y| {
+            row_text(buf, y)
+                .chars()
+                .skip(x as usize + 1)
+                .any(|c| c != ' ')
+        })
+        .collect()
+}
+
+/// The content width the frame gave the card: the drawn prompt row minus the
+/// card's horizontal padding (`QUESTION_VIEW_HPAD`).
+fn drawn_card_content_w(agent: &AgentView) -> usize {
+    agent.pane_areas.prompt.width as usize
+        - usize::from(crate::views::question_view::QUESTION_VIEW_HPAD)
+}
+
+/// The two options a permission card shows in the width regression tests.
+fn card_permission_options() -> Vec<acp::PermissionOption> {
+    vec![
+        acp::PermissionOption::new(
+            acp::PermissionOptionId::new(Arc::from("allow-once")),
+            "Allow once".to_string(),
+            acp::PermissionOptionKind::AllowOnce,
+        ),
+        acp::PermissionOption::new(
+            acp::PermissionOptionId::new(Arc::from("reject-once")),
+            "No".to_string(),
+            acp::PermissionOptionKind::RejectOnce,
+        ),
+    ]
+}
+
+/// A permission card whose one argument row fills the drawn content row (50
+/// cells on a phone) exactly, so the width the card is measured at decides
+/// whether that row counts once or twice.
+fn open_card_width_permission(agent: &mut AgentView) {
+    use crate::views::permission_view::PermissionFocus;
+    let mut perm = test_fixtures::make_followup_permission_state();
+    perm.focus = PermissionFocus::Options;
+    perm.title = "Run command".into();
+    perm.description = vec!["x".repeat(50)];
+    perm.options = card_permission_options();
+    agent.permission_queue.push_back(perm);
+}
+
+/// A phone draws the blocking cards across the frame (55 columns) while their
+/// heights were measured at the inner width (53), so an argument row that fills
+/// the drawn content row (50 cells) was counted as two rows and the card kept a
+/// row it never drew. The drawn band must hold the rows measured at the width
+/// the card is drawn at.
+#[test]
+fn phone_permission_card_counts_a_full_body_row_once() {
+    use crate::views::permission_view::permission_view_height;
+
+    let _guard = crate::theme::cache::pin_theme();
+    let mut agent = phone_agent();
+    open_card_width_permission(&mut agent);
+    let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    let frame = frame_text(&buf);
+    let prompt = agent.pane_areas.prompt;
+    let drawn_cw = drawn_card_content_w(&agent);
+    assert_eq!(
+        drawn_cw, 50,
+        "the phone draws card content 50 cells wide:\n{frame}"
+    );
+
+    let band = accent_band_rows(&buf, prompt.x);
+    let perm = agent.permission_queue.front().expect("permission open");
+    assert_eq!(
+        band.1 - band.0 + 1,
+        permission_view_height(perm, PHONE_ROWS, drawn_cw),
+        "the card draws the rows it measures at the drawn width:\n{frame}"
+    );
+    assert_eq!(
+        rows_with(&buf, "xxxx").len(),
+        1,
+        "the body row that fills the drawn row is drawn once:\n{frame}"
+    );
+    assert_eq!(
+        band_content_rows(&buf, band, prompt.x).last().copied(),
+        Some(band.1 - 1),
+        "the band ends one pad row under its last content row:\n{frame}"
+    );
+
+    // A desktop pane draws the card at the inner width, where the prompt row
+    // and the measurement already agree: its geometry does not change.
+    let mut desktop = phone_agent();
+    open_card_width_permission(&mut desktop);
+    let buf = draw(&mut desktop, DESKTOP_COLS, DESKTOP_ROWS);
+    let prompt = desktop.pane_areas.prompt;
+    let band = accent_band_rows(&buf, prompt.x);
+    let perm = desktop.permission_queue.front().expect("permission open");
+    assert_eq!(
+        band.1 - band.0 + 1,
+        permission_view_height(perm, DESKTOP_ROWS, drawn_card_content_w(&desktop)),
+        "a desktop pane keeps measuring the card at its inner width:\n{}",
+        frame_text(&buf)
+    );
+}
+
+/// A question card whose label fills the drawn content row (50 cells) exactly.
+/// A phone draws the label on one row; measured two columns narrower it counts
+/// as two, and the card reserves a blank row inside its option region.
+#[test]
+fn phone_question_card_counts_a_full_label_row_once() {
+    use crate::views::prompt_widget::StashedPrompt;
+    use crate::views::question_view::{
+        Question, QuestionOption, QuestionViewState, question_view_height,
+    };
+
+    fn option(label: &str) -> QuestionOption {
+        QuestionOption {
+            label: label.into(),
+            description: String::new(),
+            preview: None,
+            id: None,
+        }
+    }
+
+    let _guard = crate::theme::cache::pin_theme();
+    let mut agent = phone_agent();
+    let question = Question {
+        question: format!("{} {}", "A".repeat(27), "B".repeat(22)),
+        options: vec![option("Alpha"), option("Beta")],
+        multi_select: Some(false),
+        id: None,
+    };
+    agent.question_view = Some(QuestionViewState::new(
+        "tc-card".into(),
+        vec![question],
+        StashedPrompt::default(),
+    ));
+    let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    let frame = frame_text(&buf);
+    let prompt = agent.pane_areas.prompt;
+    let drawn_cw = drawn_card_content_w(&agent);
+    assert_eq!(
+        drawn_cw, 50,
+        "the phone draws card content 50 cells wide:\n{frame}"
+    );
+    assert_eq!(
+        rows_with(&buf, &"A".repeat(27)).len(),
+        1,
+        "the label that fills the drawn row is drawn once:\n{frame}"
+    );
+
+    let band = accent_band_rows(&buf, prompt.x);
+    let qv = agent.question_view.as_mut().expect("question open");
+    assert_eq!(
+        band.1 - band.0 + 1,
+        question_view_height(qv, PHONE_ROWS, drawn_cw) + 3,
+        "the card draws the rows it measures at the drawn width, plus its 3-row footer:\n{frame}"
+    );
+
+    let (top, bottom) = agent.question_scroll_region.expect("option region");
+    assert_eq!(
+        bottom - top,
+        2,
+        "the option region is as tall as the two options:\n{frame}"
+    );
+    assert_eq!(
+        band_content_rows(&buf, (top, bottom - 1), prompt.x).len(),
+        (bottom - top) as usize,
+        "every row of the option region carries an option:\n{frame}"
+    );
+}
+
+/// A question whose option list overflows the card, scrolled to its end: the
+/// scroll limit is computed from the same width the rows are drawn at, so the
+/// last option lands on the last row of the option region instead of leaving a
+/// blank row the narrower total paid for.
+#[test]
+fn phone_question_options_scroll_to_a_filled_region() {
+    use crate::views::prompt_widget::StashedPrompt;
+    use crate::views::question_view::{Question, QuestionOption, QuestionViewState};
+
+    let _guard = crate::theme::cache::pin_theme();
+    let mut agent = phone_agent();
+    // The cursor's own label fills the drawn content row (6-cell prefix + 44
+    // cells); measured two columns narrower it wraps to a second row.
+    let mut options = vec![QuestionOption {
+        label: "W".repeat(44),
+        description: String::new(),
+        preview: None,
+        id: None,
+    }];
+    for i in 2..=10 {
+        options.push(QuestionOption {
+            label: format!("Option {i}"),
+            description: String::new(),
+            preview: None,
+            id: None,
+        });
+    }
+    let question = Question {
+        question: "Which?".into(),
+        options,
+        multi_select: Some(false),
+        id: None,
+    };
+    let mut qv = QuestionViewState::new("tc-card".into(), vec![question], StashedPrompt::default());
+    qv.per_question_scroll[0] = u16::MAX;
+    agent.question_view = Some(qv);
+
+    let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    let frame = frame_text(&buf);
+    let (top, bottom) = agent.question_scroll_region.expect("option region");
+    let last = bottom - 1;
+    assert!(
+        row_text(&buf, last).contains("Option 10"),
+        "the clamped scroll stops on the last option:\n{frame}"
+    );
+    assert_eq!(
+        band_content_rows(&buf, (top, bottom - 1), agent.pane_areas.prompt.x).len(),
+        (bottom - top) as usize,
+        "the scrolled region carries no blank row:\n{frame}"
+    );
+}
+
+/// An elicitation card whose message fills the drawn content row (50 cells)
+/// exactly: measured two columns narrower it counts as two rows and the card
+/// keeps a blank row it never draws.
+#[test]
+fn phone_elicitation_card_counts_a_full_message_row_once() {
+    use crate::views::elicitation_view::{ElicitationViewState, elicitation_view_height};
+    use crate::views::prompt_widget::StashedPrompt;
+    use xai_grok_tools::mcp_elicitation::{McpElicitExtRequest, McpElicitModeFields};
+
+    let _guard = crate::theme::cache::pin_theme();
+    let mut agent = phone_agent();
+    agent.elicitation_view = Some(ElicitationViewState::from_request(
+        McpElicitExtRequest {
+            session_id: "s".into(),
+            tool_call_id: "mcp-elicit-1".into(),
+            server_name: "demo".into(),
+            message: "M".repeat(50),
+            mode: McpElicitModeFields::Form {
+                requested_schema: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "email": { "type": "string", "format": "email" }
+                    },
+                    "required": ["email"]
+                })),
+            },
+        },
+        Some(StashedPrompt::default()),
+        None,
+    ));
+    let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
+    let frame = frame_text(&buf);
+    let prompt = agent.pane_areas.prompt;
+    let drawn_cw = drawn_card_content_w(&agent);
+    assert_eq!(
+        drawn_cw, 50,
+        "the phone draws card content 50 cells wide:\n{frame}"
+    );
+    assert_eq!(
+        rows_with(&buf, &"M".repeat(20)).len(),
+        1,
+        "the message that fills the drawn row is drawn once:\n{frame}"
+    );
+
+    let band = accent_band_rows(&buf, prompt.x);
+    let ev = agent.elicitation_view.as_ref().expect("elicitation open");
+    assert_eq!(
+        band.1 - band.0 + 1,
+        elicitation_view_height(ev, PHONE_ROWS, drawn_cw),
+        "the card draws the rows it measures at the drawn width:\n{frame}"
+    );
+    assert_eq!(
+        band_content_rows(&buf, band, prompt.x).last().copied(),
+        Some(band.1 - 1),
+        "the band ends one pad row under its last content row:\n{frame}"
+    );
+}

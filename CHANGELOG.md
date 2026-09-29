@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A phone-width pane measures the permission, question and elicitation cards at the width they are drawn at. The cards span the frame like the composer, but their bodies were wrapped for the card's height at the inner width, two columns narrower, so a body line that filled the drawn row was counted as two and the card kept a blank row it never drew; the question list's scroll limit used the same narrower total, so a scroll to the end stopped one row above the last option. Desktop panes measure both widths the same and are unchanged.
+
 - The Tasks pane's right-hand strip — the elapsed time and the `[↗]` / `[✗]` buttons — no longer shows a box behind each glyph when the task label underneath is Korean or another wide (CJK) label. `ratatui` resets the cell after a wide grapheme to `Color::Reset`, and the overlay blanked its strip with a default-styled span before writing fg-only time/button spans, so those slots kept the reset background and the terminal painted its own default behind the glyph. The strip now carries the row's background and modifier: a focused selection keeps its band, a transient search-match invert no longer leaks into it, and the truncation ellipsis sits on the row background.
 
 - On a phone-width pane the top status row (branch, working directory, and the right-hand items) keeps one column of air at each screen edge instead of touching it. Its text now opens on the same column as the transcript's text and closes one column before the right edge; the transcript, task list, and composer band still span the frame, and desktop panes are unchanged.

@@ -2,27 +2,21 @@
 
 ## Unreleased
 
+## 6.9.0 — 2026-09-29
+
 - The `Jump to bottom` chip reads with half a cell of air on each side: the two padding columns paint the chip's colour over the canvas (`▐` left, `▌` right) instead of a full background cell, and both columns stay inside the click target. A wide glyph (Hangul, CJK, emoji) beginning on the chip's last column can no longer show a terminal-default cell immediately right of the chip: the chip repaints that exposed trailing cell in the glyph's own background instead of letting the content's hidden blank reach the terminal.
-
 - A phone-width pane measures the permission, question and elicitation cards at the width they are drawn at. The cards span the frame like the composer, but their bodies were wrapped for the card's height at the inner width, two columns narrower, so a body line that filled the drawn row was counted as two and the card kept a blank row it never drew; the question list's scroll limit used the same narrower total, so a scroll to the end stopped one row above the last option. Desktop panes measure both widths the same and are unchanged.
-
 - On a phone-width pane the turn row above the composer (spinner, elapsed time, `[stop]`) now sits on the footer's edges, one column in from the frame on each side, instead of one column further in on the left and two on the right. The composer's draft starts on the footer's column too, one column closer to the frame edge, on the welcome screen and in a conversation. Desktop widths are unchanged.
-
 - The Tasks pane's right-hand strip — the elapsed time and the `[↗]` / `[✗]` buttons — no longer shows a box behind each glyph when the task label underneath is Korean or another wide (CJK) label. `ratatui` resets the cell after a wide grapheme to `Color::Reset`, and the overlay blanked its strip with a default-styled span before writing fg-only time/button spans, so those slots kept the reset background and the terminal painted its own default behind the glyph. The strip now carries the row's background and modifier: a focused selection keeps its band, a transient search-match invert no longer leaks into it, and the truncation ellipsis sits on the row background.
-
 - On a phone-width pane the top status row (branch, working directory, and the right-hand items) keeps one column of air at each screen edge instead of touching it. Its text now opens on the same column as the transcript's text and closes one column before the right edge; the transcript, task list, and composer band still span the frame, and desktop panes are unchanged.
-
 - The composer opens a new row only for the character that needs it. Typing to the end of a row used to drop the caret onto an empty row below before anything was typed there, and on a phone-width pane the box grew that empty row two columns early, because the band is drawn across the frame but was measured two columns narrower. A full row now keeps the caret right after its last glyph, and the next character — a one-column letter or a two-column Hangul syllable — opens the row and takes the caret with it. A two-column glyph that meets a single free column still moves to the next row, as before. On a phone the permission follow-up and the question's freeform answer are measured the same way. Desktop row sizing is unchanged.
-
 - Resuming or continuing a full-screen session restores its cumulative billing and Path A cache hit/miss totals from `usage.json` before accepting new requests. Older sessions without saved cache history report it as unknown, and sessions with chat history but no usage file report incomplete totals instead of claiming zero. When the legacy main-loop split is unknown, observed post-upgrade main-loop counts also survive repeated resumes without claiming complete history or inferring them from billing calls.
-
 - New-file `write` uses the target repository's `.gitattributes` `eol` policy
   only when its filesystem backend confirms the target is on the host. Other
   backends, including ACP client filesystems, use the platform default because
   their host-path identity and target Git policy are unknown. Creation preserves
   the supplied final-newline choice and reports the normalized content it
   writes. Existing-file edit safety and line-ending behavior are unchanged.
-
 - Completed and cancelled Path A turns can report host-observed changes to supported Rust, Go, and pytest declarations when an in-process structured file write succeeds on host-backed `LocalFs`. Rust attributes and pytest decorators are included in declaration fingerprints. Existing dirty content is the baseline; inconsistent write metadata, client-backed ACP writes, formatting/comment-only changes, and same-signature file moves are omitted. The bounded note and turn record expose only relative path, language, category, and count—never test names, source text, literals, or hashes—and do not claim that tests ran or passed.
 
 ## 6.8.3 — 2026-09-28

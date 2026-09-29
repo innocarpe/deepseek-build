@@ -1,7 +1,7 @@
 //! Welcome screen: the first thing users see.
 //!
 //! Layout (top to bottom):
-//! - Top margin row (always preserved)
+//! - Top margin row (desktop only)
 //! - Top bar: `{branch} worktree {cwd}` from [`location_parts`](crate::views::location::location_parts)
 //! - Vertically centered content: logo, gap, menu, gap, prompt
 //! - Bottom margin
@@ -108,7 +108,7 @@ pub(super) fn render_pending_hint(
 
 /// Horizontal margin (left and right) in normal mode.
 const H_MARGIN: u16 = 2;
-/// Horizontal margin in compact mode.
+/// Horizontal margin in compact mode and in the phone top bar.
 const H_MARGIN_COMPACT: u16 = 1;
 
 /// Minimum width for the menu and changelog sections so they don't resize when the import row toggles.
@@ -806,6 +806,11 @@ pub fn render_welcome(
         H_MARGIN
     };
     let v_margin = 1u16;
+    // Match the conversation header even when smaller phone text widens the grid.
+    // Content and footer margins remain independent of the top bar's gutters.
+    let phone = crate::views::agent::effective_narrow(area.width, area.height);
+    let top_margin = if phone { 0 } else { v_margin };
+    let top_h_margin = if phone { H_MARGIN_COMPACT } else { h_margin };
     // A phone's welcome ends on the same two-row footer as the conversation
     // view, so it keeps no margin row under it either.
     let bottom_margin = if prompt::phone_band(area.width) {
@@ -818,7 +823,7 @@ pub fn render_welcome(
 
     // Announcements only render inside the hero box. Top bar is always 1 row.
     let [_, top_bar_area, content_area, _] = Layout::vertical([
-        Constraint::Length(v_margin),
+        Constraint::Length(top_margin),
         Constraint::Length(1),
         Constraint::Min(10),
         Constraint::Length(bottom_margin),
@@ -826,9 +831,9 @@ pub fn render_welcome(
     .areas(area);
 
     let top_bar_inner = Rect {
-        x: top_bar_area.x + h_margin,
+        x: top_bar_area.x + top_h_margin,
         y: top_bar_area.y,
-        width: top_bar_area.width.saturating_sub(h_margin * 2),
+        width: top_bar_area.width.saturating_sub(top_h_margin * 2),
         height: 1,
     };
     render_top_bar(top_bar_inner, buf, &theme, None);
@@ -2927,6 +2932,83 @@ mod tests {
     }
 
     #[test]
+    fn welcome_top_bar_margins_follow_phone_grid_and_preserve_desktop_frames() {
+        let _guard = crate::theme::cache::pin_theme();
+        let auth = AuthState::Done;
+        let trust = TrustState::Done;
+        let mut observed = Vec::new();
+        let mut expected = Vec::new();
+        for (width, height, phone) in [
+            (55, 41, true),
+            (73, 53, true),
+            (110, 82, true),
+            (60, 30, true),
+            (61, 30, false),
+            (80, 24, false),
+            (120, 40, false),
+            (160, 134, false),
+            (121, 82, false),
+        ] {
+            for compact in [false, true] {
+                for (x, y) in [(0, 0), (7, 3)] {
+                    let mut params = render_params(&auth, &trust, None);
+                    params.compact = compact;
+                    let area = Rect::new(x, y, width, height);
+                    let mut buf = Buffer::empty(area);
+                    let mut prompt = PromptWidget::new();
+                    let mut picker = PickerState::default();
+                    let result = render_welcome(area, &mut buf, &params, &mut prompt, &mut picker);
+                    let header_y = (area.y..area.bottom())
+                        .find(|row| {
+                            (area.x..area.right()).any(|col| buf[(col, *row)].symbol() != " ")
+                        })
+                        .expect("location row");
+                    let header_x = (area.x..area.right())
+                        .find(|col| buf[(*col, header_y)].symbol() != " ")
+                        .expect("location text");
+                    let gutter = if phone || compact { 1 } else { 2 };
+                    let top_pad = u16::from(!phone);
+                    observed.push((header_x - x, header_y - y));
+                    expected.push((gutter, top_pad));
+                    let line = crate::render::line_utils::truncate_line(
+                        top_bar::location_line(&Theme::current()),
+                        width.saturating_sub((header_x - x) * 2) as usize,
+                    );
+                    let painted: String = (header_x..header_x + line.width() as u16)
+                        .map(|col| buf[(col, header_y)].symbol())
+                        .collect();
+                    assert_eq!(
+                        painted,
+                        line.to_string(),
+                        "{width}x{height}, compact={compact}"
+                    );
+                    assert!(
+                        (area.right() - (header_x - x)..area.right())
+                            .all(|col| buf[(col, header_y)].symbol() == " ")
+                    );
+                    if (x, y) == (0, 0)
+                        && !compact
+                        && std::env::var_os("DSB_WELCOME_FRAME_DUMP").is_some()
+                    {
+                        println!(
+                            "frame {width}x{height}: header=({header_x},{header_y}), menu={:?}, prompt={:?}",
+                            result.menu_rects, result.prompt_rect
+                        );
+                        println!(
+                            "--- frame {width}x{height} ---\n{}\n--- end frame ---",
+                            buffer_text(&buf)
+                        );
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            observed, expected,
+            "phone location rows must start at (1,0)"
+        );
+    }
+
+    #[test]
     fn welcome_prompt_never_renders_grok_quota_at_any_width() {
         let _guard = crate::theme::cache::pin_theme();
         let auth = AuthState::Done;
@@ -3852,9 +3934,10 @@ mod tests {
         let auth = AuthState::Done;
         let trust = TrustState::Done;
         let params = render_params(&auth, &trust, None);
-        // 60 cols keeps the stacked layout; the top bar and margins take 3 rows, so 29 rows give the 26-row content area
-        // whose full logo fits beside an 11-row draft but not the 13-row cap
-        let area = Rect::new(0, 0, 60, 29);
+        // On a 60-column phone only the top bar takes a row, so 28 frame rows
+        // leave 27 content rows: the full logo fits beside an 11-row draft,
+        // but not the 13-row cap. Keep that budget after dropping the top pad.
+        let area = Rect::new(0, 0, 60, 28);
         let mut picker = PickerState::default();
         let mut prompt = PromptWidget::new();
 

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The `Jump to bottom` chip reads with half a cell of air on each side: the two padding columns paint the chip's colour over the canvas (`▐` left, `▌` right) instead of a full background cell, and both columns stay inside the click target. A wide glyph (Hangul, CJK, emoji) beginning on the chip's last column can no longer show a terminal-default cell immediately right of the chip: the chip repaints that exposed trailing cell in the glyph's own background instead of letting the content's hidden blank reach the terminal.
+
 - A phone-width pane measures the permission, question and elicitation cards at the width they are drawn at. The cards span the frame like the composer, but their bodies were wrapped for the card's height at the inner width, two columns narrower, so a body line that filled the drawn row was counted as two and the card kept a blank row it never drew; the question list's scroll limit used the same narrower total, so a scroll to the end stopped one row above the last option. Desktop panes measure both widths the same and are unchanged.
 
 - On a phone-width pane the turn row above the composer (spinner, elapsed time, `[stop]`) now sits on the footer's edges, one column in from the frame on each side, instead of one column further in on the left and two on the right. The composer's draft starts on the footer's column too, one column closer to the frame edge, on the welcome screen and in a conversation. Desktop widths are unchanged.

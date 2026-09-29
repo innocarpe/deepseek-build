@@ -16,7 +16,7 @@ use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::backend::{Backend, TestBackend};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Modifier;
+use ratatui::style::{Color, Modifier};
 
 /// The measured iPhone Orca pane.
 const PHONE_COLS: u16 = 55;
@@ -95,6 +95,9 @@ fn assert_inside(rect: Rect, area: Rect) {
 
 #[test]
 fn chip_sits_on_the_scrollback_last_row_over_the_gap_row() {
+    // Half-block padding needs concrete colours; hold the theme lock so no other test can put
+    // the process on the terminal-native palette mid-frame.
+    let _theme = crate::theme::cache::pin_theme();
     let mut agent = scrolled_up_agent(DESKTOP_COLS, DESKTOP_ROWS);
     let buf = draw(&mut agent, DESKTOP_COLS, DESKTOP_ROWS);
 
@@ -117,6 +120,18 @@ fn chip_sits_on_the_scrollback_last_row_over_the_gap_row() {
         rect.y,
         row_text(&buf, rect.y)
     );
+    let theme = crate::theme::Theme::current();
+    assert_ne!(
+        theme.bg_light,
+        Color::Reset,
+        "fixture: concrete chip colours"
+    );
+    for (x, glyph) in [(rect.x, "▐"), (rect.right() - 1, "▌")] {
+        let pad = &buf[(x, rect.y)];
+        assert_eq!(pad.symbol(), glyph, "half-cell padding at column {x}");
+        assert_eq!(pad.fg, theme.bg_light, "the pad inks the chip's colour");
+        assert_eq!(pad.bg, theme.bg_base, "the outer half shows the canvas");
+    }
     let gap = row_text(&buf, sb.bottom());
     assert!(
         !gap.contains("Jump to bottom"),
@@ -265,33 +280,44 @@ fn an_open_block_viewer_or_scrollback_search_hides_the_chip() {
 
 #[test]
 fn hovered_chip_brightens_its_text_over_the_gray_background() {
+    // The assertion samples `Theme::current()` before and after the draw; hold the lock so the
+    // palette cannot change between them.
+    let _theme = crate::theme::cache::pin_theme();
     let theme = crate::theme::Theme::current();
 
     let mut agent = scrolled_up_agent(DESKTOP_COLS, DESKTOP_ROWS);
     let buf = draw(&mut agent, DESKTOP_COLS, DESKTOP_ROWS);
     let rect = agent.hit_follow_indicator.rect.expect("chip visible");
-    let idle = buf.cell((rect.x, rect.y)).expect("chip cell");
+    let idle = buf.cell((rect.x + 1, rect.y)).expect("label cell");
     assert_eq!(idle.fg, theme.gray);
     assert_eq!(idle.bg, theme.bg_light);
 
     agent.hit_follow_indicator.hovered = true;
     let buf = draw(&mut agent, DESKTOP_COLS, DESKTOP_ROWS);
     let rect = agent.hit_follow_indicator.rect.expect("chip visible");
-    let hovered = buf.cell((rect.x, rect.y)).expect("chip cell");
+    let hovered = buf.cell((rect.x + 1, rect.y)).expect("label cell");
     assert_eq!(hovered.fg, theme.gray_bright);
     assert_eq!(hovered.bg, theme.bg_light);
 }
 
 #[test]
 fn both_padding_cells_hover_and_click_in_full_frames_at_every_label_width() {
+    let _theme = crate::theme::cache::pin_theme();
     for cols in [PHONE_COLS, 26, 19] {
         for edge in [false, true] {
             let mut agent = scrolled_up_agent(cols, PHONE_ROWS);
             let buf = draw(&mut agent, cols, PHONE_ROWS);
             let rect = agent.hit_follow_indicator.rect.expect("chip visible");
             let x = if edge { rect.right() - 1 } else { rect.x };
-            assert_eq!(buf[(x, rect.y)].symbol(), " ", "painted padding");
-            assert_eq!(buf[(x, rect.y)].bg, crate::theme::Theme::current().bg_light);
+            let theme = crate::theme::Theme::current();
+            let pad = &buf[(x, rect.y)];
+            assert_eq!(
+                pad.symbol(),
+                if edge { "▌" } else { "▐" },
+                "half-cell padding is drawn on both ends"
+            );
+            assert_eq!(pad.fg, theme.bg_light, "the pad inks the chip's colour");
+            assert_eq!(pad.bg, theme.bg_base, "the outer half shows the canvas");
             assert!(!agent.hit_follow_indicator.contains(rect.x - 1, rect.y));
             assert!(!agent.hit_follow_indicator.contains(rect.right(), rect.y));
             let mouse = |kind| MouseEvent {
@@ -325,6 +351,9 @@ fn both_padding_cells_hover_and_click_in_full_frames_at_every_label_width() {
 
 #[test]
 fn scrolling_styled_wide_text_keeps_the_chip_opaque_in_buffer_diff_output() {
+    // The frame's colours (chip, canvas, the exposed trailing cell's real background) are concrete
+    // only off the terminal-native palette; hold the theme lock for the whole scroll.
+    let _theme = crate::theme::cache::pin_theme();
     let mut agent = make_agent();
     for i in 0..40 {
         let prefix = if i % 2 == 0 { "" } else { "x" };
@@ -344,6 +373,7 @@ fn scrolling_styled_wide_text_keeps_the_chip_opaque_in_buffer_diff_output() {
         .unwrap();
     agent.scrollback.scroll_up(5);
     let mut saw_crossing_glyph = false;
+    let mut saw_right_edge_glyph = false;
     let mut saw_styled_text = false;
     for _ in 0..12 {
         // Paint the same frame without the chip to measure the content it covers.
@@ -363,27 +393,68 @@ fn scrolling_styled_wide_text_keeps_the_chip_opaque_in_buffer_diff_output() {
             unicode_width::UnicodeWidthStr::width(underneath[(rect.x - 1, rect.y)].symbol()) > 1;
         saw_styled_text |=
             (rect.x..rect.right()).any(|x| !underneath[(x, rect.y)].modifier.is_empty());
-        backend.draw(previous.diff(&next).into_iter()).unwrap();
-        let theme = crate::theme::Theme::current();
-        for (i, ch) in format!(" {FULL_LABEL} ").chars().enumerate() {
-            let x = rect.x + i as u16;
-            let cell = &backend.buffer()[(x, rect.y)];
-            assert_eq!(
-                cell.symbol(),
-                ch.to_string(),
-                "scrolling lost chip column {x}"
+        // A wide glyph starting on the chip's last column loses its hidden trailing blank to the
+        // chip; that cell must not reach the terminal as a default-coloured hole.
+        if unicode_width::UnicodeWidthStr::width(underneath[(rect.right() - 1, rect.y)].symbol())
+            > 1
+        {
+            saw_right_edge_glyph = true;
+            let trail = &next[(rect.right(), rect.y)];
+            assert_eq!(trail.symbol(), " ");
+            assert_ne!(
+                trail.bg,
+                Color::Reset,
+                "the trailing cell the chip exposed must carry a real background"
             );
-            assert_eq!(cell.fg, theme.gray);
-            assert_eq!(cell.bg, theme.bg_light);
+        }
+        let updates = previous.diff(&next);
+        assert!(
+            updates
+                .iter()
+                .filter(|(_, y, _)| *y == rect.y)
+                .all(|(_, _, cell)| cell.bg != Color::Reset),
+            "no emitted cell on the chip's row may fall back to the terminal default"
+        );
+        backend.draw(updates.into_iter()).unwrap();
+        let theme = crate::theme::Theme::current();
+        let expected: Vec<String> = std::iter::once("▐".to_string())
+            .chain(FULL_LABEL.chars().map(|c| c.to_string()))
+            .chain(std::iter::once("▌".to_string()))
+            .collect();
+        for (i, symbol) in expected.iter().enumerate() {
+            let x = rect.x + i as u16;
+            let padding = i == 0 || i == expected.len() - 1;
+            let cell = &backend.buffer()[(x, rect.y)];
+            assert_eq!(cell.symbol(), symbol, "scrolling lost chip column {x}");
+            assert_eq!(cell.fg, if padding { theme.bg_light } else { theme.gray });
+            assert_eq!(
+                cell.bg,
+                if padding {
+                    theme.bg_base
+                } else {
+                    theme.bg_light
+                }
+            );
             assert_eq!(cell.modifier, Modifier::empty());
             assert!(!cell.skip);
         }
+        // The frame's last column is the scrollbar's. The chip leaves it alone, so nothing in
+        // this row's right edge is chip residue; the only cells the chip owns end here.
+        assert_eq!(
+            next[(PHONE_COLS - 1, rect.y)],
+            underneath[(PHONE_COLS - 1, rect.y)],
+            "the chip must not disturb the scrollbar column"
+        );
         previous = next;
         agent.scrollback.scroll_up(1);
     }
     assert!(
         saw_crossing_glyph,
         "fixture must cross the chip's left boundary with a wide glyph"
+    );
+    assert!(
+        saw_right_edge_glyph,
+        "fixture must start a wide glyph on the chip's right edge"
     );
     assert!(
         saw_styled_text,

@@ -288,3 +288,58 @@ This hosted result is separate from the historical local full-run failures
 above and from main run #36409062503, which completed successfully on
 `035fe245e5b80b7ec28545d0df575578c4197d14`. It does not establish that an earlier
 local failure was intermittent, fixed, or caused by a particular factor.
+
+## Verification — jump-to-bottom chip padding and right edge (2026-09-29)
+
+The chip's two padding columns now paint as half blocks (`▐` left, `▌` right —
+the chip's colour as the block's ink, the canvas as its background), so the
+padding reads at half its former width while both columns stay whole cells
+inside the click target. A wide glyph starting on the chip's last column can no
+longer leave a terminal-default cell just right of the chip: before painting,
+the chip repaints that exposed trailing cell in the glyph's own style (`bg`
+falls back to `theme.bg_base` when the glyph carries none), so the cell
+`Buffer::diff` forces out after the chip replaces the glyph's leading half
+carries a real background instead of the content's hidden `Cell::EMPTY`. Themes
+whose chip or canvas colour is `Color::Reset` (terminal-native) keep the plain
+padded cell, because a half block painted with default colours would ink the
+default foreground.
+
+Local evidence on this host, serially through the vendored wrapper:
+
+- `./scripts/vendor-cargo.sh fmt --all -- --check` — passed (`rc=0`).
+- `./scripts/vendor-cargo.sh --allow-concurrent check -p xai-grok-pager
+  --all-targets` — passed (`check_rc=0`).
+- `./scripts/vendor-cargo.sh test -p xai-grok-pager --lib follow_indicator_tests
+  -- --nocapture` — `8 passed; 0 failed` (`follow_rc=0`).
+- `./scripts/vendor-cargo.sh test -p xai-grok-pager --lib jump_to_bottom_tests
+  -- --nocapture` — `11 passed; 0 failed` (`jump_rc=0`), including the 55x41
+  frame dump `line 37      ▐Jump to bottom (click) ↓▌      8:28 AM`, the
+  emitted-cell checks on the chip's row, and the padding hover/click tests at
+  every label width.
+
+The first run of the two filters failed 3 of 11 `jump_to_bottom_tests`
+(`jump_rc=101`); the failure output prints `left: Reset` / `right: Reset` for
+the chip colours, i.e. those tests read a `Reset` palette in that process. They
+now take `theme::cache::pin_theme()` like the other colour-sensitive frame
+tests, which pins the process to `GrokNight` at truecolor; the 11/11 rerun above
+is the result.
+
+Observation vs inference: the `Reset` palette in the failing run and the 11/11
+rerun are measured. Why the palette was `Reset` is **inferred**, not measured —
+this host's dsb tool shell exports `NO_COLOR=1` and `TERM=dumb` (`env`),
+`color_support` maps `NO_COLOR` to `ColorLevel::None`
+(`theme/color_support.rs:98-100`), and `quantize_color` maps every colour to
+`Color::Reset` at that level (`theme/color_support.rs:232`), so
+`Theme::current()` in an agent shell resolves to the all-`Reset` palette. No
+cross-test interference is claimed: the filtered run executes only the filtered
+tests. The pager's full `--lib` suite is not run locally on purpose (this host
+blocks in the CoreAudio voice probe, measured 2026-09-27); the broad run is CI's
+workspace `grok test`.
+
+[PR #347 CI](https://github.com/innocarpe/deepseek-build/actions/runs/36509381823)
+on source commit `d42e9cd` passed `required`, `grok clippy`, `grok fmt`,
+`changelog move`, and `changes`. The branch was rebased onto the day's `main`
+(the PR was `CONFLICTING`, and a conflicted head runs no CI at all); the two
+conflicts were this unit's own `CHANGELOG.md` bullet and its
+`docs/architecture/GROK_VENDOR.md` overlay row, both resolved keeping the
+`Unreleased` items main had added.

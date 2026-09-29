@@ -4,50 +4,6 @@
 **Normative definitions:** [architecture/HARNESS_PHILOSOPHY.md](architecture/HARNESS_PHILOSOPHY.md) §11.  
 **SSOT priority:** [product/SSOT.md](product/SSOT.md).
 
-## Verification — welcome phone top-bar margins (2026-09-29)
-
-The welcome location row now uses the conversation's
-`views::agent::effective_narrow(cols, rows)` predicate: no blank row above it
-and a one-column gutter at each side on a phone. The screenshot's location
-row is a separate header above the logo and centered menu; this change keeps
-the menu's side spacing and the composer/footer margin rules independent.
-
-Buffer evidence with regular mode, a pinned theme, and the actual welcome
-renderer (coordinates are zero-based):
-
-| Frame | Location start before | Location start after | Complete desktop text buffer |
-|---|---|---|---|
-| 55x41 | (2, 1) | (1, 0) | Phone |
-| 73x53 | (2, 1) | (1, 0) | Phone at smaller text |
-| 110x82 | (2, 1) | (1, 0) | Phone at smaller text |
-| 60x30 | (2, 1) | (1, 0) | Width boundary |
-| 61x30 | (2, 1) | (2, 1) | Identical before/after |
-| 80x24 | (2, 1) | (2, 1) | Identical before/after |
-| 120x40 | (2, 1) | (2, 1) | Identical before/after |
-| 160x134 | (2, 1) | (2, 1) | Identical before/after |
-| 121x82 | (2, 1) | (2, 1) | Identical before/after |
-
-The regression also covers compact mode and nonzero frame origins. Compact
-phones retain their one-column gutter and lose the blank top row; desktops
-retain their existing one-row top pad and one-/two-column gutters. It checks
-the width-truncated location text and the right gutter. Its pre-fix run
-reported `0 passed; 1 failed`, with the location coordinates showing the
-old margin; the fixed run reported `1 passed; 0 failed`.
-
-Local commands through the worktree-pinned vendored wrapper:
-
-- `./scripts/vendor-cargo.sh fmt --all -- --check` — passed (`rc=0`).
-- `./scripts/vendor-cargo.sh --jobs 2 check -p xai-grok-pager --all-targets` — passed (`rc=0`).
-- `./scripts/vendor-cargo.sh --jobs 2 test -p xai-grok-pager --lib welcome_top_bar_margins_follow_phone_grid_and_preserve_desktop_frames -- --nocapture --test-threads=1` with `DSB_WELCOME_FRAME_DUMP=1` — `1 passed; 0 failed`; the before/after captures yielded five identical desktop text buffers.
-- `./scripts/vendor-cargo.sh --jobs 2 test -p xai-grok-pager --lib views::welcome:: -- --test-threads=1` — `107 passed; 0 failed`. The logo-tier fixture now uses 28 frame rows to retain its original 27-row content budget after removing the phone's top pad; its 13-row draft cap and compact-logo assertion remain.
-- `./scripts/vendor-cargo.sh --jobs 2 test -p xai-grok-pager --lib effective_narrow_keeps_the_phone_grid_at_a_smaller_text_size -- --test-threads=1` — `1 passed; 0 failed`.
-- `./scripts/vendor-cargo.sh --jobs 2 test -p xai-grok-pager --lib layout_uses_full_width_phone_bars_and_ends_a_phone_on_its_footer -- --test-threads=1` — `1 passed; 0 failed`.
-
-Test runs used `RUST_MIN_STACK=16777216`. The full local pager library suite
-was not run because of the previously recorded CoreAudio probe limitation;
-the broad vendored workspace test remains the separate post-merge CI job.
-No G0–G6 gate status changes here.
-
 | Gate | Requirement | Status | Evidence (PR / path) | Flipped by |
 |------|-------------|--------|----------------------|------------|
 | **G0** | HARNESS_PHILOSOPHY + layered SOURCES merged | **green** | PR #4 | innocarpe |
@@ -84,6 +40,51 @@ No G0–G6 gate status changes here.
 
 **Ultragoal (product):** **`owner-bar-5x`** → tag **`v5.0.0`** ([ULTRAGOAL_CHAIN.md](product/ULTRAGOAL_CHAIN.md) · [OWNER_BAR_5X_GOALS.md](product/OWNER_BAR_5X_GOALS.md)).  
 Do **not** resume `heart-3x` / `fleet-4x` as product SSOT. Gate: `./scripts/test-owner-bar.sh` (RED until fusion).
+
+## Verification — welcome phone top-bar margins (2026-09-29)
+
+The welcome location row now uses the conversation's
+`views::agent::effective_narrow(cols, rows)` predicate: no blank row above it
+and a one-column gutter at each side on a phone. The screenshot's location
+row is a separate header above the logo and centered menu; this change keeps
+the menu's side spacing and the composer/footer margin rules independent.
+
+Buffer evidence with regular mode, a pinned theme, and the actual welcome
+renderer (coordinates are zero-based):
+
+| Frame | Location start before | Location start after | Complete desktop text buffer |
+|---|---|---|---|
+| 55x41 | (2, 1) | (1, 0) | Phone |
+| 73x53 | (2, 1) | (1, 0) | Phone at smaller text |
+| 110x82 | (2, 1) | (1, 0) | Phone at smaller text |
+| 60x30 | (2, 1) | (1, 0) | Width boundary |
+| 61x30 | (2, 1) | (2, 1) | Identical before/after |
+| 80x24 | (2, 1) | (2, 1) | Identical before/after |
+| 120x40 | (2, 1) | (2, 1) | Identical before/after |
+| 160x134 | (2, 1) | (2, 1) | Identical before/after |
+| 121x82 | (2, 1) | (2, 1) | Identical before/after |
+
+The regression also covers compact mode and nonzero frame origins. Compact
+phones retain their one-column gutter and lose the blank top row; desktops
+retain their existing one-row top pad and one-/two-column gutters. It checks
+the width-truncated location text and the right gutter. Its pre-fix run
+reported `0 passed; 1 failed`, with the location coordinates showing the
+old margin; the fixed run reported `1 passed; 0 failed`.
+
+Local commands through the worktree-pinned vendored wrapper:
+
+- `./scripts/vendor-cargo.sh fmt --all -- --check` — passed (`rc=0`).
+- `./scripts/vendor-cargo.sh --jobs 2 check -p xai-grok-pager --all-targets` — passed (`rc=0`).
+- `./scripts/vendor-cargo.sh --jobs 2 clippy -p xai-grok-pager -- -D warnings` — passed (`rc=0`).
+- `./scripts/vendor-cargo.sh --jobs 2 test -p xai-grok-pager --lib welcome_top_bar_margins_follow_phone_grid_and_preserve_desktop_frames -- --nocapture --test-threads=1` with `DSB_WELCOME_FRAME_DUMP=1` — `1 passed; 0 failed`; the before/after captures yielded five identical desktop text buffers.
+- `./scripts/vendor-cargo.sh --jobs 2 test -p xai-grok-pager --lib views::welcome:: -- --test-threads=1` — `107 passed; 0 failed`. The logo-tier fixture now uses 28 frame rows to retain its original 27-row content budget after removing the phone's top pad; its 13-row draft cap and compact-logo assertion remain.
+- `./scripts/vendor-cargo.sh --jobs 2 test -p xai-grok-pager --lib effective_narrow_keeps_the_phone_grid_at_a_smaller_text_size -- --test-threads=1` — `1 passed; 0 failed`.
+- `./scripts/vendor-cargo.sh --jobs 2 test -p xai-grok-pager --lib layout_uses_full_width_phone_bars_and_ends_a_phone_on_its_footer -- --test-threads=1` — `1 passed; 0 failed`.
+
+Test runs used `RUST_MIN_STACK=16777216`. The full local pager library suite
+was not run because of the previously recorded CoreAudio probe limitation;
+the broad vendored workspace test remains the separate post-merge CI job.
+No G0–G6 gate status changes here.
 
 ## Verification — jump-to-bottom chip (2026-09-28)
 

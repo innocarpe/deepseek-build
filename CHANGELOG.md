@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The welcome screen's location row now starts on the first terminal row with one column of air at each side on a phone, matching the conversation's top bar. It uses the conversation's grid-shape detection, so shrinking the phone's text to 73x53 or 110x82 keeps the tight top margins. Desktop top margins and the centered menu's side spacing are unchanged.
+
 ## 6.9.0 — 2026-09-29
 
 - The `Jump to bottom` chip reads with half a cell of air on each side: the two padding columns paint the chip's colour over the canvas (`▐` left, `▌` right) instead of a full background cell, and both columns stay inside the click target. A wide glyph (Hangul, CJK, emoji) beginning on the chip's last column can no longer show a terminal-default cell immediately right of the chip: the chip repaints that exposed trailing cell in the glyph's own background instead of letting the content's hidden blank reach the terminal.
@@ -408,8 +410,6 @@ Published to npm as `6.1.1`; the release asset and `dsb --version` carry `6.1.1`
   listed in theme pickers. Existing configs naming them keep working.
 
 ### Fixed
-
-- The welcome screen's location row now starts on the first terminal row with one column of air at each side on a phone, matching the conversation's top bar. It uses the conversation's grid-shape detection, so shrinking the phone's text to 73x53 or 110x82 keeps the tight top margins. Desktop top margins and the centered menu's side spacing are unchanged.
 - Settings theme sheet now lists the shipped product theme, so users can switch
   back without using `/theme`.
 - `oscura-midnight` renders as "Oscura Midnight" instead of a raw identifier.

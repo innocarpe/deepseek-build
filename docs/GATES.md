@@ -335,3 +335,11 @@ cross-test interference is claimed: the filtered run executes only the filtered
 tests. The pager's full `--lib` suite is not run locally on purpose (this host
 blocks in the CoreAudio voice probe, measured 2026-09-27); the broad run is CI's
 workspace `grok test`.
+
+[PR #347 CI](https://github.com/innocarpe/deepseek-build/actions/runs/36509381823)
+on source commit `d42e9cd` passed `required`, `grok clippy`, `grok fmt`,
+`changelog move`, and `changes`. The branch was rebased onto the day's `main`
+(the PR was `CONFLICTING`, and a conflicted head runs no CI at all); the two
+conflicts were this unit's own `CHANGELOG.md` bullet and its
+`docs/architecture/GROK_VENDOR.md` overlay row, both resolved keeping the
+`Unreleased` items main had added.

@@ -250,6 +250,20 @@ impl Default for PromptStyle {
 }
 
 impl PromptStyle {
+    /// Columns between the chrome's left edge and the text. A drawn band keeps
+    /// one: it has no side rule to keep text off, and one column from the frame
+    /// puts the draft on the phone footer's column. The box keeps
+    /// [`Self::chrome_pad_left`], its rule column plus the inset. The right
+    /// side keeps `chrome_pad_right` either way: the cursor's column after the
+    /// last glyph.
+    pub(crate) fn text_pad_left(&self) -> u16 {
+        if self.band && composer_band_color(&Theme::current()).is_some() {
+            crate::appearance::LayoutConfig::MIN_HPAD
+        } else {
+            self.chrome_pad_left
+        }
+    }
+
     /// Style for overlays (no chrome, no vpad).
     pub fn overlay() -> Self {
         Self {
@@ -1740,7 +1754,7 @@ impl PromptWidget {
     fn content_width(&self, area_width: u16, style: &PromptStyle) -> u16 {
         if style.chrome {
             let accent_w = if style.show_accent_line { 1u16 } else { 0 };
-            area_width.saturating_sub(accent_w + style.chrome_pad_left + style.chrome_pad_right)
+            area_width.saturating_sub(accent_w + style.text_pad_left() + style.chrome_pad_right)
         } else {
             area_width
         }
@@ -3086,11 +3100,11 @@ impl PromptWidget {
                 }
             }
             Rect {
-                x: area.x + accent_w + style.chrome_pad_left,
+                x: area.x + accent_w + style.text_pad_left(),
                 y: area.y,
                 width: area
                     .width
-                    .saturating_sub(accent_w + style.chrome_pad_left + style.chrome_pad_right),
+                    .saturating_sub(accent_w + style.text_pad_left() + style.chrome_pad_right),
                 height: area.height,
             }
         } else {

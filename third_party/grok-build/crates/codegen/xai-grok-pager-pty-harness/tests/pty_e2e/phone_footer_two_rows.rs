@@ -38,8 +38,9 @@ fn band_bottom_row(screen: &str) -> usize {
 }
 
 /// Phone frame: the composer is a band with no box rule, and exactly two rows
-/// (the footer) follow it. Desktop frames keep the box with the model on its
-/// rule.
+/// (the footer) follow it — the frame's last two, one of which may be blank on
+/// a session with no DeepSeek status and no mode chip. Desktop frames keep the
+/// box with the model on its rule.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore]
 async fn phone_frame_ends_on_a_two_row_footer_under_the_composer_band() {
@@ -70,17 +71,15 @@ async fn phone_frame_ends_on_a_two_row_footer_under_the_composer_band() {
     );
     let lines: Vec<&str> = screen.lines().collect();
     let band_at = band_bottom_row(&screen);
-    let after: Vec<&str> = lines
-        .iter()
-        .skip(band_at + 1)
-        .copied()
-        .filter(|line| !line.trim().is_empty())
-        .collect();
+    // The frame reserves both footer rows; a blank trailing row never reaches
+    // `lines()` because `screen_contents()` joins rows with `\n`. The composer
+    // band's own index still pins the pair: two rows stay under it.
     assert_eq!(
-        after.len(),
+        PHONE_ROWS as usize - 1 - band_at,
         2,
-        "exactly the two footer rows follow the phone composer\nrows: {after:?}\nscreen:\n{screen}"
+        "exactly the two footer rows follow the phone composer\nscreen:\n{screen}"
     );
+    let after: Vec<&str> = lines.iter().skip(band_at + 1).copied().collect();
     for row in &after {
         assert!(
             !row.contains("Enter:send") && !row.contains("Shift+Tab"),

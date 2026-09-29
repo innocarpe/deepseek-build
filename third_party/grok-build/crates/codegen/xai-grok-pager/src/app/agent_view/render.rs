@@ -812,7 +812,8 @@ impl AgentView {
         let compact = appearance.prompt.compact;
         let inner_width = AgentViewLayout::inner_width(area, layout_cfg, compact);
         // The prompt row's inputs wrap at the width they are drawn at, which on a phone is the whole pane: measured at
-        // `inner_width` they asked for a row before the drawn text had filled one.
+        // `inner_width` they asked for a row before the drawn text had filled one. The blocking cards draw into that
+        // same row, so their bodies and the question list's scroll region are measured at it too.
         let prompt_width = AgentViewLayout::prompt_width(area, layout_cfg, compact);
         // Phone-width panes keep a one-row prompt info block (a plain divider) and
         // fold the model onto the DeepSeek status row. The shortcut-hint row stays
@@ -851,7 +852,7 @@ impl AgentView {
             self.prompt
                 .desired_height(prompt_width, &prompt_style, true, max_prompt_height)
         };
-        let overlay_content_w = inner_width.saturating_sub(QUESTION_VIEW_HPAD) as usize;
+        let overlay_content_w = prompt_width.saturating_sub(QUESTION_VIEW_HPAD) as usize;
         let slot_card = self.blocking_card();
         let permission_view_h = if slot_card == Some(BlockingCard::Permission) {
             if let Some(perm) = self.permission_queue.front() {
@@ -2642,7 +2643,7 @@ impl AgentView {
                     .saturating_sub(question_footer_h),
             };
             if let Some(ref mut qv) = self.question_view {
-                let content_w = inner_width.saturating_sub(QUESTION_VIEW_HPAD) as usize;
+                let content_w = prompt_width.saturating_sub(QUESTION_VIEW_HPAD) as usize;
                 if let Some(question) = qv.questions.get(qv.active_tab) {
                     let visible_options_h = crate::views::question_view::visible_options_height(
                         question,

@@ -46,6 +46,14 @@ This skill is the **agent harness** for change delivery. It is not CI.
 13. **Opening the PR is not the end of the unit.** CI, the merge commit, and
     the report stay in `skills/session-unit`. This skill stops at the body and
     `gh pr view --json title,labels,url`.
+14. **A publication-route denial is a missing registration.** If `gh pr create`
+    is denied before GitHub runs because the branch is not a registered unit,
+    register it in the same turn and call `gh pr create` again as one command:
+    `GH_TOKEN="$(gh auth token --user innocarpe)"`, `--repo innocarpe/deepseek-build`,
+    `--base main`, `--head` the branch, `--title` exactly the registered title,
+    `--body-file` a `.md` file under `/tmp`, and only the registered labels.
+    No pipe, no redirection, and no second command on the same line. Do not
+    disable the hook, and do not end the unit by quoting the denial.
 
 ## Optional local helper (not required)
 

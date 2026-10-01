@@ -15,44 +15,43 @@ const USER_PROMPT_BODY_RANGE: u16 = 0;
 /// Max visible lines when a user prompt is collapsed on a roomy terminal.
 const COLLAPSED_MAX_LINES: usize = 3;
 
-/// Width (in columns) at or below which a collapsed prompt drops to
-/// [`COLLAPSED_NARROW_MAX_LINES`]. The measured iPhone Orca pane is 55 columns
-/// (the narrowest desktop pane on the same machine is 80). One row names the
-/// turn and cuts the rest of the prompt; two rows keep enough of it to read,
-/// and the band's pad is a fraction of a row, so the extra row is one line of
-/// text. Anything wider keeps [`COLLAPSED_MAX_LINES`], so the desktop layout
-/// is untouched.
+/// Width (in columns) at or below which the composer's info line leaves the
+/// model/mode label off its divider (see `views::prompt_widget::is_narrow_label_width`).
+///
+/// The echo's fold, its decorative `❯` and its same-cell tap follow the pane's
+/// phone density instead — `LayoutConfig.narrow`, derived by
+/// `views::agent::effective_narrow` — because a pinched phone grid (110×82
+/// measured) is past this threshold while it is still the same phone.
 ///
 /// [`NARROW_TERMINAL_COLS`](crate::appearance::NARROW_TERMINAL_COLS) is the same
-/// number: the whole frame's phone-width density keys off it, and this alias
-/// keeps the echo fold and the composer prefix on that one threshold.
-///
-/// `pub(crate)` so the input box can apply the same narrow-pane rule to its decorative `❯` without a second
-/// threshold. The echo and the composer agree about what "phone width" means.
+/// number: the width-only half of the phone density predicate keys off it.
 pub(crate) const COLLAPSED_NARROW_TERMINAL_COLS: u16 = crate::appearance::NARROW_TERMINAL_COLS;
 
-/// Max visible lines when a user prompt is collapsed on a narrow terminal.
+/// Max visible lines when a user prompt is collapsed on a phone-density pane.
 ///
 /// Two, not one: a single row on a 55-column pane hides most of a submitted
 /// prompt, and the band is already tight, so a second row is the context.
 const COLLAPSED_NARROW_MAX_LINES: usize = 2;
 
-/// The collapse budget for a prompt rendered at `width` into `mode`.
+/// The collapse budget for a prompt rendered into `mode` on a pane of phone
+/// density `narrow`.
 ///
 /// `Expanded` never folds; otherwise the budget is [`COLLAPSED_MAX_LINES`],
-/// tightened to [`COLLAPSED_NARROW_MAX_LINES`] when `width` is at or below
-/// [`COLLAPSED_NARROW_TERMINAL_COLS`]. Deriving this from the render width
-/// (rather than reading a single constant) is what lets the same block fold
-/// harder in a phone-width pane than in a desktop one.
+/// tightened to [`COLLAPSED_NARROW_MAX_LINES`] on a phone-density pane.
+///
+/// The signal is the pane's derived density, not the render width: the wrap
+/// width keeps following the real column count, so the same block folds harder
+/// in a phone pane than in a desktop one even when a pinched grid (110×82
+/// measured) wraps at more than 100 columns.
 ///
 /// A budget only decides how many rows are *shown*. Whether the block folds at all is
-/// [`UserPromptBlock::is_foldable_at`]'s call, and that decision has to be width-aware too: a width-blind
+/// [`UserPromptBlock::is_foldable_at`]'s call, and that decision has to be density-aware too: a width-blind
 /// estimate left this budget unreached in a phone-width pane.
-fn collapsed_max_lines(width: u16, mode: DisplayMode) -> Option<usize> {
+fn collapsed_max_lines(narrow: bool, mode: DisplayMode) -> Option<usize> {
     match mode {
         DisplayMode::Expanded => None,
         DisplayMode::Collapsed | DisplayMode::Truncated => {
-            if width <= COLLAPSED_NARROW_TERMINAL_COLS {
+            if narrow {
                 Some(COLLAPSED_NARROW_MAX_LINES)
             } else {
                 Some(COLLAPSED_MAX_LINES)
@@ -396,23 +395,23 @@ impl UserPromptBlock {
         (prefix_style, text_style, skill_style)
     }
 
-    /// The prefix this prompt draws at `width`, or `""` for none.
+    /// The prefix this prompt draws on a pane of phone density `narrow`, or `""` for none.
     ///
     /// `$ ` (bash) and `↻  ` (cron) say what kind of turn this was, so they stay whenever the caller asked for a
-    /// prefix. `❯ ` is decoration: above the narrow threshold it marks the prompt, and at or below it the band
+    /// prefix. `❯ ` is decoration: on a desktop pane it marks the prompt, and on a phone-density pane the band
     /// background already does that, so the two columns go back to the text. `show_prefix = false` still means no
     /// prefix at all.
     ///
     /// Both `wrap_prompt_lines` and [`Self::is_foldable_at`] call this, so the row count cannot assume a prefix the
     /// renderer did not draw.
-    fn prefix_for(&self, show_prefix: bool, width: u16) -> &'static str {
+    fn prefix_for(&self, show_prefix: bool, narrow: bool) -> &'static str {
         if !show_prefix {
             ""
         } else if self.is_bash {
             "$ "
         } else if self.is_cron {
             "\u{21BB}  "
-        } else if width <= COLLAPSED_NARROW_TERMINAL_COLS {
+        } else if narrow {
             ""
         } else {
             crate::glyphs::prompt_arrow()
@@ -427,10 +426,14 @@ impl UserPromptBlock {
         max_lines: Option<usize>,
         show_prefix: bool,
         is_selected: bool,
+        narrow: bool,
     ) -> Vec<BlockLine> {
-        self.wrap_prompt_lines_reserved(width, max_lines, show_prefix, is_selected, 0)
+        self.wrap_prompt_lines_reserved(width, max_lines, show_prefix, is_selected, narrow, 0)
     }
 
+    /// `narrow` is the pane's phone density (`layout.narrow`), which owns the decorative prefix; `width` is the
+    /// column count the text wraps at, which stays the real width on a phone.
+    ///
     /// `first_line_reserve` narrows only the first visual line. Tests call [`Self::wrap_prompt_lines`], which passes 0.
     fn wrap_prompt_lines_reserved(
         &self,
@@ -438,6 +441,7 @@ impl UserPromptBlock {
         max_lines: Option<usize>,
         show_prefix: bool,
         is_selected: bool,
+        narrow: bool,
         first_line_reserve: usize,
     ) -> Vec<BlockLine> {
         let theme = Theme::current();
@@ -465,7 +469,7 @@ impl UserPromptBlock {
             }
         };
 
-        let prefix = self.prefix_for(show_prefix, width);
+        let prefix = self.prefix_for(show_prefix, narrow);
         let prefix_width = prefix.width();
         let has_visible_prefix = prefix_width > 0;
         let ellipsis = " \u{2026}";
@@ -684,13 +688,15 @@ impl UserPromptBlock {
 
 impl BlockContent for UserPromptBlock {
     fn output(&self, ctx: &BlockContext) -> BlockOutput {
-        let max_lines = collapsed_max_lines(ctx.width, ctx.mode);
+        let narrow = ctx.appearance.scrollback.layout.narrow;
+        let max_lines = collapsed_max_lines(narrow, ctx.mode);
 
         let lines = self.wrap_prompt_lines_reserved(
             ctx.width,
             max_lines,
             shows_prefix(&ctx.appearance),
             ctx.is_selected,
+            narrow,
             first_line_reserve(&ctx.appearance),
         );
 
@@ -779,11 +785,12 @@ impl BlockContent for UserPromptBlock {
     /// fits the budget's rows by width — a few hundred columns at most, however long the prompt. This is asked on
     /// every layout pass and frame. A `None` budget means the mode never folds.
     fn is_foldable_at(&self, content_width: u16, appearance: &AppearanceConfig) -> bool {
-        let Some(budget) = collapsed_max_lines(content_width, DisplayMode::Collapsed) else {
+        let narrow = appearance.scrollback.layout.narrow;
+        let Some(budget) = collapsed_max_lines(narrow, DisplayMode::Collapsed) else {
             return false;
         };
         let show_prefix = shows_prefix(appearance);
-        let prefix_width = self.prefix_for(show_prefix, content_width).width();
+        let prefix_width = self.prefix_for(show_prefix, narrow).width();
         let wrap_width = usize::from(content_width)
             .saturating_sub(prefix_width)
             .max(1);
@@ -800,6 +807,7 @@ impl BlockContent for UserPromptBlock {
             Some(budget + 1),
             show_prefix,
             false,
+            narrow,
             first_line_reserve(appearance),
         )
         .len()
@@ -807,10 +815,10 @@ impl BlockContent for UserPromptBlock {
     }
 
     /// The off-screen height estimate asks this instead of assuming one row.
-    /// A collapsed phone echo paints [`COLLAPSED_NARROW_MAX_LINES`]; a wider pane paints [`COLLAPSED_MAX_LINES`].
-    fn collapsed_row_budget(&self, content_width: u16) -> u16 {
-        let rows = collapsed_max_lines(content_width, DisplayMode::Collapsed)
-            .unwrap_or(COLLAPSED_MAX_LINES);
+    /// A collapsed phone-density echo paints [`COLLAPSED_NARROW_MAX_LINES`]; a wider pane paints [`COLLAPSED_MAX_LINES`].
+    fn collapsed_row_budget(&self, narrow: bool) -> u16 {
+        let rows =
+            collapsed_max_lines(narrow, DisplayMode::Collapsed).unwrap_or(COLLAPSED_MAX_LINES);
         u16::try_from(rows).unwrap_or(u16::MAX)
     }
 
@@ -855,7 +863,7 @@ mod tests {
     fn test_short_prompt_no_truncation() {
         let _guard = crate::theme::cache::pin_theme();
         let block = UserPromptBlock::new("hello");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, false);
         let expected = format!("{}hello", crate::glyphs::prompt_arrow());
 
         assert_eq!(lines.len(), 1);
@@ -866,7 +874,7 @@ mod tests {
     fn test_short_prompt_with_max_lines() {
         let _guard = crate::theme::cache::pin_theme();
         let block = UserPromptBlock::new("hello");
-        let lines = block.wrap_prompt_lines(80, Some(2), true, false);
+        let lines = block.wrap_prompt_lines(80, Some(2), true, false, false);
         let expected = format!("{}hello", crate::glyphs::prompt_arrow());
 
         assert_eq!(lines.len(), 1);
@@ -882,7 +890,7 @@ mod tests {
         let block = UserPromptBlock::new(
             "this is a very long prompt that should wrap over several rows at this width",
         );
-        let lines = block.wrap_prompt_lines(65, None, true, false);
+        let lines = block.wrap_prompt_lines(65, None, true, false, false);
 
         assert!(lines.len() > 1, "Should wrap to multiple lines");
         assert!(line_text(&line_at(&lines, 0).content).starts_with(crate::glyphs::prompt_arrow()));
@@ -895,7 +903,7 @@ mod tests {
     fn test_long_prompt_wraps_without_the_arrow_on_a_narrow_pane() {
         let _guard = crate::theme::cache::pin_theme();
         let block = UserPromptBlock::new("this is a very long prompt that should wrap");
-        let lines = block.wrap_prompt_lines(20, None, true, false);
+        let lines = block.wrap_prompt_lines(20, None, true, false, true);
 
         assert!(lines.len() > 1, "Should wrap to multiple lines");
         assert!(
@@ -915,7 +923,7 @@ mod tests {
         let _guard = crate::theme::cache::pin_theme();
         let block =
             UserPromptBlock::new("this is a very long prompt that should wrap to many lines");
-        let lines = block.wrap_prompt_lines(20, Some(2), true, false);
+        let lines = block.wrap_prompt_lines(20, Some(2), true, false, true);
 
         assert_eq!(lines.len(), 2);
         let last = line_text(&line_at(&lines, 1).content);
@@ -933,7 +941,7 @@ mod tests {
         // prompt past the two-row budget so the last visible row is still truncated.
         let block = UserPromptBlock::new("aaaa bbbb cccc dddd eeee ffff gggg");
         let width = 15; // Narrow width to force wrapping
-        let lines = block.wrap_prompt_lines(width, Some(2), true, false);
+        let lines = block.wrap_prompt_lines(width, Some(2), true, false, true);
 
         assert_eq!(lines.len(), 2);
 
@@ -957,7 +965,7 @@ mod tests {
     fn test_bash_prompt_prefix() {
         let _guard = crate::theme::cache::pin_theme();
         let block = UserPromptBlock::bash("ls -la");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, false);
 
         assert_eq!(lines.len(), 1);
         assert!(line_text(&line_at(&lines, 0).content).starts_with("$ "));
@@ -972,7 +980,7 @@ mod tests {
         crate::theme::cache::set(crate::theme::ThemeKind::Terminal);
 
         let block = UserPromptBlock::new("hello");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, false);
         assert!(line_at(&lines, 0).background.is_none(), "no band");
         let text_span = line_at(&lines, 0).content.spans.last().unwrap();
         assert!(
@@ -982,7 +990,7 @@ mod tests {
         );
         assert!(!text_span.style.add_modifier.contains(Modifier::REVERSED));
 
-        let selected = block.wrap_prompt_lines(80, None, true, true);
+        let selected = block.wrap_prompt_lines(80, None, true, true, false);
         assert!(
             line_at(&selected, 0).background.is_none(),
             "selected: still no band"
@@ -1001,7 +1009,7 @@ mod tests {
     fn skill_with_args_only_command_is_teal() {
         let _guard = crate::theme::cache::pin_theme();
         let block = UserPromptBlock::skill("/pr-workflow create a ticket for this");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, false);
         assert_eq!(lines.len(), 1);
 
         let theme = Theme::current();
@@ -1020,7 +1028,7 @@ mod tests {
     fn skill_without_args_all_teal() {
         let _guard = crate::theme::cache::pin_theme();
         let block = UserPromptBlock::skill("/pr-workflow");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, false);
         assert_eq!(lines.len(), 1);
 
         let theme = Theme::current();
@@ -1034,7 +1042,7 @@ mod tests {
     fn skill_multiline_only_first_token_teal() {
         let _guard = crate::theme::cache::pin_theme();
         let block = UserPromptBlock::skill("/foo bar\nbaz");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, false);
         assert_eq!(lines.len(), 2);
 
         let theme = Theme::current();
@@ -1054,7 +1062,7 @@ mod tests {
         let _guard = crate::theme::cache::pin_theme();
         let text = "great /pr-workflow all good now";
         let block = UserPromptBlock::with_skill_tokens(text, vec![6..18]);
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, false);
         assert_eq!(lines.len(), 1);
 
         let theme = Theme::current();
@@ -1073,7 +1081,7 @@ mod tests {
         let _guard = crate::theme::cache::pin_theme();
         let text = "run /commit then /review please";
         let block = UserPromptBlock::with_skill_tokens(text, vec![4..11, 17..24]);
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, false);
         assert_eq!(lines.len(), 1);
 
         let theme = Theme::current();
@@ -1093,7 +1101,7 @@ mod tests {
         let text = "first line\nthen /model here";
         // "/model" starts after "first line\nthen " = 16 bytes.
         let block = UserPromptBlock::with_skill_tokens(text, vec![16..22]);
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, false);
         assert_eq!(lines.len(), 2);
 
         let theme = Theme::current();
@@ -1126,7 +1134,7 @@ mod tests {
         );
         assert_eq!(block.skill_token_ranges, vec![7..13]);
 
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, false);
         let theme = Theme::current();
         let teal: Vec<&str> = line_at(&lines, 0)
             .content
@@ -1143,7 +1151,7 @@ mod tests {
         let _guard = crate::theme::cache::pin_theme();
         let block = UserPromptBlock::with_skill_tokens("plain text", vec![100..200]);
         assert!(block.skill_token_ranges.is_empty());
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, false);
         let theme = Theme::current();
         assert_eq!(
             span_at(&line_at(&lines, 0).content.spans, 1).style.fg,
@@ -1167,7 +1175,7 @@ mod tests {
         // The truncating re-wrap must keep the visible head teal
         let text = "one\ntwo\n/pr-workflow tail";
         let block = UserPromptBlock::with_skill_tokens(text, vec![8..20]);
-        let lines = block.wrap_prompt_lines(8, Some(3), false, false);
+        let lines = block.wrap_prompt_lines(8, Some(3), false, false, true);
         assert_eq!(lines.len(), 3);
 
         let theme = Theme::current();
@@ -1186,7 +1194,7 @@ mod tests {
         // "/do-it" (bytes 8..14) fits fully on the truncated last line even at the ellipsis-reduced width, so it must survive whole and teal
         let text = "one\ntwo\n/do-it more words here";
         let block = UserPromptBlock::with_skill_tokens(text, vec![8..14]);
-        let lines = block.wrap_prompt_lines(20, Some(3), false, false);
+        let lines = block.wrap_prompt_lines(20, Some(3), false, false, true);
         assert_eq!(lines.len(), 3);
 
         let theme = Theme::current();
@@ -1209,7 +1217,7 @@ mod tests {
         // Expanded (no max_lines): the 12-wide token cannot fit at width 8, so the wrapper splits it mid-token; every piece must stay teal
         let text = "aa /pr-workflow zz";
         let block = UserPromptBlock::with_skill_tokens(text, vec![3..15]);
-        let lines = block.wrap_prompt_lines(8, None, false, false);
+        let lines = block.wrap_prompt_lines(8, None, false, false, true);
         assert!(lines.len() >= 2);
 
         let theme = Theme::current();
@@ -1229,7 +1237,7 @@ mod tests {
     fn test_multiline_input() {
         let _guard = crate::theme::cache::pin_theme();
         let block = UserPromptBlock::new("line one\nline two\nline three");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, false);
 
         assert_eq!(lines.len(), 3);
         assert!(line_text(&line_at(&lines, 0).content).starts_with(crate::glyphs::prompt_arrow()));
@@ -1241,7 +1249,7 @@ mod tests {
     fn test_multiline_truncated() {
         let _guard = crate::theme::cache::pin_theme();
         let block = UserPromptBlock::new("line one\nline two\nline three");
-        let lines = block.wrap_prompt_lines(80, Some(2), true, false);
+        let lines = block.wrap_prompt_lines(80, Some(2), true, false, false);
 
         assert_eq!(lines.len(), 2);
         // Last line should have ellipsis since there's more content
@@ -1253,7 +1261,7 @@ mod tests {
         let _guard = crate::theme::cache::pin_theme();
         // If content fits exactly in max_lines, no ellipsis needed
         let block = UserPromptBlock::new("short");
-        let lines = block.wrap_prompt_lines(80, Some(1), true, false);
+        let lines = block.wrap_prompt_lines(80, Some(1), true, false, false);
 
         assert_eq!(lines.len(), 1);
         assert!(!line_text(&line_at(&lines, 0).content).contains('\u{2026}'));
@@ -1265,7 +1273,7 @@ mod tests {
         // theme (bold fullscreen prompts) legitimately fails.
         let _guard = crate::theme::cache::pin_theme();
         let block = UserPromptBlock::new("hello");
-        let lines = block.wrap_prompt_lines(80, None, true, true);
+        let lines = block.wrap_prompt_lines(80, None, true, true, false);
         let expected = format!("{}hello", crate::glyphs::prompt_arrow());
 
         assert_eq!(lines.len(), 1);
@@ -1286,7 +1294,7 @@ mod tests {
         // Pinned: see test_selected_prompt_uses_accent_color.
         let _guard = crate::theme::cache::pin_theme();
         let block = UserPromptBlock::new("hello");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, false);
 
         assert_eq!(lines.len(), 1);
 
@@ -1307,7 +1315,7 @@ mod tests {
     fn test_prompt_lines_have_selection_range() {
         let _guard = crate::theme::cache::pin_theme();
         let block = UserPromptBlock::new("hello");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, false);
         assert!(
             lines
                 .iter()
@@ -1319,7 +1327,7 @@ mod tests {
     fn test_prompt_prefix_excluded_from_selection() {
         let _guard = crate::theme::cache::pin_theme();
         let block = UserPromptBlock::new("hello");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, false);
         assert_eq!(lines.len(), 1);
         // Prefix is span 0, content starts at span 1
         match &line_at(&lines, 0).selectable {
@@ -1334,7 +1342,7 @@ mod tests {
     fn test_prompt_no_prefix_all_selectable() {
         let _guard = crate::theme::cache::pin_theme();
         let block = UserPromptBlock::new("hello");
-        let lines = block.wrap_prompt_lines(80, None, false, false);
+        let lines = block.wrap_prompt_lines(80, None, false, false, false);
         assert_eq!(lines.len(), 1);
         assert!(matches!(line_at(&lines, 0).selectable, Selectable::All));
     }
@@ -1343,7 +1351,7 @@ mod tests {
     fn test_prompt_wrapped_lines_have_joiners() {
         let _guard = crate::theme::cache::pin_theme();
         let block = UserPromptBlock::new("this is a long prompt that should wrap");
-        let lines = block.wrap_prompt_lines(15, None, true, false);
+        let lines = block.wrap_prompt_lines(15, None, true, false, true);
         assert!(lines.len() > 1);
         assert!(line_at(&lines, 0).joiner.is_none());
         assert!(lines.iter().skip(1).any(|l| l.joiner.is_some()));
@@ -1353,7 +1361,7 @@ mod tests {
     fn test_prompt_multiline_joiners() {
         let _guard = crate::theme::cache::pin_theme();
         let block = UserPromptBlock::new("line one\nline two");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, false);
         assert_eq!(lines.len(), 2);
         assert!(line_at(&lines, 0).joiner.is_none());
         // No joiner on the second line either (hard break between logical lines)
@@ -1364,7 +1372,7 @@ mod tests {
     fn test_cron_prompt_prefix() {
         let _guard = crate::theme::cache::pin_theme();
         let block = UserPromptBlock::cron("/pr-babysit check");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, false);
         assert_eq!(lines.len(), 1);
         let text = line_text(&line_at(&lines, 0).content);
         assert!(
@@ -1378,7 +1386,7 @@ mod tests {
     fn test_bash_prefix_excluded_from_selection() {
         let _guard = crate::theme::cache::pin_theme();
         let block = UserPromptBlock::bash("ls -la");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, false);
         assert_eq!(lines.len(), 1);
         match &line_at(&lines, 0).selectable {
             Selectable::Spans(range) => {
@@ -1392,7 +1400,7 @@ mod tests {
     fn test_continuation_indent_excluded_from_selection() {
         let _guard = crate::theme::cache::pin_theme();
         let block = UserPromptBlock::new("line one\nline two");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, false);
         assert_eq!(lines.len(), 2);
         // Both lines should exclude their prefix/indent
         for line in &lines {
@@ -1488,7 +1496,7 @@ mod tests {
 
         // Default unit-test env is fullscreen (lock off).
         let block = UserPromptBlock::new("hello");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, false);
         let spans = &line_at(&lines, 0).content.spans;
         assert!(
             !span_at(spans, 0)
@@ -1539,7 +1547,7 @@ mod tests {
     fn user_prompt_band_is_semantic_not_panel() {
         let _guard = crate::theme::cache::pin_theme();
         let block = UserPromptBlock::new("scan me");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, false);
         assert!(
             !line_at(&lines, 0).background_is_panel,
             "band must be semantic so flat_background keeps it"
@@ -1559,14 +1567,18 @@ mod tests {
     // ── Narrow-terminal collapse budget ─────────────────────────────
 
     /// Build a collapsed `BlockContext` at `width`.
-    fn collapsed_ctx(width: u16) -> BlockContext {
+    fn collapsed_ctx(width: u16, narrow: bool) -> BlockContext {
         BlockContext {
             mode: DisplayMode::Collapsed,
             is_running: false,
             width,
             raw: false,
             max_lines: None,
-            appearance: AppearanceConfig::default(),
+            appearance: if narrow {
+                phone_appearance()
+            } else {
+                AppearanceConfig::default()
+            },
             is_selected: false,
             cwd: None,
         }
@@ -1608,7 +1620,7 @@ mod tests {
     fn collapsed_prompt_folds_to_two_lines_at_phone_width() {
         for width in [40u16, 50, 53, 55, 60] {
             let block = UserPromptBlock::new(LONG_PROMPT);
-            let lines = rendered_lines(&block, &collapsed_ctx(width));
+            let lines = rendered_lines(&block, &collapsed_ctx(width, true));
             assert_eq!(
                 lines.len(),
                 COLLAPSED_NARROW_MAX_LINES,
@@ -1633,7 +1645,7 @@ mod tests {
         const ECHO_WIDTH: u16 = 52;
         let block = UserPromptBlock::new(LONG_PROMPT);
         let rows: Vec<String> = block
-            .wrap_prompt_lines(ECHO_WIDTH, Some(2), false, false)
+            .wrap_prompt_lines(ECHO_WIDTH, Some(2), false, false, true)
             .iter()
             .map(|l| line_text(&l.content))
             .collect();
@@ -1651,7 +1663,7 @@ mod tests {
     #[test]
     fn collapsed_last_line_keeps_a_wide_glyph_whole() {
         let block = UserPromptBlock::new("가".repeat(30));
-        let lines = block.wrap_prompt_lines(21, Some(1), false, false);
+        let lines = block.wrap_prompt_lines(21, Some(1), false, false, true);
         assert_eq!(
             line_text(&line_at(&lines, 0).content),
             format!("{} \u{2026}", "가".repeat(9))
@@ -1670,7 +1682,7 @@ mod tests {
             "the premise: the pair measures narrower than it paints"
         );
         let block = UserPromptBlock::new(format!("head\n{}\ntail", pair.repeat(5)));
-        let lines = block.wrap_prompt_lines(10, Some(2), false, false);
+        let lines = block.wrap_prompt_lines(10, Some(2), false, false, true);
         let last = line_text(&line_at(&lines, 1).content);
         assert_eq!(last, format!("{} \u{2026}", pair.repeat(4)));
         assert_eq!(str_display_cells(&last), 10);
@@ -1686,11 +1698,13 @@ mod tests {
         let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}";
         let block = UserPromptBlock::new(format!("head\n{family}ab\nend"));
         assert_eq!(
-            block.wrap_prompt_lines(WIDTH, None, false, false).len(),
+            block
+                .wrap_prompt_lines(WIDTH, None, false, false, true)
+                .len(),
             4,
             "the premise: the wrapper splits the emoji line into two rows"
         );
-        let lines = block.wrap_prompt_lines(WIDTH, Some(2), false, false);
+        let lines = block.wrap_prompt_lines(WIDTH, Some(2), false, false, true);
         let last = &line_at(&lines, 1).content;
         assert_eq!(line_text(last), format!("{family}ab \u{2026}"));
         assert!(
@@ -1714,7 +1728,7 @@ mod tests {
     fn collapsed_last_line_counts_a_tab_as_no_cell() {
         const WIDTH: u16 = 8;
         let block = UserPromptBlock::new("head\n\tABCDEFGH\ntail");
-        let lines = block.wrap_prompt_lines(WIDTH, Some(2), false, false);
+        let lines = block.wrap_prompt_lines(WIDTH, Some(2), false, false, true);
         let last = &line_at(&lines, 1).content;
         assert_eq!(line_text(last), "\tABCDEF \u{2026}");
         let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, WIDTH, 1));
@@ -1736,7 +1750,7 @@ mod tests {
             "C".repeat(40)
         ));
         let rows: Vec<String> = block
-            .wrap_prompt_lines(52, Some(2), false, false)
+            .wrap_prompt_lines(52, Some(2), false, false, true)
             .iter()
             .map(|l| line_text(&l.content))
             .collect();
@@ -1755,22 +1769,36 @@ mod tests {
     fn collapsed_last_line_keeps_a_combining_mark_after_a_token() {
         let _guard = crate::theme::cache::pin_theme();
         let block = UserPromptBlock::with_skill_tokens("head\n/abcd\u{301}z\ntail", vec![5..10]);
-        let lines = block.wrap_prompt_lines(7, Some(2), false, false);
+        let lines = block.wrap_prompt_lines(7, Some(2), false, false, true);
         let last = &line_at(&lines, 1).content;
         assert_eq!(teal_text(last, &Theme::current()), "/abcd");
         assert_eq!(line_text(last), "/abcd\u{301} \u{2026}");
     }
 
-    /// The other half of the contract: widths above the threshold keep the
-    /// three-line budget, so the desktop layout is unchanged.
+    /// Density, not width, decides the budget. A pane without phone density
+    /// keeps the roomy three-line budget whatever it wraps at; the measured
+    /// pinched phone grid (110×82), wrapping at 110 columns, folds to two.
     #[test]
-    fn collapsed_prompt_keeps_three_line_budget_above_threshold() {
-        let block = UserPromptBlock::new(LONG_PROMPT);
-        let lines = rendered_lines(&block, &collapsed_ctx(COLLAPSED_NARROW_TERMINAL_COLS + 1));
+    fn collapsed_budget_follows_the_pane_density() {
+        let block = UserPromptBlock::new(LONG_PROMPT.repeat(2));
+        for width in [40u16, 80] {
+            let lines = rendered_lines(&block, &collapsed_ctx(width, false));
+            assert_eq!(
+                lines.len(),
+                COLLAPSED_MAX_LINES,
+                "without phone density the roomy budget stands at {width} columns: {lines:?}"
+            );
+        }
+
+        let pinched = rendered_lines(&block, &collapsed_ctx(110, true));
         assert_eq!(
-            lines.len(),
-            COLLAPSED_MAX_LINES,
-            "one column past the threshold must keep the roomy budget: {lines:?}"
+            pinched.len(),
+            COLLAPSED_NARROW_MAX_LINES,
+            "the 110×82 phone grid folds to the two-line budget: {pinched:?}"
+        );
+        assert!(
+            pinched[1].ends_with(" \u{2026}"),
+            "the folded second line carries the ellipsis: {pinched:?}"
         );
     }
 
@@ -1779,7 +1807,7 @@ mod tests {
     #[test]
     fn collapsed_prompt_keeps_three_lines_at_desktop_width() {
         let block = UserPromptBlock::new(LONG_PROMPT.repeat(8));
-        let lines = rendered_lines(&block, &collapsed_ctx(120));
+        let lines = rendered_lines(&block, &collapsed_ctx(120, false));
         assert_eq!(
             lines.len(),
             COLLAPSED_MAX_LINES,
@@ -1791,30 +1819,30 @@ mod tests {
         );
     }
 
-    /// The threshold itself is the boundary: `<=` is narrow, `>` is roomy.
+    /// The pane's density flag is the boundary: phone density folds to two, anything else keeps three.
     #[test]
-    fn collapsed_budget_switches_at_the_threshold() {
+    fn collapsed_budget_switches_on_phone_density() {
         assert_eq!(
-            collapsed_max_lines(COLLAPSED_NARROW_TERMINAL_COLS, DisplayMode::Collapsed),
+            collapsed_max_lines(true, DisplayMode::Collapsed),
             Some(COLLAPSED_NARROW_MAX_LINES),
         );
         assert_eq!(
-            collapsed_max_lines(COLLAPSED_NARROW_TERMINAL_COLS + 1, DisplayMode::Collapsed),
+            collapsed_max_lines(false, DisplayMode::Collapsed),
             Some(COLLAPSED_MAX_LINES),
         );
     }
 
-    /// Expanding is not affected by width: a user who asks for the full prompt
+    /// Expanding is not affected by the pane's density: a user who asks for the full prompt
     /// gets it at any pane size.
     #[test]
     fn expanded_prompt_is_unbounded_at_phone_width() {
         assert_eq!(
-            collapsed_max_lines(40, DisplayMode::Expanded),
+            collapsed_max_lines(true, DisplayMode::Expanded),
             None,
             "Expanded must never fold, however narrow the pane"
         );
         let block = UserPromptBlock::new(LONG_PROMPT);
-        let mut ctx = collapsed_ctx(40);
+        let mut ctx = collapsed_ctx(40, true);
         ctx.mode = DisplayMode::Expanded;
         assert!(
             rendered_lines(&block, &ctx).len() > COLLAPSED_NARROW_MAX_LINES,
@@ -1934,7 +1962,7 @@ mod tests {
             "three short rows still fit the three-row desktop budget"
         );
 
-        let lines = rendered_lines(&three, &collapsed_ctx(PHONE_CONTENT_WIDTH));
+        let lines = rendered_lines(&three, &collapsed_ctx(PHONE_CONTENT_WIDTH, true));
         assert_eq!(lines.len(), COLLAPSED_NARROW_MAX_LINES, "{lines:?}");
         assert!(
             lines[1].ends_with(" \u{2026}"),
@@ -1954,14 +1982,23 @@ mod tests {
             "the default config must ask for the arrow, or this test proves nothing"
         );
 
-        let narrow = rendered_lines(&block, &collapsed_ctx(PHONE_CONTENT_WIDTH));
+        let narrow = rendered_lines(&block, &collapsed_ctx(PHONE_CONTENT_WIDTH, true));
         assert_eq!(
             narrow,
             vec!["hello".to_string()],
             "a phone-width echo starts at the text, with no arrow column"
         );
 
-        let desktop = rendered_lines(&block, &collapsed_ctx(80));
+        // The measured pinched phone grid (110×82): the pane is still the phone's, so the wrap
+        // width does not bring the arrow back.
+        let pinched = rendered_lines(&block, &collapsed_ctx(110, true));
+        assert_eq!(
+            pinched,
+            vec!["hello".to_string()],
+            "a pinched phone grid keeps the arrow dropped at 110 columns"
+        );
+
+        let desktop = rendered_lines(&block, &collapsed_ctx(80, false));
         assert_eq!(
             desktop,
             vec![format!("{}hello", crate::glyphs::prompt_arrow())],
@@ -2005,7 +2042,7 @@ mod tests {
         let block = UserPromptBlock::new(words);
         let rows = |max_lines| -> Vec<String> {
             block
-                .wrap_prompt_lines(ECHO_WIDTH, max_lines, true, false)
+                .wrap_prompt_lines(ECHO_WIDTH, max_lines, true, false, true)
                 .iter()
                 .map(|l| line_text(&l.content))
                 .collect()
@@ -2020,7 +2057,7 @@ mod tests {
             "three wrapped rows are past the two-row phone budget"
         );
         assert_eq!(
-            rows(collapsed_max_lines(ECHO_WIDTH, DisplayMode::Collapsed)),
+            rows(collapsed_max_lines(true, DisplayMode::Collapsed)),
             vec![
                 "A".repeat(27),
                 format!("{} {} \u{2026}", "B".repeat(27), "C".repeat(22))
@@ -2056,7 +2093,7 @@ mod tests {
 
         let mut compact = phone_appearance();
         compact.prompt.compact = true;
-        let mut ctx = collapsed_ctx(ECHO_WIDTH);
+        let mut ctx = collapsed_ctx(ECHO_WIDTH, true);
         ctx.appearance = compact.clone();
         assert_eq!(
             rendered_lines(&bash, &ctx).len(),
@@ -2072,11 +2109,11 @@ mod tests {
     #[test]
     fn narrow_band_keeps_meaning_bearing_prefixes() {
         let bash = UserPromptBlock::bash("ls");
-        let lines = rendered_lines(&bash, &collapsed_ctx(PHONE_CONTENT_WIDTH));
+        let lines = rendered_lines(&bash, &collapsed_ctx(PHONE_CONTENT_WIDTH, true));
         assert_eq!(lines, vec!["$ ls".to_string()], "bash prefix survives");
 
         let cron = UserPromptBlock::cron("wake up");
-        let lines = rendered_lines(&cron, &collapsed_ctx(PHONE_CONTENT_WIDTH));
+        let lines = rendered_lines(&cron, &collapsed_ctx(PHONE_CONTENT_WIDTH, true));
         assert_eq!(
             lines,
             vec!["\u{21BB}  wake up".to_string()],

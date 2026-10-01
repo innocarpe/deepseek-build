@@ -3658,12 +3658,12 @@ mod tests {
         assert_eq!(state.scroll_offset(), 2);
     }
 
-    // ── Width-derived prompt fold at push and on resize ────────────
+    // ── Density-derived prompt fold at push and on resize ──────────
 
-    /// The measured iPhone Orca pane is 55 columns. The clock no longer reserves a
-    /// gutter there, so the prompt's content column is ~50 and the collapsed budget
-    /// is two rows: this fixture wraps to three rows at that width, and to two at
-    /// [`DESKTOP_PANE`], where the budget is three.
+    /// The measured iPhone Orca pane is 55 columns, phone density. The clock no longer reserves a
+    /// gutter there, so the prompt's content column is ~50 and the collapsed budget is two rows:
+    /// this fixture wraps to three rows at that width, and to two at [`DESKTOP_PANE`], where the
+    /// pane is not the phone's and the budget is three.
     const PHONE_PANE: u16 = 55;
     /// The narrowest desktop pane observed on the same machine.
     const DESKTOP_PANE: u16 = 80;
@@ -3675,6 +3675,7 @@ mod tests {
     #[test]
     fn prompt_at_phone_width_defaults_to_collapsed() {
         let mut state = ScrollbackState::new();
+        state.set_appearance(phone_appearance(false));
         state.prepare_layout(PHONE_PANE, 20);
         let id = state.push_block(user_block(&phone_overflowing_prompt()));
         assert_eq!(
@@ -3717,6 +3718,8 @@ mod tests {
         // A manual fold is a user gesture: pinned-and-expanded, the shape `fold_selected_impl` produces.
         state.get_by_id_mut(pinned).unwrap().display_mode_pinned = true;
 
+        // The app re-derives the density flag on the same resize (`apply_effective_density`).
+        state.set_appearance(phone_appearance(false));
         state.prepare_layout(PHONE_PANE, 20);
 
         assert_eq!(
@@ -3734,6 +3737,7 @@ mod tests {
     #[test]
     fn resize_wider_unfolds_the_automatic_prompt() {
         let mut state = ScrollbackState::new();
+        state.set_appearance(phone_appearance(false));
         state.prepare_layout(PHONE_PANE, 20);
         let id = state.push_block(user_block(&phone_overflowing_prompt()));
         assert_eq!(
@@ -3741,6 +3745,8 @@ mod tests {
             DisplayMode::Collapsed
         );
 
+        // The app re-derives the density flag on the same resize (`apply_effective_density`).
+        state.set_appearance(AppearanceConfig::default());
         state.prepare_layout(DESKTOP_PANE, 20);
 
         assert_eq!(
@@ -3755,6 +3761,7 @@ mod tests {
     #[test]
     fn prompt_pushed_before_first_frame_folds_at_the_first_width() {
         let mut state = ScrollbackState::new();
+        state.set_appearance(phone_appearance(false));
         let id = state.push_block(user_block(&phone_overflowing_prompt()));
         assert_eq!(
             state.get_by_id(id).unwrap().display_mode,
@@ -3834,6 +3841,8 @@ mod tests {
             DisplayMode::Expanded
         );
         state.prepare_layout(0, 20);
+        // The pane stays phone width, so the app keeps its density flag set (`apply_effective_density`).
+        state.set_appearance(phone_appearance(false));
         state.prepare_layout(PHONE_PANE, 20);
         assert_eq!(
             state.get_by_id(automatic).unwrap().display_mode,
@@ -3859,6 +3868,7 @@ mod tests {
     #[test]
     fn phone_width_prompt_echo_is_two_rows_plus_the_pads() {
         let mut state = ScrollbackState::new();
+        state.set_appearance(phone_appearance(false));
         state.prepare_layout(PHONE_PANE, 20);
         // Longer than the ~100-column fold fixture: three wrapped rows would be the
         // unfolded height, so a cached height of two content rows is the budget, not a short wrap.
@@ -3881,6 +3891,7 @@ mod tests {
     #[test]
     fn offscreen_phone_prompt_estimates_the_padded_band() {
         let mut state = ScrollbackState::new();
+        state.set_appearance(phone_appearance(false));
         state.prepare_layout(PHONE_PANE, 8);
         state.begin_batch();
         state.push_block(user_block(&"x".repeat(200)));

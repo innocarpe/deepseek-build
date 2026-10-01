@@ -657,7 +657,7 @@ fn render_prompt_and_version(
     if pending_hint.is_none()
         && !skip_version
         && layout.version.height > 0
-        && prompt::phone_band(prompt_centered.width)
+        && prompt::phone_band(frame.width, frame.height)
     {
         let footer_area = Rect {
             x: frame.x + 1,
@@ -812,12 +812,9 @@ pub fn render_welcome(
     let top_margin = if phone { 0 } else { v_margin };
     let top_h_margin = if phone { H_MARGIN_COMPACT } else { h_margin };
     // A phone's welcome ends on the same two-row footer as the conversation
-    // view, so it keeps no margin row under it either.
-    let bottom_margin = if prompt::phone_band(area.width) {
-        0
-    } else {
-        v_margin
-    };
+    // view, so it keeps no margin row under it either. Same judgment as `phone`
+    // (and as the composer band): the frame grid, never an inset width.
+    let bottom_margin = if phone { 0 } else { v_margin };
 
     buf.set_style(area, Style::default().bg(theme.bg_base));
 
@@ -994,6 +991,7 @@ fn render_welcome_blocked(
             prompt_widget,
             content_area.width,
             buf.area().width,
+            buf.area().height,
             compact,
             prompt_max_height(&layout_input),
         ));
@@ -1907,6 +1905,7 @@ fn render_welcome_done(
             prompt,
             content_area.width,
             buf.area().width,
+            buf.area().height,
             p.compact,
             prompt_max_height(&layout_input),
         ));
@@ -3006,6 +3005,94 @@ mod tests {
             observed, expected,
             "phone location rows must start at (1,0)"
         );
+    }
+
+    /// The composer band follows the frame grid, not the centered content
+    /// column: the measured phone grids (55×41, 73×53, 110×82) draw the band,
+    /// and the desktop grids keep the box. The stacked welcome's two-row footer
+    /// follows the same judgment — 110×82 is wide enough for the side-by-side
+    /// hero box, which keeps its own version inside the box and paints no
+    /// footer, as before this gate.
+    #[test]
+    fn welcome_composer_and_footer_follow_the_phone_grid() {
+        let _guard = crate::theme::cache::pin_theme();
+        let auth = AuthState::Done;
+        let trust = TrustState::Done;
+        for (width, height, phone, footer) in [
+            (55u16, 41u16, true, true),
+            (73, 53, true, true),
+            (110, 82, true, false),
+            (80, 24, false, false),
+            (120, 40, false, false),
+            (160, 134, false, false),
+        ] {
+            let mut params = render_params(&auth, &trust, None);
+            let flags = [PromptFlag {
+                text: "plan",
+                color: None,
+                bold: false,
+            }];
+            params.flags = &flags;
+            let area = Rect::new(0, 0, width, height);
+            let mut buf = Buffer::empty(area);
+            let mut prompt = PromptWidget::new();
+            let mut picker = PickerState::default();
+            let _ = render_welcome(area, &mut buf, &params, &mut prompt, &mut picker);
+            let rows: Vec<String> = buffer_text(&buf).lines().map(str::to_string).collect();
+            assert_eq!(rows.len(), height as usize);
+            let all_of = |glyph: char| {
+                rows.iter().any(|row| {
+                    row.chars().count() == width as usize && row.chars().all(|c| c == glyph)
+                })
+            };
+            let frame = buffer_text(&buf);
+            if phone {
+                assert!(
+                    all_of('\u{2586}'),
+                    "{width}x{height}: the band composer's top row is a full `▆` row:\n{frame}"
+                );
+                assert!(
+                    all_of('\u{2582}'),
+                    "{width}x{height}: the band composer's bottom divider is a full `▂` row:\n{frame}"
+                );
+                if footer {
+                    let row1 = &rows[height as usize - 2];
+                    assert!(
+                        row1.starts_with(" DeepSeek Build"),
+                        "{width}x{height}: the phone footer's first row starts one column in:\n{frame}"
+                    );
+                    let last = &rows[height as usize - 1];
+                    let last_trimmed = last.trim_end();
+                    assert!(
+                        last_trimmed.ends_with("plan"),
+                        "{width}x{height}: the phone footer's second row ends the frame:\n{frame}"
+                    );
+                    assert_eq!(
+                        last_trimmed.chars().count(),
+                        width as usize - 1,
+                        "{width}x{height}: the footer keeps one column inside the frame's right edge:\n{frame}"
+                    );
+                } else {
+                    assert!(
+                        !rows[height as usize - 1].trim_end().ends_with("plan"),
+                        "{width}x{height}: the hero box keeps its own version, so no phone footer row:\n{frame}"
+                    );
+                }
+            } else {
+                assert!(
+                    !all_of('\u{2586}') && !all_of('\u{2582}'),
+                    "{width}x{height}: a desktop frame keeps the box composer:\n{frame}"
+                );
+                assert!(
+                    frame.contains('\u{256d}'),
+                    "{width}x{height}: the box composer's top border:\n{frame}"
+                );
+                assert!(
+                    rows[height as usize - 1].trim().is_empty(),
+                    "{width}x{height}: the desktop keeps its blank margin row under the version badge:\n{frame}"
+                );
+            }
+        }
     }
 
     #[test]

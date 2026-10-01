@@ -1738,6 +1738,10 @@ mod tests {
     fn phone_width_collapsed_echo_paints_the_padded_band() {
         let area = Rect::new(0, 0, 55, 41);
         let mut state = ScrollbackState::new();
+        // The app derives the pane's density flag from the terminal grid; a 55-column pane is the phone's.
+        let mut appearance = AppearanceConfig::default();
+        appearance.scrollback.layout.narrow = true;
+        state.set_appearance(appearance);
         state.prepare_layout(area.width, area.height);
         state.push_block(RenderBlock::user_prompt("x".repeat(200)));
         let model = render_model(&mut state, area);

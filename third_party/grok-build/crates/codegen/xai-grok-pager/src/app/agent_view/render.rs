@@ -21,9 +21,7 @@ use crate::views::agent::AgentViewLayoutParams;
 use crate::views::btw_overlay::BTW_OVERLAY_ENTRY_IDX;
 use crate::views::modal;
 use crate::views::plan_approval_view::PlanApprovalFocus;
-use crate::views::prompt_widget::{
-    PromptBg, PromptFlag, PromptInfo, PromptStyle, is_narrow_label_width, mode_flags,
-};
+use crate::views::prompt_widget::{PromptBg, PromptFlag, PromptInfo, PromptStyle, mode_flags};
 use crate::views::question_view::QUESTION_VIEW_HPAD;
 use crate::views::shortcuts_bar::{HintItem, PendingHint, ShortcutsBar};
 use crate::views::{agent, turn_status};
@@ -815,10 +813,14 @@ impl AgentView {
         // `inner_width` they asked for a row before the drawn text had filled one. The blocking cards draw into that
         // same row, so their bodies and the question list's scroll region are measured at it too.
         let prompt_width = AgentViewLayout::prompt_width(area, layout_cfg, compact);
-        // Phone-width panes keep a one-row prompt info block (a plain divider) and
-        // fold the model onto the DeepSeek status row. The shortcut-hint row stays
-        // dropped, so the bottom stack is one row shorter than the desktop stack.
-        let narrow = is_narrow_label_width(inner_width);
+        // The pane's phone density — the same `layout.narrow` the composer band, the
+        // bottom stack's rows and the footer read — keeps a one-row prompt info block
+        // (a plain divider), folds the model onto the DeepSeek status row and drops
+        // the shortcut-hint row, so the bottom stack is one row shorter than the
+        // desktop stack. A 60-column width check here left a pinched phone grid
+        // (73×53, 110×82 measured) with the desktop hint row and cost chips under a
+        // phone composer band.
+        let narrow = layout_cfg.narrow;
         let banner_height = if banner_height > 0 {
             if let Some(tip_text) = tip {
                 if self.session_banner_active {

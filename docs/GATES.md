@@ -41,6 +41,52 @@
 **Ultragoal (product):** **`owner-bar-5x`** → tag **`v5.0.0`** ([ULTRAGOAL_CHAIN.md](product/ULTRAGOAL_CHAIN.md) · [OWNER_BAR_5X_GOALS.md](product/OWNER_BAR_5X_GOALS.md)).  
 Do **not** resume `heart-3x` / `fleet-4x` as product SSOT. Gate: `./scripts/test-owner-bar.sh` (RED until fusion).
 
+## Verification — phone density gates follow the pane grid (2026-10-01)
+
+The phone-only render gates now read the pane's derived density
+(`LayoutConfig.narrow` from `views::agent::effective_narrow`) instead of
+comparing a width against the 60-column threshold. On a pinched phone grid
+(73x53, 110x82 measured at smaller text) the welcome composer is the band and,
+where the stacked layout runs, the frame ends on its two-row footer; a
+collapsed prompt echo folds to two lines; a same-cell tap expands or folds it;
+the decorative `❯` stays dropped in the echo and the composer; and the
+conversation's bottom stack is the phone's (no shortcut-hint row, no desktop
+cost chips) with the two-row footer in that area. Wrap widths, box
+measurements, the clock and every pane the density flag calls desktop keep the
+real column count and today's box composer, three-line fold, double-click,
+hint row and `❯`.
+
+Buffer evidence on the final tree:
+
+| Frame / test | Pre-fix | After |
+|---|---|---|
+| Welcome 73x53 (`welcome_composer_and_footer_follow_the_phone_grid`) | Box composer (`╭ ... ╰ ... ╯`, label on the divider), no phone footer | Full `▆` / `▂` band rows and the two-row footer ending the frame |
+| Welcome 55x41 | Band composer | Band composer (unchanged) |
+| Welcome 110x82 | Box composer: `phone_band` read the centered content column | Band composer; the side-by-side hero box keeps its own version, as before |
+| Welcome 80x24 / 120x40 / 160x134 | Box composer, blank margin row | Identical |
+| Conversation 73x53 / 110x82 (`phone_pane_ends_on_a_two_row_footer_and_drops_the_hint_row`) | Band composer, then the shortcut-hint row and the desktop cost chips; no footer | Band composer ends on the two-row footer; no hint row |
+| Echo + same-cell tap 110x82 (`pinched_phone_grid_keeps_the_two_line_echo_and_the_same_cell_tap`) | Three-row fold at the 107-column wrap; single click stayed a selection | Two-line fold; one tap expands, a second folds |
+
+The welcome regression run against the pre-fix renderer reported
+`0 passed; 1 failed` with the box-composer frame above; the final run passes.
+The extended whole-view test failed against the pre-fix bottom stack on
+exactly the hint row / missing footer it pins. Fixtures that model a phone
+pane now set `layout.narrow` themselves (the app derives it in
+`AppView::apply_effective_density`), and the whole-view footer test pins the
+theme (`theme::cache::pin_theme`): its band glyphs need concrete colours, and
+this tool shell's `TERM=dumb` resolves the ambient theme to `Reset`, which
+falls the composer back to the box.
+
+Local commands through the worktree-pinned vendored wrapper:
+
+- `./scripts/vendor-cargo.sh fmt -p xai-grok-pager` — applied; `git diff` shows no unrelated reformat.
+- `./scripts/vendor-cargo.sh clippy -p xai-grok-pager -- -D warnings` — passed (`rc=0`).
+- `./scripts/vendor-cargo.sh test -p xai-grok-pager --lib --no-fail-fast -- --test-threads 4` — `10302 passed; 9 failed; 5 ignored`. The nine are the recorded host-environment set (invocation name `dsb` vs `grok`: `app::screen_mode_relaunch` and the four `app::tests::print_exit_resume_hint_*`; `GROK_SESSION_ID` present in the shell: `notifications::hooks::tests::omits_session_id_when_none`; the sandbox: `app::session_title_resolve::tests::pin_ambiguous_title_errors_before_sandbox`; macOS key labels: the two `views::dashboard::render::tests::render_footer_multiline_*`), unchanged from the pre-change baseline.
+- `./scripts/vendor-cargo.sh test -p xai-grok-pager-minimal --lib -- --test-threads 1` — `97 passed; 0 failed`. The same suite under the default thread count failed `commit::tests::committed_edit_keeps_diff_line_backgrounds` (a theme-cache race between parallel tests); it passes alone and serially.
+- `./scripts/vendor-cargo.sh test -p xai-grok-pager-pty-harness --test scroll_matrix_curated` — `4 passed; 5 failed` (`c1_auto_g3_flood_speed100`, `c1_auto_g4_jerk_xfail`, `c1_auto_g8_midstream`, `c2_auto_g3_flood_speed100`, `c5_tmux_g9b`, all on the `I-CADENCE` flush-spacing invariant). The same command on the stashed baseline tree reproduced the same five cells, so they are this host's pre-existing pty-timing failures.
+
+No G0–G6 gate status changes here.
+
 ## Verification — welcome phone top-bar margins (2026-09-29)
 
 The welcome location row now uses the conversation's

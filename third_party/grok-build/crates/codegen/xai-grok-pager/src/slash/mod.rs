@@ -1169,8 +1169,22 @@ impl SlashController {
             .iter()
             .map(|t| trigger_owns_typed_name(t, trimmed))
             .collect();
+        // Deep Code CLI bc973c7 (v0.4.2): a name that starts with the query
+        // outranks one that only contains it. `/mo` must offer `/model` before
+        // a skill such as `commondao`, even when that skill was used recently.
+        // Score, exactness, MRU, and builtin stay as tiebreaks inside each band.
+        // Case follows `command_prefix_matches_smart` so the band agrees with
+        // the ghost text and nucleo's smart-case hits.
+        let prefix_match: Vec<bool> = rows
+            .iter()
+            .map(|row| command_prefix_matches_smart(row.command_name(), trimmed))
+            .collect();
         deduped.sort_by(|a, b| {
-            b.0.cmp(&a.0)
+            let a_prefix = prefix_match.get(a.1).copied().unwrap_or(false);
+            let b_prefix = prefix_match.get(b.1).copied().unwrap_or(false);
+            b_prefix
+                .cmp(&a_prefix)
+                .then_with(|| b.0.cmp(&a.0))
                 .then_with(|| owns_typed_name.get(b.1).cmp(&owns_typed_name.get(a.1)))
                 .then_with(|| mru_scores.get(b.1).cmp(&mru_scores.get(a.1)))
                 .then_with(|| {
@@ -1874,6 +1888,40 @@ mod tests {
         assert!(
             snapshot.matches.iter().any(|row| row.display == "/model"),
             "expected /model in matches"
+        );
+    }
+
+    /// Deep Code `filterSlashCommands` (bc973c7): prefix matches precede
+    /// substring matches. A recently used skill whose name merely contains
+    /// the query must not sit above a command the query starts.
+    #[test]
+    fn prefix_match_outranks_recent_substring_skill() {
+        let mut ctrl = SlashController::with_builtins(std::path::PathBuf::from("."));
+        ctrl.registry_mut()
+            .set_acp_commands(&[skill_cmd("commondao", "user")]);
+        ctrl.record_command_use("commondao", "commondao");
+
+        let state = SlashState::default();
+        let models = ModelState::default();
+        ctrl.refresh(&state, "/mo", 3, &models);
+
+        let names: Vec<&str> = state
+            .snapshot()
+            .matches
+            .iter()
+            .map(|row| row.display.as_str())
+            .collect();
+        let model = names
+            .iter()
+            .position(|name| *name == "/model")
+            .expect("builtin /model");
+        let skill = names
+            .iter()
+            .position(|name| *name == "/commondao")
+            .expect("skill /commondao");
+        assert!(
+            model < skill,
+            "prefix /model must rank before substring /commondao, got {names:?}"
         );
     }
 

@@ -143,6 +143,7 @@ use std::time::Instant;
 mod child_action_filter;
 mod cta;
 mod elicitation;
+pub(crate) use elicitation::UnansweredElicitation;
 mod input;
 pub(crate) use input::ExternalPromptEditorAccess;
 mod interactions;
@@ -178,6 +179,8 @@ mod dock_input_tests;
 mod header_tests;
 #[cfg(test)]
 mod jump_to_bottom_tests;
+#[cfg(test)]
+mod model_notice_tests;
 #[cfg(test)]
 mod phone_bottom_tests;
 mod rewind;
@@ -1459,6 +1462,8 @@ pub struct AgentView {
     /// Set by `dispatch_fork_resolved`; stores the parent session id and worktree flag so the banner can be formatted with the child's session id (not known until `SessionLoaded`). `None` for non-fork sessions.
     /// Cleared on all failure paths: `SessionLoadFailed`, `WorktreeSessionFailed` (non-orphan branch), and `ForkSessionFailed`.
     pub(crate) pending_fork_banner: Option<PendingForkBanner>,
+    /// Set when `session/load` failed, so this tab has no session and a plain prompt is refused with a notice.
+    pub(crate) load_failed: bool,
     /// Entry ID of the "Loading session ..." placeholder block pushed by `dispatch_load_session_inner`. Cleared by the `SessionLoaded`
     /// handler so the placeholder doesn't linger on screen when the loaded session has no replay content.
     pub(crate) loading_placeholder_id: Option<EntryId>,

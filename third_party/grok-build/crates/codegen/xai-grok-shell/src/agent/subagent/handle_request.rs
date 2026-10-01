@@ -1468,6 +1468,7 @@ pub(crate) async fn run_shell_child(
                 model_id: effective_model_id.clone(),
                 agent: crate::session::persistence::PersistedAgent::from(&definition),
                 reasoning_effort: Some(effective_sampling_config.reasoning_effort),
+                context_window: None,
             });
     }
     crate::waterfall::mark(&request.id, crate::waterfall::stage::SESSION_SPAWN);
@@ -1532,6 +1533,10 @@ pub(crate) async fn run_shell_child(
         None,
         false,
         false,
+        ctx.agent_config
+            .as_ref()
+            .map(crate::session::file_acceleration::settings)
+            .unwrap_or_default(),
         std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
         definition,
         subagent_session_default_agent_profile,

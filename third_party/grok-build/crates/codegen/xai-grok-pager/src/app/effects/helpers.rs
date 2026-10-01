@@ -276,10 +276,8 @@ pub(super) fn format_acp_error(err: &acp::Error, is_api_key_auth: bool) -> Strin
             &format_rate_limited_user_message(detail.as_deref(), is_api_key_auth),
         );
     }
-    if err.code == acp::ErrorCode::InvalidParams && let Some(data) = &err.data
-        && let Some(msg) = error_detail_from_data(data) && !msg.is_empty()
-    {
-        return sanitize_user_error(&msg);
+    if let Some(detail) = invalid_params_detail(err) {
+        return sanitize_user_error(&detail);
     }
     let raw = error_data_detail(err)
         .filter(|s| !s.is_empty())
@@ -290,6 +288,14 @@ pub(super) fn format_acp_error(err: &acp::Error, is_api_key_auth: bool) -> Strin
             &raw,
         )
         .message()
+}
+/// The sentence an invalid-params error carries for the user, if any
+pub(super) fn invalid_params_detail(err: &acp::Error) -> Option<String> {
+    if err.code != acp::ErrorCode::InvalidParams {
+        return None;
+    }
+    let detail = err.data.as_ref().and_then(error_detail_from_data)?;
+    (!detail.is_empty()).then_some(detail)
 }
 /// Detail string carried in the error's `data` payload, if any.
 fn error_data_detail(err: &acp::Error) -> Option<String> {

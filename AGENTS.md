@@ -91,6 +91,11 @@ rule is about the sentences a session writes itself.
 artifacts keep the repository's conventions: code, comments, commit messages, PR
 bodies and the docs tree stay English.
 
+**Natural Korean, not English-shaped Korean.** A sentence that keeps English's
+words in Korean order reads as a translation and stops the reader: `완료 조건이 섰습니다`
+("the done condition holds") and `지금 닫습니다` ("close now") are not Korean. Say what a
+Korean writer would say — `완료 조건을 다 채웠습니다`, `이번 회차는 여기서 마무리하겠습니다`.
+
 Measured 2026-09-25 over this repository's session logs (primary sessions only).
 Of the sessions in this tree that had a standing Korean rule in context, 10 of 12
 answered ≥99% of their text turns in Korean (the other two: 67%, 83%). Sessions

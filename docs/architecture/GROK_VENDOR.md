@@ -226,7 +226,10 @@ script treats a missing directory the same as an empty one and exits 0.
 
 Sync 2 (ledger: `1.0.0` → `1.0.41`) measured **0 of 13** patches applying.
 `844c7be` deleted `0001`–`0013` and moved that overlay in with a three-way
-merge. `0014` (OSC 9999 agent status) was the one file left in the directory.
+merge. Sync 3 (`1.0.41` → `1.0.45`, 2026-10-01) used the same method: the
+directory was still empty, so the refresh was a three-way merge, not a patch
+re-apply. The pin after that sync is `SOURCE_REV`
+`559751fdcec02d413e4c57c8832ab275e4f44980`. `0014` (OSC 9999 agent status) was the one file left in the directory.
 On parent `0ff7d8c` it applies neither way:
 
 | Direction | Result |

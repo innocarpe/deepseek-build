@@ -795,7 +795,7 @@ pub fn tool_definitions_with_options(
             function: ToolFunction {
                 name: "bash".into(),
                 description: Some(
-                    "Run a shell command. Declare side_effects scopes; classifier is authoritative (spec 90). Execution requires --bash-execute or --dogfood.".into(),
+                    "Run a shell command. Declare side_effects scopes; classifier is authoritative (spec 90). Execution requires --bash-execute or --dogfood. Before any delete or move, verify that the resolved absolute target path is the intended one; never run it against a computed path you have not checked. An unset variable expands to an empty string, so guard variables in such paths with ${VAR:?}.".into(),
                 ),
                 parameters: Some(json!({
                     "type": "object",
@@ -1008,6 +1008,20 @@ mod tests {
         let v: Value = serde_json::from_str(&resp.content).unwrap();
         assert_eq!(v["dry_run"], false);
         assert!(v["stdout"].as_str().unwrap().contains("dogfood-ok"));
+    }
+
+    #[test]
+    fn bash_description_guards_unchecked_delete_and_unset_vars() {
+        let defs = tool_definitions();
+        let bash = defs
+            .iter()
+            .find(|d| d.function.name == "bash")
+            .expect("bash tool");
+        let description = bash.function.description.as_deref().unwrap_or("");
+        assert!(description.contains(
+            "Before any delete or move, verify that the resolved absolute target path is the intended one"
+        ));
+        assert!(description.contains("${VAR:?}"));
     }
 
     #[test]

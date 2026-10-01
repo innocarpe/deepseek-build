@@ -567,8 +567,7 @@ fn render_minimal_status(
         render_idle_hint(buf, area, theme);
         return;
     }
-    let is_pending_user_input =
-        !agent.permission_queue.is_empty() || minimal_api::question_view(agent).is_some();
+    let is_pending_user_input = minimal_api::is_awaiting_user_answer(agent);
     let goal_verifying = agent
         .goal_state
         .as_ref()

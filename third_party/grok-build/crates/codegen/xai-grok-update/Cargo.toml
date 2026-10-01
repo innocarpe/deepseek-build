@@ -20,8 +20,9 @@ tokio = { workspace = true, features = ["fs", "process", "io-util", "macros", "t
 tracing = { workspace = true }
 url = { workspace = true }
 xai-dirs = { workspace = true }
+xai-grok-cloud-config = { workspace = true }
 xai-grok-login = { workspace = true }
-xai-grok-shell = { workspace = true }
+xai-grok-shell = { path = "../xai-grok-shell", default-features = false }
 xai-grok-telemetry = { workspace = true }
 xai-grok-tools = { workspace = true }
 xai-grok-version = { workspace = true }
@@ -35,6 +36,10 @@ zip = { version = "3", default-features = false, features = ["deflate-flate2"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = { workspace = true }
+
+[features]
+default = ["xai-grok-shell/default"]
+default-bazel = []
 
 [dev-dependencies]
 semver = { workspace = true }

@@ -1618,11 +1618,11 @@ impl TasksPane {
     }
 }
 #[cfg(test)]
-#[path = "tasks_pane_status_tests.rs"]
-mod status_tests;
-#[cfg(test)]
 #[path = "tasks_pane_overlay_bg_tests.rs"]
 mod overlay_bg_tests;
+#[cfg(test)]
+#[path = "tasks_pane_status_tests.rs"]
+mod status_tests;
 
 #[cfg(test)]
 mod tests {

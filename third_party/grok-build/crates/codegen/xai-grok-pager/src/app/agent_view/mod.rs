@@ -180,9 +180,9 @@ mod header_tests;
 #[cfg(test)]
 mod jump_to_bottom_tests;
 #[cfg(test)]
-mod phone_bottom_tests;
-#[cfg(test)]
 mod model_notice_tests;
+#[cfg(test)]
+mod phone_bottom_tests;
 mod rewind;
 mod role;
 pub(crate) use role::{AgentRole, ChildLink, ComposerRoute, ViewSurface};

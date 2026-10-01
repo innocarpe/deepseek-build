@@ -43,6 +43,24 @@ When tools are used under thinking mode (ADR 0005): preserve `reasoning_content`
 - Max repair attempts per tool call: **1** auto-repair then error.  
 - Log `repair_applied=true` + original snippet (truncated, redacted) at debug level only.
 
+### 1.5 Visible synthesis after a tool round
+
+DeepSeek thinking mode can finish a call with `finish_reason=stop`, empty
+`content`, and the answer only in `reasoning_content`. That stop is accepted
+when no tool result is still waiting for visible text. Another call would
+start another thinking round after the model already signalled completion.
+
+A tool result with no visible assistant text after it is the exception
+(Reasonix `285272440f`). The loop appends one host user message to the
+volatile tail and calls the model once more:
+
+> The previous assistant response finished without any visible answer text. Continue the same task now and provide a concise visible answer to the user. Do not send reasoning only.
+
+A second reasoning-only stop after that message is accepted. A later tool
+round earns one new retry. The message stays in the volatile tail, so the
+stable prefix does not move. A reasoning-only stop before any tool call in
+the turn is not retried.
+
 ## 2. Non-goals
 
 - LLM-based “guess the args” second model call in M1  
@@ -64,6 +82,9 @@ When tools are used under thinking mode (ADR 0005): preserve `reasoning_content`
 | `repair_does_not_invent_required` | error, no dispatch |
 | `pairing_inserts_interrupted` | load fixture with hole → repaired transcript |
 | `no_dispatch_on_invalid` | mock executor not called |
+| `synthesis_retry_once_after_tool_round` | tool result, then reasoning-only stop → one retry carrying the §1.5 sentence; the next visible answer is the turn outcome |
+| `second_reasoning_only_stop_accepted` | the same shape with a second reasoning-only stop → still one retry, then the turn ends |
+| `reasoning_only_stop_without_tools_not_retried` | reasoning-only stop and no tool call → one provider call |
 
 ## 5. Implementation notes
 

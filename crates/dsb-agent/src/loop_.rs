@@ -10,7 +10,7 @@ use dsb_context::{
 };
 use dsb_provider_deepseek::ReasoningEffort;
 use dsb_provider_deepseek::{
-    ChatMessage, ChatRequestBuilder, Client, MODEL_PRO, ModelId, ProviderError, StreamEvent,
+    ChatMessage, ChatRequestBuilder, Client, MODEL_PRO, ModelId, ProviderError, Role, StreamEvent,
     ThinkingMode, ToolCall, ToolDefinition,
 };
 use dsb_tools::{
@@ -162,6 +162,35 @@ pub struct TurnOutcome {
     pub route: RouteDecision,
     pub model_used: String,
     pub tool_rounds: u32,
+}
+
+/// Host tail message after a tool round that stopped with no visible answer.
+/// Spec 15 §1.5. Kept byte-stable so tests and the model see one sentence.
+const VISIBLE_ANSWER_RETRY: &str = "The previous assistant response finished without any visible answer text. Continue the same task now and provide a concise visible answer to the user. Do not send reasoning only.";
+
+fn has_visible_final_answer(text: &str) -> bool {
+    !text.trim().is_empty()
+}
+
+/// A tool result is still waiting when the transcript, walked from the end,
+/// hits a tool message before any assistant message with visible text.
+fn silent_since_last_tool_round(messages: &[ChatMessage]) -> bool {
+    for message in messages.iter().rev() {
+        match message.role {
+            Role::Tool => return true,
+            Role::Assistant => {
+                if message
+                    .content
+                    .as_deref()
+                    .is_some_and(has_visible_final_answer)
+                {
+                    return false;
+                }
+            }
+            Role::System | Role::User => {}
+        }
+    }
+    false
 }
 
 /// Session agent holding stable prefix + volatile transcript.
@@ -378,6 +407,9 @@ impl Agent {
         self.tail.push_user(user_text);
 
         let mut tool_rounds = 0u32;
+        // One visible-answer retry per tool round (spec 15 §1.5). Reset when
+        // a tool round actually runs, so a later round can owe its own.
+        let mut synthesis_retries = 0u32;
         let mut last_route = route.clone();
         // Initialized before loop; always overwritten by the first successful stream.
         #[allow(unused_assignments)]
@@ -476,10 +508,27 @@ impl Agent {
             ));
 
             if tool_calls.is_empty() {
+                // Spec 15 §1.5: a reasoning-only stop is the model's completion
+                // signal and is not retried — except when a tool result still
+                // has no visible text after it. That case gets one more call.
+                if !has_visible_final_answer(&last_content)
+                    && tool_rounds > 0
+                    && synthesis_retries == 0
+                    && silent_since_last_tool_round(&self.tail.messages)
+                {
+                    synthesis_retries = 1;
+                    on_event(TurnEvent::Warning(
+                        "No visible answer was produced; asking the assistant to respond again."
+                            .into(),
+                    ));
+                    self.tail.push_user(VISIBLE_ANSWER_RETRY);
+                    continue;
+                }
                 break;
             }
 
             tool_rounds += 1;
+            synthesis_retries = 0;
             if tool_rounds > self.config.max_tool_rounds {
                 on_event(TurnEvent::Warning(
                     "max tool rounds reached; stopping".into(),
@@ -1291,6 +1340,175 @@ mod tests {
             lines.first().map(String::as_str),
             Some("cache_session=hit=80,miss=20,rate=80,reported=1,unreported=1"),
             "the resumed session continues the count rather than restarting it"
+        );
+    }
+
+    fn sse(chunks: &[serde_json::Value]) -> String {
+        let mut body = String::new();
+        for chunk in chunks {
+            body.push_str("data: ");
+            body.push_str(&chunk.to_string());
+            body.push_str("\n\n");
+        }
+        body.push_str("data: [DONE]\n\n");
+        body
+    }
+
+    fn tool_round_body() -> String {
+        sse(&[
+            serde_json::json!({
+                "model": "deepseek-v4-flash",
+                "choices": [{ "delta": {
+                    "reasoning_content": "read the file",
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call-1",
+                        "type": "function",
+                        "function": { "name": "not_a_tool", "arguments": "{}" }
+                    }]
+                }}]
+            }),
+            serde_json::json!({
+                "choices": [{ "delta": {}, "finish_reason": "tool_calls" }]
+            }),
+        ])
+    }
+
+    fn reasoning_stop_body(text: &str) -> String {
+        sse(&[serde_json::json!({
+            "model": "deepseek-v4-flash",
+            "choices": [{
+                "delta": { "reasoning_content": text },
+                "finish_reason": "stop"
+            }]
+        })])
+    }
+
+    fn visible_body(text: &str) -> String {
+        sse(&[serde_json::json!({
+            "model": "deepseek-v4-flash",
+            "choices": [{
+                "delta": { "content": text },
+                "finish_reason": "stop"
+            }]
+        })])
+    }
+
+    struct ScriptedSse {
+        n: std::sync::atomic::AtomicUsize,
+        bodies: Vec<String>,
+    }
+
+    impl wiremock::Respond for ScriptedSse {
+        fn respond(&self, _: &wiremock::Request) -> ResponseTemplate {
+            let i = self.n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let body = self
+                .bodies
+                .get(i)
+                .unwrap_or_else(|| self.bodies.last().expect("script"));
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(body.clone())
+        }
+    }
+
+    async fn scripted_agent(bodies: Vec<String>) -> (MockServer, Agent, tempfile::TempDir) {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ScriptedSse {
+                n: std::sync::atomic::AtomicUsize::new(0),
+                bodies,
+            })
+            .mount(&server)
+            .await;
+        let client =
+            Arc::new(Client::new(ClientConfig::new("k").with_base_url(server.uri())).unwrap());
+        let dir = tempdir().unwrap();
+        let agent = Agent::new(
+            client,
+            AgentConfig {
+                workspace_root: dir.path().to_path_buf(),
+                tools: Vec::new(),
+                discover_skills: false,
+                show_model: false,
+                ..AgentConfig::default()
+            },
+        )
+        .unwrap();
+        (server, agent, dir)
+    }
+
+    fn requests_with_retry(requests: &[wiremock::Request]) -> usize {
+        requests
+            .iter()
+            .filter(|r| String::from_utf8_lossy(&r.body).contains(VISIBLE_ANSWER_RETRY))
+            .count()
+    }
+
+    #[tokio::test]
+    async fn synthesis_retry_once_after_tool_round() {
+        let (server, mut agent, _dir) = scripted_agent(vec![
+            tool_round_body(),
+            reasoning_stop_body("I have the file contents; the answer is ready."),
+            visible_body("The file says contents."),
+        ])
+        .await;
+        let epoch = agent.prefix_epoch_short().to_string();
+        let out = agent
+            .run_turn("what does the file say", |_| {})
+            .await
+            .unwrap();
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(
+            requests.len(),
+            3,
+            "tool round + reasoning-only stop + one retry"
+        );
+        assert_eq!(requests_with_retry(&requests), 1);
+        assert_eq!(out.assistant_text, "The file says contents.");
+        assert_eq!(out.tool_rounds, 1);
+        assert_eq!(agent.prefix_epoch_short(), epoch);
+    }
+
+    #[tokio::test]
+    async fn second_reasoning_only_stop_accepted() {
+        let (server, mut agent, _dir) = scripted_agent(vec![
+            tool_round_body(),
+            reasoning_stop_body("done thinking"),
+            reasoning_stop_body("still only thinking"),
+        ])
+        .await;
+        let out = agent
+            .run_turn("what does the file say", |_| {})
+            .await
+            .unwrap();
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(
+            requests.len(),
+            3,
+            "a second reasoning-only stop is not another retry"
+        );
+        assert_eq!(requests_with_retry(&requests), 1);
+        assert!(out.assistant_text.trim().is_empty());
+    }
+
+    #[tokio::test]
+    async fn reasoning_only_stop_without_tools_not_retried() {
+        let (server, mut agent, _dir) =
+            scripted_agent(vec![reasoning_stop_body("the answer is in the reasoning")]).await;
+        let out = agent.run_turn("answer me", |_| {}).await.unwrap();
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(
+            requests.len(),
+            1,
+            "a reasoning-only stop with no tool round is accepted"
+        );
+        assert_eq!(requests_with_retry(&requests), 0);
+        assert!(out.assistant_text.trim().is_empty());
+        assert!(
+            out.reasoning_text
+                .contains("the answer is in the reasoning")
         );
     }
 }

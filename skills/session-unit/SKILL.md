@@ -61,6 +61,14 @@ description ended at the PR.
    - Open the PR with `pr-authoring`, which includes the push. From the
      control tower, use that skill's control-tower mode (`--repo`, `--head`,
      per-command token).
+   - A denial that the publication route only allows registered units is a
+     missing registration, not the end of the unit. Register that unit in the
+     same turn, then call `gh pr create` again as one command:
+     `GH_TOKEN="$(gh auth token --user innocarpe)"`, `--repo innocarpe/deepseek-build`,
+     `--base main`, `--head` this branch, `--body-file` a `.md` file under `/tmp`,
+     and the registered labels. No pipe, no redirection, and no second command
+     in the same line. Do not disable the hook, and do not stop after quoting
+     the denial.
    - Don't hold the PR for local polish: commit → push → PR once the evidence
      exists, then keep polishing on the branch. `grok fmt` and `grok clippy`
      are the longest polls and they run on GitHub — the PR in flight is the

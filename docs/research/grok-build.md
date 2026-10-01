@@ -235,3 +235,20 @@ The merge is statically reviewed and gate-tested; the credential-gated live
 behaviours (hosted xAI features) remain untested by design. Source-only xAI
 auth, telemetry and hosted code remains for compilation, with the local default
 path DeepSeek-seeded and telemetry-off.
+
+## 1.0.41 → 1.0.45 sync record (non-binding)
+
+Measured 2026-10-01. Two upstream commits (`f0e3be11` → `2bdd1d6a`), `SOURCE_REV`
+`036a5d83…` → `559751fd…`, 991 files. Method: three-way merge, 21 conflicts.
+Product SemVer is unchanged.
+
+| Version | What landed in the vendor tree | Verdict |
+| --- | --- | --- |
+| 1.0.42 | Paste/image fixes, minimal-mode resize, stashed-draft caret, plugin hook reload, Auto-review label, `grok worktree create` | Take. Smart-auto served-model label and WinGet self-update are N/A |
+| 1.0.43 | MCP prompts visible in minimal mode | Take |
+| 1.0.44 | Seatbelt sandbox, optional context windows, plan-comment delete, shortcuts search, same-file edits sequenced | Take |
+| 1.0.45 | Custom agents on spawn, MCP token file, model notice banner, subagent wait count | Take |
+
+The DeepSeek overlay (version injection, announcement strip, cache-session log,
+phone layout, hold selection, caret clamp) was re-derived on the conflicts.
+Ledger: `docs/product/UPSTREAM_SYNC_LEDGER.md` Sync 3.

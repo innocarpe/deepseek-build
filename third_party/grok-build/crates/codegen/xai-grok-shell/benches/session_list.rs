@@ -482,49 +482,27 @@ fn write_summary(
 ) {
     let session_dir = cwd_dir.join(session_id);
     fs::create_dir(&session_dir).expect("create session directory");
+    let created_at = active_at - ChronoDuration::minutes(5);
     let summary: Summary = serde_json::from_value(serde_json::json!({
         "info": { "id": session_id, "cwd": cwd },
-        "agent_id": null,
-        "attempt_id": null,
-        "cwd_generation": 0,
-        "previous_cwd": null,
-        "pending_cwd_switch_reminder": null,
-        "cwd_switch_bookkeeping_generation": 0,
         "session_summary": format!("Deterministic benchmark session {ordinal}"),
-        "created_at": active_at - ChronoDuration::minutes(5),
-        "updated_at": active_at,
+        "created_at": created_at.to_rfc3339(),
+        "updated_at": active_at.to_rfc3339(),
         "num_messages": 8 + ordinal % 24,
         "num_chat_messages": 8 + ordinal % 24,
         "current_model_id": "benchmark-model",
-        "parent_session_id": null,
-        "forked_at": null,
-        "collection_id": null,
-        "next_trace_turn": 0,
         "chat_format_version": 1,
-        "prompt_display_cwd": null,
-        "session_kind": null,
-        "fork_context_source": null,
-        "fork_parent_prompt_id": null,
-        "inherited_prefix_len": null,
-        "hidden": null,
-        "source_workspace_dir": null,
         "git_root_dir": cwd,
         "git_remotes": ["git@github.com:xai-org/benchmark.git"],
         "head_commit": format!("{ordinal:040x}"),
         "head_branch": "main",
-        "request_id": null,
-        "grok_home": null,
-        "last_active_at": active_at,
+        "last_active_at": active_at.to_rfc3339(),
         "generated_title": format!("Benchmark session {ordinal}"),
-        "title_is_manual": false,
         "worktree_label": worktree_label,
+        "agent_name": "benchmark-agent",
         "sandbox_profile": "workspace",
-        "reasoning_effort": null,
-        "last_turn_summary": null,
-        "last_turn_summary_prompt_id": null,
-        "last_recap": null
     }))
-    .expect("deserialize summary");
+    .expect("summary fixture");
     let summary_path = session_dir.join("summary.json");
     let bytes = serde_json::to_vec_pretty(&summary).expect("serialize summary");
     fs::write(&summary_path, bytes).expect("write summary");

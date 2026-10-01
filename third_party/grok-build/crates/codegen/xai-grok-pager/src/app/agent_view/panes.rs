@@ -404,7 +404,7 @@ impl AgentView {
                 (
                     DockWatcherId::Monitor(t.task_id.clone()),
                     crate::views::dock::DockRow {
-                        kind: "Monitor".into(),
+                        kind: t.display_kind().into(),
                         description,
                         activity: None,
                         meta: crate::views::dock::fmt_elapsed(elapsed),

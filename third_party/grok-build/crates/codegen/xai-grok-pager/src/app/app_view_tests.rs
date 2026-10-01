@@ -5349,6 +5349,12 @@ fn foldable_prompt_echo() -> String {
 }
 
 fn draw_agent_at(agent: &mut AgentView, width: u16, height: u16) {
+    // The app derives the pane's density flag from the terminal grid
+    // (`AppView::apply_effective_density`); the fixture sets the same value, so these
+    // frames are the frames the pane draws.
+    let mut appearance = agent.scrollback.appearance().clone();
+    appearance.scrollback.layout.narrow = crate::views::agent::effective_narrow(width, height);
+    agent.scrollback.set_appearance(appearance);
     let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, width, height));
     let _ = agent.draw(
         ratatui::layout::Rect::new(0, 0, width, height),
@@ -5673,6 +5679,59 @@ fn phone_prompt_echo_tap_expands_under_word_select() {
     let (body_col, body_row) = selectable_cell(agent, prompt_idx, 2);
     tap_cell(&mut app, body_col, body_row);
     draw_agent_at(app.agents.get_mut(&id).unwrap(), 55, 40);
+    let agent = app.agents.get(&id).unwrap();
+    assert_eq!(prompt_mode(agent, prompt_idx), DisplayMode::Collapsed);
+    assert_eq!(echo_lines(agent, prompt_idx).len(), 2);
+}
+
+/// The measured pinched phone grid (110×82 at 50% text) keeps the phone echo and its
+/// same-cell tap: the pane's density flag is set from the grid, so the echo folds to
+/// two lines and one tap opens it even though its wrap width (110) is past the old
+/// 60-column threshold.
+#[test]
+fn pinched_phone_grid_keeps_the_two_line_echo_and_the_same_cell_tap() {
+    use crate::scrollback::types::DisplayMode;
+    let mut app = test_app_with_agent();
+    let id = super::super::agent::AgentId(0);
+    draw_agent_at(app.agents.get_mut(&id).unwrap(), 110, 82);
+    let prompt_idx = push_foldable_echo(app.agents.get_mut(&id).unwrap());
+    draw_agent_at(app.agents.get_mut(&id).unwrap(), 110, 82);
+
+    let agent = app.agents.get(&id).unwrap();
+    assert_eq!(prompt_mode(agent, prompt_idx), DisplayMode::Collapsed);
+    assert_eq!(
+        echo_lines(agent, prompt_idx).len(),
+        2,
+        "the pinched phone grid folds to the phone's two-line budget: {:?}",
+        echo_lines(agent, prompt_idx)
+    );
+
+    let (col, row) = selectable_cell(agent, prompt_idx, 0);
+    tap_cell(&mut app, col, row);
+    draw_agent_at(app.agents.get_mut(&id).unwrap(), 110, 82);
+    let agent = app.agents.get(&id).unwrap();
+    assert_eq!(
+        prompt_mode(agent, prompt_idx),
+        DisplayMode::Expanded,
+        "one tap opens the echo on the pinched phone grid"
+    );
+    assert!(
+        echo_lines(agent, prompt_idx).len() > 2,
+        "opening the echo shows more than the two-line band"
+    );
+    assert!(!agent.scrollback.is_follow_mode());
+
+    // A second tap on the opened echo folds it back, inside the double-click window.
+    {
+        let agent = app.agents.get_mut(&id).unwrap();
+        let (_, clicked_idx, count) = agent.last_click.expect("the opening tap is counted");
+        assert_eq!(count, 1);
+        agent.last_click = Some((std::time::Instant::now(), clicked_idx, count));
+    }
+    let agent = app.agents.get(&id).unwrap();
+    let (col, row) = selectable_cell(agent, prompt_idx, 0);
+    tap_cell(&mut app, col, row);
+    draw_agent_at(app.agents.get_mut(&id).unwrap(), 110, 82);
     let agent = app.agents.get(&id).unwrap();
     assert_eq!(prompt_mode(agent, prompt_idx), DisplayMode::Collapsed);
     assert_eq!(echo_lines(agent, prompt_idx).len(), 2);

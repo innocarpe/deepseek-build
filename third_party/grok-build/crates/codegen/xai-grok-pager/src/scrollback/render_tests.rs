@@ -3797,6 +3797,9 @@ fn echo_band_text_starts_one_column_after_the_accent_column() {
         let mut appearance = AppearanceConfig::default();
         appearance.scrollback.layout.block_pad_left = left;
         appearance.scrollback.layout.block_pad_right = right;
+        // A 53-column pane is the phone's: the density flag drops the decorative `❯ ` the same way
+        // it does on the measured pane, so the probe reads the text column, not the prefix's.
+        appearance.scrollback.layout.narrow = true;
         state.set_appearance(appearance);
         let viewport = Rect::new(0, 0, 53, 6);
         state.prepare_layout(viewport.width, viewport.height);

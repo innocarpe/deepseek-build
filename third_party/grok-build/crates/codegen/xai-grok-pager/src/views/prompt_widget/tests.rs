@@ -5042,30 +5042,45 @@
         style.vpad_top
     }
 
+    /// The phone-density flag (`PromptStyle::band`, the agent view's `layout.narrow` and the welcome's
+    /// frame-grid judgment) owns the decorative arrow. A pinched phone grid (110×82 measured) is wider
+    /// than the 55-column pane and keeps the dropped arrow.
     #[test]
-    fn phone_width_composer_drops_the_arrow_prefix() {
+    fn phone_density_composer_drops_the_arrow_prefix() {
         let _guard = crate::theme::cache::pin_theme();
-        let style = PromptStyle::default();
+        let desktop = PromptStyle::default();
         assert!(
-            style.show_prefix,
+            desktop.show_prefix,
             "the default style must ask for the arrow, or this test proves nothing"
         );
-
-        // A 55-column pane. The box border already frames the input.
-        let buf = draw_bordered(55, &style);
-        let row = first_text_row(&style);
-        let text_row = buf_text_at(&buf, 0, 55, row);
         assert!(
-            !text_row.contains(crate::glyphs::prompt_arrow()),
-            "a phone-width composer must not paint the arrow: {text_row:?}"
+            !desktop.band,
+            "the default style is not phone density, or this test proves nothing"
         );
+        let phone = PromptStyle {
+            band: true,
+            ..PromptStyle::default()
+        };
 
-        let wide = draw_bordered(179, &style);
-        let wide_row = buf_text_at(&wide, 0, 179, row);
-        assert!(
-            wide_row.contains(crate::glyphs::prompt_arrow()),
-            "desktop keeps the arrow: {wide_row:?}"
-        );
+        let row = first_text_row(&desktop);
+        // A 55-column pane and the pinched 110-column phone grid. The band already frames the input.
+        for width in [55u16, 110] {
+            let buf = draw_bordered(width, &phone);
+            let text_row = buf_text_at(&buf, 0, width, row);
+            assert!(
+                !text_row.contains(crate::glyphs::prompt_arrow()),
+                "a {width}-column phone-density composer must not paint the arrow: {text_row:?}"
+            );
+        }
+
+        for width in [80u16, 179] {
+            let buf = draw_bordered(width, &desktop);
+            let wide_row = buf_text_at(&buf, 0, width, row);
+            assert!(
+                wide_row.contains(crate::glyphs::prompt_arrow()),
+                "a {width}-column desktop keeps the arrow: {wide_row:?}"
+            );
+        }
     }
 
     #[test]

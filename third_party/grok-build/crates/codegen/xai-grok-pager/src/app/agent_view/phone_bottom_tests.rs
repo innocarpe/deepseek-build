@@ -237,20 +237,30 @@ fn assert_footer(
 
 #[test]
 fn phone_pane_ends_on_a_two_row_footer_and_drops_the_hint_row() {
-    let mut agent = phone_agent();
-    let registry = ActionRegistry::defaults();
-    let buf = draw(&mut agent, PHONE_COLS, PHONE_ROWS);
-    eprintln!("phone 55x41 — bottom rows:\n{}", bottom_rows(&buf, 6));
+    // The band's `▆`/`▂` rows need concrete colours: an ambient terminal theme
+    // (`TERM=dumb`) resolves to `Reset` and the composer falls back to the box.
+    let _guard = crate::theme::cache::pin_theme();
+    // The measured phone grids: 55×41 at 100% text and 73×53 / 110×82 as the
+    // pinch zooms text out. All three are the same phone density.
+    for (cols, rows) in [(PHONE_COLS, PHONE_ROWS), (73, 53), (110, 82)] {
+        let mut agent = phone_agent();
+        let registry = ActionRegistry::defaults();
+        let buf = draw(&mut agent, cols, rows);
+        eprintln!(
+            "phone {cols}x{rows} — bottom rows:\n{}",
+            bottom_rows(&buf, 6)
+        );
 
-    assert_footer(
-        &buf,
-        "$15.87",
-        "cache 88%",
-        "DeepSeek V4.1 Flash (max)",
-        Some("4.1k in \u{b7} 0 out"),
-        Some("always-approve"),
-    );
-    assert_no_hint_row(&agent, &registry, &buf);
+        assert_footer(
+            &buf,
+            "$15.87",
+            "cache 88%",
+            "DeepSeek V4.1 Flash (max)",
+            Some("4.1k in \u{b7} 0 out"),
+            Some("always-approve"),
+        );
+        assert_no_hint_row(&agent, &registry, &buf);
+    }
 }
 
 #[test]

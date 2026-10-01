@@ -108,12 +108,12 @@ pub trait BlockContent {
         self.is_foldable()
     }
 
-    /// Rows a collapsed foldable block paints at `content_width`.
+    /// Rows a collapsed foldable block paints on a pane of phone density `narrow`.
     ///
     /// Tool and thinking headers are one row. A user prompt paints its collapse budget, so the off-screen height
     /// estimate has to ask rather than assume one row.
-    fn collapsed_row_budget(&self, content_width: u16) -> u16 {
-        let _ = content_width;
+    fn collapsed_row_budget(&self, narrow: bool) -> u16 {
+        let _ = narrow;
         1
     }
 
@@ -480,8 +480,8 @@ impl BlockContent for RenderBlock {
         delegate_block!(self, is_foldable_at(content_width, appearance))
     }
 
-    fn collapsed_row_budget(&self, content_width: u16) -> u16 {
-        delegate_block!(self, collapsed_row_budget(content_width))
+    fn collapsed_row_budget(&self, narrow: bool) -> u16 {
+        delegate_block!(self, collapsed_row_budget(narrow))
     }
 
     fn next_fold_mode(&self, current: DisplayMode, is_running: bool) -> DisplayMode {

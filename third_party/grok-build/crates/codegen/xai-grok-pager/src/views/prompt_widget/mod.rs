@@ -1671,9 +1671,8 @@ impl PromptWidget {
         max_height: u16,
     ) -> u16 {
         let content_width = self.content_width(area_width, style);
-        // Pane width, not content width. The shared threshold is about the pane (see `shows_prefix`); passing the
-        // content width would drop the prefix on a 60-column chromeless box that the renderer keeps it on.
-        let prefix_w = if self.shows_prefix(style, area_width) {
+        // The phone-density flag owns the prefix (see `shows_prefix`), so this pass and the draw agree on the cell.
+        let prefix_w = if self.shows_prefix(style) {
             PREFIX_WIDTH
         } else {
             0
@@ -1733,21 +1732,23 @@ impl PromptWidget {
         }
     }
 
-    /// Whether the composer draws a prefix cell at `area_width`.
+    /// Whether the composer draws a prefix cell.
     ///
-    /// The decorative `❯` is dropped on a phone-width pane: two columns of a 55-column pane should go to the text, and
+    /// The decorative `❯` is dropped on a phone-density pane: two columns of a 55-column pane should go to the text, and
     /// the box border already frames the input. Meaning-bearing prefixes survive — the history search indicator
     /// (`? `) and caller overrides (bash `! `) say which mode the composer is in.
     ///
-    /// Compared against the pane width, the same quantity the echo's rule uses. A content-width comparison would drop
-    /// the arrow on a 60-column `chrome: false` box and shift mouse hit-testing left by two columns.
-    fn shows_prefix(&self, style: &PromptStyle, area_width: u16) -> bool {
+    /// Density, not width: `PromptStyle::band` is the pane's phone-density flag (the agent view sets it from
+    /// `layout.narrow`, the welcome screen from the frame grid), so a pinched phone grid (110×82 measured) keeps the
+    /// phone composer's two columns. Comparing a width instead would drop the arrow on a 60-column `chrome: false` box
+    /// and shift mouse hit-testing by two columns.
+    fn shows_prefix(&self, style: &PromptStyle) -> bool {
         if !style.show_prefix {
             return false;
         }
         let meaning_bearing = (self.history_search.is_active() && !self.history_search.is_browse())
             || style.prefix_override.is_some();
-        meaning_bearing || area_width > crate::scrollback::blocks::COLLAPSED_NARROW_TERMINAL_COLS
+        meaning_bearing || !style.band
     }
 
     /// Compute the content width inside the chrome (if any).
@@ -3183,9 +3184,8 @@ impl PromptWidget {
         }
 
         // Render prefix on first text row: search icon when history search is active, else ❯.
-        // `shows_prefix` owns the narrow-pane rule so this pass and `desired_height` agree. Both feed it the pane
-        // width (`area`), which is the quantity the shared constant is about.
-        let show_prefix = self.shows_prefix(style, area.width);
+        // `shows_prefix` owns the phone-density rule so this pass and `desired_height` agree on the cell.
+        let show_prefix = self.shows_prefix(style);
         let prefix_w = if show_prefix { PREFIX_WIDTH } else { 0 };
         if show_prefix && text_area_rect.width > PREFIX_WIDTH {
             let (prefix_str, accent_color) =

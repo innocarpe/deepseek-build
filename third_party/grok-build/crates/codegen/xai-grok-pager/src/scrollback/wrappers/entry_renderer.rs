@@ -439,12 +439,14 @@ impl<'a> EntryRenderer<'a> {
             return lines;
         }
         // Collapsed / Truncated foldable entries render their collapse budget, NOT their (often huge) hidden body.
-        // A tool or thought header is one row. A prompt asks [`BlockContent::collapsed_row_budget`]: two rows in a
-        // phone-width pane, three on a wider one. Assuming one row under-counted the phone echo.
+        // A tool or thought header is one row. A prompt asks [`BlockContent::collapsed_row_budget`]: two rows on a
+        // phone-density pane, three on a wider one. Assuming one row under-counted the phone echo.
         let lines = if self.entry.display_mode != DisplayMode::Expanded
             && self.entry.is_foldable_at(content_width, self.appearance())
         {
-            self.entry.block.collapsed_row_budget(content_width)
+            self.entry
+                .block
+                .collapsed_row_budget(self.appearance().scrollback.layout.narrow)
         } else if self.entry.block.is_user_prompt() {
             // `ceil(width / columns)` is only a lower bound on word-boundary wrapping, and a prompt pinned
             // above the viewport keeps this estimate as its header's height: a row short, the header
@@ -2063,14 +2065,18 @@ mod tests {
 
     /// The collapsed phone echo: two content rows plus the pad row each side
     /// (painted as a fraction of a row — see `paint_narrow_pad_row`), and the
-    /// off-screen estimate reserves the same four rows.
+    /// off-screen estimate reserves the same four rows. The density flag owns the
+    /// fold, so the measured pinched grid (110×82) paints the same four rows,
+    /// and the same wrap width without the flag keeps the desktop's third row.
     #[test]
     fn estimate_collapsed_phone_prompt_matches_the_padded_band() {
         let _theme = pin_theme();
         let theme = Theme::current();
         let mut entry = ScrollbackEntry::new(RenderBlock::user_prompt("x".repeat(200)));
         entry.set_display_mode(DisplayMode::Collapsed);
-        let r = EntryRenderer::new(&entry, &theme);
+        let mut phone = AppearanceConfig::default();
+        phone.scrollback.layout.narrow = true;
+        let r = EntryRenderer::new(&entry, &theme).with_appearance(phone.clone());
         assert_eq!(
             r.desired_height(55),
             4,
@@ -2080,6 +2086,21 @@ mod tests {
             r.estimate_height(55),
             r.desired_height(55),
             "the off-screen estimate counts the same padded band"
+        );
+
+        let mut long = ScrollbackEntry::new(RenderBlock::user_prompt("x".repeat(600)));
+        long.set_display_mode(DisplayMode::Collapsed);
+        let pinched = EntryRenderer::new(&long, &theme).with_appearance(phone);
+        assert_eq!(
+            pinched.desired_height(110),
+            4,
+            "the 110×82 phone grid folds at its 110-column wrap: two content rows and the pads"
+        );
+        let desktop = EntryRenderer::new(&long, &theme);
+        assert_eq!(
+            desktop.desired_height(110),
+            5,
+            "without the phone flag the same width keeps the three-row budget"
         );
     }
 

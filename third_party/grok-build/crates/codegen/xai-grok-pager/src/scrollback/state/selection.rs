@@ -269,11 +269,13 @@ impl ScrollbackState {
         }
     }
 
-    /// The prompt's wrap width is in the phone-width band.
+    /// The pane's phone density, which owns the prompt echo's same-cell tap.
+    ///
+    /// The signal is the derived `layout.narrow`, not the wrap width: a pinched phone grid (110×82
+    /// measured) wraps at more than 60 columns and is still the same phone.
     /// `0` means the pane has not been laid out yet, which is not a phone width.
     pub(crate) fn prompt_echo_is_phone_width(&self) -> bool {
-        let width = self.prompt_content_width(self.last_width);
-        width > 0 && width <= crate::scrollback::blocks::COLLAPSED_NARROW_TERMINAL_COLS
+        self.prompt_content_width(self.last_width) > 0 && self.appearance.scrollback.layout.narrow
     }
 
     /// Whether a same-cell tap at `click_row` would expand or fold this phone-width prompt echo.

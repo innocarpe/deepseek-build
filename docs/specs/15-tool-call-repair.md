@@ -14,7 +14,10 @@ Before dispatching any tool:
 1. Parse model tool-call arguments as JSON.  
 2. If parse fails or schema mismatch, run **repair pass** (spec-defined limits).  
 3. If still invalid → **do not execute**; return structured error to model.  
-4. On session load / interrupted turns: ensure every `tool_call` has a matching `tool` result or an explicit `tool_result_interrupted` placeholder before next API call.
+4. On session load, before the next API call, and before a live tool batch returns: every assistant `tool_call` has a matching `tool` result.
+   - A missing result after the assistant message recorded the call is `tool_result_interrupted` with code `TOOL_OUTCOME_UNKNOWN`. The text says the outcome is unknown and not to retry blindly when the operation may have side effects.
+   - A call the live batch never dispatched is `tool_not_started` with code `TOOL_NOT_STARTED`. The text says to retry it if it is still needed.
+   - The batch writes those results before it returns, including when a worker panics or a later call fails.
 
 ### 1.1 Repair pass (allowed)
 
@@ -53,7 +56,8 @@ When tools are used under thinking mode (ADR 0005): preserve `reasoning_content`
 | Case | Behavior |
 |------|----------|
 | Unrepairable JSON | Tool error result to model; turn continues |
-| Missing tool result in transcript | Insert interrupted placeholder; never send unpaired call |
+| Missing tool result in transcript | Insert `TOOL_OUTCOME_UNKNOWN` (`tool_result_interrupted`); never send an unpaired call |
+| Live batch never dispatched the call | Insert `TOOL_NOT_STARTED` before the batch returns |
 | 400 from API about reasoning_content | Surface; do not spin retry without transcript fix |
 
 ## 4. Test plan (automated)

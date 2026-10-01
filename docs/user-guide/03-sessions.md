@@ -19,7 +19,7 @@ Override home with `DEEPSEEK_BUILD_HOME`.
 
 ## Resume by id
 
-Same flag resumes and **repairs tool-call pairs** on load (spec 15): any assistant `tool_calls` without a matching tool result gets a `tool_result_interrupted` placeholder so the next API call is valid.
+Same flag resumes and **repairs tool-call pairs** on load (spec 15): any assistant `tool_calls` without a matching tool result gets a `tool_result_interrupted` placeholder (`TOOL_OUTCOME_UNKNOWN`) so the next API call is valid. The placeholder tells the model the outcome is unknown and not to retry a call that may have side effects without checking.
 
 ```bash
 deepseek-build --session my-feature chat

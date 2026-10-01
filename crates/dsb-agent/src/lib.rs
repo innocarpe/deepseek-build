@@ -15,7 +15,10 @@ mod subagent;
 
 pub use cache_totals::CacheSessionTotals;
 pub use loop_::{Agent, AgentConfig, TurnEvent, TurnOutcome};
-pub use pairing::{InterruptedTool, PAIRING_INTERRUPTED_CONTENT, pair_tool_results};
+pub use pairing::{
+    InterruptedTool, NOT_STARTED_TEXT, OUTCOME_UNKNOWN_TEXT, PAIRING_INTERRUPTED_CONTENT,
+    UnansweredKind, close_unanswered_calls, pair_tool_results, recovery_content,
+};
 pub use parallel::{MAX_PARALLEL_READONLY, is_mutating_tool, partition_indices};
 pub use path_a_turn::{
     PathAToolCall, PathAToolPrep, path_a_default_router, path_a_flash_wire_id, path_a_pro_wire_id,

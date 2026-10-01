@@ -1,5 +1,6 @@
 //! Multi-turn agent loop: routing, repair, tools (spec 45/90).
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -21,7 +22,7 @@ use dsb_tools::{
 use thiserror::Error;
 
 use crate::cache_totals::CacheSessionTotals;
-use crate::pairing::{InterruptedTool, pair_tool_results, tools_in_play};
+use crate::pairing::{InterruptedTool, close_unanswered_calls, pair_tool_results, tools_in_play};
 use crate::repair::{RepairError, repair_tool_arguments};
 use crate::routing::{ModelRouter, Preset, RouteDecision, apply_routing_command};
 use crate::session::{PrefixSnapshot, SessionError, SessionRecord, SessionStore};
@@ -572,10 +573,35 @@ impl Agent {
         if tool_calls.is_empty() {
             return Ok(());
         }
-        if tool_calls.len() == 1 {
-            return self.handle_tool_call(&tool_calls[0], on_event);
+        let mut started = HashSet::new();
+        let outcome = if tool_calls.len() == 1 {
+            started.insert(tool_calls[0].id.clone());
+            self.handle_tool_call(&tool_calls[0], on_event)
+        } else {
+            self.dispatch_tool_calls(tool_calls, on_event, &mut started)
+        };
+        // Record recovery results before this step returns, including when a
+        // worker panicked or a later call failed. A closed turn is not repaired
+        // again until the next send, and an unanswered call makes that send invalid.
+        let recorded = close_unanswered_calls(&mut self.tail.messages, tool_calls, &started);
+        if !recorded.is_empty() {
+            on_event(TurnEvent::Warning(format!(
+                "recorded {} unanswered tool result(s)",
+                recorded.len()
+            )));
         }
+        outcome
+    }
 
+    fn dispatch_tool_calls<F>(
+        &mut self,
+        tool_calls: &[ToolCall],
+        on_event: &mut F,
+        started: &mut HashSet<String>,
+    ) -> Result<(), AgentError>
+    where
+        F: FnMut(TurnEvent),
+    {
         // Repair arguments first (serial; cheap) so classification uses fixed JSON.
         let mut prepared: Vec<(ToolCall, Result<serde_json::Value, String>)> = Vec::new();
         for call in tool_calls {
@@ -633,6 +659,7 @@ impl Agent {
             let mut handles = Vec::new();
             for i in chunk {
                 let (call, repaired) = &prepared[i];
+                started.insert(call.id.clone());
                 let call = call.clone();
                 let repaired = repaired.clone();
                 let workspace = workspace.clone();
@@ -692,15 +719,18 @@ impl Agent {
                 .skip(crate::parallel::MAX_PARALLEL_READONLY)
                 .copied()
             {
+                started.insert(prepared[i].0.id.clone());
                 self.finish_prepared_call(&prepared[i], on_event)?;
             }
         } else {
             for i in ro_idx {
+                started.insert(prepared[i].0.id.clone());
                 self.finish_prepared_call(&prepared[i], on_event)?;
             }
         }
 
         for i in mu_idx {
+            started.insert(prepared[i].0.id.clone());
             self.finish_prepared_call(&prepared[i], on_event)?;
         }
         Ok(())

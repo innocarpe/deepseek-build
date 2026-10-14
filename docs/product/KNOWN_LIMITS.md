@@ -63,7 +63,7 @@ Only items below are treated as **open residual** for vision honesty. Do **not**
 | Topic | Reality | Where |
 |-------|---------|-------|
 | **Interactive TTY worktree create** | Product flag forward + headless no-create + opt-in stamp proven; **interactive create after process `exec`** not asserted as sole green | VC012 residual · carried by VC013 |
-| **Non-darwin packaging / assets** | Prebuilt platform is **`darwin-arm64`** (Apple Silicon macOS) only; other targets deferred | Install / ADR 0009 · [05-npm.md](../user-guide/05-npm.md) |
+| **Platforms beyond darwin-arm64 / linux-x64** | Prebuilt platforms are **`darwin-arm64`** (Apple Silicon macOS) and **`linux-x64`** (x86_64 Linux, Ubuntu 22.04 build base); Windows and other targets deferred | Install / ADR 0009 (Linux x64 amendment) · [05-npm.md](../user-guide/05-npm.md) |
 | **Release publish lane** | A maintainer-approved `vMAJOR.MINOR.PATCH` tag starts the release workflows. `publish-npm.yml` waits for the matching release asset, verifies the packaged version, then publishes automatically with OIDC; no separate manual npm publish is needed. Run [#36422527144](https://github.com/innocarpe/deepseek-build/actions/runs/36422527144) published `v6.8.3` successfully, including its trusted-publishing step. A main merge alone does not publish | ADR 0012 · `.github/workflows/publish-npm.yml` |
 | **Source vs live SemVer drift** | None measured on 2026-09-29: workspace version fields, npm `latest`, and GitHub Latest all report `6.8.3`. Recheck after release changes | Current version check above |
 | **Session usage after process restart** | Published `6.8.3`: the TUI chip was session-cumulative only while the process ran; the actor ledger was not restored. Unreleased `main` after [PR #339](https://github.com/innocarpe/deepseek-build/pull/339) restores cumulative billing and Path A cache hit/miss totals from the session's `usage.json` before new requests. Legacy sessions without saved cache fields retain unknown cache history; existing chat history without `usage.json` is marked incomplete instead of being treated as complete zero totals. Turn-fold cursors remain process-local. This change is merged source, not part of published `v6.8.3` | Vendored `session/usage_file.rs`, `session/persistence.rs`, `session/acp_session_impl/spawn.rs`; PR #339 |
@@ -104,7 +104,7 @@ Binding map: [HEART_3X_SPEC_BINDING.md](../architecture/HEART_3X_SPEC_BINDING.md
 
 - **`4.0.1`+ packaging design:** `npm i -g` downloads **prebuilt** natives from GitHub Releases (ADR 0009) — seconds, no Rust on default path.
 - Source compile only with `DEEPSEEK_BUILD_ALLOW_SOURCE_BUILD=1` or `./scripts/install.sh` (dev).
-- Prebuilt platform: **`darwin-arm64` only** (see residual table).
+- Prebuilt platforms: **`darwin-arm64` and `linux-x64` only** (see residual table).
 - **npm registry publish** is authorized by a maintainer-approved
   `vMAJOR.MINOR.PATCH` tag. That tag starts the release workflows; after the
   matching GitHub Release asset is attached and the packaged-version check

@@ -286,34 +286,34 @@ if [[ "$SKIP_TAG" -eq 0 ]]; then
 fi
 
 # --- 5. wait for prebuilt assets ----------------------------------------------
-SUPPORTED_PLATFORM="darwin-arm64"
-if [[ -z "$PLATFORM" ]]; then
-  PLATFORM="$(node -e "console.log(require('./npm/lib/platform').platformId()||'')" 2>/dev/null || true)"
+# Every released platform ships a tarball (ADR 0009, amended 2026-10-15:
+# darwin-arm64 + linux-x64), so the default wait covers all of them and a
+# release stops until each asset exists. --platform narrows the wait to one
+# platform (recovery); --wait-all is the explicit spelling of the default.
+SUPPORTED_PLATFORMS=(darwin-arm64 linux-x64)
+TARGETS=("${SUPPORTED_PLATFORMS[@]}")
+if [[ "$WAIT_ALL" -eq 0 && -n "$PLATFORM" ]]; then
+  PLATFORM_SUPPORTED=0
+  for p in "${SUPPORTED_PLATFORMS[@]}"; do
+    [[ "$p" == "$PLATFORM" ]] && PLATFORM_SUPPORTED=1
+  done
+  if [[ "$PLATFORM_SUPPORTED" -ne 1 ]]; then
+    echo "error: unsupported platform '$PLATFORM' (supported: ${SUPPORTED_PLATFORMS[*]})" >&2
+    exit 1
+  fi
+  TARGETS=("$PLATFORM")
 fi
-if [[ -z "$PLATFORM" ]]; then
-  PLATFORM="$SUPPORTED_PLATFORM"
-fi
-if [[ "$PLATFORM" != "$SUPPORTED_PLATFORM" ]]; then
-  echo "error: this release harness currently supports $SUPPORTED_PLATFORM only (got $PLATFORM)" >&2
-  exit 1
-fi
-ALL_PLATFORMS=("$SUPPORTED_PLATFORM")
-WAIT_LABEL="$PLATFORM"; [[ "$WAIT_ALL" -eq 1 ]] && WAIT_LABEL="all (${ALL_PLATFORMS[*]})"
-echo "== waiting for v$VERSION release assets ($WAIT_LABEL, timeout ${TIMEOUT}s) =="
+echo "== waiting for v$VERSION release assets (${TARGETS[*]}, timeout ${TIMEOUT}s) =="
 DEADLINE=$(( $(date +%s) + TIMEOUT ))
 ASSET_OK=0
 while [[ $(date +%s) -lt $DEADLINE ]]; do
   PRESENT="$(gh release view "v$VERSION" --json assets --jq '[.assets[].name] | join(",")' 2>/dev/null || true)"
-  if [[ "$WAIT_ALL" -eq 1 ]]; then
-    MISSING=0
-    for p in "${ALL_PLATFORMS[@]}"; do
-      [[ "$PRESENT" == *"deepseek-build-${VERSION}-${p}.tar.gz"* ]] || MISSING=1
-    done
-    [[ "$MISSING" -eq 0 ]] && ASSET_OK=1
-  else
-    [[ "$PRESENT" == *"deepseek-build-${VERSION}-${PLATFORM}.tar.gz"* ]] && ASSET_OK=1
-  fi
-  if [[ "$ASSET_OK" -eq 1 ]]; then
+  MISSING=0
+  for p in "${TARGETS[@]}"; do
+    [[ "$PRESENT" == *"deepseek-build-${VERSION}-${p}.tar.gz"* ]] || MISSING=1
+  done
+  if [[ "$MISSING" -eq 0 ]]; then
+    ASSET_OK=1
     echo "== release assets ready: ${PRESENT} =="
     break
   fi
@@ -321,7 +321,7 @@ while [[ $(date +%s) -lt $DEADLINE ]]; do
   sleep 30
 done
 if [[ "$ASSET_OK" -eq 0 ]]; then
-  echo "error: v$VERSION assets not ready within ${TIMEOUT}s" >&2
+  echo "error: v$VERSION assets not ready within ${TIMEOUT}s (waiting for: ${TARGETS[*]})" >&2
   echo "  resume later with: $0 $VERSION --publish-only" >&2
   exit 1
 fi

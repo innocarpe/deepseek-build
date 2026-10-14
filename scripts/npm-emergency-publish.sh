@@ -59,22 +59,25 @@ for c in npm node gh; do
   command -v "$c" >/dev/null 2>&1 || { echo "error: $c not found on PATH" >&2; exit 1; }
 done
 
-ASSET="deepseek-build-${VERSION}-darwin-arm64.tar.gz"
+SUPPORTED_PLATFORMS="darwin-arm64 linux-x64"
 TAG="v${VERSION}"
 
-echo "== 1/4 preflight: release asset for ${TAG} =="
+echo "== 1/4 preflight: release assets for ${TAG} =="
 ASSETS="$(gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null || true)"
 if [[ -z "$ASSETS" ]]; then
   echo "error: GitHub release ${TAG} has no assets — do not publish a version whose binary is missing" >&2
   exit 1
 fi
-if ! printf '%s\n' "$ASSETS" | grep -qx "$ASSET"; then
-  echo "error: ${ASSET} is not attached to ${TAG}" >&2
-  echo "  present: ${ASSETS}" >&2
-  echo "  Build and attach it first (release skill §Manual asset fallback)." >&2
-  exit 1
-fi
-echo "asset present: ${ASSET}"
+for p in $SUPPORTED_PLATFORMS; do
+  ASSET="deepseek-build-${VERSION}-${p}.tar.gz"
+  if ! printf '%s\n' "$ASSETS" | grep -qx "$ASSET"; then
+    echo "error: ${ASSET} is not attached to ${TAG}" >&2
+    echo "  present: ${ASSETS}" >&2
+    echo "  Build and attach it first (release skill §Manual asset fallback)." >&2
+    exit 1
+  fi
+  echo "asset present: ${ASSET}"
+done
 
 LIVE="$(npm view "@innocarpe/deepseek-build@${VERSION}" version 2>/dev/null || true)"
 if [[ "$LIVE" == "$VERSION" ]]; then

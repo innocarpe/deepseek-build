@@ -260,7 +260,7 @@ function installPrebuilt(opts) {
       ok: false,
       error:
         `unsupported platform ${process.platform}/${process.arch}. ` +
-        `Supported: darwin-arm64 (Apple Silicon macOS only).`,
+        `Supported: darwin-arm64 (Apple Silicon macOS), linux-x64 (x86_64 Linux).`,
     };
   }
 

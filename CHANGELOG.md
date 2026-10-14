@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Prebuilt releases cover `linux-x64` beside `darwin-arm64`. On x86_64 Linux, `npm install -g @innocarpe/deepseek-build` now downloads `deepseek-build-<version>-linux-x64.tar.gz` from the version's GitHub release and installs the same three binaries on the same seconds-long path as Apple Silicon; `deepseek-build --version` and `dsb --version` report the release. The release workflow builds the Linux tarball on an `ubuntu-22.04` runner (the glibc 2.35 floor 22.04-era images need) with the vendored dotslash protoc shim, `publish-npm.yml` refuses to publish until every supported platform's asset exists — executing the `linux-x64` asset on its Linux runner and the `darwin-arm64` asset in the macOS publish job — and the release harness waits for all supported assets by default (`release.sh --platform ID` narrows the wait). The npm wrapper's platform resolver, the packager's allowlist, and the emergency publish's asset gate move from the single-target list to `darwin-arm64` + `linux-x64`; unsupported pairs (Windows, `linux-arm64`, Intel macOS) still fail closed with a clear message. ADR 0009 records the decision as its Linux x64 amendment.
+
 ## 6.11.0 — 2026-10-15
 
 - The `/model` picker shows one row, `DeepSeek V4.1 Flash`. The product seed and the home repair write `[models] disabled_models = ["grok-*"]` and `hidden_models = ["deepseek-v4-pro"]`, so the vendored Grok catalog rows leave the picker and the Pro row is hidden from it. Pro stays in the model catalog and `/pro` and `/preset max` still route to it, while `-m deepseek-v4-pro` no longer resolves. An existing home gets the Flash stanza's earlier product label rewritten; a user-chosen display name is kept.

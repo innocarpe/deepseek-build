@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 6.10.0 — 2026-10-15
+
 - `deepseek-build update` (and its `dsb update` alias) detects the install channel itself and refreshes it in place when a newer version is published. It reads the latest version from the npm registry, falling back to GitHub Releases and then `npm view`; an npm-global install is refreshed with `npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build@latest`, a source checkout is printed the exact `git pull --ff-only` and `./scripts/install.sh` commands, and an install it cannot place prints its version and those commands without making a network call. Those two report and exit 1. A published version below the installed one is refused unless `DEEPSEEK_BUILD_ALLOW_DOWNGRADE=1` is set, and a pre-release of the installed core does not displace it while a pre-release of a higher core is an update. No dependency was added.
 - A tool batch that ends with an assistant `tool_calls` entry and no result is now closed in assistant order: a call this process dispatched — including one whose worker panicked — is recorded as `TOOL_OUTCOME_UNKNOWN` with "Do not retry blindly.", while a call the batch never started is recorded as `TOOL_NOT_STARTED` and may be retried. Loading a saved session still treats every hole as an unknown outcome, because a transcript stores no separate "started" record. The `bash` tool description also carries the delete-path verification and the `${VAR:?}` unset-variable guard.
 - The slash dropdown ranks a smart-case prefix match ahead of a name that merely contains the query, so `/mo` offers the built-in `/model` above a recently used skill such as `/commondao`. Fuzzy score, exactness, MRU and builtin stay the tiebreaks inside each band.

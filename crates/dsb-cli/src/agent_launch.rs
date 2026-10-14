@@ -1180,6 +1180,7 @@ pub fn print_product_splash() {
     for line in whale {
         let _ = writeln!(out, "{BLUE}{line}{RESET}");
     }
+    let _ = writeln!(out);
     let _ = writeln!(
         out,
         "{BLUE}{BOLD}  DeepSeek Build{RESET}  ·  coding agent TUI  ·  #4D6BFE"

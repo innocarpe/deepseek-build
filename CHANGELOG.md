@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The `/model` picker shows one row, `DeepSeek V4.1 Flash`. The product seed and the home repair write `[models] disabled_models = ["grok-*"]` and `hidden_models = ["deepseek-v4-pro"]`, so the vendored Grok catalog rows leave the picker and the Pro row is hidden from it. Pro stays in the model catalog and `/pro` and `/preset max` still route to it, while `-m deepseek-v4-pro` no longer resolves. An existing home gets the Flash stanza's earlier product label rewritten; a user-chosen display name is kept.
+
 ## 6.10.0 — 2026-10-15
 
 - `deepseek-build update` (and its `dsb update` alias) detects the install channel itself and refreshes it in place when a newer version is published. It reads the latest version from the npm registry, falling back to GitHub Releases and then `npm view`; an npm-global install is refreshed with `npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build@latest`, a source checkout is printed the exact `git pull --ff-only` and `./scripts/install.sh` commands, and an install it cannot place prints its version and those commands without making a network call. Those two report and exit 1. A published version below the installed one is refused unless `DEEPSEEK_BUILD_ALLOW_DOWNGRADE=1` is set, and a pre-release of the installed core does not displace it while a pre-release of a higher core is an update. No dependency was added.

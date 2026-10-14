@@ -134,6 +134,39 @@ Set `DEEPSEEK_BUILD_ALLOW_DOWNGRADE=1` to install that older package on
 purpose. When the package and the agent disagree, the shim prints a warning
 on stderr before the command runs.
 
+## Updating
+
+`deepseek-build update` (alias `dsb update`) asks the published feeds for the
+latest version and updates this install in place.
+
+| Feed | When |
+|------|------|
+| npm registry (`registry.npmjs.org/@innocarpe/deepseek-build/latest`) | first |
+| GitHub Releases (`api.github.com/repos/innocarpe/deepseek-build/releases/latest`) | registry read failed |
+| `npm view @innocarpe/deepseek-build version` | both HTTP reads failed |
+
+The install channel is detected from the running binary before the lookup:
+
+- **npm global** — `GROK_INSTALLER=npm` (the shim sets it), a `node_modules`
+  path, or this package present under `npm root -g`. It runs
+  `npm install -g --allow-scripts=@innocarpe/deepseek-build @innocarpe/deepseek-build@latest`.
+- **source** (`./scripts/install.sh`, `cargo install`, a checkout binary) —
+  prints `git pull --ff-only` and `./scripts/install.sh` and exits 1; the
+  registry cannot replace that install.
+- **unrecognized** — prints the current version and the manual commands,
+  exits 1, and installs nothing.
+
+The exit code is `0` when the install is up to date or was updated, and `1`
+when nothing was installed (unrecognized channel, source install, refused
+downgrade, or unreadable feed).
+
+An installed version newer than the published one is left alone, as in
+`version-align.js`. A pre-release ranks below its own release, so a pre-release
+published as `latest` counts as older than the same stable install while a
+pre-release of a higher core still counts as newer.
+`DEEPSEEK_BUILD_ALLOW_DOWNGRADE=1 deepseek-build update` installs the older
+release on purpose.
+
 ## How wrappers work
 
 Node shims (`npm/bin/*.js`) resolve natives from:

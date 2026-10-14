@@ -20,6 +20,7 @@ mod banner;
 mod onboard;
 mod terminal_tab_icon;
 mod theme;
+mod update;
 use banner::{BannerInfo, prompt as styled_prompt, render_welcome};
 use theme::{Role, Theme};
 
@@ -206,6 +207,8 @@ enum Commands {
     /// Auth helpers (login / status / logout).
     #[command(subcommand)]
     Auth(AuthCmd),
+    /// Update this install in place, when a newer version is published.
+    Update,
 }
 
 #[derive(Debug, Subcommand)]
@@ -257,10 +260,12 @@ Product entry: type `{name}` on a TTY → DeepSeek Build TUI (whale + DeepSeek b
 First-run: `{name} setup` picks DeepSeek API or OpenRouter and stores the key under ~/.deepseek-build/ (0600).\n\
 Line-mode only (old UI, not the product): `{name} chat`.\n\
 Commands: `deepseek-build` (primary) and `dsb` (alias) are the same program.\n\
+Update: `{name} update` checks the published version and updates an npm-global install in place.\n\
 Version is always full SemVer (MAJOR.MINOR.PATCH), e.g. {ver} — never bare \"{bare}\".\n\n\
 Examples:\n  \
   {name}                    # DeepSeek Build full-screen TUI (default)\n  \
   {name} setup              # first-run provider + API key\n  \
+  {name} update             # update this install in place\n  \
   {name} chat               # line-mode chat only (legacy)\n  \
   {name} --dogfood          # trusted local coding\n  \
   {name} --resume <id>      # resume a full-screen TUI session\n  \
@@ -411,6 +416,9 @@ async fn real_main() -> Result<()> {
         }
         Some(Commands::Skills(ref cmd)) => {
             run_skills_cmd(&cli, cmd)?;
+        }
+        Some(Commands::Update) => {
+            update::run_update()?;
         }
     }
     Ok(())
@@ -1058,6 +1066,7 @@ mod tests {
         assert!(subs.contains(&"repl-legacy"));
         assert!(subs.contains(&"agent"));
         assert!(subs.contains(&"sessions"));
+        assert!(subs.contains(&"update"));
     }
 
     #[test]

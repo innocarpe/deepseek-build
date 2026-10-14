@@ -27,6 +27,7 @@
   <a href="#why-deepseek-build">Why DeepSeek Build</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#deepseek-harness">DeepSeek Harness</a> ·
+  <a href="#benchmarks">Benchmarks</a> ·
   <a href="#documentation">Documentation</a> ·
   <a href="#contributing">Contributing</a>
 </p>
@@ -242,6 +243,46 @@ new features taken from dsh.
 Read more: [dsh research note](docs/research/dsh-deepseek-harness.md) ·
 [what this work changed](docs/product/CHANGELIST_6_1_0.md) ·
 [design sources](docs/product/SOURCES.md).
+
+## Benchmarks
+
+On 2026-10-15, **dsb** itself ran two public agent benchmarks — a Linux x64
+source build driving **DeepSeek V4.1 Flash** (`deepseek-v4-flash`) with
+thinking on, reasoning effort `max`, and one attempt per task (`-k 1`). Both
+went through their official runners: Harbor for Terminal-Bench 4.0 and Pier
+for DeepSWE v1.1.
+
+| Model · harness | Terminal-Bench 4.0 | DeepSWE v1.1 |
+| --- | --- | --- |
+| **dsb + DeepSeek V4.1 Flash (max)** — measured here | **33.3%** (2 of 6 tasks) | **63.6%** (7 of 11 tasks) |
+| DeepSeek V4.1 Flash (max) — reported | 26.8% (announced 31.2%) | 74.2% |
+| Claude Haiku 5.5 (max) — reported | 32.8% (announced 39.2%) | not published (83.7% on SWE-bench Multilingual) |
+| GPT-6 Luna (max) — reported | 12.6% (announced 16.4%) | 66.6% |
+
+Reported figures are public numbers from the sources linked below; `announced`
+marks the model vendor's own figure next to the evaluation number. For scale,
+the same Terminal-Bench 4.0 board carries Claude Sonnet 5.5 at 63.6% and
+Claude Opus 5.5 at 59.6%.
+
+Harness is part of the score. On Terminal-Bench 4.0, Artificial Analysis ran
+both lightweight models with the same mini-swe-agent harness (DeepSeek V4.1
+Flash 26.8%, GPT-6 Luna 12.6%), and Vals AI measured 19.7% and 13.6% in a
+shared environment. On DeepSWE v1.1, DeepSeek V4.1 Flash is reported at 65.6%
+under Codex and 69.8% under Claude Code. List prices per 1M tokens
+(input/output): Claude Haiku 5.5 $0.10/$0.50 (5× on prompts above 100k
+tokens), GPT-6 Luna $0.10/$0.50, DeepSeek V4.1 Flash $0.30/$1.20 (half price
+in off-peak hours).
+
+Our row is an early directional signal, not a like-for-like comparison with
+those boards: it covers a **task subset** (6 of 66 Terminal-Bench 4.0 tasks,
+with GPU and network-isolated tasks excluded; 11 of 113 DeepSWE v1.1 tasks),
+**one attempt per task**, and an environment that moved mid-run from Modal to
+a local Docker Desktop (macOS, amd64 emulation) when Modal's spend limit was
+reached.
+
+Sources: [aievals.app — Terminal-Bench 4](https://aievals.app/benchmarks/terminal-bench-4) ·
+[decode.agency — AI model comparison](https://decode.agency/article/ai-model-comparison-software-development/) ·
+[DeepSeek V4.1 Flash model card](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash)
 
 ## Documentation
 

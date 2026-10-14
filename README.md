@@ -71,6 +71,16 @@ deepseek-build --version
 dsb --version
 ```
 
+Keep the install current with the same command on either name:
+
+```bash
+deepseek-build update
+```
+
+It asks the published feeds for the latest version and replaces an npm-global
+install in place. When the install is already current it says so and changes
+nothing, and it never replaces an install with an older published version.
+
 If the installer reports that the product bin directory is not on `PATH`, add
 it before launching:
 

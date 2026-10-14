@@ -54,6 +54,22 @@ npm (optional): see [05-npm.md](./05-npm.md).
 
 Both must print the **same** full SemVer triple.
 
+## Updating
+
+`deepseek-build update` (alias `dsb update`) checks the published version and
+updates this install in place. The npm registry cannot replace a source
+install, so there the command prints the two steps to run from the checkout
+and exits `1`:
+
+```bash
+git pull --ff-only
+./scripts/install.sh
+```
+
+The exit code is `0` when the install is up to date or was updated, and `1`
+when nothing was installed. [05-npm.md](./05-npm.md#updating) covers the feed
+lookup, the channel detection, and the npm path.
+
 ## Config home
 
 Product config lives under `~/.deepseek-build/` (credentials, future sessions).  

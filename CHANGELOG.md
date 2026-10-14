@@ -4,6 +4,8 @@
 
 - The native headless loop (`dsb run` / `dsb chat`) accepts `--max-tool-rounds <N>`, raising the per-turn tool-round cap that made long benchmark and CI runs stop at eight rounds with `max tool rounds reached`. The default stays 8 and `0` is rejected as a value.
 - `--dangerously-allow-all` is a new explicit opt-in for disposable sandboxes (benchmark / CI containers): every permission scope is allowed — network, unclassified commands, write/delete outside the workspace — and bash executes. Without the flag the fail-closed headless policy is byte-identical, `--dogfood` and the full-screen TUI keep their own profiles, and the welcome banner names the profile `allow-all`. Spec 90 §1.4 and ADR 0013 name the opt-in; user-guide 07/08 document the flag.
+- The native loop's completion budget rises from 8192 to `65536` tokens (ADR 0014). Measured against the API, the old budget truncated thinking-enabled responses at `--effort max` with every completion token spent inside reasoning (`finish_reason: length`, `reasoning_tokens: 8091`), which stalled a `dsb run` task twice; the API's valid range is `[1, 393216]`. A turn whose response the provider truncates now warns `response truncated at max_tokens` instead of reading as a reasoning-only completion.
+- A reasoning-only assistant stop is replayed to the provider with an empty `content` string. Without it the next request failed `400 Invalid assistant message: content or tool_calls must be set`, which ended a `dsb run` trial at the synthesis retry; tool-call messages keep null content.
 
 ## 6.11.0 — 2026-10-15
 

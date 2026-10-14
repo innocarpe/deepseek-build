@@ -532,6 +532,16 @@ impl Agent {
                 },
             ));
 
+            // `length` is the provider truncating the response, not the model
+            // finishing: with thinking on, max-effort reasoning can spend the
+            // whole completion budget and leave no content or tool calls.
+            // Say so, so a truncated turn is not read as a completion.
+            if completed.message.finish_reason.as_deref() == Some("length") {
+                on_event(TurnEvent::Warning(
+                    "response truncated at max_tokens; the turn may be incomplete".into(),
+                ));
+            }
+
             if tool_calls.is_empty() {
                 // Spec 15 §1.5: a reasoning-only stop is the model's completion
                 // signal and is not retried — except when a tool result still
@@ -1453,6 +1463,17 @@ mod tests {
         })])
     }
 
+    /// A response the provider truncated at the completion budget.
+    fn length_stop_body(text: &str) -> String {
+        sse(&[serde_json::json!({
+            "model": "deepseek-v4-flash",
+            "choices": [{
+                "delta": { "reasoning_content": text },
+                "finish_reason": "length"
+            }]
+        })])
+    }
+
     struct ScriptedSse {
         n: std::sync::atomic::AtomicUsize,
         bodies: Vec<String>,
@@ -1616,6 +1637,37 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[tokio::test]
+    async fn truncated_response_is_reported_as_truncation() {
+        // `finish_reason=length` with no content and no tool calls is the
+        // provider cutting the response at the completion budget (measured
+        // 2026-10-15: max-effort reasoning can spend the whole budget), which
+        // must not read as a reasoning-only completion.
+        let (server, mut agent, _dir) = scripted_agent(vec![
+            tool_round_body(),
+            length_stop_body("ran out of budget mid-thought"),
+            visible_body("done"),
+        ])
+        .await;
+        let mut warnings = Vec::new();
+        let out = agent
+            .run_turn("what does the file say", |ev| {
+                if let TurnEvent::Warning(w) = ev {
+                    warnings.push(w);
+                }
+            })
+            .await
+            .unwrap();
+        assert_eq!(out.assistant_text, "done");
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("truncated at max_tokens")),
+            "{warnings:?}"
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), 3);
     }
 
     #[test]

@@ -39,7 +39,13 @@ These IDs are **accepted as product pins** based on official pricing/docs pages 
 |------|--------|
 | Context length | 1M (docs) |
 | Max output | up to 384K (docs) |
-| Default product max_tokens (M1) | Implementation default **8192** unless user overrides (cost/latency; not API max) |
+| Default product max_tokens | Implementation default **65536** (raised from 8192 by [ADR 0014](./0014-native-completion-budget.md); cost/latency guard, not API max) |
+
+> **Amended by [ADR 0014](./0014-native-completion-budget.md) (2026-10-15):**
+> the 8192 default truncated thinking-enabled responses at `--effort max`
+> (`finish_reason: length`, all completion tokens inside reasoning), which
+> stalled native-loop tasks. The default is 65536, the API range is
+> `[1, 393216]`, and the loop now warns on a `length` stop.
 
 ### Thinking / effort (OpenAI Chat Completions path)
 

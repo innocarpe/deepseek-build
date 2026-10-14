@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 6.11.0 — 2026-10-15
+
 - The `/model` picker shows one row, `DeepSeek V4.1 Flash`. The product seed and the home repair write `[models] disabled_models = ["grok-*"]` and `hidden_models = ["deepseek-v4-pro"]`, so the vendored Grok catalog rows leave the picker and the Pro row is hidden from it. Pro stays in the model catalog and `/pro` and `/preset max` still route to it, while `-m deepseek-v4-pro` no longer resolves. An existing home gets the Flash stanza's earlier product label rewritten; a user-chosen display name is kept.
 - The product context window becomes `1048576` — the window the DeepSeek API reports for both V4.1 Flash and V4 Pro — replacing the `128000` the product seed wrote. An install seeded earlier is migrated on launch: a DeepSeek stanza's legacy `128000` becomes `1048576`, a missing `context_window` is injected because the vendored model entry requires the key, any other explicit value is kept, and `[model.<other>]` sections are untouched.
 - The Flash slot can hold a standing reasoning effort. With `[models] default = "deepseek-v4-flash"` and a `default_reasoning_effort` beside it, the native path (`dsb run` / `dsb chat`) routes Flash at that effort instead of a hardcoded high, reading the same pin the bare TUI's vendored resolver reads and falling back to the Flash stanza's `reasoning_effort` and then the shipped default; `--effort` still wins for the process, Pro keeps its own values, and the Pro-404 fallback keeps the pin. The product seed and home repair also write `reasoning_efforts = ["max", "high", "low"]` on each DeepSeek stanza so the vendored `/effort` menu can offer `max` (an explicit user list is kept), and the Flash slot displays as `DeepSeek V4.1 Flash`.

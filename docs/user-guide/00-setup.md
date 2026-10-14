@@ -4,7 +4,7 @@
 
 Install alone is not enough. You need an API key before the agent can answer:
 either a **DeepSeek API** key, or an **OpenRouter** key for the same DeepSeek
-V4 Flash / Pro models.
+V4.1 Flash / Pro models.
 
 ## Natural first run
 

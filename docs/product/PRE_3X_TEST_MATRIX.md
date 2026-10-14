@@ -105,7 +105,7 @@ Vendor **release build** remains `./scripts/build-grok-pager.sh check|release` (
 | T2.1 | Agent binary present | `deepseek-build-agent` or `xai-grok-pager` on product path / `DEEPSEEK_BUILD_AGENT_BIN` |
 | T2.2 | Product config seed | New home → `config.toml` has flash/pro, `chat_completions`, **`base_url = https://api.deepseek.com`**, theme deepseeknight |
 | T2.3 | Repair path | Existing config missing `base_url` gets repair on next `ensure_product_agent_config` |
-| T2.4 | models list | Agent `models` lists deepseek-v4-flash / pro as available when GROK_HOME=product home |
+| T2.4 | models list | Agent `models` on a product home lists exactly one row, `deepseek-v4-flash`; `grok-*` and `deepseek-v4-pro` do not appear |
 
 **Critical finding (2026-08-07):** seed used to set only `[endpoints].xai_api_base_url`. Agent still called **`cli-chat-proxy.grok.com`**. Model-level **`base_url`** is mandatory. Fixed in `agent_launch.rs` + T4 probes.
 

@@ -30,7 +30,7 @@ concurrency:
 
 jobs:
   seed:
-    name: seed default-branch cache
+    name: seed default-branch cache (darwin-arm64)
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: macos-14
     timeout-minutes: 30
@@ -93,8 +93,66 @@ jobs:
           fi
           ./scripts/release-rust-cache.sh unpack "$archive"
 
+  # The linux-x64 twin of the job above. Same unpack-and-save shape; the
+  # shared-key and the runner OS are what keep the two caches apart.
+  seed-linux:
+    name: seed default-branch cache (linux-x64)
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      # Must match release-prebuilt.yml. RUST* and CARGO* are part of the
+      # rust-cache key; a mismatch saves an entry the next tag will not restore.
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 1
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.0
+
+      - name: Download the release Rust archive
+        id: archive
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: release-rust-cache-linux-x64
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/release-rust-cache
+
+      - name: Open the release cache key
+        id: cache
+        if: steps.archive.outcome == 'success'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            third_party/grok-build
+          shared-key: release-prebuilt-linux-x64
+          cache-all-crates: true
+          cache-workspace-crates: true
+          cache-provider: github
+          lookup-only: true
+          save-if: true
+
+      - name: Unpack into the cache paths
+        if: steps.archive.outcome == 'success'
+        run: |
+          set -euo pipefail
+          archive="$(find "$RUNNER_TEMP/release-rust-cache" -name 'release-rust-cache.tar.gz' -print -quit)"
+          if [[ -z "$archive" ]]; then
+            echo "::error::artifact had no release-rust-cache.tar.gz" >&2
+            exit 1
+          fi
+          ./scripts/release-rust-cache.sh unpack "$archive"
+
   warm:
-    name: build the first release cache
+    name: build the first release cache (darwin-arm64)
     if: github.event_name == 'workflow_dispatch'
     runs-on: macos-14
     timeout-minutes: 120
@@ -135,7 +193,7 @@ jobs:
         run: ./scripts/build-grok-pager.sh release
 
   verify:
-    name: restore the release cache
+    name: restore the release cache (darwin-arm64)
     needs: warm
     if: github.event_name == 'workflow_dispatch'
     runs-on: macos-14

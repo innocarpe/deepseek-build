@@ -1,5 +1,6 @@
-# Build and attach the Apple Silicon macOS prebuilt on version tags (ADR 0009).
-# publish-npm.yml publishes after the asset is attached.
+# Build and attach the prebuilt tarballs (darwin-arm64, linux-x64) on version
+# tags (ADR 0009, as amended 2026-10-15). publish-npm.yml publishes after every
+# supported platform's asset is attached.
 #
 # The agent is always rebuilt. Reusing the previous tag's binary shipped a
 # version string that failed the npm postinstall check.
@@ -40,6 +41,11 @@ jobs:
         include:
           - os: macos-14
             platform: darwin-arm64
+          # ubuntu-22.04 rather than ubuntu-latest on purpose: the linux-x64
+          # tarball must run on 22.04-era images (glibc 2.35), and a newer
+          # build base raises that floor.
+          - os: ubuntu-22.04
+            platform: linux-x64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     steps:
@@ -94,9 +100,28 @@ jobs:
           cache-provider: github
           save-if: false
 
-      - name: Install protoc
+      - name: Install protoc (macOS)
+        if: runner.os == 'macOS'
         run: |
           brew install protobuf || true
+
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'linux-x64'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            build-essential pkg-config libssl-dev cmake clang libclang-dev
+
+      - name: Wire the vendored protoc shim (Linux)
+        if: matrix.platform == 'linux-x64'
+        run: |
+          # Ubuntu 22.04's apt protoc is 3.12 (no proto3 optional), so the
+          # vendored bin/protoc — a dotslash shim for protoc 29.3 — goes first
+          # on PATH and in PROTOC. The dotslash install further down is that
+          # shim's runner; this was the verified source-build path.
+          VENDOR_BIN="$GITHUB_WORKSPACE/third_party/grok-build/bin"
+          echo "$VENDOR_BIN" >> "$GITHUB_PATH"
+          echo "PROTOC=$VENDOR_BIN/protoc" >> "$GITHUB_ENV"
 
       - name: Detect change scope
         id: scope
@@ -206,7 +231,10 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: release-rust-cache-darwin-arm64
+          # One artifact per platform: upload-artifact@v4 rejects a duplicate
+          # name within a run, and seed-release-cache.yml restores each one
+          # under its own shared-key.
+          name: release-rust-cache-${{ matrix.platform }}
           path: ${{ runner.temp }}/release-rust-cache.tar.gz
           retention-days: 2
           if-no-files-found: ignore

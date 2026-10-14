@@ -32,6 +32,8 @@ serde_json = "1"
 
 [dev-dependencies]
 tempfile = "3"
+# Repair tests assert the rewritten `config.toml` still parses as TOML.
+toml = "0.9"
 
 [lints]
 workspace = true

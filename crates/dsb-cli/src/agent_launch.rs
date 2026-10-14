@@ -152,7 +152,7 @@ fn provider_wire_model(provider: Provider, slot: &str) -> String {
 fn product_slot_display_name(slot: &str) -> &'static str {
     match slot {
         "deepseek-v4-pro" => "DeepSeek V4 Pro",
-        _ => "DeepSeek V4 Flash",
+        _ => "DeepSeek V4.1 Flash",
     }
 }
 
@@ -282,6 +282,9 @@ enabled = true
 ///    on DeepSeek model stanzas when those keys are missing
 /// 5. `[models]` side-request keys (session titles, web search, image
 ///    description) pointing at the Flash stanza when those keys are missing
+/// 6. DeepSeek model display `name`: the stale product default
+///    `DeepSeek V4 Flash` becomes `DeepSeek V4.1 Flash` (the model the slot
+///    maps to); a user-set name is preserved
 fn repair_product_agent_config(body: &str) -> String {
     repair_product_agent_config_with_theme(body, PRODUCT_THEME)
 }
@@ -323,6 +326,8 @@ fn repair_product_agent_config_with_theme(body: &str, theme: &str) -> String {
     next = ensure_deepseek_model_reasoning_effort(next, "deepseek-v4-pro");
     next = ensure_deepseek_model_system_prompt_label(next, "deepseek-v4-flash");
     next = ensure_deepseek_model_system_prompt_label(next, "deepseek-v4-pro");
+    next = ensure_deepseek_model_display_name(next, "deepseek-v4-flash");
+    next = ensure_deepseek_model_display_name(next, "deepseek-v4-pro");
     next = ensure_product_aux_models(next);
 
     if !next.contains("xai_api_base_url") {
@@ -474,6 +479,74 @@ fn ensure_deepseek_model_system_prompt_label(body: String, model_id: &str) -> St
         out.push(format!(
             "system_prompt_label = \"{PRODUCT_SYSTEM_PROMPT_LABEL}\""
         ));
+        patched = true;
+    }
+    if patched {
+        let mut s = out.join("\n");
+        if !s.ends_with('\n') {
+            s.push('\n');
+        }
+        s
+    } else {
+        body
+    }
+}
+
+/// Display name earlier product versions seeded for `slot`. Repair replaces
+/// exactly this value with the current one and leaves any other name alone.
+fn product_slot_stale_display_name(slot: &str) -> &'static str {
+    match slot {
+        "deepseek-v4-pro" => "DeepSeek V4 Pro",
+        _ => "DeepSeek V4 Flash",
+    }
+}
+
+/// Product display name: DeepSeek model stanzas must carry the current
+/// product name (`DeepSeek V4.1 Flash`), not the stale seed from earlier
+/// versions.
+///
+/// Adds the name when the section lacks it, replaces the stale product
+/// default, and preserves any user-set name. Idempotent.
+fn ensure_deepseek_model_display_name(body: String, model_id: &str) -> String {
+    let header = format!("[model.{model_id}]");
+    if !body.contains(&header) {
+        return body;
+    }
+    let name = product_slot_display_name(model_id);
+    let stale = product_slot_stale_display_name(model_id);
+    let mut out: Vec<String> = Vec::new();
+    let mut in_section = false;
+    let mut found = false;
+    let mut patched = false;
+    for line in body.lines() {
+        let t = line.trim();
+        if t == header {
+            in_section = true;
+            found = false;
+            out.push(line.to_string());
+            continue;
+        }
+        if in_section && t.starts_with('[') {
+            if !found {
+                out.push(format!("name = \"{name}\""));
+                patched = true;
+            }
+            in_section = false;
+        }
+        let key = t.split_once('=').map(|(key, _)| key.trim());
+        if in_section && key == Some("name") {
+            found = true;
+            if toml_rhs_string(t) == Some(stale) {
+                out.push(format!("name = \"{name}\""));
+                patched = true;
+                continue;
+            }
+        }
+        out.push(line.to_string());
+    }
+    // Section ran to end of file with no name and no closing header.
+    if in_section && !found {
+        out.push(format!("name = \"{name}\""));
         patched = true;
     }
     if patched {
@@ -1579,6 +1652,16 @@ fn product_config_seed_contains_deepseek_defaults() {
         body.contains("reasoning_efforts = [\"max\", \"high\", \"low\"]"),
         "seed missing effort menu: {body}"
     );
+    // Defect 2: the Flash slot displays the model it maps to
+    // (`DeepSeek V4.1 Flash`), never the older `DeepSeek V4 Flash` seed.
+    assert!(
+        body.contains("name = \"DeepSeek V4.1 Flash\""),
+        "seed missing current Flash display name: {body}"
+    );
+    assert!(
+        !body.contains("name = \"DeepSeek V4 Flash\""),
+        "seed leaked stale Flash display name: {body}"
+    );
     // Existing file without theme gets theme injected (not full rewrite).
     std::fs::write(dir.path().join("config.toml"), "keep=1\n").unwrap();
     ensure_product_agent_config(&home).unwrap();
@@ -1891,6 +1974,64 @@ system_prompt_label = "My Custom Agent" # not Grok
     assert!(
         fixed.contains("system_prompt_label = \"My Custom Agent\" # not Grok"),
         "comment text must not make a custom label stale: {fixed}"
+    );
+}
+
+#[test]
+fn repair_replaces_stale_flash_display_name_and_keeps_pro() {
+    let raw = r#"
+[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+name = "DeepSeek V4 Flash"
+
+[model.deepseek-v4-pro]
+model = "deepseek-v4-pro"
+name = "DeepSeek V4 Pro"
+"#;
+    let fixed = repair_product_agent_config(raw);
+    assert!(
+        fixed.contains("name = \"DeepSeek V4.1 Flash\""),
+        "stale Flash display name must be replaced: {fixed}"
+    );
+    assert!(
+        !fixed.contains("name = \"DeepSeek V4 Flash\""),
+        "stale Flash display name must not survive: {fixed}"
+    );
+    assert!(
+        fixed.contains("name = \"DeepSeek V4 Pro\""),
+        "Pro display name must be preserved: {fixed}"
+    );
+    // Idempotent.
+    assert_eq!(repair_product_agent_config(&fixed), fixed);
+}
+
+#[test]
+fn repair_keeps_custom_display_name() {
+    let raw = r#"
+[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+name = "My Flash"
+"#;
+    let fixed = repair_product_agent_config(raw);
+    assert!(
+        fixed.contains("name = \"My Flash\""),
+        "custom display name must be preserved: {fixed}"
+    );
+}
+
+#[test]
+fn repair_injects_missing_display_name_before_next_section() {
+    let raw = r#"
+[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+
+[other]
+keep = true
+"#;
+    let fixed = ensure_deepseek_model_display_name(raw.to_string(), "deepseek-v4-flash");
+    assert!(
+        fixed.contains("name = \"DeepSeek V4.1 Flash\"\n[other]"),
+        "missing name must be injected before the next section: {fixed}"
     );
 }
 

@@ -240,7 +240,7 @@ default = "deepseek-v4-flash"
 
 [model.deepseek-v4-flash]
 model = "deepseek-v4-flash"
-name = "DeepSeek V4 Flash"
+name = "DeepSeek V4.1 Flash"
 context_window = 128000
 api_backend = "chat_completions"
 base_url = "${BASE_URL}"

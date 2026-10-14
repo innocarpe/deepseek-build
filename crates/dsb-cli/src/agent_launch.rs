@@ -10,6 +10,7 @@ use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use dsb_config::{BuildHome, Provider};
+use dsb_provider_deepseek::ReasoningEffort;
 
 /// Env override for the full-screen agent binary.
 pub const ENV_AGENT_BIN: &str = "DEEPSEEK_BUILD_AGENT_BIN";
@@ -151,7 +152,7 @@ fn provider_wire_model(provider: Provider, slot: &str) -> String {
 fn product_slot_display_name(slot: &str) -> &'static str {
     match slot {
         "deepseek-v4-pro" => "DeepSeek V4 Pro",
-        _ => "DeepSeek V4 Flash",
+        _ => "DeepSeek V4.1 Flash",
     }
 }
 
@@ -177,6 +178,9 @@ base_url = "{base_url}"
 # Spec 30 / VC008: Path A chat_completions must stamp reasoning_effort on wire.
 supports_reasoning_effort = true
 reasoning_effort = "high"
+# Without this list the vendored /effort menu falls back to the upstream legacy
+# rows (xhigh/high/medium/low) and `max` is unreachable for a DeepSeek slot.
+reasoning_efforts = ["max", "high", "low"]
 "#
     )
 }
@@ -278,6 +282,9 @@ enabled = true
 ///    on DeepSeek model stanzas when those keys are missing
 /// 5. `[models]` side-request keys (session titles, web search, image
 ///    description) pointing at the Flash stanza when those keys are missing
+/// 6. DeepSeek model display `name`: the stale product default
+///    `DeepSeek V4 Flash` becomes `DeepSeek V4.1 Flash` (the model the slot
+///    maps to); a user-set name is preserved
 fn repair_product_agent_config(body: &str) -> String {
     repair_product_agent_config_with_theme(body, PRODUCT_THEME)
 }
@@ -319,6 +326,8 @@ fn repair_product_agent_config_with_theme(body: &str, theme: &str) -> String {
     next = ensure_deepseek_model_reasoning_effort(next, "deepseek-v4-pro");
     next = ensure_deepseek_model_system_prompt_label(next, "deepseek-v4-flash");
     next = ensure_deepseek_model_system_prompt_label(next, "deepseek-v4-pro");
+    next = ensure_deepseek_model_display_name(next, "deepseek-v4-flash");
+    next = ensure_deepseek_model_display_name(next, "deepseek-v4-pro");
     next = ensure_product_aux_models(next);
 
     if !next.contains("xai_api_base_url") {
@@ -368,9 +377,12 @@ fn ensure_product_aux_models(body: String) -> String {
     inject_model_section_keys_if_missing(body, "[models]", &keys)
 }
 
-/// Spec 30 / VC008: ensure DeepSeek model stanzas enable effort and default high.
+/// Spec 30 / VC008: ensure DeepSeek model stanzas enable effort, default high,
+/// and expose the DeepSeek effort menu (`max`/`high`/`low`) so a standing
+/// `default_reasoning_effort = "max"` is selectable in the vendored `/effort`.
 ///
-/// Does not overwrite an explicit user `reasoning_effort` / `supports_reasoning_effort`.
+/// Does not overwrite an explicit user `reasoning_effort` /
+/// `reasoning_efforts` / `supports_reasoning_effort`.
 fn ensure_deepseek_model_reasoning_effort(body: String, model_id: &str) -> String {
     let header = format!("[model.{model_id}]");
     if !body.contains(&header) {
@@ -385,8 +397,36 @@ fn ensure_deepseek_model_reasoning_effort(body: String, model_id: &str) -> Strin
                 "supports_reasoning_effort = true",
             ),
             ("reasoning_effort", "reasoning_effort = \"high\""),
+            (
+                "reasoning_efforts",
+                "reasoning_efforts = [\"max\", \"high\", \"low\"]",
+            ),
         ],
     )
+}
+
+/// Standing reasoning effort for the product Flash slot, read from `config.toml`.
+///
+/// Mirrors the vendored resolution (`remote_config/resolution.rs`): the
+/// `[models] default_reasoning_effort` pin applies to the entry named by
+/// `[models] default`; without that pin the stanza's own `reasoning_effort`
+/// stands. `None` keeps the shipped default (`ReasoningEffort::High`).
+pub fn configured_default_reasoning_effort(home: &BuildHome) -> Option<ReasoningEffort> {
+    let body = std::fs::read_to_string(home.path().join("config.toml")).ok()?;
+    let lines: Vec<String> = body.lines().map(str::to_string).collect();
+    let section_value = |header: &str, key: &str| -> Option<String> {
+        let range = toml_section_range(&lines, header)?;
+        let idx = toml_section_key_index(&lines, range, key)?;
+        toml_rhs_string(&lines[idx]).map(str::to_string)
+    };
+    if section_value("[models]", "default").as_deref() == Some("deepseek-v4-flash")
+        && let Some(effort) = section_value("[models]", "default_reasoning_effort")
+    {
+        return Some(ReasoningEffort::from_product(&effort));
+    }
+    section_value("[model.deepseek-v4-flash]", "reasoning_effort")
+        .as_deref()
+        .map(ReasoningEffort::from_product)
 }
 
 /// Product identity: DeepSeek model stanzas must carry the DeepSeek
@@ -439,6 +479,74 @@ fn ensure_deepseek_model_system_prompt_label(body: String, model_id: &str) -> St
         out.push(format!(
             "system_prompt_label = \"{PRODUCT_SYSTEM_PROMPT_LABEL}\""
         ));
+        patched = true;
+    }
+    if patched {
+        let mut s = out.join("\n");
+        if !s.ends_with('\n') {
+            s.push('\n');
+        }
+        s
+    } else {
+        body
+    }
+}
+
+/// Display name earlier product versions seeded for `slot`. Repair replaces
+/// exactly this value with the current one and leaves any other name alone.
+fn product_slot_stale_display_name(slot: &str) -> &'static str {
+    match slot {
+        "deepseek-v4-pro" => "DeepSeek V4 Pro",
+        _ => "DeepSeek V4 Flash",
+    }
+}
+
+/// Product display name: DeepSeek model stanzas must carry the current
+/// product name (`DeepSeek V4.1 Flash`), not the stale seed from earlier
+/// versions.
+///
+/// Adds the name when the section lacks it, replaces the stale product
+/// default, and preserves any user-set name. Idempotent.
+fn ensure_deepseek_model_display_name(body: String, model_id: &str) -> String {
+    let header = format!("[model.{model_id}]");
+    if !body.contains(&header) {
+        return body;
+    }
+    let name = product_slot_display_name(model_id);
+    let stale = product_slot_stale_display_name(model_id);
+    let mut out: Vec<String> = Vec::new();
+    let mut in_section = false;
+    let mut found = false;
+    let mut patched = false;
+    for line in body.lines() {
+        let t = line.trim();
+        if t == header {
+            in_section = true;
+            found = false;
+            out.push(line.to_string());
+            continue;
+        }
+        if in_section && t.starts_with('[') {
+            if !found {
+                out.push(format!("name = \"{name}\""));
+                patched = true;
+            }
+            in_section = false;
+        }
+        let key = t.split_once('=').map(|(key, _)| key.trim());
+        if in_section && key == Some("name") {
+            found = true;
+            if toml_rhs_string(t) == Some(stale) {
+                out.push(format!("name = \"{name}\""));
+                patched = true;
+                continue;
+            }
+        }
+        out.push(line.to_string());
+    }
+    // Section ran to end of file with no name and no closing header.
+    if in_section && !found {
+        out.push(format!("name = \"{name}\""));
         patched = true;
     }
     if patched {
@@ -1027,6 +1135,7 @@ fn stamp_path_a_routing(home: &BuildHome) {
     };
 
     let mut router = path_a_default_router();
+    router.set_default_effort(configured_default_reasoning_effort(home));
     let flash = route_path_a_turn(&mut router, "path-a-routing-stamp");
     let (pro_text, _) = apply_routing_command(&mut router, "/pro stamp-pro-once");
     let pro = route_path_a_turn(&mut router, &pro_text);
@@ -1358,6 +1467,93 @@ mod tests {
         );
     }
 
+    /// The standing `max` pin (`[models] default_reasoning_effort`) must reach
+    /// the production routing stamp on the Flash slot.
+    #[test]
+    fn stamp_path_a_routing_honours_standing_max_pin() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dsb_config::BuildHome::from_path(dir.path());
+        std::fs::write(
+            dir.path().join("config.toml"),
+            r#"[models]
+default = "deepseek-v4-flash"
+default_reasoning_effort = "max"
+
+[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+reasoning_effort = "high"
+"#,
+        )
+        .unwrap();
+        stamp_path_a_routing(&home);
+        let body = std::fs::read_to_string(dir.path().join("path_a_routing.txt"))
+            .expect("routing stamp file");
+        assert!(
+            body.contains("flash_visibility=model=deepseek-v4-flash thinking=on effort=max"),
+            "pin must win over the stanza's high: {body}"
+        );
+        assert!(
+            body.contains("after_pro_visibility=model=deepseek-v4-flash thinking=on effort=max"),
+            "Flash returns at the pinned effort: {body}"
+        );
+    }
+
+    /// `configured_default_reasoning_effort` mirrors the vendored resolution:
+    /// the `[models]` pin applies to the Flash entry it names; the Flash
+    /// stanza's own `reasoning_effort` stands otherwise.
+    #[test]
+    fn configured_default_reasoning_effort_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dsb_config::BuildHome::from_path(dir.path());
+        assert_eq!(
+            configured_default_reasoning_effort(&home),
+            None,
+            "no config file keeps the shipped default"
+        );
+        std::fs::write(
+            dir.path().join("config.toml"),
+            r#"[models]
+default = "deepseek-v4-flash"
+default_reasoning_effort = "max"
+
+[model.deepseek-v4-flash]
+reasoning_effort = "low"
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            configured_default_reasoning_effort(&home),
+            Some(ReasoningEffort::Max),
+            "the [models] pin wins over the stanza value"
+        );
+        std::fs::write(
+            dir.path().join("config.toml"),
+            r#"[models]
+default = "deepseek-v4-pro"
+default_reasoning_effort = "max"
+
+[model.deepseek-v4-flash]
+reasoning_effort = "low"
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            configured_default_reasoning_effort(&home),
+            Some(ReasoningEffort::Low),
+            "a pin aimed at another entry leaves the Flash stanza standing"
+        );
+        std::fs::write(
+            dir.path().join("config.toml"),
+            "[models]\ndefault = \"deepseek-v4-flash\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            configured_default_reasoning_effort(&home),
+            None,
+            "no pin and no stanza effort keeps the shipped default"
+        );
+    }
+
     /// G010 / L3-50+60: production L3 stamp — fail-closed classify + worker cache law.
     #[test]
     fn stamp_path_a_l3_schedule_and_worker_cache() {
@@ -1450,6 +1646,22 @@ fn product_config_seed_contains_deepseek_defaults() {
         body.contains("reasoning_effort = \"high\""),
         "seed missing reasoning_effort high: {body}"
     );
+    // Defect 4: without an explicit menu the vendored /effort falls back to the
+    // upstream legacy rows (xhigh/high/medium/low) and can never offer (max).
+    assert!(
+        body.contains("reasoning_efforts = [\"max\", \"high\", \"low\"]"),
+        "seed missing effort menu: {body}"
+    );
+    // Defect 2: the Flash slot displays the model it maps to
+    // (`DeepSeek V4.1 Flash`), never the older `DeepSeek V4 Flash` seed.
+    assert!(
+        body.contains("name = \"DeepSeek V4.1 Flash\""),
+        "seed missing current Flash display name: {body}"
+    );
+    assert!(
+        !body.contains("name = \"DeepSeek V4 Flash\""),
+        "seed leaked stale Flash display name: {body}"
+    );
     // Existing file without theme gets theme injected (not full rewrite).
     std::fs::write(dir.path().join("config.toml"), "keep=1\n").unwrap();
     ensure_product_agent_config(&home).unwrap();
@@ -1524,6 +1736,7 @@ model = "deepseek-v4-pro"
 api_backend = "chat_completions"
 base_url = "https://api.deepseek.com"
 reasoning_effort = "max"
+reasoning_efforts = ["low"]
 
 [ui]
 theme = "deepseeknight"
@@ -1543,8 +1756,21 @@ yolo = false
         "flash missing default high: {flash_sec}"
     );
     assert!(
+        flash_sec.contains("reasoning_efforts = [\"max\", \"high\", \"low\"]"),
+        "flash missing effort menu: {flash_sec}"
+    );
+    assert!(
         pro_sec.contains("reasoning_effort = \"max\""),
         "pro explicit max must be preserved: {pro_sec}"
+    );
+    // A user-set menu survives; the default one is not injected over it.
+    assert!(
+        pro_sec.contains("reasoning_efforts = [\"low\"]"),
+        "pro explicit menu must be preserved: {pro_sec}"
+    );
+    assert!(
+        !pro_sec.contains("reasoning_efforts = [\"max\", \"high\", \"low\"]"),
+        "pro must not get the default menu when one is set: {pro_sec}"
     );
     assert!(
         !pro_sec.contains("reasoning_effort = \"high\""),
@@ -1748,6 +1974,64 @@ system_prompt_label = "My Custom Agent" # not Grok
     assert!(
         fixed.contains("system_prompt_label = \"My Custom Agent\" # not Grok"),
         "comment text must not make a custom label stale: {fixed}"
+    );
+}
+
+#[test]
+fn repair_replaces_stale_flash_display_name_and_keeps_pro() {
+    let raw = r#"
+[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+name = "DeepSeek V4 Flash"
+
+[model.deepseek-v4-pro]
+model = "deepseek-v4-pro"
+name = "DeepSeek V4 Pro"
+"#;
+    let fixed = repair_product_agent_config(raw);
+    assert!(
+        fixed.contains("name = \"DeepSeek V4.1 Flash\""),
+        "stale Flash display name must be replaced: {fixed}"
+    );
+    assert!(
+        !fixed.contains("name = \"DeepSeek V4 Flash\""),
+        "stale Flash display name must not survive: {fixed}"
+    );
+    assert!(
+        fixed.contains("name = \"DeepSeek V4 Pro\""),
+        "Pro display name must be preserved: {fixed}"
+    );
+    // Idempotent.
+    assert_eq!(repair_product_agent_config(&fixed), fixed);
+}
+
+#[test]
+fn repair_keeps_custom_display_name() {
+    let raw = r#"
+[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+name = "My Flash"
+"#;
+    let fixed = repair_product_agent_config(raw);
+    assert!(
+        fixed.contains("name = \"My Flash\""),
+        "custom display name must be preserved: {fixed}"
+    );
+}
+
+#[test]
+fn repair_injects_missing_display_name_before_next_section() {
+    let raw = r#"
+[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+
+[other]
+keep = true
+"#;
+    let fixed = ensure_deepseek_model_display_name(raw.to_string(), "deepseek-v4-flash");
+    assert!(
+        fixed.contains("name = \"DeepSeek V4.1 Flash\"\n[other]"),
+        "missing name must be injected before the next section: {fixed}"
     );
 }
 

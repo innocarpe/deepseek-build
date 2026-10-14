@@ -69,7 +69,7 @@ fn run_wizard(
     writeln!(out, "     mode 0600 · never committed to git")?;
     writeln!(
         out,
-        "  Endpoint: {} · DeepSeek V4 Flash / Pro",
+        "  Endpoint: {} · DeepSeek V4.1 Flash / Pro",
         crate::agent_launch::provider_base_url(provider)
     )?;
     if provider == Provider::DeepSeek {

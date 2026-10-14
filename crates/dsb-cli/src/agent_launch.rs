@@ -527,12 +527,15 @@ fn ensure_product_picker_models(body: String) -> String {
 /// `default_reasoning_effort = "max"` is selectable in the vendored `/effort`.
 ///
 /// Does not overwrite an explicit user `reasoning_effort` /
-/// `reasoning_efforts` / `supports_reasoning_effort`.
+/// `reasoning_efforts` / `supports_reasoning_effort` — a stanza whose menu is
+/// the documented array of tables keeps it, and the duplicate flat line an
+/// older version injected next to it is dropped first.
 fn ensure_deepseek_model_reasoning_effort(body: String, model_id: &str) -> String {
     let header = format!("[model.{model_id}]");
     if !body.contains(&header) {
         return body;
     }
+    let body = drop_duplicate_flat_reasoning_efforts(body, model_id);
     inject_model_section_keys_if_missing(
         body,
         &header,
@@ -545,6 +548,66 @@ fn ensure_deepseek_model_reasoning_effort(body: String, model_id: &str) -> Strin
             ("reasoning_efforts", PRODUCT_REASONING_EFFORTS_MENU),
         ],
     )
+}
+
+/// Drop the flat product effort menu from a stanza that declares
+/// `reasoning_efforts` as an array of tables.
+///
+/// Older versions read the presence scan as "key missing" when the stanza's
+/// only menu was `[[model.<id>.reasoning_efforts]]` entries (the scan stops at
+/// the first header line) and injected the flat menu next to them: a duplicate
+/// key that makes `config.toml` unparseable, so the vendored agent cannot
+/// start. Only the exact product line is dropped; any other flat value is
+/// hand-written, and both expressions are left for the user to resolve.
+fn drop_duplicate_flat_reasoning_efforts(body: String, model_id: &str) -> String {
+    let header = format!("[model.{model_id}]");
+    if !body.contains(&header) {
+        return body;
+    }
+    let parent = format!("model.{model_id}");
+    let table_form_present = body.lines().any(|line| {
+        matches!(
+            table_header_child_key(line, &parent),
+            Some(("reasoning_efforts", true))
+        )
+    });
+    if !table_form_present {
+        return body;
+    }
+    let mut out: Vec<&str> = Vec::with_capacity(body.lines().count());
+    let mut in_section = false;
+    let mut changed = false;
+    for line in body.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_section = t == header;
+            out.push(line);
+            continue;
+        }
+        if in_section && is_product_reasoning_efforts_menu(t) {
+            changed = true;
+            continue;
+        }
+        out.push(line);
+    }
+    if !changed {
+        return body;
+    }
+    let mut s = out.join("\n");
+    if !s.ends_with('\n') {
+        s.push('\n');
+    }
+    s
+}
+
+/// True when `t` is the flat effort menu line [`PRODUCT_REASONING_EFFORTS_MENU`]
+/// writes (spacing-insensitive).
+fn is_product_reasoning_efforts_menu(t: &str) -> bool {
+    let Some((key, rhs)) = t.split_once('=') else {
+        return false;
+    };
+    key.trim() == "reasoning_efforts"
+        && toml_rhs_without_comment(rhs).trim() == r#"["max", "high", "low"]"#
 }
 
 /// Standing reasoning effort for the product Flash slot, read from `config.toml`.
@@ -2071,6 +2134,58 @@ theme = "deepseeknight"
         "pro gets the menu when nothing declares it: {pro_sec}"
     );
     toml::from_str::<toml::Value>(&fixed).expect("repaired config must parse");
+    assert_eq!(repair_product_agent_config(&fixed), fixed);
+}
+
+#[test]
+fn repair_heals_flat_duplicate_beside_table_form_reasoning_efforts() {
+    // The incident shape (2026-10-15): the flat menu was injected into a
+    // stanza whose only menu is the documented array of tables, and the
+    // duplicate key made the whole file unparseable for the vendored loader.
+    let broken = r#"
+[models]
+default = "deepseek-v4-flash"
+
+[model.deepseek-v4-flash]
+reasoning_efforts = ["max", "high", "low"]
+supports_reasoning_effort = true
+reasoning_effort = "max"
+model = "deepseek-v4-flash"
+api_backend = "chat_completions"
+base_url = "https://api.deepseek.com"
+
+[[model.deepseek-v4-flash.reasoning_efforts]]
+value = "max"
+
+[[model.deepseek-v4-flash.reasoning_efforts]]
+value = "high"
+
+[[model.deepseek-v4-flash.reasoning_efforts]]
+value = "low"
+default = true
+"#;
+    assert!(
+        toml::from_str::<toml::Value>(broken).is_err(),
+        "precondition: the duplicate key is broken TOML"
+    );
+    let fixed = repair_product_agent_config(broken);
+    toml::from_str::<toml::Value>(&fixed).expect("healed config must parse");
+    let flash_idx = fixed.find("[model.deepseek-v4-flash]").unwrap();
+    let pro_idx = fixed.find("[model.deepseek-v4-pro]").unwrap();
+    let flash_sec = &fixed[flash_idx..pro_idx];
+    assert!(
+        !flash_sec
+            .lines()
+            .any(|l| l.trim().starts_with("reasoning_efforts =")),
+        "the injected flat menu is dropped: {flash_sec}"
+    );
+    assert_eq!(
+        flash_sec
+            .matches("[[model.deepseek-v4-flash.reasoning_efforts]]")
+            .count(),
+        3,
+        "the user's table entries survive: {flash_sec}"
+    );
     assert_eq!(repair_product_agent_config(&fixed), fixed);
 }
 

@@ -290,6 +290,9 @@ enabled = true
 /// 6. DeepSeek model display `name`: the stale product default
 ///    `DeepSeek V4 Flash` becomes `DeepSeek V4.1 Flash` (the model the slot
 ///    maps to); a user-set name is preserved
+/// 7. API-measured `context_window` (1048576) on DeepSeek model stanzas:
+///    migrates the legacy `128000` seed, preserves other explicit values,
+///    injects the key when missing
 fn repair_product_agent_config(body: &str) -> String {
     repair_product_agent_config_with_theme(body, PRODUCT_THEME)
 }
@@ -327,6 +330,8 @@ fn repair_product_agent_config_with_theme(body: &str, theme: &str) -> String {
 
     next = ensure_deepseek_model_base_url(next, "deepseek-v4-flash");
     next = ensure_deepseek_model_base_url(next, "deepseek-v4-pro");
+    next = ensure_deepseek_model_context_window(next, "deepseek-v4-flash");
+    next = ensure_deepseek_model_context_window(next, "deepseek-v4-pro");
     next = ensure_deepseek_model_reasoning_effort(next, "deepseek-v4-flash");
     next = ensure_deepseek_model_reasoning_effort(next, "deepseek-v4-pro");
     next = ensure_deepseek_model_system_prompt_label(next, "deepseek-v4-flash");
@@ -368,6 +373,69 @@ fn ensure_deepseek_model_base_url(body: String, model_id: &str) -> String {
             &format!("base_url = \"{DEEPSEEK_API_BASE_URL}\""),
         )],
     )
+}
+
+/// Context window: DeepSeek model stanzas must carry the API-measured window
+/// ([`PRODUCT_CONTEXT_WINDOW`]).
+///
+/// An install seeded before the V4.1 window keeps `128000` forever — the
+/// provider retarget rewrites `base_url` / `model` / `env_key` / `api_key`
+/// only — so the legacy value is migrated on launch. Other explicit values
+/// are preserved; a missing key is injected because the vendored
+/// `ModelEntryConfig.context_window` is a required `NonZeroU64` with no serde
+/// default. Idempotent.
+fn ensure_deepseek_model_context_window(body: String, model_id: &str) -> String {
+    let header = format!("[model.{model_id}]");
+    if !body.contains(&header) {
+        return body;
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut in_section = false;
+    let mut found = false;
+    let mut patched = false;
+    for line in body.lines() {
+        let t = line.trim();
+        if t == header {
+            in_section = true;
+            found = false;
+            out.push(line.to_string());
+            continue;
+        }
+        if in_section && t.starts_with('[') {
+            if !found {
+                out.push(format!("context_window = {PRODUCT_CONTEXT_WINDOW}"));
+                patched = true;
+            }
+            in_section = false;
+        }
+        let key = t.split_once('=').map(|(key, _)| key.trim());
+        if in_section && key == Some("context_window") {
+            found = true;
+            let legacy = t
+                .split_once('=')
+                .is_some_and(|(_, rhs)| toml_rhs_without_comment(rhs).trim() == "128000");
+            if legacy {
+                out.push(format!("context_window = {PRODUCT_CONTEXT_WINDOW}"));
+                patched = true;
+                continue;
+            }
+        }
+        out.push(line.to_string());
+    }
+    // Section ran to end of file with no key and no closing header.
+    if in_section && !found {
+        out.push(format!("context_window = {PRODUCT_CONTEXT_WINDOW}"));
+        patched = true;
+    }
+    if patched {
+        let mut s = out.join("\n");
+        if !s.ends_with('\n') {
+            s.push('\n');
+        }
+        s
+    } else {
+        body
+    }
 }
 
 /// Point `[models]` side requests at the Flash stanza when the keys are absent.
@@ -1801,6 +1869,157 @@ yolo = false
         pro_sec.contains("supports_reasoning_effort = true"),
         "pro missing supports: {pro_sec}"
     );
+    assert_eq!(repair_product_agent_config(&fixed), fixed);
+}
+
+#[test]
+fn repair_migrates_legacy_context_window_in_both_product_sections() {
+    let raw = r#"
+[models]
+default = "deepseek-v4-flash"
+
+[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+api_backend = "chat_completions"
+base_url = "https://api.deepseek.com"
+env_key = "DEEPSEEK_API_KEY"
+context_window = 128000
+
+[model.deepseek-v4-pro]
+model = "deepseek-v4-pro"
+api_backend = "chat_completions"
+base_url = "https://api.deepseek.com"
+context_window = 128000
+
+[ui]
+theme = "deepseeknight"
+yolo = false
+"#;
+    let fixed = repair_product_agent_config(raw);
+    let flash_idx = fixed.find("[model.deepseek-v4-flash]").unwrap();
+    let pro_idx = fixed.find("[model.deepseek-v4-pro]").unwrap();
+    let flash_sec = &fixed[flash_idx..pro_idx];
+    let pro_sec = &fixed[pro_idx..];
+    assert!(
+        flash_sec.contains(&format!("context_window = {PRODUCT_CONTEXT_WINDOW}")),
+        "flash must migrate off the legacy 128000: {flash_sec}"
+    );
+    assert!(
+        !flash_sec.contains("128000"),
+        "legacy 128000 must be gone from flash: {flash_sec}"
+    );
+    assert!(
+        pro_sec.contains(&format!("context_window = {PRODUCT_CONTEXT_WINDOW}")),
+        "pro must migrate off the legacy 128000: {pro_sec}"
+    );
+    assert!(
+        !pro_sec.contains("128000"),
+        "legacy 128000 must be gone from pro: {pro_sec}"
+    );
+    // Idempotent
+    assert_eq!(repair_product_agent_config(&fixed), fixed);
+}
+
+#[test]
+fn repair_injects_context_window_when_missing() {
+    let raw = r#"
+[models]
+default = "deepseek-v4-flash"
+
+[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+api_backend = "chat_completions"
+base_url = "https://api.deepseek.com"
+env_key = "DEEPSEEK_API_KEY"
+
+[model.deepseek-v4-pro]
+model = "deepseek-v4-pro"
+api_backend = "chat_completions"
+base_url = "https://api.deepseek.com"
+
+[ui]
+theme = "deepseeknight"
+yolo = false
+"#;
+    let fixed = repair_product_agent_config(raw);
+    let flash_idx = fixed.find("[model.deepseek-v4-flash]").unwrap();
+    let pro_idx = fixed.find("[model.deepseek-v4-pro]").unwrap();
+    let flash_sec = &fixed[flash_idx..pro_idx];
+    let pro_sec = &fixed[pro_idx..];
+    assert!(
+        flash_sec.contains(&format!("context_window = {PRODUCT_CONTEXT_WINDOW}")),
+        "flash must get the window injected: {flash_sec}"
+    );
+    assert_eq!(
+        flash_sec.matches("context_window").count(),
+        1,
+        "flash must get exactly one injected key: {flash_sec}"
+    );
+    assert!(
+        pro_sec.contains(&format!("context_window = {PRODUCT_CONTEXT_WINDOW}")),
+        "pro must get the window injected: {pro_sec}"
+    );
+    assert_eq!(
+        pro_sec.matches("context_window").count(),
+        1,
+        "pro must get exactly one injected key: {pro_sec}"
+    );
+    // Idempotent
+    assert_eq!(repair_product_agent_config(&fixed), fixed);
+}
+
+#[test]
+fn repair_preserves_custom_context_window_and_other_model_sections() {
+    let raw = r#"
+[models]
+default = "deepseek-v4-flash"
+
+[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+api_backend = "chat_completions"
+base_url = "https://api.deepseek.com"
+env_key = "DEEPSEEK_API_KEY"
+context_window = 128000
+
+[model.deepseek-v4-pro]
+model = "deepseek-v4-pro"
+api_backend = "chat_completions"
+base_url = "https://api.deepseek.com"
+context_window = 256000
+
+[model.local-llm]
+model = "local-llm"
+base_url = "https://localhost:8080/v1"
+context_window = 128000
+
+[ui]
+theme = "deepseeknight"
+yolo = false
+"#;
+    let fixed = repair_product_agent_config(raw);
+    let flash_idx = fixed.find("[model.deepseek-v4-flash]").unwrap();
+    let pro_idx = fixed.find("[model.deepseek-v4-pro]").unwrap();
+    let other_idx = fixed.find("[model.local-llm]").unwrap();
+    let flash_sec = &fixed[flash_idx..pro_idx];
+    let pro_sec = &fixed[pro_idx..other_idx];
+    let other_sec = &fixed[other_idx..];
+    assert!(
+        flash_sec.contains(&format!("context_window = {PRODUCT_CONTEXT_WINDOW}")),
+        "flash must migrate while pro stays custom: {flash_sec}"
+    );
+    assert!(
+        !flash_sec.contains("128000"),
+        "legacy 128000 must be gone from flash: {flash_sec}"
+    );
+    assert!(
+        pro_sec.contains("context_window = 256000"),
+        "explicit user value must be preserved: {pro_sec}"
+    );
+    assert!(
+        other_sec.contains("context_window = 128000"),
+        "non-product model sections must be untouched: {other_sec}"
+    );
+    // Idempotent
     assert_eq!(repair_product_agent_config(&fixed), fixed);
 }
 

@@ -33,7 +33,7 @@ pub use path_a_permissions::{
 };
 pub use permissions::{
     Decision, PermissionError, PermissionPolicy, Scope, classify_bash, decide,
-    default_coding_policy, dogfood_coding_policy,
+    default_coding_policy, dogfood_coding_policy, trusted_sandbox_policy,
 };
 pub use plan::{PlanError, PlanItem, PlanStore};
 pub use snippets::{EditError, LineEnding, Snippet, SnippetStore, WriteError};

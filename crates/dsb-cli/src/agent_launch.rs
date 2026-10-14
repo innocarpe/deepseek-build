@@ -131,6 +131,13 @@ const PRODUCT_MODEL_SLOTS: [&str; 2] = ["deepseek-v4-flash", "deepseek-v4-pro"];
 /// for both slots — the shared stanza template has no divergence to model.
 const PRODUCT_CONTEXT_WINDOW: &str = "1048576";
 
+/// Flat `reasoning_efforts` line injected into a DeepSeek model stanza that
+/// declares no effort menu. Without this list the vendored `/effort` menu
+/// falls back to the upstream legacy rows (xhigh/high/medium/low) and `max`
+/// is unreachable for a DeepSeek slot. The duplicate heal removes this exact
+/// text, so both sides read one constant.
+const PRODUCT_REASONING_EFFORTS_MENU: &str = r#"reasoning_efforts = ["max", "high", "low"]"#;
+
 /// `[models]` side-request keys that otherwise fall back to the vendored
 /// default model instead of a product stanza. `prompt_suggestion` is left
 /// out on purpose: unset, the per-turn suggestion call is skipped; pointing
@@ -535,10 +542,7 @@ fn ensure_deepseek_model_reasoning_effort(body: String, model_id: &str) -> Strin
                 "supports_reasoning_effort = true",
             ),
             ("reasoning_effort", "reasoning_effort = \"high\""),
-            (
-                "reasoning_efforts",
-                "reasoning_efforts = [\"max\", \"high\", \"low\"]",
-            ),
+            ("reasoning_efforts", PRODUCT_REASONING_EFFORTS_MENU),
         ],
     )
 }
@@ -767,16 +771,41 @@ fn toml_rhs_without_comment(rhs: &str) -> &str {
     rhs
 }
 
+/// Child key path when `line` is a table header inside `parent`'s namespace:
+/// `[<parent>.<key>]` and `[[<parent>.<key>]]` (array of tables) both return
+/// `(<key>.<sub…>, is_array)`. The parent's own header and unrelated tables
+/// return `None`.
+///
+/// The vendored schema declares some keys as tables — the documented
+/// `model.<id>.reasoning_efforts` form is an array of tables — so a presence
+/// scan for such a key has to see these headers, not only flat key lines.
+fn table_header_child_key<'a>(line: &'a str, parent: &str) -> Option<(&'a str, bool)> {
+    let trimmed = toml_rhs_without_comment(line.trim()).trim();
+    let (inner, array) = if let Some(rest) = trimmed.strip_prefix("[[") {
+        (rest.strip_suffix("]]")?, true)
+    } else {
+        (trimmed.strip_prefix('[')?.strip_suffix(']')?, false)
+    };
+    let child = inner.strip_prefix(parent)?.strip_prefix('.')?;
+    if child.is_empty() {
+        return None;
+    }
+    Some((child, array))
+}
+
 /// Inject TOML keys into a `[model.*]` section when absent (section-scoped).
 ///
 /// `keys` are `(prefix, full_line)` where `prefix` matches the start of a
-/// non-comment line in the section (e.g. `"base_url"`, `"reasoning_effort"`).
+/// non-comment line in the section (e.g. `"base_url"`, `"reasoning_effort"`),
+/// or the first path segment of a child table header
+/// (`[[model.<id>.reasoning_efforts]]`).
 fn inject_model_section_keys_if_missing(
     body: String,
     header: &str,
     keys: &[(&str, &str)],
 ) -> String {
     let lines: Vec<&str> = body.lines().collect();
+    let parent = header.trim_start_matches('[').trim_end_matches(']');
     let mut out: Vec<String> = Vec::with_capacity(lines.len() + keys.len());
     let mut i = 0;
     let mut patched = false;
@@ -797,6 +826,20 @@ fn inject_model_section_keys_if_missing(
                     }
                 }
                 j += 1;
+            }
+            // Child tables may sit anywhere later in the body — the flat
+            // region above ends at their header, so a stanza whose only
+            // `reasoning_efforts` is `[[model.<id>.reasoning_efforts]]` entries
+            // would otherwise read as "key missing".
+            for line in &lines[i + 1..] {
+                let Some((child, _)) = table_header_child_key(line, parent) else {
+                    continue;
+                };
+                for (idx, (prefix, _)) in keys.iter().enumerate() {
+                    if child.starts_with(prefix) {
+                        present[idx] = true;
+                    }
+                }
             }
             for (idx, (_, full_line)) in keys.iter().enumerate() {
                 if !present[idx] {
@@ -1938,6 +1981,96 @@ yolo = false
         pro_sec.contains("supports_reasoning_effort = true"),
         "pro missing supports: {pro_sec}"
     );
+    assert_eq!(repair_product_agent_config(&fixed), fixed);
+}
+
+#[test]
+fn repair_keeps_table_form_reasoning_efforts_without_flat_duplicate() {
+    let raw = r#"
+[models]
+default = "deepseek-v4-flash"
+
+[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+api_backend = "chat_completions"
+base_url = "https://api.deepseek.com"
+supports_reasoning_effort = true
+
+[[model.deepseek-v4-flash.reasoning_efforts]]
+value = "max"
+
+[[model.deepseek-v4-flash.reasoning_efforts]]
+value = "high"
+
+[[model.deepseek-v4-flash.reasoning_efforts]]
+value = "low"
+default = true
+
+[ui]
+theme = "deepseeknight"
+"#;
+    let fixed = repair_product_agent_config(raw);
+    let flash_idx = fixed.find("[model.deepseek-v4-flash]").unwrap();
+    let pro_idx = fixed.find("[model.deepseek-v4-pro]").unwrap();
+    let flash_sec = &fixed[flash_idx..pro_idx];
+    assert!(
+        !flash_sec
+            .lines()
+            .any(|l| l.trim().starts_with("reasoning_efforts =")),
+        "flat menu must not be injected next to the table form: {flash_sec}"
+    );
+    assert!(
+        !flash_sec.contains("reasoning_effort = \"high\""),
+        "an explicit menu suppresses the default effort: {flash_sec}"
+    );
+    assert_eq!(
+        flash_sec
+            .matches("[[model.deepseek-v4-flash.reasoning_efforts]]")
+            .count(),
+        3,
+        "the user's table entries must stay: {flash_sec}"
+    );
+    toml::from_str::<toml::Value>(&fixed).expect("repaired config must parse");
+    assert_eq!(repair_product_agent_config(&fixed), fixed);
+}
+
+#[test]
+fn repair_injects_flat_effort_menu_when_only_unrelated_child_tables_exist() {
+    let raw = r#"
+[models]
+default = "deepseek-v4-flash"
+
+[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+api_backend = "chat_completions"
+base_url = "https://api.deepseek.com"
+
+[model.deepseek-v4-flash.notice]
+severity = "warning"
+text = "Use /pro for harder tasks."
+
+[model.deepseek-v4-pro]
+model = "deepseek-v4-pro"
+api_backend = "chat_completions"
+base_url = "https://api.deepseek.com"
+
+[ui]
+theme = "deepseeknight"
+"#;
+    let fixed = repair_product_agent_config(raw);
+    let flash_idx = fixed.find("[model.deepseek-v4-flash]").unwrap();
+    let pro_idx = fixed.find("[model.deepseek-v4-pro]").unwrap();
+    let flash_sec = &fixed[flash_idx..pro_idx];
+    let pro_sec = &fixed[pro_idx..];
+    assert!(
+        flash_sec.contains("reasoning_efforts = [\"max\", \"high\", \"low\"]"),
+        "menu must still be injected when no form declares it: {flash_sec}"
+    );
+    assert!(
+        pro_sec.contains("reasoning_efforts = [\"max\", \"high\", \"low\"]"),
+        "pro gets the menu when nothing declares it: {pro_sec}"
+    );
+    toml::from_str::<toml::Value>(&fixed).expect("repaired config must parse");
     assert_eq!(repair_product_agent_config(&fixed), fixed);
 }
 

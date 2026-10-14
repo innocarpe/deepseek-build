@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The native headless loop (`dsb run` / `dsb chat`) accepts `--max-tool-rounds <N>`, raising the per-turn tool-round cap that made long benchmark and CI runs stop at eight rounds with `max tool rounds reached`. The default stays 8 and `0` is rejected as a value.
+- `--dangerously-allow-all` is a new explicit opt-in for disposable sandboxes (benchmark / CI containers): every permission scope is allowed — network, unclassified commands, write/delete outside the workspace — and bash executes. Without the flag the fail-closed headless policy is byte-identical, `--dogfood` and the full-screen TUI keep their own profiles, and the welcome banner names the profile `allow-all`. Spec 90 §1.4 and ADR 0013 name the opt-in; user-guide 07/08 document the flag.
+
 ## 6.11.0 — 2026-10-15
 
 - The `/model` picker shows one row, `DeepSeek V4.1 Flash`. The product seed and the home repair write `[models] disabled_models = ["grok-*"]` and `hidden_models = ["deepseek-v4-pro"]`, so the vendored Grok catalog rows leave the picker and the Pro row is hidden from it. Pro stays in the model catalog and `/pro` and `/preset max` still route to it, while `-m deepseek-v4-pro` no longer resolves. An existing home gets the Flash stanza's earlier product label rewritten; a user-chosen display name is kept.

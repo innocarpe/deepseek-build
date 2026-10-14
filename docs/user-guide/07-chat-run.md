@@ -44,6 +44,8 @@ Slash-ish routing helpers (same turn text):
 | `--dogfood` | Trusted local write + bash execute |
 | `--allow-workspace-write` | Allow in-cwd writes without ask |
 | `--bash-execute` | Enable bash execution |
+| `--max-tool-rounds N` | Per-turn tool-round cap in the native loop (default 8) |
+| `--dangerously-allow-all` | Disposable-sandbox profile: every scope allowed + bash (see [08](./08-permissions.md)) |
 | `--ask-permissions` | Force TTY ask even for `run` |
 | `--no-ask-permissions` | Never prompt (ask → deny) |
 

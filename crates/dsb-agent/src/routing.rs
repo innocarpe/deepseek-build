@@ -90,6 +90,9 @@ pub struct ModelRouter {
     force_flash_once: bool,
     /// Automatic router enabled (optional M1).
     auto_router: bool,
+    /// Standing reasoning effort for the Flash slot, from the product
+    /// `[models] default_reasoning_effort` pin. `None` keeps the shipped High.
+    default_effort: Option<ReasoningEffort>,
 }
 
 impl Default for ModelRouter {
@@ -105,6 +108,7 @@ impl ModelRouter {
             pro_once: false,
             force_flash_once: false,
             auto_router: true,
+            default_effort: None,
         }
     }
 
@@ -133,6 +137,13 @@ impl ModelRouter {
         self.auto_router = enabled;
     }
 
+    /// Pin a standing effort for the Flash slot (product config
+    /// `[models] default_reasoning_effort`). A per-turn `--effort` still wins:
+    /// the loop applies the CLI override after routing.
+    pub fn set_default_effort(&mut self, effort: Option<ReasoningEffort>) {
+        self.default_effort = effort;
+    }
+
     /// Select model for this turn. Consumes one-shot overrides.
     ///
     /// Precedence: explicit user override > sticky preset > auto router > default Flash.
@@ -140,13 +151,13 @@ impl ModelRouter {
         // User force flash
         if self.force_flash_once {
             self.force_flash_once = false;
-            return Self::decision(ModelId::Flash, RouteSource::UserOverride, None, None);
+            return self.decision(ModelId::Flash, RouteSource::UserOverride, None, None);
         }
 
         // One-shot pro
         if self.pro_once {
             self.pro_once = false;
-            return Self::decision(
+            return self.decision(
                 ModelId::Pro,
                 RouteSource::UserOverride,
                 Some("user_pro_once".into()),
@@ -157,7 +168,7 @@ impl ModelRouter {
         // Sticky preset
         match self.preset {
             Preset::Max => {
-                return Self::decision(ModelId::Pro, RouteSource::StickyPreset, None, None);
+                return self.decision(ModelId::Pro, RouteSource::StickyPreset, None, None);
             }
             Preset::Flash => {
                 // fall through to auto router / default
@@ -171,7 +182,7 @@ impl ModelRouter {
             && let Some(reason) = auto_escalate_reason(user_text)
         {
             // Only escalate if user did not force flash (already handled).
-            return Self::decision(ModelId::Pro, RouteSource::AutoRouter, Some(reason), None);
+            return self.decision(ModelId::Pro, RouteSource::AutoRouter, Some(reason), None);
         }
 
         let source = if self.preset == Preset::Flash {
@@ -179,12 +190,12 @@ impl ModelRouter {
         } else {
             RouteSource::StickyPreset
         };
-        Self::decision(ModelId::Flash, source, None, None)
+        self.decision(ModelId::Flash, source, None, None)
     }
 
     /// Fallback when Pro is unavailable (404/unsupported).
-    pub fn fallback_flash(warning: impl Into<String>) -> RouteDecision {
-        Self::decision(
+    pub fn fallback_flash(&self, warning: impl Into<String>) -> RouteDecision {
+        self.decision(
             ModelId::Flash,
             RouteSource::FallbackUnavailable,
             None,
@@ -193,6 +204,7 @@ impl ModelRouter {
     }
 
     fn decision(
+        &self,
         model: ModelId,
         source: RouteSource,
         escalate_reason: Option<String>,
@@ -200,10 +212,13 @@ impl ModelRouter {
     ) -> RouteDecision {
         let (thinking, effort) = match model {
             ModelId::Pro => (ThinkingMode::enabled(), ReasoningEffort::High),
-            ModelId::Flash => (ThinkingMode::enabled(), ReasoningEffort::High),
+            ModelId::Flash => (
+                ThinkingMode::enabled(),
+                self.default_effort.unwrap_or(ReasoningEffort::High),
+            ),
             ModelId::Other(_) => (ThinkingMode::enabled(), ReasoningEffort::High),
         };
-        // Preset max uses effort max — handled by caller for sticky; keep High default for flash/pro one-shot.
+        // Preset max uses effort max — handled by caller for sticky.
         let effort = if matches!(source, RouteSource::StickyPreset) && model.as_wire() == MODEL_PRO
         {
             ReasoningEffort::Max
@@ -295,6 +310,7 @@ mod tests {
         let d = r.route_turn("hello");
         assert_eq!(d.wire_model, MODEL_FLASH);
         assert_eq!(d.source, RouteSource::Default);
+        assert_eq!(d.effort, ReasoningEffort::High);
     }
 
     #[test]
@@ -306,6 +322,7 @@ mod tests {
         assert_eq!(d1.wire_model, MODEL_PRO);
         let d2 = r.route_turn("y");
         assert_eq!(d2.wire_model, MODEL_FLASH);
+        assert_eq!(d2.effort, ReasoningEffort::High);
     }
 
     #[test]
@@ -341,10 +358,45 @@ mod tests {
 
     #[test]
     fn pro_unavailable_fallback() {
-        let d = ModelRouter::fallback_flash("pro 404");
+        let r = ModelRouter::default();
+        let d = r.fallback_flash("pro 404");
         assert_eq!(d.wire_model, MODEL_FLASH);
         assert_eq!(d.source, RouteSource::FallbackUnavailable);
         assert!(d.warning.is_some());
+    }
+
+    #[test]
+    fn default_effort_pins_flash_route_force_and_fallback() {
+        let mut r = ModelRouter::new(Preset::Balanced);
+        r.set_auto_router(false);
+        r.set_default_effort(Some(ReasoningEffort::Max));
+
+        // Default (non-escalated) route on the Flash slot.
+        let d = r.route_turn("hello");
+        assert_eq!(d.wire_model, MODEL_FLASH);
+        assert_eq!(d.effort, ReasoningEffort::Max);
+
+        // User-forced Flash keeps the pin.
+        r.request_force_flash();
+        let forced = r.route_turn("x");
+        assert_eq!(forced.wire_model, MODEL_FLASH);
+        assert_eq!(forced.effort, ReasoningEffort::Max);
+
+        // Pro 404 fallback lands on Flash with the pin.
+        let fb = r.fallback_flash("pro 404");
+        assert_eq!(fb.wire_model, MODEL_FLASH);
+        assert_eq!(fb.effort, ReasoningEffort::Max);
+    }
+
+    #[test]
+    fn default_effort_leaves_pro_alone() {
+        let mut r = ModelRouter::new(Preset::Max);
+        r.set_auto_router(false);
+        r.set_default_effort(Some(ReasoningEffort::Max));
+        r.request_pro_once();
+        let d = r.route_turn("x");
+        assert_eq!(d.wire_model, MODEL_PRO);
+        assert_eq!(d.effort, ReasoningEffort::High);
     }
 
     #[test]

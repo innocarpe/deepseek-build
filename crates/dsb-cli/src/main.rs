@@ -713,6 +713,9 @@ async fn build_agent(cli: &Cli) -> Result<Agent> {
     } else {
         None
     };
+    // Product config pin (`[models] default_reasoning_effort`) applies to the
+    // Flash slot; `--effort` still wins per turn (effort_override below).
+    let default_reasoning_effort = agent_launch::configured_default_reasoning_effort(&home);
     let agent_cfg = AgentConfig {
         workspace_root: workspace,
         preset,
@@ -726,6 +729,7 @@ async fn build_agent(cli: &Cli) -> Result<Agent> {
         user_skills_root,
         discover_skills: true,
         effort_override,
+        default_reasoning_effort,
         thinking_enabled,
         ..AgentConfig::default()
     };

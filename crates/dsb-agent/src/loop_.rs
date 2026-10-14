@@ -70,6 +70,9 @@ pub struct AgentConfig {
     pub discover_skills: bool,
     /// Override reasoning effort for all turns (CLI `--effort`).
     pub effort_override: Option<ReasoningEffort>,
+    /// Standing effort for the Flash slot from product config
+    /// (`[models] default_reasoning_effort`); `None` keeps the shipped High.
+    pub default_reasoning_effort: Option<ReasoningEffort>,
     /// When Some(false), disable thinking for the session.
     pub thinking_enabled: Option<bool>,
 }
@@ -87,6 +90,7 @@ impl std::fmt::Debug for AgentConfig {
             .field("ask_callback", &self.ask_callback.as_ref().map(|_| "<fn>"))
             .field("discover_skills", &self.discover_skills)
             .field("effort_override", &self.effort_override)
+            .field("default_reasoning_effort", &self.default_reasoning_effort)
             .field("thinking_enabled", &self.thinking_enabled)
             .finish_non_exhaustive()
     }
@@ -111,6 +115,7 @@ impl Default for AgentConfig {
             ask_callback: None,
             discover_skills: true,
             effort_override: None,
+            default_reasoning_effort: None,
             thinking_enabled: None,
         }
     }
@@ -241,7 +246,8 @@ impl Agent {
             project_instructions,
         };
         let stable = PrefixBuilder::new().build(&inputs)?;
-        let router = ModelRouter::new(config.preset);
+        let mut router = ModelRouter::new(config.preset);
+        router.set_default_effort(config.default_reasoning_effort);
         let policy = build_policy(&config);
         let mut tools = ToolExecutor::new(config.workspace_root.clone(), policy);
         tools.bash_execute = config.bash_execute || config.dogfood;
@@ -464,7 +470,7 @@ impl Agent {
                 Err(ProviderError::ApiStatus { status, body: _ })
                     if status == 404 && last_route.model.as_wire() == MODEL_PRO =>
                 {
-                    let fb = ModelRouter::fallback_flash("pro unavailable (404)");
+                    let fb = self.router.fallback_flash("pro unavailable (404)");
                     on_event(TurnEvent::Warning(fb.warning.clone().unwrap_or_default()));
                     on_event(TurnEvent::ModelVisibility(fb.visibility_line()));
                     last_route = fb;

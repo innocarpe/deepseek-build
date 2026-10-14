@@ -137,6 +137,17 @@ const PRODUCT_CONTEXT_WINDOW: &str = "1048576";
 /// it at Flash would start a new paid request on every turn.
 const PRODUCT_AUX_MODEL_KEYS: [&str; 3] = ["session_summary", "web_search", "image_description"];
 
+/// `[models]` keys that decide which rows the `/model` picker shows.
+///
+/// The picker renders the vendored ACP model catalog. With no models endpoint
+/// configured the built-in Grok catalog merges in, so `disabled_models`
+/// removes those rows and `hidden_models` keeps the Pro row out of the picker
+/// (Pro stays in the catalog for `/pro`, `/preset max` and subagent routing).
+const PRODUCT_PICKER_MODEL_KEYS: [(&str, &str); 2] = [
+    ("disabled_models", r#"disabled_models = ["grok-*"]"#),
+    ("hidden_models", r#"hidden_models = ["deepseek-v4-pro"]"#),
+];
+
 /// Base URL the product model stanzas use for `provider`.
 pub fn provider_base_url(provider: Provider) -> &'static str {
     match provider {
@@ -235,6 +246,10 @@ pub fn ensure_product_agent_config_with_theme(home: &BuildHome, theme: &str) -> 
         .iter()
         .map(|key| format!("{key} = \"deepseek-v4-flash\"\n"))
         .collect();
+    let picker_lines: String = PRODUCT_PICKER_MODEL_KEYS
+        .iter()
+        .map(|(_, line)| format!("{line}\n"))
+        .collect();
     let stanzas: String = PRODUCT_MODEL_SLOTS
         .iter()
         .map(|slot| product_model_stanza(slot, provider, api_key))
@@ -248,7 +263,9 @@ pub fn ensure_product_agent_config_with_theme(home: &BuildHome, theme: &str) -> 
 
 [models]
 default = "deepseek-v4-flash"
-# Side requests (session titles, web search, image description) use the
+# `/model` picker: drop the vendored Grok catalog rows, and keep the Pro row
+# out of the picker (Pro stays reachable via `/pro` and `/preset max`).
+{picker_lines}# Side requests (session titles, web search, image description) use the
 # product Flash stanza instead of the vendored default model.
 {aux_lines}{stanzas}
 [endpoints]
@@ -293,6 +310,8 @@ enabled = true
 /// 7. API-measured `context_window` (1048576) on DeepSeek model stanzas:
 ///    migrates the legacy `128000` seed, preserves other explicit values,
 ///    injects the key when missing
+/// 8. `[models]` picker selectors (`disabled_models`, `hidden_models`) so the
+///    `/model` picker shows the Flash row only
 fn repair_product_agent_config(body: &str) -> String {
     repair_product_agent_config_with_theme(body, PRODUCT_THEME)
 }
@@ -339,6 +358,8 @@ fn repair_product_agent_config_with_theme(body: &str, theme: &str) -> String {
     next = ensure_deepseek_model_display_name(next, "deepseek-v4-flash");
     next = ensure_deepseek_model_display_name(next, "deepseek-v4-pro");
     next = ensure_product_aux_models(next);
+    // The picker selectors also create a missing `[models]` table.
+    next = ensure_product_picker_models(next);
 
     if !next.contains("xai_api_base_url") {
         if !next.contains("[endpoints]") {
@@ -448,6 +469,50 @@ fn ensure_product_aux_models(body: String) -> String {
         .collect();
     let keys: Vec<(&str, &str)> = lines.iter().map(|(k, l)| (*k, l.as_str())).collect();
     inject_model_section_keys_if_missing(body, "[models]", &keys)
+}
+
+/// Restrict the `/model` picker to the product rows for an existing home.
+///
+/// The picker renders the vendored ACP model catalog. Nothing in this repo
+/// sets a models endpoint, so the built-in Grok catalog applies and its rows
+/// (`grok-*`) merge in. `disabled_models` removes those rows from the catalog
+/// and `hidden_models` keeps the Pro row out of the picker; the Pro stanza
+/// itself stays, so `/pro` and `/preset max` still route to it. Existing
+/// values are never rewritten, and a second run is a no-op.
+fn ensure_product_picker_models(body: String) -> String {
+    let mut lines: Vec<String> = body.lines().map(str::to_string).collect();
+    if let Some((start, end)) = toml_section_range(&lines, "[models]") {
+        let mut insert_at = end;
+        let mut patched = false;
+        for (key, full_line) in PRODUCT_PICKER_MODEL_KEYS {
+            if toml_section_key_index(&lines, (start, end), key).is_none() {
+                lines.insert(insert_at, full_line.to_string());
+                insert_at += 1;
+                patched = true;
+            }
+        }
+        if !patched {
+            return body;
+        }
+        let mut next = lines.join("\n");
+        if !next.ends_with('\n') {
+            next.push('\n');
+        }
+        return next;
+    }
+
+    // No `[models]` table at all: append a product one at end of file so the
+    // picker loses the Grok rows on the next launch.
+    let mut next = body;
+    if !next.ends_with('\n') {
+        next.push('\n');
+    }
+    next.push_str("\n[models]\n");
+    for (_, full_line) in PRODUCT_PICKER_MODEL_KEYS {
+        next.push_str(full_line);
+        next.push('\n');
+    }
+    next
 }
 
 /// Spec 30 / VC008: ensure DeepSeek model stanzas enable effort, default high,
@@ -1760,9 +1825,13 @@ fn product_config_seed_contains_deepseek_defaults() {
     // Repair also adds DeepSeek model blocks with base_url.
     assert!(body2.contains("[model.deepseek-v4-flash]"));
     assert!(body2.contains("base_url = \"https://api.deepseek.com\""));
+    // The picker `[models]` table is appended on pass 1; the side-request keys
+    // then land inside it on pass 2, and pass 3 is the fixpoint.
     ensure_product_agent_config(&home).unwrap();
     let body3 = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
-    assert_eq!(body2, body3);
+    ensure_product_agent_config(&home).unwrap();
+    let body4 = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
+    assert_eq!(body3, body4);
 }
 
 #[test]
@@ -2103,17 +2172,9 @@ fn seed_injects_deepseek_system_prompt_label_and_no_grok_branding() {
     );
     // The product seed must never render Grok/xAI identity text. (The
     // `xai_api_base_url` key itself is a vendored schema name — the ADR 0008
-    // config-home bridge — not branding.)
-    let lower = body.to_ascii_lowercase();
-    assert!(!lower.contains("grok"), "seed leaked grok branding: {body}");
-    assert!(
-        !lower.contains("released by xai"),
-        "seed leaked released-by-xAI branding: {body}"
-    );
-    assert!(
-        !body.contains("system_prompt_label = \"Grok"),
-        "seed leaked grok-valued label: {body}"
-    );
+    // config-home bridge — not branding, and the `disabled_models` picker
+    // selector is the one allowed `grok` occurrence.)
+    assert_no_grok_branding(&body);
 }
 
 #[test]
@@ -2219,6 +2280,9 @@ system_prompt_label = "My Custom Agent" # not Grok
 #[test]
 fn repair_replaces_stale_flash_display_name_and_keeps_pro() {
     let raw = r#"
+[models]
+default = "deepseek-v4-flash"
+
 [model.deepseek-v4-flash]
 model = "deepseek-v4-flash"
 name = "DeepSeek V4 Flash"
@@ -2277,6 +2341,9 @@ keep = true
 #[test]
 fn repair_scrubs_grok_fork_secondary_model() {
     let raw = r#"
+[models]
+default = "deepseek-v4-flash"
+
 [ui]
 theme = "deepseeknight"
 fork_secondary_model = "grok-4.5"
@@ -2361,6 +2428,32 @@ fn section_of<'a>(body: &'a str, header: &str) -> &'a str {
     &rest[..end]
 }
 
+/// Assert the product config carries no Grok/xAI identity text.
+///
+/// The `disabled_models = ["grok-*"]` picker selector is the one allowed
+/// non-comment `grok` occurrence; comments are skipped.
+#[cfg(test)]
+fn assert_no_grok_branding(body: &str) {
+    assert!(
+        !body.to_ascii_lowercase().contains("released by xai"),
+        "released-by-xAI branding leaked: {body}"
+    );
+    assert!(
+        !body.contains("system_prompt_label = \"Grok"),
+        "grok-valued label leaked: {body}"
+    );
+    for line in body.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') || !trimmed.to_ascii_lowercase().contains("grok") {
+            continue;
+        }
+        assert!(
+            trimmed.starts_with("disabled_models"),
+            "grok branding leaked: {line}"
+        );
+    }
+}
+
 #[test]
 fn openrouter_seed_routes_both_stanzas_to_openrouter() {
     let dir = tempfile::tempdir().unwrap();
@@ -2385,7 +2478,7 @@ fn openrouter_seed_routes_both_stanzas_to_openrouter() {
     assert!(body.contains(&format!("xai_api_base_url = \"{OPENROUTER_API_BASE_URL}\"")));
     assert!(!body.contains(DEEPSEEK_API_BASE_URL), "{body}");
     assert!(!body.contains("DEEPSEEK_API_KEY"), "{body}");
-    assert!(!body.to_ascii_lowercase().contains("grok"), "{body}");
+    assert_no_grok_branding(&body);
     // Launch-time repair must not drag an OpenRouter seed back to DeepSeek.
     ensure_product_agent_config(&home).unwrap();
     let again = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
@@ -2725,4 +2818,71 @@ env_key = ["DEEPSEEK_API_KEY"]
     let (same, kept) = retarget_product_config(raw, Provider::OpenRouter, "sk-or-v1-k");
     assert_eq!(same, raw);
     assert_eq!(kept, vec!["deepseek-v4-flash", "deepseek-v4-pro"]);
+}
+
+#[test]
+fn seed_pins_picker_model_selectors() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dsb_config::BuildHome::from_path(dir.path());
+    ensure_product_agent_config(&home).unwrap();
+    let body = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
+    let models = section_of(&body, "[models]");
+    for (key, full_line) in PRODUCT_PICKER_MODEL_KEYS {
+        assert!(models.contains(full_line), "{key} missing: {models}");
+    }
+}
+
+#[test]
+fn repair_injects_picker_selectors_into_existing_models() {
+    let raw = "[models]\ndefault = \"deepseek-v4-flash\"\ndisabled_models = [\"grok-4.6\"]\n";
+    let fixed = repair_product_agent_config(raw);
+    let models = section_of(&fixed, "[models]");
+    assert!(
+        models.contains("disabled_models = [\"grok-4.6\"]"),
+        "explicit user selector must be preserved: {models}"
+    );
+    assert!(
+        models.contains("hidden_models = [\"deepseek-v4-pro\"]"),
+        "{models}"
+    );
+    assert_eq!(fixed.matches("disabled_models").count(), 1, "{fixed}");
+    assert_eq!(repair_product_agent_config(&fixed), fixed);
+}
+
+#[test]
+fn repair_appends_picker_models_table_when_missing() {
+    let fixed = repair_product_agent_config("keep=1\n");
+    assert!(fixed.contains("keep=1"), "{fixed}");
+    assert_eq!(fixed.matches("[models]").count(), 1, "{fixed}");
+    let models = section_of(&fixed, "[models]");
+    for (key, full_line) in PRODUCT_PICKER_MODEL_KEYS {
+        assert!(models.contains(full_line), "{key} missing: {models}");
+    }
+}
+
+#[test]
+fn repair_picker_repairs_are_idempotent() {
+    // Existing `[models]`: one pass is a fixpoint.
+    let with_models = "[models]\ndefault = \"deepseek-v4-flash\"\n";
+    let once = repair_product_agent_config(with_models);
+    assert_eq!(once, repair_product_agent_config(&once));
+    // No `[models]` at all: the picker table lands on the first pass and the
+    // aux side-request keys follow into it on the second.
+    let bare = repair_product_agent_config("keep=1\n");
+    assert_eq!(bare.matches("[models]").count(), 1, "{bare}");
+    let bare2 = repair_product_agent_config(&bare);
+    let bare3 = repair_product_agent_config(&bare2);
+    assert_eq!(bare2, bare3);
+}
+
+#[test]
+fn product_slot_display_names_follow_the_picker_surface() {
+    assert_eq!(
+        product_slot_display_name("deepseek-v4-flash"),
+        "DeepSeek V4.1 Flash"
+    );
+    assert_eq!(
+        product_slot_display_name("deepseek-v4-pro"),
+        "DeepSeek V4 Pro"
+    );
 }

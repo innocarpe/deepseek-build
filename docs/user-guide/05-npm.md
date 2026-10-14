@@ -35,7 +35,9 @@ npm install -g @innocarpe/deepseek-build
 - `postinstall` downloads a **platform tarball** from GitHub Releases for this SemVer and installs into `~/.deepseek-build/bin/`.  
 - Should finish in **seconds** (network + extract), not tens of minutes.  
 - Node **≥ 18**.  
-- Platform: `darwin-arm64` (Apple Silicon macOS only).
+- Platforms: `darwin-arm64` (Apple Silicon macOS) and `linux-x64` (x86_64
+  Linux; the tarball is built on Ubuntu 22.04, so it needs glibc 2.35+ —
+  Ubuntu 22.04 or newer).
 - npm **12.0.0+** does not run this package's `postinstall` unless `allowScripts` covers `@innocarpe/deepseek-build`. A denied script still ends with `added 1 package` and does not install the agent. `npm install -g --allow-scripts=@innocarpe/deepseek-build` with no package spec fails (`ENOENT package.json`). `npm rebuild -g @innocarpe/deepseek-build` is denied the same way; pass `--allow-scripts=@innocarpe/deepseek-build` and repeat the package name.
 
 If `dsb` is not on PATH after install:
@@ -182,11 +184,14 @@ Node shims (`npm/bin/*.js`) resolve natives from:
 # After version bump + building natives for this machine:
 ./scripts/package-release-binaries.sh --upload
 # → dist/deepseek-build-{VERSION}-{platform}.tar.gz on GitHub release v{VERSION}
+# Repeat per supported platform with --platform ID (darwin-arm64 | linux-x64);
+# build the linux-x64 tarball on x86_64 Linux.
 
 npm publish --access public   # human OTP (ADR 0007)
 ```
 
-CI attaches the `darwin-arm64` tarball on each version tag.
+CI attaches every supported platform's tarball (`darwin-arm64`, `linux-x64`)
+on each version tag.
 
 ## Publish (owner)
 

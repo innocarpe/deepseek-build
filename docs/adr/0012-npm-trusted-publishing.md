@@ -85,8 +85,8 @@ because it is the fallback if a tag predates `publish-npm.yml`.
 ```
 ./scripts/release.sh <ver>
   └─ tag v<ver> pushed
-       ├─ release-prebuilt.yml  → builds + attaches darwin-arm64 tarball
-       └─ publish-npm.yml       → waits for that asset, verifies it, publishes
+       ├─ release-prebuilt.yml  → builds + attaches each platform's tarball
+       └─ publish-npm.yml       → waits for those assets, verifies them, publishes
 ```
 
 `publish-npm.yml` is the only publishing path. It runs on the `v*.*.*` tag push
@@ -110,13 +110,16 @@ npm's requirements, verified against `docs.npmjs.com/trusted-publishers`
 | `repository.url` in `package.json` matches the repo | `git+https://github.com/innocarpe/deepseek-build.git` |
 
 The ordering contract from ADR 0009 is preserved and strengthened. The job
-refuses to publish unless the release asset exists **and** the packaged agent
-executes and reports the release version; a missing or stale tarball fails the
-run instead of shipping an npm version whose binary is absent.
+refuses to publish unless every supported platform's release asset exists
+**and** the packaged agents execute and report the release version; a missing
+or stale tarball fails the run instead of shipping an npm version whose binary
+is absent.
 
-`macos-14` rather than `ubuntu-latest` is deliberate: `darwin-arm64` is the only
-released platform, and running the packaged agent is the strongest available
-check that the asset is really the release build.
+`macos-14` rather than `ubuntu-latest` is deliberate for the publish job: it
+lets that job run the packaged `darwin-arm64` agent, the strongest available
+check that the asset is really the release build. The `linux-x64` asset is
+executed on the wait job's Linux runner for the same reason (ADR 0009
+amendment, 2026-10-15).
 
 ### The human step, and how it is done when it is needed
 

@@ -505,14 +505,21 @@ impl Agent {
                 model_used = m.clone();
             }
 
-            // Push assistant with reasoning for tool replay
+            // Push assistant with reasoning for tool replay. DeepSeek rejects
+            // an assistant message with neither `content` nor `tool_calls`
+            // (400 "content or tool_calls must be set", measured 2026-10-15),
+            // so a reasoning-only stop still carries an empty content string;
+            // with tool calls present, null content stays valid.
             let tool_calls = completed.message.tool_calls.clone();
+            let content = if !last_content.is_empty() {
+                Some(last_content.clone())
+            } else if tool_calls.is_empty() {
+                Some(String::new())
+            } else {
+                None
+            };
             self.tail.push(ChatMessage::assistant_with_reasoning(
-                if last_content.is_empty() {
-                    None
-                } else {
-                    Some(last_content.clone())
-                },
+                content,
                 if last_reasoning.is_empty() {
                     None
                 } else {
@@ -1569,6 +1576,46 @@ mod tests {
             out.reasoning_text
                 .contains("the answer is in the reasoning")
         );
+        // The stop stays in the transcript and must remain replayable on a
+        // later turn of the same session.
+        let last = agent.transcript_tail().last().unwrap();
+        assert_eq!(last.role, Role::Assistant);
+        assert_eq!(last.content.as_deref(), Some(""));
+    }
+
+    #[tokio::test]
+    async fn reasoning_only_stop_keeps_content_on_the_wire() {
+        // Measured against the DeepSeek API on 2026-10-15: an assistant
+        // message with neither `content` nor `tool_calls` is a 400 ("content
+        // or tool_calls must be set"), which killed a `dsb run` trial at the
+        // synthesis retry. Every assistant message this loop sends carries
+        // one of the two.
+        let (server, mut agent, _dir) = scripted_agent(vec![
+            tool_round_body(),
+            reasoning_stop_body("only thinking"),
+            visible_body("done"),
+        ])
+        .await;
+        let out = agent
+            .run_turn("what does the file say", |_| {})
+            .await
+            .unwrap();
+        assert_eq!(out.assistant_text, "done");
+        let request = server
+            .received_requests()
+            .await
+            .unwrap()
+            .pop()
+            .expect("a request reached the provider");
+        let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+        for message in body["messages"].as_array().unwrap() {
+            if message["role"] == "assistant" {
+                assert!(
+                    message.get("content").is_some() || message.get("tool_calls").is_some(),
+                    "assistant message with neither content nor tool_calls: {message}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -126,6 +126,11 @@ pub const OPENROUTER_API_BASE_URL: &str = "https://openrouter.ai/api/v1";
 /// has to know which endpoint is behind them.
 const PRODUCT_MODEL_SLOTS: [&str; 2] = ["deepseek-v4-flash", "deepseek-v4-pro"];
 
+/// Context window (tokens) both product slots report through the DeepSeek
+/// API (`GET /models`): V4.1 Flash and V4 Pro both measure 1048576. One value
+/// for both slots — the shared stanza template has no divergence to model.
+const PRODUCT_CONTEXT_WINDOW: &str = "1048576";
+
 /// `[models]` side-request keys that otherwise fall back to the vendored
 /// default model instead of a product stanza. `prompt_suggestion` is left
 /// out on purpose: unset, the per-turn suggestion call is skipped; pointing
@@ -171,7 +176,7 @@ fn product_model_stanza(slot: &str, provider: Provider, api_key: Option<&str>) -
 model = "{wire}"
 name = "{name}"
 system_prompt_label = "{PRODUCT_SYSTEM_PROMPT_LABEL}"
-context_window = 128000
+context_window = {PRODUCT_CONTEXT_WINDOW}
 api_backend = "chat_completions"
 base_url = "{base_url}"
 {api_key_line}env_key = "{env_key}"
@@ -1661,6 +1666,21 @@ fn product_config_seed_contains_deepseek_defaults() {
     assert!(
         !body.contains("name = \"DeepSeek V4 Flash\""),
         "seed leaked stale Flash display name: {body}"
+    );
+    // V4.1 Flash / V4 Pro API window: both stanzas seed 1048576, never 128000.
+    let flash_idx = body.find("[model.deepseek-v4-flash]").unwrap();
+    let pro_idx = body.find("[model.deepseek-v4-pro]").unwrap();
+    assert!(
+        body[flash_idx..pro_idx].contains(&format!("context_window = {PRODUCT_CONTEXT_WINDOW}")),
+        "seed missing flash context_window: {body}"
+    );
+    assert!(
+        body[pro_idx..].contains(&format!("context_window = {PRODUCT_CONTEXT_WINDOW}")),
+        "seed missing pro context_window: {body}"
+    );
+    assert!(
+        !body.contains("128000"),
+        "legacy 128000 window must not be seeded: {body}"
     );
     // Existing file without theme gets theme injected (not full rewrite).
     std::fs::write(dir.path().join("config.toml"), "keep=1\n").unwrap();

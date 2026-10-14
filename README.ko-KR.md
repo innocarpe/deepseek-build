@@ -27,6 +27,7 @@
   <a href="#왜-deepseek-build인가">왜 DeepSeek Build인가</a> ·
   <a href="#작동-방식">작동 방식</a> ·
   <a href="#deepseek-harness">DeepSeek Harness</a> ·
+  <a href="#벤치마크">벤치마크</a> ·
   <a href="#문서">문서</a> ·
   <a href="#기여하기">기여하기</a>
 </p>
@@ -222,6 +223,43 @@ dsh에서 새로 가져온 기능이 아닙니다.
 더 읽기: [dsh 리서치 노트](docs/research/dsh-deepseek-harness.md) ·
 [이 작업이 바꾼 것](docs/product/CHANGELIST_6_1_0.md) ·
 [디자인 소스](docs/product/SOURCES.md).
+
+## 벤치마크
+
+2026-10-15에 **dsb** 자체를 에이전트로 사용해 공개 에이전트 벤치마크 두 개를
+돌렸습니다. Linux x64 소스 빌드가 **DeepSeek V4.1 Flash**(`deepseek-v4-flash`)를
+thinking on, reasoning effort `max`, 과제당 1회(`-k 1`)로 구동했고, 실행은 각
+벤치마크의 공식 러너를 통해 진행했습니다 — Harbor는 Terminal-Bench 4.0, Pier는
+DeepSWE v1.1.
+
+| 모델 · 하네스 | Terminal-Bench 4.0 | DeepSWE v1.1 |
+| --- | --- | --- |
+| **dsb + DeepSeek V4.1 Flash (max)** — 여기서 측정 | **33.3%** (2/6과제) | **63.6%** (7/11과제) |
+| DeepSeek V4.1 Flash (max) — 보고 수치 | 26.8% (발표 31.2%) | 74.2% |
+| Claude Haiku 5.5 (max) — 보고 수치 | 32.8% (발표 39.2%) | 미공개 (SWE-bench Multilingual 83.7%) |
+| GPT-6 Luna (max) — 보고 수치 | 12.6% (발표 16.4%) | 66.6% |
+
+보고 수치는 아래 출처의 수치이며, `발표`로 병기한 숫자는 모델 회사의 자체
+발표치입니다. 참고로 같은 Terminal-Bench 4.0 보드에서는 Claude Sonnet 5.5가
+63.6%, Claude Opus 5.5가 59.6%입니다.
+
+점수에는 하네스도 한몫합니다. Terminal-Bench 4.0에서 Artificial Analysis는 두
+경량 모델을 같은 mini-swe-agent 하네스로 돌려 DeepSeek V4.1 Flash 26.8%,
+GPT-6 Luna 12.6%를 기록했고, Vals AI는 공유 환경에서 19.7%와 13.6%를
+측정했습니다. DeepSWE v1.1에서는 DeepSeek V4.1 Flash가 Codex 구동으로 65.6%,
+Claude Code 구동으로 69.8%로 보고됩니다. 100만 토큰당 정가(입력/출력):
+Claude Haiku 5.5 $0.10/$0.50(프롬프트 10만 토큰 초과 시 5배), GPT-6 Luna
+$0.10/$0.50, DeepSeek V4.1 Flash $0.30/$1.20(비혼잡 시간대 반값).
+
+이번 측정은 전체 보드와 일대일로 비교하기보다 초기 방향 신호로 봐야 합니다.
+전체 데이터셋이 아닌 **부분집합**(Terminal-Bench 4.0은 66과제 중 6과제 — GPU·
+무네트워크 과제 제외, DeepSWE v1.1은 113과제 중 11과제)이고, 과제당 **1회**
+실행이며, 실행 환경도 중간에 Modal에서 로컬 Docker Desktop(macOS, amd64
+에뮬레이션)으로 옮겨졌습니다(Modal 지출 한도 도달).
+
+출처: [aievals.app — Terminal-Bench 4](https://aievals.app/benchmarks/terminal-bench-4) ·
+[decode.agency — AI 모델 비교](https://decode.agency/article/ai-model-comparison-software-development/) ·
+[DeepSeek V4.1 Flash 모델 카드](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash)
 
 ## 문서
 

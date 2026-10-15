@@ -3,10 +3,10 @@
 #
 # Ordering contract (ADR 0009 / release skill hard rule 5): the npm package is a
 # thin wrapper whose postinstall downloads
-# `deepseek-build-<version>-darwin-arm64.tar.gz` from the GitHub release, so a
-# version must never reach npm before its asset is attached. This workflow waits
-# for the asset, executes the packaged agent to prove it reports the release
-# version, and only then publishes.
+# `deepseek-build-<version>-<platform>.tar.gz` from the GitHub release, so a
+# version must never reach npm before every supported platform's asset is
+# attached. This workflow waits for all of them, executes the packaged agent to
+# prove it reports the release version, and only then publishes.
 #
 # The trusted publisher configured on npmjs.com must name THIS file:
 # `publish-npm.yml` (filename only, no path). All fields are case-sensitive.
@@ -42,14 +42,18 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  SUPPORTED_PLATFORM: darwin-arm64
+  # Every released platform's tarball must exist before publish (ADR 0009, as
+  # amended 2026-10-15).
+  SUPPORTED_PLATFORMS: darwin-arm64 linux-x64
 
 jobs:
   wait:
-    name: wait for asset
-    # Linux so the 40–70 minute build does not hold a macOS runner. The
-    # packaged agent is executed on macOS in the publish job, after the asset
-    # exists. 6.0.1 spent 44 of its 46 minutes in this wait.
+    name: wait for assets
+    # Linux so the 40–70 minute build does not hold a macOS runner. It waits
+    # for every supported asset and executes the linux-x64 one here, because
+    # this runner is the platform that can run it; the darwin-arm64 asset is
+    # executed on macOS in the publish job, after both assets exist. 6.0.1
+    # spent 44 of its 46 minutes in this wait.
     runs-on: ubuntu-latest
     timeout-minutes: 100
     permissions:
@@ -99,13 +103,12 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "publishing ${VERSION} from tag ${TAG} at ${HEAD_SHA}"
 
-      - name: Wait for the release asset
+      - name: Wait for the release assets
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
-          ASSET="deepseek-build-${VERSION}-${SUPPORTED_PLATFORM}.tar.gz"
           # Cold builds measured 46 minutes (6.0.1). 90 minutes leaves room
           # for a 60+ minute compile without consuming the job timeout.
           DEADLINE=$(( $(date +%s) + 5400 ))
@@ -113,8 +116,13 @@ jobs:
             gh release view "v${VERSION}" --repo "$GITHUB_REPOSITORY" \
               --json assets --jq '.assets[].name' \
               > "$RUNNER_TEMP/assets.txt" 2>/dev/null || true
-            if grep -qx "$ASSET" "$RUNNER_TEMP/assets.txt"; then
-              echo "asset present: $ASSET"
+            MISSING=""
+            for p in $SUPPORTED_PLATFORMS; do
+              grep -qx "deepseek-build-${VERSION}-${p}.tar.gz" "$RUNNER_TEMP/assets.txt" \
+                || MISSING="$MISSING $p"
+            done
+            if [[ -z "$MISSING" ]]; then
+              echo "assets present: ${SUPPORTED_PLATFORMS}"
               break
             fi
             gh run list --repo "$GITHUB_REPOSITORY" --workflow release-prebuilt.yml --limit 30 \
@@ -129,31 +137,64 @@ jobs:
               CONCLUSION="$(jq -r '.conclusion' <<<"$BUILD")"
               echo "release-prebuilt for v${VERSION}: status=${STATUS} conclusion=${CONCLUSION}"
               if [[ "$STATUS" == "completed" && "$CONCLUSION" != "success" ]]; then
-                echo "::error::release-prebuilt completed as ${CONCLUSION} and ${ASSET} is absent" >&2
+                echo "::error::release-prebuilt completed as ${CONCLUSION}; missing assets:${MISSING}" >&2
                 exit 1
               fi
             fi
             if [[ $(date +%s) -ge $DEADLINE ]]; then
-              echo "::error::${ASSET} was not attached within 5400s — refusing to publish (ADR 0009)" >&2
-              echo "Attach it (release skill 'Manual asset fallback') and re-run this job." >&2
+              echo "::error::missing assets:${MISSING} were not attached within 5400s — refusing to publish (ADR 0009)" >&2
+              echo "Attach them (release skill 'Manual asset fallback') and re-run this job." >&2
               exit 1
             fi
-            echo "waiting for ${ASSET} (release-prebuilt.yml)…"
+            echo "waiting for assets:${MISSING} (release-prebuilt.yml)…"
             sleep 60
           done
+
+      # The asset must be executed to prove it is the release build. This
+      # runner is Linux, so it is where the linux-x64 asset can run; the
+      # darwin-arm64 asset is executed on macOS in the publish job.
+      - name: Verify the linux-x64 asset is the release build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          ASSET="deepseek-build-${VERSION}-linux-x64.tar.gz"
+          VERIFY="$RUNNER_TEMP/asset-verify-linux"
+          rm -rf "$VERIFY"; mkdir -p "$VERIFY"
+          gh release download "v${VERSION}" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ASSET" --dir "$VERIFY"
+          tar -xzf "$VERIFY/$ASSET" -C "$VERIFY"
+          for bin in deepseek-build dsb deepseek-build-agent; do
+            test -f "$VERIFY/$bin" || { echo "::error::$bin missing from $ASSET" >&2; exit 1; }
+            chmod 755 "$VERIFY/$bin"
+          done
+          OUT="$(env -u DEEPSEEK_BUILD_VERSION -u GROK_TEST_VERSION "$VERIFY/deepseek-build-agent" --version 2>&1 || true)"
+          echo "packaged linux agent --version: ${OUT}"
+          if [[ "$OUT" != *"$VERSION"* ]]; then
+            echo "::error::packaged linux agent does not report ${VERSION} — stale asset, refusing to publish" >&2
+            exit 1
+          fi
+          if ! "$VERIFY/dsb" --version 2>/dev/null | grep -q "$VERSION"; then
+            echo "::error::packaged linux dsb wrapper does not report ${VERSION}" >&2
+            exit 1
+          fi
 
   publish:
     name: publish
     needs: wait
-    # macOS because the only released platform is darwin-arm64: it lets the job
-    # execute the packaged agent to prove the asset is the release build, which
-    # a Linux runner cannot do. GitHub-hosted runners are the supported
-    # environment for npm trusted publishing.
+    # macOS because it lets this job execute the packaged darwin-arm64 agent to
+    # prove the asset is the release build; a Linux runner cannot run it. The
+    # linux-x64 asset is executed on the wait job's runner instead. GitHub-
+    # hosted runners are the supported environment for npm trusted publishing.
     runs-on: macos-14
     timeout-minutes: 20
     permissions:
       contents: read
       id-token: write
+    env:
+      # The one asset this macOS runner can execute.
+      PLATFORM: darwin-arm64
     steps:
       - uses: actions/checkout@v4
         with:
@@ -215,15 +256,15 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "publishing ${VERSION} from tag ${TAG} at ${HEAD_SHA}"
 
-      # The wait job already blocked until this asset existed. Download it
-      # here and refuse to publish if it disappeared.
+      # The wait job already blocked until every supported asset existed.
+      # Download the darwin one here and refuse to publish if it disappeared.
       - name: Download the release asset
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
-          ASSET="deepseek-build-${VERSION}-${SUPPORTED_PLATFORM}.tar.gz"
+          ASSET="deepseek-build-${VERSION}-${PLATFORM}.tar.gz"
           mkdir -p dist
           gh release download "v${VERSION}" --repo "$GITHUB_REPOSITORY" \
             --pattern "$ASSET" --dir dist
@@ -235,7 +276,7 @@ jobs:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
-          ASSET="deepseek-build-${VERSION}-${SUPPORTED_PLATFORM}.tar.gz"
+          ASSET="deepseek-build-${VERSION}-${PLATFORM}.tar.gz"
           VERIFY="$RUNNER_TEMP/asset-verify"
           rm -rf "$VERIFY"; mkdir -p "$VERIFY"
           tar -xzf "dist/$ASSET" -C "$VERIFY"
@@ -331,3 +372,39 @@ jobs:
         run: |
           echo "npm: $(npm --version)"
           npm config get registry
+
+  # The same user path on the second supported platform. The wait job proved
+  # the linux-x64 asset executes; this proves a Linux user can install the
+  # package from the registry. It runs whenever the assets existed and the run
+  # was not cancelled — including when the publish job failed after publishing,
+  # because "can a user install it?" stays the question it answers.
+  smoke-linux:
+    name: linux install smoke (the user path)
+    needs: [wait, publish]
+    if: ${{ !cancelled() && needs.wait.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Global install smoke (linux)
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${INPUT_VERSION:-}" ]]; then
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          PREFIX="$RUNNER_TEMP/dsb-smoke-linux"
+          rm -rf "$PREFIX"; mkdir -p "$PREFIX"
+          npm install -g --prefix "$PREFIX" "@innocarpe/deepseek-build@${VERSION}"
+          for bin in dsb deepseek-build; do
+            OUT="$("$PREFIX/bin/$bin" --version 2>&1 || true)"
+            echo "$bin --version: ${OUT}"
+            [[ "$OUT" == *"$VERSION"* ]] || { echo "::error::$bin did not report ${VERSION}" >&2; exit 1; }
+          done

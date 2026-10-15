@@ -18,6 +18,9 @@
 #   3. `gh pr merge` itself fails — exit 1 with the PR and the resume command
 #   4. the PR conflicts with its base — stop before `gh pr merge`
 #   5. checks never finish — `--checks-timeout` bounds the wait
+#   6. one released platform's asset never appears — the asset wait stops at
+#      `--timeout` and refuses to continue (2026-10-15: darwin-arm64 and
+#      linux-x64 are both required)
 #
 # Hermetic: a temp sandbox holds a copy of the real release.sh and
 # scripts/lib/pr_checks.py, a throwaway git repo with a bare origin, and a fake
@@ -127,7 +130,15 @@ case "$1 $2" in
     fi
     ;;
   "release view")
-    printf 'deepseek-build-%s-darwin-arm64.tar.gz\n' "$GH_VERSION"
+    # Both released platforms' assets by default (release.sh waits for every
+    # supported platform). GH_ASSETS=darwin-only reproduces a stuck linux
+    # build for case 6.
+    if [[ "${GH_ASSETS:-both}" == "darwin-only" ]]; then
+      printf 'deepseek-build-%s-darwin-arm64.tar.gz\n' "$GH_VERSION"
+    else
+      printf 'deepseek-build-%s-darwin-arm64.tar.gz\ndeepseek-build-%s-linux-x64.tar.gz\n' \
+        "$GH_VERSION" "$GH_VERSION"
+    fi
     ;;
   *)
     echo "fake gh: unhandled call: $*" >&2
@@ -187,6 +198,7 @@ run_release() { # <release args...>; sets RC
     PATH="$BINPATH:$PATH" HOME="$CASE/home" \
     GH_CALLS="$CALLS" GH_STATE_DIR="$STATE" GH_PR_NUMBER="$PR_NUMBER" \
     GH_VERSION="$VERSION" GH_MERGE_FAIL="${GH_MERGE_FAIL:-0}" \
+    GH_ASSETS="${GH_ASSETS:-}" \
     "$SYSTEM_BASH" ./scripts/release.sh "$@" ) \
     > "$STATE/out" 2> "$STATE/err" || RC=$?
 }
@@ -268,6 +280,17 @@ pending_json "$STATE/responses/001.json"
 DSB_PR_CHECKS_INTERVAL_SEC=1 run_release "$VERSION" --no-publish --checks-timeout 2
 if [[ "$RC" -ne 0 && "$(merges)" -eq 0 ]] && grep -q 'within 2s' "$STATE/err"; then
   ok "exit $RC on the deadline with no merge call"
+else
+  bad "rc=$RC merges=$(merges)"; dump "$STATE/err"
+fi
+
+# ---------------------------------------------------------------------------
+head_ "6. a platform asset that never appears stops the release"
+make_case missing-linux
+green_json "$STATE/responses/001.json"
+GH_ASSETS="darwin-only" run_release "$VERSION" --no-publish --timeout 2
+if [[ "$RC" -ne 0 && "$(merges)" -ge 1 ]] && grep -q 'assets not ready' "$STATE/err"; then
+  ok "exit $RC after the merge, the asset wait refused to continue"
 else
   bad "rc=$RC merges=$(merges)"; dump "$STATE/err"
 fi

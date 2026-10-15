@@ -26,7 +26,8 @@ Usage: $0 [options]
 
 Options:
   --from-dir DIR   Directory containing deepseek-build, dsb, deepseek-build-agent
-  --platform ID    Override platform id (default: detect via node npm/lib/platform.js)
+  --platform ID    Platform id: darwin-arm64 | linux-x64
+                   (default: detect via node npm/lib/platform.js)
   --upload         Upload tarball to GitHub release v{VERSION} (gh)
   --out-dir DIR    Output directory (default: ./dist)
   -h, --help
@@ -51,10 +52,14 @@ if [[ -z "$PLATFORM" ]]; then
   echo "error: could not detect platform" >&2
   exit 1
 fi
-if [[ "$PLATFORM" != "darwin-arm64" ]]; then
-  echo "error: this release package currently supports darwin-arm64 only (got $PLATFORM)" >&2
-  exit 1
-fi
+SUPPORTED_PLATFORMS="darwin-arm64 linux-x64"
+case " $SUPPORTED_PLATFORMS " in
+  *" $PLATFORM "*) ;;
+  *)
+    echo "error: unsupported platform: $PLATFORM (supported: $SUPPORTED_PLATFORMS)" >&2
+    exit 1
+    ;;
+esac
 
 ASSET="deepseek-build-${VERSION}-${PLATFORM}.tar.gz"
 mkdir -p "$OUT_DIR"

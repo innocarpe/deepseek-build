@@ -39,7 +39,7 @@ remaining human step is a **one-time** enrollment on the npm website
 |------|------|-----|
 | `npm publish` | ~10 s | The npm package is a thin JS wrapper (no compiled code, ADR 0009) |
 | User `npm i -g` | ~10 s | `postinstall` downloads `deepseek-build-{ver}-{platform}.tar.gz` from GitHub Releases |
-| Prebuilt build (cold, no default-branch cache) | 40–60+ min | Whole Grok TUI workspace compiled for `darwin-arm64`. `v6.0.1` took 46 minutes, of which the agent build was 41. `rust-cache` logged `No cache found` and sccache's Rust hit rate was 0.15% |
+| Prebuilt build (cold, no default-branch cache) | 40–60+ min | Whole Grok TUI workspace compiled, per platform. `v6.0.1` took 46 minutes for `darwin-arm64`, of which the agent build was 41. `rust-cache` logged `No cache found` and sccache's Rust hit rate was 0.15%. The `linux-x64` twin runs the same workspace on `ubuntu-22.04` |
 | Prebuilt build (warm default-branch cache) | recompile of the version-marked crates | The agent is always rebuilt so `--version` matches the package. With a restored `target/`, unchanged dependencies are not recompiled. The first release after the cache seed is still cold; the seed is what the release after that restores |
 
 There is no wrapper-reuse fast path. Reusing the previous tag's agent binary
@@ -105,8 +105,8 @@ build (30–60+ minutes). The contract and test names are spec 10 §1.9 / §4.4.
 | `--skip-bump` / `--skip-pr` / `--skip-tag` | Resume from a later stage |
 | `--publish-only` | Skip everything, wait for assets + publish |
 | `--local-publish` | **Emergency:** publish from this machine instead of waiting for CI (interactive npm login) |
-| `--platform ID` | Platform to wait for (default: detect from `npm/lib/platform.js`) |
-| `--wait-all` | Retained for future matrix expansion; currently waits for the single `darwin-arm64` target |
+| `--platform ID` | Wait for only this platform (`darwin-arm64` \| `linux-x64`). Default (no flag): wait for **every** supported platform |
+| `--wait-all` | Explicit spelling of the default; the wait covers all supported platforms (`darwin-arm64`, `linux-x64`) |
 | `--timeout SEC` | Asset wait timeout (default 5400) |
 | `--checks-timeout SEC` | How long to wait for the release PR's checks before merging (default 3600) |
 
@@ -349,32 +349,38 @@ prompt; step 1 is an account-identity action and needs a person.
 
 > **Operational reality.** `v6.0.1` and `v6.0.2` both left the queue within
 > seconds (2026-09-25 / 2026-09-26). Older tags did sit in the queue, so the
-> manual asset fallback below stays. The matrix is Apple Silicon macOS
-> (`darwin-arm64`) only. `publish-npm.yml` waits for the asset on a Linux
-> runner, so a late manual attach still publishes, and the workflow can be
-> re-run on demand. The wait stops early when `release-prebuilt` has already
-> finished without the asset.
+> manual asset fallback below stays. The matrix builds two released platforms:
+> `darwin-arm64` (macos-14) and `linux-x64` (ubuntu-22.04 — the glibc 2.35
+> floor 22.04-era images need; a newer build base raises it). `publish-npm.yml`
+> waits for both assets on a Linux runner, so a late manual attach still
+> publishes, and the workflow can be re-run on demand. The wait stops early
+> when `release-prebuilt` has already finished without the assets.
 
 - **Always a full agent build.** The binary's version string has to match
   the package. `scope=full` is the only scope the job logs.
+- **protoc on Linux** is the vendored `third_party/grok-build/bin/protoc`
+  dotslash shim (protoc 29.3), pinned in `PROTOC` and on `PATH`. Ubuntu
+  22.04's apt protoc (3.12) cannot parse proto3 optional fields. macOS keeps
+  the `brew install protobuf` step; `cargo install dotslash` serves the shim
+  on both.
 - **Rust cache across tags.** `release-prebuilt.yml` restores
-  `Swatinem/rust-cache@v2` (`shared-key: release-prebuilt-darwin-arm64`,
-  `save-if: false`) and uploads `release-rust-cache.tar.gz`.
+  `Swatinem/rust-cache@v2` (`shared-key: release-prebuilt-<platform>`,
+  `save-if: false`) and uploads one `release-rust-cache-<platform>` artifact.
   `seed-release-cache.yml` runs after that success, in the default-branch
-  context, and saves the archive there. The next tag can restore a
-  default-branch cache; it cannot restore the previous tag's own save.
-  `CARGO_TERM_COLOR` and `CARGO_INCREMENTAL` are part of the cache key and
-  must match in both workflows. An archive over 6 GiB is not uploaded, and
-  a pack failure does not fail the release.
+  context, and saves each archive there under its platform's key. The next
+  tag can restore a default-branch cache; it cannot restore the previous
+  tag's own save. `CARGO_TERM_COLOR` and `CARGO_INCREMENTAL` are part of the
+  cache key and must match in both workflows. An archive over 6 GiB is not
+  uploaded, and a pack failure does not fail the release.
 - **First cache.** `v6.1.0` ran before this workflow existed, so it
   uploaded no archive and the seed saved nothing. `workflow_dispatch` on
   `seed-release-cache.yml` builds the release agent on `main` and the
   following job restores that cache. A cold count of compiled crates fails
   that job.
 - **Honest limits.** The release that produces the first archive is still
-  cold. A runner-image Rust upgrade changes the cache key. Non-Apple-Silicon
-  users are outside the current product support boundary and receive a clear
-  unsupported-platform message.
+  cold. A runner-image Rust upgrade changes the cache key. Windows,
+  `linux-arm64`, and musl/static targets are outside the current product
+  support boundary and receive a clear unsupported-platform message.
 
 ## CI notes (`publish-npm.yml`)
 
@@ -383,23 +389,28 @@ prompt; step 1 is an account-identity action and needs a person.
   dispatchable run, so cut a new tag or use the emergency path.
 - **Refuse-to-publish gates** (all before `npm publish` runs): full SemVer;
   the tag exists and `HEAD` **is** the tag commit; `package.json` matches the
-  tag; the `darwin-arm64` tarball is attached; the packaged agent **executes**
-  and reports the release version; the version is not already on the registry.
+  tag; every supported platform's tarball (`darwin-arm64`, `linux-x64`) is
+  attached; the packaged agents **execute** and report the release version —
+  the `linux-x64` one on the wait job's Linux runner, the `darwin-arm64` one
+  in the publish job; the version is not already on the registry.
 - **Auth:** `id-token: write` only. No npm secret is read.
 - **Provenance:** generated automatically by trusted publishing, and
   `--provenance` is passed explicitly. Verify after publish with
   `npm view @innocarpe/deepseek-build@<version> dist.attestations`.
-- **Runners:** `wait for asset` is `ubuntu-latest` (timeout 100 minutes,
-  inner deadline 90). `publish` is `macos-14` (timeout 20 minutes) and
-  starts only after the asset exists, so it can execute the packaged
-  `darwin-arm64` agent. npm trusted publishing supports GitHub-hosted
-  runners only. A build that has already failed does not hold the wait
-  until the deadline.
-- **After publish** the job runs the user-facing path: a clean
-  `npm install -g` and `dsb --version` / `deepseek-build --version`. That step
-  runs whenever a publish happened or the version was already live — including
-  when the verification step above it failed — because "can a user install it?"
-  is the question it answers, and a skip would hide the answer.
+- **Runners:** `wait for assets` is `ubuntu-latest` (timeout 100 minutes,
+  inner deadline 90); it waits for every supported asset and executes the
+  packaged `linux-x64` agent, which this runner can run. `publish` is
+  `macos-14` (timeout 20 minutes) and starts only after the assets exist, so
+  it can execute the packaged `darwin-arm64` agent. npm trusted publishing
+  supports GitHub-hosted runners only. A build that has already failed does
+  not hold the wait until the deadline.
+- **After publish** the user-facing path runs on both platforms: on macOS in
+  the publish job and on `ubuntu-latest` in the separate `smoke-linux` job — a
+  clean `npm install -g` plus `dsb --version` / `deepseek-build --version`. The
+  macOS step runs whenever a publish happened or the version was already live —
+  including when the verification step above it failed — because "can a user
+  install it?" is the question it answers, and a skip would hide the answer;
+  the Linux job runs whenever the assets existed (the wait job succeeded).
 - **Registry visibility.** A successful `npm publish` does not make the version
   immediately readable: the registry serves reads through a CDN with its own
   cache, and nothing in npm's documentation promises read-after-write. On the
@@ -424,7 +435,8 @@ prompt; step 1 is an account-identity action and needs a person.
 ./scripts/release.sh <version> --publish-only --local-publish
 ```
 
-It refuses to publish without the release asset, then drives
+It refuses to publish without every supported platform's release asset
+(`darwin-arm64`, `linux-x64`), then drives
 `npm login --auth-type=web` through `aside exec`: the browser agent signs in as
 the npm account, completes the CLI session, and reads any emailed one-time code
 from Gmail. **No person is asked for a number**, and no code or token is

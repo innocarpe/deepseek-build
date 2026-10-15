@@ -27,6 +27,7 @@
   <a href="#为什么选择-deepseek-build">为什么选择 DeepSeek Build</a> ·
   <a href="#工作原理">工作原理</a> ·
   <a href="#deepseek-harness">DeepSeek Harness</a> ·
+  <a href="#基准测试">基准测试</a> ·
   <a href="#文档">文档</a> ·
   <a href="#参与贡献">参与贡献</a>
 </p>
@@ -209,6 +210,41 @@ dsh 新引入的功能。
 延伸阅读：[dsh 研究笔记](docs/research/dsh-deepseek-harness.md) ·
 [本次工作的变更](docs/product/CHANGELIST_6_1_0.md) ·
 [设计来源](docs/product/SOURCES.md)。
+
+## 基准测试
+
+2026-10-15，以 **dsb** 自身作为代理运行了两项公开代理基准测试。Linux x64
+源码构建驱动 **DeepSeek V4.1 Flash**（`deepseek-v4-flash`），thinking on、
+reasoning effort 为 `max`、每个任务运行一次（`-k 1`）；两项测试均通过各自的
+官方运行器执行——Terminal-Bench 4.0 用 Harbor，DeepSWE v1.1 用 Pier。
+
+| 模型 · harness | Terminal-Bench 4.0 | DeepSWE v1.1 |
+| --- | --- | --- |
+| **dsb + DeepSeek V4.1 Flash (max)** —— 本次实测 | **33.3%**（2/6 个任务） | **63.6%**（7/11 个任务） |
+| DeepSeek V4.1 Flash (max) —— 公开数据 | 26.8%（公布 31.2%） | 74.2% |
+| Claude Haiku 5.5 (max) —— 公开数据 | 32.8%（公布 39.2%） | 未公布（SWE-bench Multilingual 83.7%） |
+| GPT-6 Luna (max) —— 公开数据 | 12.6%（公布 16.4%） | 66.6% |
+
+公开数据来自下列来源；括号中标注 `公布` 的为模型厂商自行公布的数字。作为
+参照，同一 Terminal-Bench 4.0 榜单上 Claude Sonnet 5.5 为 63.6%、Claude Opus
+5.5 为 59.6%。
+
+分数同样取决于 harness。在 Terminal-Bench 4.0 上，Artificial Analysis 用同一个
+mini-swe-agent harness 运行了两款轻量模型（DeepSeek V4.1 Flash 26.8%、
+GPT-6 Luna 12.6%），Vals AI 在共享环境中测得 19.7% 和 13.6%。在 DeepSWE v1.1
+上，DeepSeek V4.1 Flash 在 Codex 驱动下为 65.6%、在 Claude Code 驱动下为
+69.8%。每百万 token 定价（输入/输出）：Claude Haiku 5.5 $0.10/$0.50
+（提示超过 10 万 token 时为 5 倍）、GPT-6 Luna $0.10/$0.50、DeepSeek V4.1
+Flash $0.30/$1.20（非高峰时段半价）。
+
+本次实测是早期方向性信号，而非与完整榜单的一一对比：它是**任务子集**
+（Terminal-Bench 4.0 为 66 个任务中的 6 个，排除 GPU 与无网络任务；DeepSWE
+v1.1 为 113 个任务中的 11 个），每个任务仅运行**一次**，运行环境中途还从
+Modal 切换到本地 Docker Desktop（macOS，amd64 模拟，因 Modal 达到支出上限）。
+
+来源：[aievals.app — Terminal-Bench 4](https://aievals.app/benchmarks/terminal-bench-4) ·
+[decode.agency — AI 模型对比](https://decode.agency/article/ai-model-comparison-software-development/) ·
+[DeepSeek V4.1 Flash 模型卡](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash)
 
 ## 文档
 

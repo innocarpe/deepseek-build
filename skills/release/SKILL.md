@@ -70,9 +70,10 @@ log) is silently skipped.
    first, then build.
 5. **No silent asset skip.** `release-prebuilt.yml` tag runs routinely stay
    "queued" forever. If `gh release view v<ver> --json assets` shows no tarball
-   for `darwin-arm64`, attach manually (fallback below) — do not publish an
-   npm version whose binary is missing or stale. `publish-npm.yml` enforces
-   this too: it waits for the asset and fails the run without it.
+   for a released platform (`darwin-arm64`, `linux-x64`), attach manually
+   (fallback below) — do not publish an npm version whose binary is missing or
+   stale. `publish-npm.yml` enforces this too: it waits for every supported
+   platform's asset and fails the run without them.
 6. **Verify after publish** with a real global install + `dsb --version` +
    a `strings` check for the release's markers (e.g. `deepseek.com` status
    handling) on the installed binary.
@@ -203,7 +204,9 @@ cp "$WT/third_party/grok-build/target/release/xai-grok-pager-bin" \
    ~/.deepseek-build/bin/deepseek-build-agent
 # attach tarball to the GitHub release (creates v4.0.4 if missing)
 cd "$WT" && ./scripts/package-release-binaries.sh --upload
-gh release view v4.0.4 --json assets                      # confirm tarball
+# the linux-x64 tarball for the same tag builds on x86_64 Linux (Ubuntu 22.04
+# base): the same script with --platform linux-x64 there. Attach both.
+gh release view v4.0.4 --json assets                      # confirm both tarballs
 # then let CI publish (it re-runs on demand):
 gh workflow run publish-npm.yml --ref v4.0.4
 # or, only if CI itself is unavailable:
@@ -218,7 +221,8 @@ gh workflow run publish-npm.yml --ref v4.0.4
 - [ ] `strings $(command -v dsb)` (or the agent binary) shows the release's
       behavior markers — e.g. for the image-fix release, the DeepSeek
       endpoint / status markers — not the pre-fix build
-- [ ] `gh release view v<ver> --json tagName,assets` shows the `darwin-arm64` tarball
+- [ ] `gh release view v<ver> --json tagName,assets` shows every released
+      platform's tarball (`darwin-arm64`, `linux-x64`)
 - [ ] CHANGELOG still newest-first: `./scripts/reorder-changelog.sh --check`
 - [ ] The `<ver>` section names what shipped — items moved out of
       `Unreleased`, not a lone `--desc` line (`git show v<ver>:CHANGELOG.md | head -30`)
@@ -247,7 +251,8 @@ gh workflow run publish-npm.yml --ref v4.0.4
 
 ## Done means
 
-- [ ] Tag `v<ver>` exists on origin and has the platform tarball attached
+- [ ] Tag `v<ver>` exists on origin and has every released platform's tarball
+      attached (`darwin-arm64`, `linux-x64`)
 - [ ] `@innocarpe/deepseek-build@<ver>` is live and a clean global install works
 - [ ] CHANGELOG newest-first + `docs/product/versions/README.md` row consistent
       with `<ver>`

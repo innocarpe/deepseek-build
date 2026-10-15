@@ -31,7 +31,8 @@ Product contract remains: **`dsb` opens the DeepSeek full-screen TUI**. How bina
 
 | `platform` id | Target |
 |---------------|--------|
-| `darwin-arm64` | Apple Silicon macOS (current supported target) |
+| `darwin-arm64` | Apple Silicon macOS |
+| `linux-x64` | x86_64 Linux (added 2026-10-15 — see the Linux x64 amendment; built on Ubuntu 22.04) |
 
 The other platform mappings are deferred candidates, not current release
 targets. Windows is not a first-class prebuilt target yet; document the
@@ -78,14 +79,42 @@ fail closed or build only for `darwin-arm64`. Re-enabling another platform
 requires an explicit product decision and a matching release-harness change;
 it must not happen merely because a runner is available.
 
+### Linux x64 amendment (2026-10-15)
+
+The scope expands: `linux-x64` (x86_64 Linux, glibc 2.35+) joins
+`darwin-arm64` as a released prebuilt target. The driver was a benchmark
+session that needed Linux installs and had to build the `v6.9.0` source on a
+cloud runner; the release harness now builds the Linux tarball so `npm i -g`
+and the source path do not have to.
+
+- Platform id `linux-x64`; asset `deepseek-build-<version>-linux-x64.tar.gz`.
+- Built on `ubuntu-22.04` on purpose: the binary must run on 22.04-era images
+  (glibc 2.35), and a newer build base raises that floor. `ubuntu-latest` is
+  not the build runner for this asset.
+- protoc on Linux comes from the vendored
+  `third_party/grok-build/bin/protoc` — a dotslash shim for protoc 29.3.
+  Ubuntu 22.04's apt protoc (3.12) cannot parse proto3 optional fields. The
+  release job pins the shim in `PROTOC` and on `PATH`; `cargo install
+  dotslash` is already part of the job.
+- Every other platform pair still fails closed: the npm resolver returns
+  null, the packager refuses, and the release wait loop requires **every**
+  supported platform's asset — `release.sh` by default and `publish-npm.yml`
+  before it publishes. `publish-npm.yml` executes the `linux-x64` asset on
+  its Linux runner, and its `darwin-arm64` counterpart on the macOS publish
+  job.
+
+`linux-arm64` and musl/static Linux variants stay deferred (see Non-goals).
+
 ### Release engineering
 
-- Tag `vMAJOR.MINOR.PATCH` **must** attach the `darwin-arm64` tarball before or with npm publish.
-- Script: `scripts/package-release-binaries.sh` builds/packages local or CI artifacts.  
-- CI workflow (recommended): on tag push, build the single target → upload the asset.
+- Tag `vMAJOR.MINOR.PATCH` **must** attach every supported platform's tarball
+  (`darwin-arm64`, `linux-x64`) before or with npm publish.
+- Script: `scripts/package-release-binaries.sh` builds/packages local or CI
+  artifacts (one `--platform ID` invocation per platform).
+- CI workflow (recommended): on tag push, build each target → upload the asset.
 - **The ordering rule is enforced, not just documented:** `publish-npm.yml`
-  waits for the asset, executes the packaged agent to confirm it reports the
-  release version, and refuses to publish otherwise.
+  waits for every supported asset, executes the packaged agents to confirm
+  they report the release version, and refuses to publish otherwise.
 - **npm publish is CI-published** over OIDC trusted publishing
   ([ADR 0012](./0012-npm-trusted-publishing.md), amending ADR 0007's human gate).
 

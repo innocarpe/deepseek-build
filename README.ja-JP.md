@@ -27,6 +27,7 @@
   <a href="#なぜ-deepseek-build-か">なぜ DeepSeek Build か</a> ·
   <a href="#仕組み">仕組み</a> ·
   <a href="#deepseek-harness">DeepSeek Harness</a> ·
+  <a href="#ベンチマーク">ベンチマーク</a> ·
   <a href="#ドキュメント">ドキュメント</a> ·
   <a href="#コントリビューション">コントリビューション</a>
 </p>
@@ -223,6 +224,44 @@ snippet staleness。これらは dsh から新たに取り入れた機能では�
 詳しくは: [dsh リサーチノート](docs/research/dsh-deepseek-harness.md) ·
 [今回の作業での変更](docs/product/CHANGELIST_6_1_0.md) ·
 [設計ソース](docs/product/SOURCES.md)。
+
+## ベンチマーク
+
+2026-10-15、**dsb** 自身をエージェントとして使い、公開エージェントベンチマークを
+2 つ実行しました。Linux x64 のソースビルドが **DeepSeek V4.1 Flash**
+（`deepseek-v4-flash`）を thinking on、reasoning effort `max`、タスクごとに
+1 回（`-k 1`）で駆動し、実行は各ベンチマークの公式ランナー（Harbor は
+Terminal-Bench 4.0、Pier は DeepSWE v1.1）で行いました。
+
+| モデル · ハーネス | Terminal-Bench 4.0 | DeepSWE v1.1 |
+| --- | --- | --- |
+| **dsb + DeepSeek V4.1 Flash (max)** — ここでの実測 | **33.3%**（2/6 タスク） | **63.6%**（7/11 タスク） |
+| DeepSeek V4.1 Flash (max) — 公表値 | 26.8%（発表 31.2%） | 74.2% |
+| Claude Haiku 5.5 (max) — 公表値 | 32.8%（発表 39.2%） | 未公表（SWE-bench Multilingual 83.7%） |
+| GPT-6 Luna (max) — 公表値 | 12.6%（発表 16.4%） | 66.6% |
+
+公表値は下記出典の数値で、`発表` と併記した数字はモデルベンダー自身の発表値です。
+参考までに、同じ Terminal-Bench 4.0 ボードでは Claude Sonnet 5.5 が 63.6%、
+Claude Opus 5.5 が 59.6% です。
+
+スコアにはハーネスも効きます。Terminal-Bench 4.0 では Artificial Analysis が
+両軽量モデルを同じ mini-swe-agent ハーネスで走らせ（DeepSeek V4.1 Flash
+26.8%、GPT-6 Luna 12.6%）、Vals AI は共有環境で 19.7% と 13.6% を計測しました。
+DeepSWE v1.1 では DeepSeek V4.1 Flash は Codex 駆動で 65.6%、Claude Code 駆動で
+69.8% と報告されています。100 万トークンあたりの定価（入力/出力）: Claude
+Haiku 5.5 $0.10/$0.50（10 万トークン超のプロンプトは 5 倍）、GPT-6 Luna
+$0.10/$0.50、DeepSeek V4.1 Flash $0.30/$1.20（オフピーク時間帯は半額）。
+
+今回の実測はフルボードとの一対一比較ではなく、初期の方向性シグナルとして
+見てください。全体データセットではなく**部分集合**（Terminal-Bench 4.0 は
+66 タスク中 6 — GPU タスクとネットワーク分離タスクを除外、DeepSWE v1.1 は
+113 タスク中 11）で、タスクごとに**1 回**のみ実行し、実行環境も途中で Modal
+からローカル Docker Desktop（macOS、amd64 エミュレーション）へ移りました
+（Modal の支出上限に到達）。
+
+出典: [aievals.app — Terminal-Bench 4](https://aievals.app/benchmarks/terminal-bench-4) ·
+[decode.agency — AI モデル比較](https://decode.agency/article/ai-model-comparison-software-development/) ·
+[DeepSeek V4.1 Flash モデルカード](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash)
 
 ## ドキュメント
 

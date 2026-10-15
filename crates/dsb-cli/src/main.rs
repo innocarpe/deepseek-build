@@ -81,6 +81,19 @@ struct Cli {
     #[arg(long, global = true, default_value_t = false)]
     dogfood: bool,
 
+    /// Maximum tool rounds per turn in the native loop (`run` / `chat`) before
+    /// it stops with `max tool rounds reached` (default: 8). Raise for long
+    /// headless runs (benchmarks / CI).
+    #[arg(long, global = true, value_parser = clap::value_parser!(u32).range(1..))]
+    max_tool_rounds: Option<u32>,
+
+    /// Dangerous opt-in for a disposable sandbox (benchmark / CI container):
+    /// allow every permission scope — including network, unclassified
+    /// commands, and write/delete outside the workspace — and execute bash.
+    /// Without this flag the fail-closed policy is unchanged.
+    #[arg(long, global = true, default_value_t = false)]
+    dangerously_allow_all: bool,
+
     /// Force interactive permission prompts even for `run` (default: prompts on TTY chat only).
     #[arg(long, global = true, default_value_t = false)]
     ask_permissions: bool,
@@ -716,13 +729,14 @@ async fn build_agent(cli: &Cli) -> Result<Agent> {
     // Product config pin (`[models] default_reasoning_effort`) applies to the
     // Flash slot; `--effort` still wins per turn (effort_override below).
     let default_reasoning_effort = agent_launch::configured_default_reasoning_effort(&home);
-    let agent_cfg = AgentConfig {
+    let mut agent_cfg = AgentConfig {
         workspace_root: workspace,
         preset,
         show_model: !cli.quiet_model,
         allow_workspace_write: cli.allow_workspace_write || cli.dogfood,
-        bash_execute: cli.bash_execute || cli.dogfood,
+        bash_execute: cli.bash_execute || cli.dogfood || cli.dangerously_allow_all,
         dogfood: cli.dogfood,
+        dangerous_allow_all: cli.dangerously_allow_all,
         headless: !interactive,
         grants_home: Some(home.path().to_path_buf()),
         ask_callback,
@@ -733,12 +747,19 @@ async fn build_agent(cli: &Cli) -> Result<Agent> {
         thinking_enabled,
         ..AgentConfig::default()
     };
+    if let Some(rounds) = cli.max_tool_rounds {
+        agent_cfg.max_tool_rounds = rounds;
+    }
     Ok(Agent::new(client, agent_cfg)?)
 }
 
 /// Interactive prompts: TTY chat/repl by default; `run` stays headless unless --ask-permissions.
 fn wants_interactive_permissions(cli: &Cli) -> bool {
-    if cli.no_ask_permissions || cli.dogfood || cli.allow_workspace_write {
+    if cli.no_ask_permissions
+        || cli.dogfood
+        || cli.allow_workspace_write
+        || cli.dangerously_allow_all
+    {
         return false;
     }
     if cli.ask_permissions {
@@ -889,11 +910,17 @@ fn print_welcome_banner(cli: &Cli, agent: &Agent, session_id: Option<&str>) {
         .cwd
         .clone()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    let dog = if cli.dogfood { "dogfood" } else { "safe" };
+    let profile = if cli.dangerously_allow_all {
+        "allow-all"
+    } else if cli.dogfood {
+        "dogfood"
+    } else {
+        "safe"
+    };
 
     let mut info = BannerInfo::default_product(ver, inv);
     info.cwd = cwd.display().to_string();
-    info.profile = dog.into();
+    info.profile = profile.into();
     info.epoch = agent.prefix_epoch_short().to_string();
     info.session = session_id.map(|s| s.to_string());
     if cli.effort.is_some() || cli.no_thinking || cli.thinking {
@@ -1077,6 +1104,26 @@ mod tests {
     fn tui_forward_flags_empty_by_default() {
         let cli = Cli::try_parse_from(["dsb"]).unwrap();
         assert!(tui_forward_flags(&cli).is_empty());
+    }
+
+    #[test]
+    fn max_tool_rounds_flag_parses_and_rejects_zero() {
+        let cli = Cli::try_parse_from(["dsb", "run", "--max-tool-rounds", "200", "hi"]).unwrap();
+        assert_eq!(cli.max_tool_rounds, Some(200));
+        assert!(Cli::try_parse_from(["dsb", "run", "--max-tool-rounds", "0", "hi"]).is_err());
+        // Absent keeps the AgentConfig default (8).
+        let default = Cli::try_parse_from(["dsb", "run", "hi"]).unwrap();
+        assert_eq!(default.max_tool_rounds, None);
+    }
+
+    #[test]
+    fn dangerously_allow_all_defaults_off_and_parses_globally() {
+        let default = Cli::try_parse_from(["dsb", "run", "hi"]).unwrap();
+        assert!(!default.dangerously_allow_all);
+        let flagged = Cli::try_parse_from(["dsb", "run", "--dangerously-allow-all", "hi"]).unwrap();
+        assert!(flagged.dangerously_allow_all);
+        // It disables interactive asks where --dogfood does.
+        assert!(!wants_interactive_permissions(&flagged));
     }
 
     #[test]

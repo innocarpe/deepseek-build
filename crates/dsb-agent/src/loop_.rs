@@ -17,7 +17,7 @@ use dsb_provider_deepseek::{
 use dsb_tools::{
     AskCallback, PermissionPolicy, Scope, ToolExecutor, ToolName, ToolRequest, catalog_from_config,
     catalog_tool_definitions, default_coding_policy, dogfood_coding_policy, load_mcp_config,
-    tool_definitions,
+    tool_definitions, trusted_sandbox_policy,
 };
 use thiserror::Error;
 
@@ -60,6 +60,12 @@ pub struct AgentConfig {
     /// Trusted local dogfood profile: workspace write + bash execute under policy.
     /// Still denies write/delete outside the workspace.
     pub dogfood: bool,
+    /// Explicit opt-in for a disposable sandbox: every permission scope is
+    /// allowed (incl. network, unknown commands, write/delete outside the
+    /// workspace) and bash executes. Default false. Callers set this
+    /// deliberately (`--dangerously-allow-all`); it supersedes `dogfood` and
+    /// `allow_workspace_write`.
+    pub dangerous_allow_all: bool,
     /// Optional user skills directory (`~/.deepseek-build/skills`).
     pub user_skills_root: Option<PathBuf>,
     /// User config home for permission grants (`permission-grants.json`).
@@ -86,6 +92,7 @@ impl std::fmt::Debug for AgentConfig {
             .field("allow_workspace_write", &self.allow_workspace_write)
             .field("bash_execute", &self.bash_execute)
             .field("dogfood", &self.dogfood)
+            .field("dangerous_allow_all", &self.dangerous_allow_all)
             .field("grants_home", &self.grants_home)
             .field("ask_callback", &self.ask_callback.as_ref().map(|_| "<fn>"))
             .field("discover_skills", &self.discover_skills)
@@ -110,6 +117,7 @@ impl Default for AgentConfig {
             allow_workspace_write: false,
             bash_execute: false,
             dogfood: false,
+            dangerous_allow_all: false,
             user_skills_root: None,
             grants_home: None,
             ask_callback: None,
@@ -122,6 +130,9 @@ impl Default for AgentConfig {
 }
 
 fn build_policy(cfg: &AgentConfig) -> PermissionPolicy {
+    if cfg.dangerous_allow_all {
+        return trusted_sandbox_policy(cfg.headless);
+    }
     if cfg.dogfood || cfg.allow_workspace_write {
         let mut p = if cfg.dogfood {
             dogfood_coding_policy(cfg.headless)
@@ -250,7 +261,7 @@ impl Agent {
         router.set_default_effort(config.default_reasoning_effort);
         let policy = build_policy(&config);
         let mut tools = ToolExecutor::new(config.workspace_root.clone(), policy);
-        tools.bash_execute = config.bash_execute || config.dogfood;
+        tools.bash_execute = config.bash_execute || config.dogfood || config.dangerous_allow_all;
         tools.user_skills_root = config.user_skills_root.clone();
         tools.mcp_catalog = mcp_catalog;
         if let Some(home) = &config.grants_home {
@@ -494,14 +505,21 @@ impl Agent {
                 model_used = m.clone();
             }
 
-            // Push assistant with reasoning for tool replay
+            // Push assistant with reasoning for tool replay. DeepSeek rejects
+            // an assistant message with neither `content` nor `tool_calls`
+            // (400 "content or tool_calls must be set", measured 2026-10-15),
+            // so a reasoning-only stop still carries an empty content string;
+            // with tool calls present, null content stays valid.
             let tool_calls = completed.message.tool_calls.clone();
+            let content = if !last_content.is_empty() {
+                Some(last_content.clone())
+            } else if tool_calls.is_empty() {
+                Some(String::new())
+            } else {
+                None
+            };
             self.tail.push(ChatMessage::assistant_with_reasoning(
-                if last_content.is_empty() {
-                    None
-                } else {
-                    Some(last_content.clone())
-                },
+                content,
                 if last_reasoning.is_empty() {
                     None
                 } else {
@@ -513,6 +531,16 @@ impl Agent {
                     Some(tool_calls.clone())
                 },
             ));
+
+            // `length` is the provider truncating the response, not the model
+            // finishing: with thinking on, max-effort reasoning can spend the
+            // whole completion budget and leave no content or tool calls.
+            // Say so, so a truncated turn is not read as a completion.
+            if completed.message.finish_reason.as_deref() == Some("length") {
+                on_event(TurnEvent::Warning(
+                    "response truncated at max_tokens; the turn may be incomplete".into(),
+                ));
+            }
 
             if tool_calls.is_empty() {
                 // Spec 15 §1.5: a reasoning-only stop is the model's completion
@@ -1391,6 +1419,11 @@ mod tests {
     }
 
     fn tool_round_body() -> String {
+        tool_round_body_id("call-1")
+    }
+
+    /// One assistant turn that requests an unknown tool under the given id.
+    fn tool_round_body_id(id: &str) -> String {
         sse(&[
             serde_json::json!({
                 "model": "deepseek-v4-flash",
@@ -1398,7 +1431,7 @@ mod tests {
                     "reasoning_content": "read the file",
                     "tool_calls": [{
                         "index": 0,
-                        "id": "call-1",
+                        "id": id,
                         "type": "function",
                         "function": { "name": "not_a_tool", "arguments": "{}" }
                     }]
@@ -1430,6 +1463,17 @@ mod tests {
         })])
     }
 
+    /// A response the provider truncated at the completion budget.
+    fn length_stop_body(text: &str) -> String {
+        sse(&[serde_json::json!({
+            "model": "deepseek-v4-flash",
+            "choices": [{
+                "delta": { "reasoning_content": text },
+                "finish_reason": "length"
+            }]
+        })])
+    }
+
     struct ScriptedSse {
         n: std::sync::atomic::AtomicUsize,
         bodies: Vec<String>,
@@ -1449,6 +1493,15 @@ mod tests {
     }
 
     async fn scripted_agent(bodies: Vec<String>) -> (MockServer, Agent, tempfile::TempDir) {
+        scripted_agent_with(bodies, |_| {}).await
+    }
+
+    /// `scripted_agent` with a chance to adjust the config before the agent
+    /// is built (e.g. a raised tool-round cap).
+    async fn scripted_agent_with(
+        bodies: Vec<String>,
+        edit: impl FnOnce(&mut AgentConfig),
+    ) -> (MockServer, Agent, tempfile::TempDir) {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
@@ -1461,17 +1514,15 @@ mod tests {
         let client =
             Arc::new(Client::new(ClientConfig::new("k").with_base_url(server.uri())).unwrap());
         let dir = tempdir().unwrap();
-        let agent = Agent::new(
-            client,
-            AgentConfig {
-                workspace_root: dir.path().to_path_buf(),
-                tools: Vec::new(),
-                discover_skills: false,
-                show_model: false,
-                ..AgentConfig::default()
-            },
-        )
-        .unwrap();
+        let mut config = AgentConfig {
+            workspace_root: dir.path().to_path_buf(),
+            tools: Vec::new(),
+            discover_skills: false,
+            show_model: false,
+            ..AgentConfig::default()
+        };
+        edit(&mut config);
+        let agent = Agent::new(client, config).unwrap();
         (server, agent, dir)
     }
 
@@ -1545,6 +1596,165 @@ mod tests {
         assert!(
             out.reasoning_text
                 .contains("the answer is in the reasoning")
+        );
+        // The stop stays in the transcript and must remain replayable on a
+        // later turn of the same session.
+        let last = agent.transcript_tail().last().unwrap();
+        assert_eq!(last.role, Role::Assistant);
+        assert_eq!(last.content.as_deref(), Some(""));
+    }
+
+    #[tokio::test]
+    async fn reasoning_only_stop_keeps_content_on_the_wire() {
+        // Measured against the DeepSeek API on 2026-10-15: an assistant
+        // message with neither `content` nor `tool_calls` is a 400 ("content
+        // or tool_calls must be set"), which killed a `dsb run` trial at the
+        // synthesis retry. Every assistant message this loop sends carries
+        // one of the two.
+        let (server, mut agent, _dir) = scripted_agent(vec![
+            tool_round_body(),
+            reasoning_stop_body("only thinking"),
+            visible_body("done"),
+        ])
+        .await;
+        let out = agent
+            .run_turn("what does the file say", |_| {})
+            .await
+            .unwrap();
+        assert_eq!(out.assistant_text, "done");
+        let request = server
+            .received_requests()
+            .await
+            .unwrap()
+            .pop()
+            .expect("a request reached the provider");
+        let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+        for message in body["messages"].as_array().unwrap() {
+            if message["role"] == "assistant" {
+                assert!(
+                    message.get("content").is_some() || message.get("tool_calls").is_some(),
+                    "assistant message with neither content nor tool_calls: {message}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn truncated_response_is_reported_as_truncation() {
+        // `finish_reason=length` with no content and no tool calls is the
+        // provider cutting the response at the completion budget (measured
+        // 2026-10-15: max-effort reasoning can spend the whole budget), which
+        // must not read as a reasoning-only completion.
+        let (server, mut agent, _dir) = scripted_agent(vec![
+            tool_round_body(),
+            length_stop_body("ran out of budget mid-thought"),
+            visible_body("done"),
+        ])
+        .await;
+        let mut warnings = Vec::new();
+        let out = agent
+            .run_turn("what does the file say", |ev| {
+                if let TurnEvent::Warning(w) = ev {
+                    warnings.push(w);
+                }
+            })
+            .await
+            .unwrap();
+        assert_eq!(out.assistant_text, "done");
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("truncated at max_tokens")),
+            "{warnings:?}"
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), 3);
+    }
+
+    #[test]
+    fn agent_config_defaults_keep_the_fail_safe() {
+        let cfg = AgentConfig::default();
+        assert_eq!(cfg.max_tool_rounds, 8);
+        assert!(!cfg.dangerous_allow_all);
+    }
+
+    /// `n` scripted tool rounds, then a visible answer.
+    fn scripted_rounds(n: usize) -> Vec<String> {
+        let mut bodies: Vec<String> = (0..n)
+            .map(|i| tool_round_body_id(&format!("call-{i}")))
+            .collect();
+        bodies.push(visible_body("done"));
+        bodies
+    }
+
+    #[tokio::test]
+    async fn default_tool_round_cap_stops_at_eight_rounds() {
+        let (server, mut agent, _dir) = scripted_agent(scripted_rounds(12)).await;
+        let mut warnings = Vec::new();
+        let out = agent
+            .run_turn("long task", |ev| {
+                if let TurnEvent::Warning(w) = ev {
+                    warnings.push(w);
+                }
+            })
+            .await
+            .unwrap();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("max tool rounds reached")),
+            "{warnings:?}"
+        );
+        // Eight batches dispatched; the ninth call was refused before dispatch.
+        assert_eq!(out.tool_rounds, 9);
+        assert_eq!(server.received_requests().await.unwrap().len(), 9);
+    }
+
+    #[tokio::test]
+    async fn max_tool_rounds_override_runs_past_the_default_cap() {
+        let (server, mut agent, _dir) =
+            scripted_agent_with(scripted_rounds(12), |cfg| cfg.max_tool_rounds = 12).await;
+        let mut warnings = Vec::new();
+        let out = agent
+            .run_turn("long task", |ev| {
+                if let TurnEvent::Warning(w) = ev {
+                    warnings.push(w);
+                }
+            })
+            .await
+            .unwrap();
+        assert!(
+            !warnings.iter().any(|w| w.contains("max tool rounds")),
+            "{warnings:?}"
+        );
+        assert_eq!(out.tool_rounds, 12);
+        assert_eq!(out.assistant_text, "done");
+        assert_eq!(server.received_requests().await.unwrap().len(), 13);
+    }
+
+    #[tokio::test]
+    async fn dangerous_allow_all_opt_in_wires_the_trusted_policy() {
+        use dsb_tools::{Decision, decide};
+
+        let (_server, agent, _dir) = scripted_agent_with(vec![visible_body("ok")], |cfg| {
+            cfg.dangerous_allow_all = true
+        })
+        .await;
+        assert!(agent.tools.bash_execute);
+        assert_eq!(
+            decide(&agent.tools.policy, &[Scope::Unknown]),
+            Decision::Allow
+        );
+        assert_eq!(
+            decide(&agent.tools.policy, &[Scope::WriteOutCwd]),
+            Decision::Allow
+        );
+
+        // A default agent keeps the fail-closed policy and dry-run bash.
+        let (_server, default_agent, _dir) = scripted_agent(vec![visible_body("ok")]).await;
+        assert!(!default_agent.tools.bash_execute);
+        assert_eq!(
+            decide(&default_agent.tools.policy, &[Scope::Unknown]),
+            Decision::Deny
         );
     }
 }

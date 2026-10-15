@@ -6,8 +6,15 @@ use crate::models::{
     ChatMessage, ModelId, ReasoningEffort, ThinkingMode, ToolChoice, ToolDefinition,
 };
 
-/// Default max_tokens for M1 (ADR 0005).
-pub const DEFAULT_MAX_TOKENS: u32 = 8192;
+/// Default max_tokens for the native loop (ADR 0005, raised by ADR 0014).
+///
+/// ADR 0005 pinned the M1 scaffold default at 8192 cost/latency guard. Measured
+/// against the API on 2026-10-15, an 8192 budget truncates thinking-enabled
+/// responses at `--effort max`: `finish_reason=length` with every completion
+/// token spent inside reasoning (`reasoning_tokens=8091` on one probe) and no
+/// content or tool calls. The API's valid range is `[1, 393216]`; 65536 leaves
+/// roughly 8x headroom over the measured burn.
+pub const DEFAULT_MAX_TOKENS: u32 = 65536;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ChatRequest {
@@ -215,5 +222,19 @@ mod tests {
         assert!(req.stream);
         let v = serde_json::to_value(&req).unwrap();
         assert_eq!(v["stream"], true);
+    }
+
+    #[test]
+    fn default_budget_clears_max_effort_reasoning() {
+        // Floor pinned by ADR 0014: a budget below 64K truncates max-effort
+        // reasoning (measured 2026-10-15), and the default request must carry
+        // the raised budget.
+        assert!(DEFAULT_MAX_TOKENS >= 65_536);
+        let req = ChatRequestBuilder::new(ModelId::Flash)
+            .messages(vec![ChatMessage::user("x")])
+            .build();
+        assert_eq!(req.max_tokens, Some(DEFAULT_MAX_TOKENS));
+        let v = serde_json::to_value(&req).unwrap();
+        assert_eq!(v["max_tokens"], DEFAULT_MAX_TOKENS);
     }
 }

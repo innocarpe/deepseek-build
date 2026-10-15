@@ -187,6 +187,37 @@ pub fn dogfood_coding_policy(headless: bool) -> PermissionPolicy {
     p
 }
 
+/// Explicit opt-in profile for a disposable sandbox (benchmark / CI
+/// container): every scope is allowed and the tool-layer scope gate is off.
+/// The sandbox boundary is the safety boundary here; on a real machine it is
+/// not, so callers must gate this behind a deliberate flag
+/// (`--dangerously-allow-all`) and never make it a default. Spec 90 §1.4: a
+/// power-user profile may exist only as opt-in.
+pub fn trusted_sandbox_policy(headless: bool) -> PermissionPolicy {
+    let allow = [
+        Scope::ReadInCwd,
+        Scope::ReadOutCwd,
+        Scope::WriteInCwd,
+        Scope::WriteOutCwd,
+        Scope::DeleteInCwd,
+        Scope::DeleteOutCwd,
+        Scope::QueryGit,
+        Scope::MutateGit,
+        Scope::Network,
+        Scope::Unknown,
+    ]
+    .into_iter()
+    .collect();
+    PermissionPolicy {
+        allow,
+        ask: BTreeSet::new(),
+        deny: BTreeSet::new(),
+        default: Decision::Allow,
+        headless,
+        granted: BTreeSet::new(),
+    }
+}
+
 pub fn decide(policy: &PermissionPolicy, scopes: &[Scope]) -> Decision {
     policy.decide(scopes)
 }
@@ -471,5 +502,48 @@ mod tests {
         assert_eq!(decide(&p, &[Scope::WriteInCwd]), Decision::Deny);
         let interactive = default_coding_policy(false);
         assert_eq!(decide(&interactive, &[Scope::WriteInCwd]), Decision::Ask);
+    }
+
+    #[test]
+    fn trusted_sandbox_allows_every_scope() {
+        let p = trusted_sandbox_policy(true);
+        for scope in [
+            Scope::ReadInCwd,
+            Scope::ReadOutCwd,
+            Scope::WriteInCwd,
+            Scope::WriteOutCwd,
+            Scope::DeleteInCwd,
+            Scope::DeleteOutCwd,
+            Scope::QueryGit,
+            Scope::MutateGit,
+            Scope::Network,
+            Scope::Unknown,
+        ] {
+            assert_eq!(decide(&p, &[scope]), Decision::Allow, "{scope:?}");
+        }
+        // A multi-scope call is allowed as a whole (no deny/ask member).
+        assert_eq!(
+            decide(&p, &[Scope::Unknown, Scope::Network, Scope::WriteOutCwd]),
+            Decision::Allow
+        );
+    }
+
+    #[test]
+    fn trusted_sandbox_allows_bash_the_headless_default_denies() {
+        // The two recorded benchmark failures in one call shape: a network
+        // command and an unclassifiable one.
+        for command in ["curl https://example.com", "totally-unknown-bin --xyz"] {
+            let scopes = classify_bash(command);
+            assert_eq!(
+                decide(&default_coding_policy(true), &scopes),
+                Decision::Deny,
+                "fail-closed default for {command:?}"
+            );
+            assert_eq!(
+                decide(&trusted_sandbox_policy(true), &scopes),
+                Decision::Allow,
+                "opt-in profile for {command:?}"
+            );
+        }
     }
 }

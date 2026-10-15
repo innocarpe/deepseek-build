@@ -28,6 +28,29 @@ When a tool needs confirmation:
 
 `--dogfood` and `--allow-workspace-write` skip ask for in-cwd write/delete (still deny out-of-cwd).
 
+## Opt-in: `--dangerously-allow-all` (disposable sandbox)
+
+For throwaway sandboxes only (benchmark / CI containers):
+
+```bash
+dsb run --dangerously-allow-all --max-tool-rounds 200 "…"
+```
+
+The flag turns the scope gate off: every scope is allowed — network,
+unclassified commands, write/delete outside the workspace — and bash executes.
+Use it only where the sandbox boundary is the safety boundary; on a real
+machine it protects nothing.
+
+It is per-invocation: never a config key, and without it the fail-closed
+defaults above are unchanged. `--dogfood`, the grants file, and the
+full-screen TUI keep their own profiles.
+
+## Tool-round cap
+
+The native `run` / `chat` loop stops a turn after 8 tool rounds with
+`max tool rounds reached`. `--max-tool-rounds N` raises that cap for long
+headless runs; `0` is rejected and the default stays 8.
+
 ## Spec
 
 Normative: `docs/specs/90-permissions.md`.

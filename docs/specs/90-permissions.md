@@ -120,6 +120,13 @@ deny = ["write-out-cwd", "delete-out-cwd"]
 
 **Anti-pattern:** shipping with `default = allow` for all scopes as the **only** mode (YOLO-only). A power-user “yolo” profile may exist only as **opt-in**.
 
+**Shipped opt-in ([ADR 0013](../adr/0013-trusted-sandbox-permission-profile.md)).**
+The native headless loop ships `--dangerously-allow-all`
+(`trusted_sandbox_policy`): every scope allowed, for disposable sandboxes
+(benchmark / CI containers) only. It is a per-invocation flag — never a
+default, never a config key — and the table above plus §1.5 are unchanged
+without it.
+
 ### 1.5 Headless / CI
 
 | Mode | ask behavior |

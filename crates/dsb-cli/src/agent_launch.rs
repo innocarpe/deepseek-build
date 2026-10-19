@@ -10,7 +10,7 @@ use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use dsb_config::{BuildHome, Provider};
-use dsb_provider_deepseek::{MODEL_FLASH, ReasoningEffort};
+use dsb_provider_deepseek::{MODEL_FLASH, ModelId, ReasoningEffort};
 
 /// Env override for the full-screen agent binary.
 pub const ENV_AGENT_BIN: &str = "DEEPSEEK_BUILD_AGENT_BIN";
@@ -414,7 +414,7 @@ fn ensure_deepseek_model_base_url(body: String, model_id: &str) -> String {
     )
 }
 
-/// Move only the shipped legacy Flash wire id to the current id. The stanza
+/// Move only the shipped legacy Flash wire ids to the current id. The stanza
 /// key stays stable so existing `[models]` references and CLI choices survive.
 /// A custom endpoint or model remains the user's choice.
 fn migrate_flash_wire_model(body: String) -> String {
@@ -431,9 +431,7 @@ fn migrate_flash_wire_model(body: String) -> String {
     };
     let model_index = toml_section_key_index(&lines, range, "model");
     let current = model_index.and_then(|i| toml_rhs_string(&lines[i]));
-    if current
-        .is_some_and(|model| model != legacy_provider_wire_model(provider, "deepseek-v4-flash"))
-    {
+    if current.is_some_and(|model| !is_known_flash_wire(provider, model)) {
         return body;
     }
     let new_line = format!(
@@ -448,6 +446,18 @@ fn migrate_flash_wire_model(body: String) -> String {
     let mut next = lines.join("\n");
     next.push('\n');
     next
+}
+
+/// Whether a Flash stanza's `model` is a value the product itself knows for
+/// the provider. Direct aliases resolve through [`ModelId::from_wire`], so the
+/// provider crate owns the alias list. Exact match only: a custom id that
+/// merely contains one of these strings is preserved. The vision-preview
+/// alias existed on the direct API, never on OpenRouter.
+fn is_known_flash_wire(provider: Provider, model: &str) -> bool {
+    match provider {
+        Provider::DeepSeek => ModelId::from_wire(model) == ModelId::Flash,
+        Provider::OpenRouter => model == "deepseek/deepseek-v4-flash",
+    }
 }
 
 /// Context window: DeepSeek model stanzas must carry the API-measured window
@@ -2001,6 +2011,11 @@ fn repair_moves_only_legacy_flash_wire_ids() {
     for (base, old, current) in [
         (DEEPSEEK_API_BASE_URL, "deepseek-v4-flash", MODEL_FLASH),
         (
+            DEEPSEEK_API_BASE_URL,
+            "deepseek-v4-flash-vision-exp",
+            MODEL_FLASH,
+        ),
+        (
             OPENROUTER_API_BASE_URL,
             "deepseek/deepseek-v4-flash",
             OPENROUTER_FLASH_1017,
@@ -2026,6 +2041,45 @@ fn repair_moves_only_legacy_flash_wire_ids() {
     assert!(
         section_of(&fixed, "[model.deepseek-v4-flash]").contains("model = \"deepseek-v4-flash\"")
     );
+
+    // The vision-preview alias is direct-API only, and the migration reads
+    // exact values from the Flash stanza alone.
+    let openrouter_vision = "[model.deepseek-v4-flash]\nmodel = \"deepseek/deepseek-v4-flash-vision-exp\"\nbase_url = \"https://openrouter.ai/api/v1\"\n";
+    let fixed = repair_product_agent_config(openrouter_vision);
+    assert!(
+        section_of(&fixed, "[model.deepseek-v4-flash]")
+            .contains("model = \"deepseek/deepseek-v4-flash-vision-exp\""),
+        "{fixed}"
+    );
+
+    let scoped = concat!(
+        "[models]\n",
+        "default = \"deepseek-v4-flash\"\n",
+        "session_summary = \"deepseek-v4-flash\"\n",
+        "web_search = \"deepseek-v4-flash\"\n",
+        "image_description = \"deepseek-v4-flash\"\n",
+        "[model.deepseek-v4-flash]\n",
+        "model = \"deepseek-v4-flash-vision-exp\"\n",
+        "base_url = \"https://api.deepseek.com\"\n",
+        "[model.deepseek-v4-pro]\n",
+        "model = \"deepseek-v4-flash-vision-exp\"\n",
+        "base_url = \"https://api.deepseek.com\"\n",
+        "[model.custom]\n",
+        "model = \"deepseek-v4-flash-vision-exp\"\n",
+        "base_url = \"https://api.deepseek.com\"\n",
+    );
+    let fixed = repair_product_agent_config(scoped);
+    assert!(
+        section_of(&fixed, "[model.deepseek-v4-flash]").contains("model = \"deepseek-flash\""),
+        "{fixed}"
+    );
+    for header in ["[model.deepseek-v4-pro]", "[model.custom]"] {
+        assert!(
+            section_of(&fixed, header).contains("model = \"deepseek-v4-flash-vision-exp\""),
+            "{header}: {fixed}"
+        );
+    }
+    assert_eq!(repair_product_agent_config(&fixed), fixed);
 }
 
 #[test]

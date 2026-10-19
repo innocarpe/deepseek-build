@@ -238,9 +238,9 @@ cat >"${HOME_DIR}/config.toml" <<EOF
 default = "deepseek-v4-flash"
 
 [model.deepseek-v4-flash]
-model = "deepseek-v4-flash"
+model = "deepseek-flash"
 name = "DeepSeek V4.1 Flash"
-context_window = 128000
+context_window = 1048576
 api_backend = "chat_completions"
 base_url = "${BASE_URL}"
 api_key = "sk-scripted-path-a-r0"
@@ -249,7 +249,7 @@ env_key = "DEEPSEEK_API_KEY"
 [model.deepseek-v4-pro]
 model = "deepseek-v4-pro"
 name = "DeepSeek V4 Pro"
-context_window = 128000
+context_window = 1048576
 api_backend = "chat_completions"
 base_url = "${BASE_URL}"
 api_key = "sk-scripted-path-a-r0"

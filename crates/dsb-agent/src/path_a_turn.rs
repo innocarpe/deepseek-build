@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn h20_4_both_wire_ids_are_deepseek_v4() {
-        assert_eq!(path_a_flash_wire_id(), "deepseek-v4-flash");
+        assert_eq!(path_a_flash_wire_id(), "deepseek-flash");
         assert_eq!(path_a_pro_wire_id(), "deepseek-v4-pro");
     }
 }

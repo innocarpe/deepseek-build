@@ -502,7 +502,7 @@ def make_handler(state: ScriptedState):
                 self.wfile.write(err)
                 return
 
-            model = "deepseek-v4-flash"
+            model = "deepseek-flash"
             if isinstance(body, dict) and isinstance(body.get("model"), str):
                 model = body["model"]
 

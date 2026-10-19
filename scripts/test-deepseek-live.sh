@@ -83,7 +83,7 @@ run_thin() {
     mark_fail "T3.1 failed"
   fi
 
-  if echo "$out" | rg -q 'model=deepseek-v4-flash|model_used=deepseek-v4-flash'; then
+  if echo "$out" | rg -q 'model=deepseek-flash|model_used=deepseek-flash'; then
     record T3.2 PASS
     ok "T3.2 model line"
   else

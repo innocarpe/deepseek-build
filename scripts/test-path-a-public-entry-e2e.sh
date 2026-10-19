@@ -190,9 +190,9 @@ default = "deepseek-v4-flash"
 # VC008: omit reasoning_effort keys so product agent_launch *repair* must inject
 # Spec 30 defaults before the agent binary reads config (integration, not dual-seed).
 [model.deepseek-v4-flash]
-model = "deepseek-v4-flash"
+model = "deepseek-flash"
 name = "DeepSeek V4.1 Flash"
-context_window = 128000
+context_window = 1048576
 api_backend = "chat_completions"
 base_url = "${BASE_URL}"
 api_key = "sk-scripted-path-a-r0"
@@ -201,7 +201,7 @@ env_key = "DEEPSEEK_API_KEY"
 [model.deepseek-v4-pro]
 model = "deepseek-v4-pro"
 name = "DeepSeek V4 Pro"
-context_window = 128000
+context_window = 1048576
 api_backend = "chat_completions"
 base_url = "${BASE_URL}"
 api_key = "sk-scripted-path-a-r0"
@@ -435,7 +435,7 @@ for line in open(path, encoding="utf-8"):
     if not isinstance(body, dict):
         continue
     m = body.get("model") or ""
-    if m == "deepseek-v4-flash":
+    if m == "deepseek-flash":
         flash += 1
     elif m == "deepseek-v4-pro":
         pro += 1
@@ -448,7 +448,7 @@ for line in open(path, encoding="utf-8"):
             effort_ok += 1
             effort_samples.append(f"{m}:{re}")
 if flash < 1:
-    print(f"no deepseek-v4-flash on wire (flash={flash} pro={pro} other={other})", file=sys.stderr)
+    print(f"no deepseek-flash on wire (flash={flash} pro={pro} other={other})", file=sys.stderr)
     sys.exit(1)
 if effort_ok < 1:
     print(

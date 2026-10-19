@@ -106,9 +106,9 @@ make_hermetic_grok_home() {
 default = "deepseek-v4-flash"
 
 [model.deepseek-v4-flash]
-model = "deepseek-v4-flash"
+model = "deepseek-flash"
 name = "DeepSeek V4.1 Flash"
-context_window = 128000
+context_window = 1048576
 api_backend = "chat_completions"
 base_url = "https://api.deepseek.com"
 env_key = "DEEPSEEK_API_KEY"
@@ -116,7 +116,7 @@ env_key = "DEEPSEEK_API_KEY"
 [model.deepseek-v4-pro]
 model = "deepseek-v4-pro"
 name = "DeepSeek V4 Pro"
-context_window = 128000
+context_window = 1048576
 api_backend = "chat_completions"
 base_url = "https://api.deepseek.com"
 env_key = "DEEPSEEK_API_KEY"

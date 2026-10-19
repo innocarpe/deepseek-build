@@ -162,9 +162,9 @@ cat >"${HOME_DIR}/config.toml" <<EOF
 default = "deepseek-v4-flash"
 
 [model.deepseek-v4-flash]
-model = "deepseek-v4-flash"
+model = "deepseek-flash"
 name = "DeepSeek V4.1 Flash"
-context_window = 128000
+context_window = 1048576
 api_backend = "chat_completions"
 base_url = "${BASE_URL}"
 api_key = "sk-scripted-g011"
@@ -173,7 +173,7 @@ env_key = "DEEPSEEK_API_KEY"
 [model.deepseek-v4-pro]
 model = "deepseek-v4-pro"
 name = "DeepSeek V4 Pro"
-context_window = 128000
+context_window = 1048576
 api_backend = "chat_completions"
 base_url = "${BASE_URL}"
 api_key = "sk-scripted-g011"
@@ -237,8 +237,8 @@ ok "S5 theme deepseeknight + S4 base_url"
 if [[ ! -s "${WIRE}" ]]; then
   fail "OB-1 empty wire — public entry did not reach scripted server"
 fi
-if ! rg -q 'deepseek-v4-flash' "${WIRE}"; then
-  warn "wire missing deepseek-v4-flash (may still pass if only grok title call)"
+if ! rg -q 'deepseek-flash' "${WIRE}"; then
+  warn "wire missing deepseek-flash (may still pass if only grok title call)"
 fi
 ok "OB-1 public entry via installed deepseek-build (no DEEPSEEK_BUILD_AGENT_BIN)"
 

@@ -10,7 +10,7 @@ use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use dsb_config::{BuildHome, Provider};
-use dsb_provider_deepseek::ReasoningEffort;
+use dsb_provider_deepseek::{MODEL_FLASH, ReasoningEffort};
 
 /// Env override for the full-screen agent binary.
 pub const ENV_AGENT_BIN: &str = "DEEPSEEK_BUILD_AGENT_BIN";
@@ -125,6 +125,7 @@ pub const OPENROUTER_API_BASE_URL: &str = "https://openrouter.ai/api/v1";
 /// for every provider so routing (`/pro`, subagents, `[models] default`) never
 /// has to know which endpoint is behind them.
 const PRODUCT_MODEL_SLOTS: [&str; 2] = ["deepseek-v4-flash", "deepseek-v4-pro"];
+const OPENROUTER_FLASH_1017: &str = "deepseek/deepseek-v4.1-flash-1017";
 
 /// Context window (tokens) both product slots report through the DeepSeek
 /// API (`GET /models`): V4.1 Flash and V4 Pro both measure 1048576. One value
@@ -163,9 +164,18 @@ pub fn provider_base_url(provider: Provider) -> &'static str {
     }
 }
 
-/// Wire `model` id for a product slot. OpenRouter only accepts the
-/// `provider/model` form, so the same pinned model gets the `deepseek/` prefix.
+/// Wire `model` id for a product slot. The stable config slot keeps its
+/// historical name; its provider-specific wire id follows the current model.
 fn provider_wire_model(provider: Provider, slot: &str) -> String {
+    match (provider, slot) {
+        (Provider::DeepSeek, "deepseek-v4-flash") => MODEL_FLASH.to_string(),
+        (Provider::OpenRouter, "deepseek-v4-flash") => OPENROUTER_FLASH_1017.to_string(),
+        (Provider::DeepSeek, _) => slot.to_string(),
+        (Provider::OpenRouter, _) => format!("deepseek/{slot}"),
+    }
+}
+
+fn legacy_provider_wire_model(provider: Provider, slot: &str) -> String {
     match provider {
         Provider::DeepSeek => slot.to_string(),
         Provider::OpenRouter => format!("deepseek/{slot}"),
@@ -356,6 +366,7 @@ fn repair_product_agent_config_with_theme(body: &str, theme: &str) -> String {
 
     next = ensure_deepseek_model_base_url(next, "deepseek-v4-flash");
     next = ensure_deepseek_model_base_url(next, "deepseek-v4-pro");
+    next = migrate_flash_wire_model(next);
     next = ensure_deepseek_model_context_window(next, "deepseek-v4-flash");
     next = ensure_deepseek_model_context_window(next, "deepseek-v4-pro");
     next = ensure_deepseek_model_reasoning_effort(next, "deepseek-v4-flash");
@@ -401,6 +412,42 @@ fn ensure_deepseek_model_base_url(body: String, model_id: &str) -> String {
             &format!("base_url = \"{DEEPSEEK_API_BASE_URL}\""),
         )],
     )
+}
+
+/// Move only the shipped legacy Flash wire id to the current id. The stanza
+/// key stays stable so existing `[models]` references and CLI choices survive.
+/// A custom endpoint or model remains the user's choice.
+fn migrate_flash_wire_model(body: String) -> String {
+    let mut lines: Vec<String> = body.lines().map(str::to_string).collect();
+    let Some(range) = toml_section_range(&lines, "[model.deepseek-v4-flash]") else {
+        return body;
+    };
+    let base =
+        toml_section_key_index(&lines, range, "base_url").and_then(|i| toml_rhs_string(&lines[i]));
+    let provider = match base {
+        Some(DEEPSEEK_API_BASE_URL) => Provider::DeepSeek,
+        Some(OPENROUTER_API_BASE_URL) => Provider::OpenRouter,
+        _ => return body,
+    };
+    let model_index = toml_section_key_index(&lines, range, "model");
+    let current = model_index.and_then(|i| toml_rhs_string(&lines[i]));
+    if current
+        .is_some_and(|model| model != legacy_provider_wire_model(provider, "deepseek-v4-flash"))
+    {
+        return body;
+    }
+    let new_line = format!(
+        "model = \"{}\"",
+        provider_wire_model(provider, "deepseek-v4-flash")
+    );
+    if let Some(i) = model_index {
+        lines[i] = new_line;
+    } else {
+        lines.insert(range.0, new_line);
+    }
+    let mut next = lines.join("\n");
+    next.push('\n');
+    next
 }
 
 /// Context window: DeepSeek model stanzas must carry the API-measured window
@@ -1017,7 +1064,8 @@ fn retarget_product_config(
         let has_inline_key = inline_key.is_some();
         let is_default_for = |p: Provider| {
             base == provider_base_url(p)
-                && model == provider_wire_model(p, slot)
+                && (model == provider_wire_model(p, slot)
+                    || model == legacy_provider_wire_model(p, slot))
                 && env_key.as_deref().is_none_or(|e| e == p.env_key())
         };
         let wanted: Vec<(&str, String)> = if is_default_for(other) {
@@ -1028,11 +1076,14 @@ fn retarget_product_config(
                 ("api_key", api_key.to_string()),
             ]
         } else if base == new_base {
-            if has_inline_key {
-                vec![("api_key", api_key.to_string())]
-            } else {
-                Vec::new()
+            let mut wanted = Vec::new();
+            if is_default_for(provider) && model != provider_wire_model(provider, slot) {
+                wanted.push(("model", provider_wire_model(provider, slot)));
             }
+            if has_inline_key {
+                wanted.push(("api_key", api_key.to_string()));
+            }
+            wanted
         } else {
             kept_custom.push(slot);
             continue;
@@ -1694,12 +1745,12 @@ mod tests {
         let body = std::fs::read_to_string(dir.path().join("path_a_routing.txt"))
             .expect("routing stamp file");
         assert!(
-            body.contains("path_a_default_model=deepseek-v4-flash"),
+            body.contains("path_a_default_model=deepseek-flash"),
             "{body}"
         );
         assert!(body.contains("path_a_pro_model=deepseek-v4-pro"), "{body}");
         assert!(
-            body.contains("after_pro_visibility=model=deepseek-v4-flash"),
+            body.contains("after_pro_visibility=model=deepseek-flash"),
             "must return to Flash after /pro once: {body}"
         );
         assert!(
@@ -1734,11 +1785,11 @@ reasoning_effort = "high"
         let body = std::fs::read_to_string(dir.path().join("path_a_routing.txt"))
             .expect("routing stamp file");
         assert!(
-            body.contains("flash_visibility=model=deepseek-v4-flash thinking=on effort=max"),
+            body.contains("flash_visibility=model=deepseek-flash thinking=on effort=max"),
             "pin must win over the stanza's high: {body}"
         );
         assert!(
-            body.contains("after_pro_visibility=model=deepseek-v4-flash thinking=on effort=max"),
+            body.contains("after_pro_visibility=model=deepseek-flash thinking=on effort=max"),
             "Flash returns at the pinned effort: {body}"
         );
     }
@@ -1859,7 +1910,11 @@ fn product_config_seed_contains_deepseek_defaults() {
     let home = dsb_config::BuildHome::from_path(dir.path());
     ensure_product_agent_config(&home).unwrap();
     let body = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
-    assert!(body.contains("deepseek-v4-flash"));
+    assert!(body.contains("[model.deepseek-v4-flash]"));
+    assert!(
+        section_of(&body, "[model.deepseek-v4-flash]").contains("model = \"deepseek-flash\""),
+        "seed must use the current Flash wire id: {body}"
+    );
     assert!(body.contains("api.deepseek.com"));
     assert!(body.contains("chat_completions"));
     assert!(body.contains("DEEPSEEK_API_KEY"));
@@ -1939,6 +1994,65 @@ fn product_config_seed_contains_deepseek_defaults() {
     ensure_product_agent_config(&home).unwrap();
     let body4 = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
     assert_eq!(body3, body4);
+}
+
+#[test]
+fn repair_moves_only_legacy_flash_wire_ids() {
+    for (base, old, current) in [
+        (DEEPSEEK_API_BASE_URL, "deepseek-v4-flash", MODEL_FLASH),
+        (
+            OPENROUTER_API_BASE_URL,
+            "deepseek/deepseek-v4-flash",
+            OPENROUTER_FLASH_1017,
+        ),
+    ] {
+        let raw = format!(
+            "[models]\ndefault = \"deepseek-v4-flash\"\nsession_summary = \"deepseek-v4-flash\"\n\
+             [model.deepseek-v4-flash]\nmodel = \"{old}\"\nbase_url = \"{base}\"\nname = \"My Flash\"\n"
+        );
+        let fixed = repair_product_agent_config(&raw);
+        let flash = section_of(&fixed, "[model.deepseek-v4-flash]");
+        assert!(flash.contains(&format!("model = \"{current}\"")), "{fixed}");
+        assert!(flash.contains("name = \"My Flash\""), "{fixed}");
+        assert!(fixed.contains("default = \"deepseek-v4-flash\""), "{fixed}");
+        assert_eq!(repair_product_agent_config(&fixed), fixed);
+    }
+
+    let custom = "[model.deepseek-v4-flash]\nmodel = \"custom-flash\"\nbase_url = \"https://api.deepseek.com\"\n";
+    let fixed = repair_product_agent_config(custom);
+    assert!(section_of(&fixed, "[model.deepseek-v4-flash]").contains("model = \"custom-flash\""));
+    let custom_endpoint = "[model.deepseek-v4-flash]\nmodel = \"deepseek-v4-flash\"\nbase_url = \"https://proxy.example\"\n";
+    let fixed = repair_product_agent_config(custom_endpoint);
+    assert!(
+        section_of(&fixed, "[model.deepseek-v4-flash]").contains("model = \"deepseek-v4-flash\"")
+    );
+}
+
+#[test]
+fn retarget_legacy_flash_wire_to_current_provider_id() {
+    for (from, old, to, expected) in [
+        (
+            DEEPSEEK_API_BASE_URL,
+            "deepseek-v4-flash",
+            Provider::OpenRouter,
+            OPENROUTER_FLASH_1017,
+        ),
+        (
+            OPENROUTER_API_BASE_URL,
+            "deepseek/deepseek-v4-flash",
+            Provider::DeepSeek,
+            MODEL_FLASH,
+        ),
+    ] {
+        let raw = format!("[model.deepseek-v4-flash]\nmodel = \"{old}\"\nbase_url = \"{from}\"\n");
+        let (fixed, kept) = retarget_product_config(&raw, to, "sk-test");
+        assert!(kept.is_empty(), "{kept:?}");
+        assert!(
+            section_of(&fixed, "[model.deepseek-v4-flash]")
+                .contains(&format!("model = \"{expected}\"")),
+            "{fixed}"
+        );
+    }
 }
 
 #[test]
@@ -2713,7 +2827,10 @@ fn openrouter_seed_routes_both_stanzas_to_openrouter() {
     for slot in PRODUCT_MODEL_SLOTS {
         let sec = section_of(&body, &format!("[model.{slot}]"));
         assert!(
-            sec.contains(&format!("model = \"deepseek/{slot}\"")),
+            sec.contains(&format!(
+                "model = \"{}\"",
+                provider_wire_model(Provider::OpenRouter, slot)
+            )),
             "{sec}"
         );
         assert!(
@@ -2792,7 +2909,10 @@ fn retarget_moves_pristine_seed_to_openrouter_and_back() {
     for slot in PRODUCT_MODEL_SLOTS {
         let sec = section_of(&or_body, &format!("[model.{slot}]"));
         assert!(
-            sec.contains(&format!("model = \"deepseek/{slot}\"")),
+            sec.contains(&format!(
+                "model = \"{}\"",
+                provider_wire_model(Provider::OpenRouter, slot)
+            )),
             "{sec}"
         );
         assert!(
@@ -2819,7 +2939,13 @@ fn retarget_moves_pristine_seed_to_openrouter_and_back() {
     assert!(kept.is_empty());
     for slot in PRODUCT_MODEL_SLOTS {
         let sec = section_of(&back, &format!("[model.{slot}]"));
-        assert!(sec.contains(&format!("model = \"{slot}\"")), "{sec}");
+        assert!(
+            sec.contains(&format!(
+                "model = \"{}\"",
+                provider_wire_model(Provider::DeepSeek, slot)
+            )),
+            "{sec}"
+        );
         assert!(
             sec.contains(&format!("base_url = \"{DEEPSEEK_API_BASE_URL}\"")),
             "{sec}"
@@ -2946,7 +3072,7 @@ fn retarget_treats_missing_base_url_as_deepseek_and_appends_missing_stanza() {
         "{flash}"
     );
     assert!(
-        flash.contains("model = \"deepseek/deepseek-v4-flash\""),
+        flash.contains("model = \"deepseek/deepseek-v4.1-flash-1017\""),
         "{flash}"
     );
     assert!(flash.contains("api_key = \"sk-or-v1-k\""), "{flash}");

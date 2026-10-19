@@ -439,7 +439,7 @@ mod tests {
         wizard(&home, None, "2\nsk-or-v1-k\n").result.unwrap();
         let body = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
         assert!(
-            body.contains("model = \"deepseek/deepseek-v4-flash\""),
+            body.contains("model = \"deepseek/deepseek-v4.1-flash-1017\""),
             "{body}"
         );
         assert!(

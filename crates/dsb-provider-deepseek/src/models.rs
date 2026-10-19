@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 pub const MODEL_FLASH: &str = "deepseek-flash";
 /// Retired Flash id, still accepted temporarily by DeepSeek.
 pub const MODEL_FLASH_LEGACY: &str = "deepseek-v4-flash";
+/// Retired vision-preview Flash id, still accepted temporarily by DeepSeek.
+pub const MODEL_FLASH_VISION_LEGACY: &str = "deepseek-v4-flash-vision-exp";
 /// Pinned Pro wire id (ADR 0005).
 pub const MODEL_PRO: &str = "deepseek-v4-pro";
 
@@ -39,7 +41,7 @@ impl ModelId {
 
     pub fn from_wire(s: &str) -> Self {
         match s {
-            MODEL_FLASH | MODEL_FLASH_LEGACY => Self::Flash,
+            MODEL_FLASH | MODEL_FLASH_LEGACY | MODEL_FLASH_VISION_LEGACY => Self::Flash,
             MODEL_PRO => Self::Pro,
             other => Self::Other(other.to_string()),
         }
@@ -241,12 +243,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn retired_flash_id_resolves_to_current_wire_id() {
-        assert_eq!(ModelId::from_wire(MODEL_FLASH_LEGACY), ModelId::Flash);
+    fn retired_flash_ids_resolve_to_current_wire_id() {
+        for legacy in [MODEL_FLASH_LEGACY, MODEL_FLASH_VISION_LEGACY] {
+            let id = ModelId::from_wire(legacy);
+            assert_eq!(id, ModelId::Flash);
+            assert_eq!(id.as_wire(), MODEL_FLASH);
+            assert_eq!(
+                serde_json::to_string(&id).unwrap(),
+                format!("\"{MODEL_FLASH}\"")
+            );
+        }
         assert_eq!(ModelId::from_wire(MODEL_FLASH).as_wire(), MODEL_FLASH);
-        assert_eq!(
-            ModelId::from_wire(MODEL_FLASH_LEGACY).as_wire(),
-            MODEL_FLASH
-        );
+    }
+
+    #[test]
+    fn unknown_wire_id_is_preserved() {
+        let id = ModelId::from_wire("custom-flash");
+        assert_eq!(id, ModelId::Other("custom-flash".to_string()));
+        assert_eq!(id.as_wire(), "custom-flash");
+        assert_eq!(serde_json::to_string(&id).unwrap(), "\"custom-flash\"");
     }
 }

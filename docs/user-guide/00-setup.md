@@ -4,7 +4,7 @@
 
 Install alone is not enough. You need an API key before the agent can answer:
 either a **DeepSeek API** key, or an **OpenRouter** key for the same DeepSeek
-V4.1 Flash / Pro models.
+V4.1 Flash 1017 / V4 Pro models.
 
 ## Natural first run
 
@@ -34,7 +34,7 @@ The full-screen agent's `~/.deepseek-build/config.toml` follows the choice:
 | | DeepSeek API | OpenRouter |
 |---|---|---|
 | `base_url` | `https://api.deepseek.com` | `https://openrouter.ai/api/v1` |
-| Flash slot `model` | `deepseek-v4-flash` | `deepseek/deepseek-v4-flash` |
+| Flash slot `model` | `deepseek-flash` | `deepseek/deepseek-v4.1-flash-1017` |
 | Pro slot `model` | `deepseek-v4-pro` | `deepseek/deepseek-v4-pro` |
 | `env_key` | `DEEPSEEK_API_KEY` | `OPENROUTER_API_KEY` |
 
@@ -42,6 +42,11 @@ A fresh home is seeded for the chosen provider. If `config.toml` already
 exists, setup switches only the stanzas that still hold the other provider's
 product defaults; a stanza you edited by hand (custom model, proxy URL, own
 `env_key`) is left alone and setup prints a note.
+
+The local Flash section stays named `[model.deepseek-v4-flash]` so existing
+`[models]` references continue to work. On launch, an older product default
+inside that section is upgraded to the current provider wire ID; a custom
+model or endpoint is kept.
 
 Session titles, web search, and image description are pinned to the Flash
 stanza (`[models] session_summary` / `web_search` / `image_description`), so

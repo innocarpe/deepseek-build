@@ -42,7 +42,7 @@ when Spec 10 assembly is active on Path A turns.
 Visibility line each turn (illustrative):
 
 ```text
-model=deepseek-v4-flash thinking=on effort=high
+model=deepseek-flash thinking=on effort=high
 ```
 
 REPL: `/pro`, `/flash`, `/preset …`, `/model` (status via next-turn visibility).

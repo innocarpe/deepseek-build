@@ -2,8 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Pinned Flash wire id (ADR 0005).
-pub const MODEL_FLASH: &str = "deepseek-v4-flash";
+/// Current Flash wire id (ADR 0015). DeepSeek serves the latest V4.1 Flash
+/// checkpoint, including 1017, behind this stable API name.
+pub const MODEL_FLASH: &str = "deepseek-flash";
+/// Retired Flash id, still accepted temporarily by DeepSeek.
+pub const MODEL_FLASH_LEGACY: &str = "deepseek-v4-flash";
 /// Pinned Pro wire id (ADR 0005).
 pub const MODEL_PRO: &str = "deepseek-v4-pro";
 
@@ -36,7 +39,7 @@ impl ModelId {
 
     pub fn from_wire(s: &str) -> Self {
         match s {
-            MODEL_FLASH => Self::Flash,
+            MODEL_FLASH | MODEL_FLASH_LEGACY => Self::Flash,
             MODEL_PRO => Self::Pro,
             other => Self::Other(other.to_string()),
         }
@@ -231,4 +234,19 @@ pub struct AssistantMessage {
 pub enum ContentPart {
     Text { text: String },
     Other(serde_json::Value),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retired_flash_id_resolves_to_current_wire_id() {
+        assert_eq!(ModelId::from_wire(MODEL_FLASH_LEGACY), ModelId::Flash);
+        assert_eq!(ModelId::from_wire(MODEL_FLASH).as_wire(), MODEL_FLASH);
+        assert_eq!(
+            ModelId::from_wire(MODEL_FLASH_LEGACY).as_wire(),
+            MODEL_FLASH
+        );
+    }
 }

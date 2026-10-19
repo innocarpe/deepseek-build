@@ -159,7 +159,7 @@ mod tests {
             .build();
         let v = serde_json::to_value(&req).unwrap();
         assert_eq!(v["thinking"]["type"], "enabled");
-        assert_eq!(v["model"], "deepseek-v4-flash");
+        assert_eq!(v["model"], "deepseek-flash");
     }
 
     #[test]

@@ -1114,7 +1114,7 @@ mod tests {
             .unwrap();
         let epoch2 = agent.prefix_epoch_short().to_string();
         assert_eq!(epoch1, epoch2);
-        assert!(models.iter().any(|m| m.contains("deepseek-v4-flash")));
+        assert!(models.iter().any(|m| m.contains("deepseek-flash")));
     }
 
     #[tokio::test]
@@ -1157,7 +1157,7 @@ mod tests {
         assert_eq!(out.route.wire_model, MODEL_PRO);
         // next turn flash
         let out2 = agent.run_turn("follow up", |_| {}).await.unwrap();
-        assert_eq!(out2.route.wire_model, "deepseek-v4-flash");
+        assert_eq!(out2.route.wire_model, "deepseek-flash");
     }
 
     /// The §1.5.2 line through a real turn loop, on the wire format the

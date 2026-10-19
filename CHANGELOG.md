@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Flash requests now use DeepSeek's `deepseek-flash` API alias, which serves DeepSeek V4.1 Flash 1017, or OpenRouter's `deepseek/deepseek-v4.1-flash-1017` ID. The full-screen agent keeps the existing `[model.deepseek-v4-flash]` local slot so saved `[models]` references work; on launch and provider switch, product defaults with the retired wire ID migrate to the current one. Custom model IDs and endpoints are preserved. Native `deepseek-build run` / `dsb run` requests and the scripted wire checks use the new ID; V4 Pro remains available by explicit route. ADR 0015 supersedes ADR 0005's Flash wire pin.
+
 ## 6.12.0 — 2026-10-15
 
 - The native headless loop (`dsb run` / `dsb chat`) accepts `--max-tool-rounds <N>`, raising the per-turn tool-round cap that made long benchmark and CI runs stop at eight rounds with `max tool rounds reached`. The default stays 8 and `0` is rejected as a value.

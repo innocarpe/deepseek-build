@@ -137,6 +137,12 @@ the official DeepSeek API, DeepSeek V4.1 Flash (`deepseek-flash`) accepts
 attached images directly, and text-only models keep images off the wire with
 the on-disk fallback.
 
+The default Flash wire ID is `deepseek-flash`, which DeepSeek currently serves
+as **DeepSeek V4.1 Flash 1017**. OpenRouter setup uses
+`deepseek/deepseek-v4.1-flash-1017`. Existing product homes retain their local
+`[model.deepseek-v4-flash]` slot; DSB updates its old wire ID on launch while
+preserving custom model choices ([ADR 0015](docs/adr/0015-deepseek-flash-1017.md)).
+
 ## Authentication and configuration
 
 Interactive setup asks how to reach the DeepSeek models — the DeepSeek API or

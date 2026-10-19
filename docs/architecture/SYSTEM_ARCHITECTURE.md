@@ -185,7 +185,19 @@ flowchart TD
   Out --> Vis[Always show model= to user]
 ```
 
-Wire IDs: `deepseek-v4-flash`, `deepseek-v4-pro` (ADR 0005).
+Provider wire IDs are provider-specific ([ADR 0015](../adr/0015-deepseek-v41-flash-1017.md)).
+The product slot is the local config key; the wire ID is what the provider
+receives.
+
+| Product slot | DeepSeek direct | OpenRouter |
+|--------------|-----------------|------------|
+| Flash `deepseek-v4-flash` | `deepseek-flash` | `deepseek/deepseek-v4.1-flash-1017` |
+| Pro `deepseek-v4-pro` | `deepseek-v4-pro` | `deepseek/deepseek-v4-pro` |
+
+The mapping is explicit; OpenRouter IDs are not derived by prefixing the slot
+name. The retired direct aliases `deepseek-v4-flash` and
+`deepseek-v4-flash-vision-exp` resolve to the Flash slot for configuration
+compatibility (ADR 0015).
 
 ---
 

@@ -3,6 +3,7 @@
 - **Status:** Accepted  
 - **Date:** 2026-08-06  
 - **Gate:** G1b  
+- **Amended by:** [ADR 0014](./0014-native-completion-budget.md) (default max_tokens) · [ADR 0015](./0015-deepseek-v41-flash-1017.md) (Flash wire ID and provider-specific mapping)
 - **Evidence date:** 2026-08-06 against official docs  
   - https://api-docs.deepseek.com/quick_start/pricing  
   - https://api-docs.deepseek.com/guides/thinking_mode  
@@ -26,12 +27,22 @@ Claude/Codex adversarial reviews required **pinned model IDs** and an executable
 
 ### Pinned model IDs (wire)
 
-| Logical tier | Wire `model` string | Notes (evidence date) |
-|--------------|---------------------|------------------------|
-| Flash | **`deepseek-v4-flash`** | Version label DeepSeek-V4-Flash-0731; id stays `deepseek-v4-flash` |
-| Pro | **`deepseek-v4-pro`** | Premium tier |
+| Logical tier | Wire `model` string | Notes |
+|--------------|---------------------|-------|
+| Flash | **`deepseek-flash`** | Current official Flash ID (2026-10-17). Legacy aliases `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` are accepted but retired — see [ADR 0015](./0015-deepseek-v41-flash-1017.md) |
+| Pro | **`deepseek-v4-pro`** | Premium tier; unchanged by ADR 0015 |
 
-These IDs are **accepted as product pins** based on official pricing/docs pages on 2026-08-06. If DeepSeek renames them, open a superseding ADR.
+These IDs are product pins. The Flash pin was updated on 2026-10-19 by
+[ADR 0015](./0015-deepseek-v41-flash-1017.md); Pro is unchanged. If DeepSeek
+renames either, open a superseding ADR.
+
+### Provider-specific wire IDs
+
+The direct API and OpenRouter use different IDs for the same product slot.
+Flash maps to `deepseek-flash` on the direct API and
+`deepseek/deepseek-v4.1-flash-1017` on OpenRouter; Pro maps to
+`deepseek-v4-pro` and `deepseek/deepseek-v4-pro`. The mapping and the
+compatibility rules are in [ADR 0015](./0015-deepseek-v41-flash-1017.md).
 
 ### Context / limits (documented product assumptions)
 
@@ -104,7 +115,7 @@ Official pricing distinguishes **cache hit vs cache miss** input rates. Product 
 
 - G1b → **green** when this ADR merges.  
 - Specs 20/30 use wire IDs above.  
-- VISION/PRD may name `deepseek-v4-flash` / `deepseek-v4-pro` again as pinned.
+- VISION/PRD may name the Flash slot `deepseek-v4-flash` or the current wire ID `deepseek-flash`; the slot and wire ID are distinct (ADR 0015).
 
 ## References
 

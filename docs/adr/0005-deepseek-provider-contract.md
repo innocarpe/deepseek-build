@@ -51,7 +51,7 @@ These IDs are **accepted as product pins** based on official pricing/docs pages 
 
 | Control | How we send it |
 |---------|----------------|
-| Thinking on/off | `extra_body`: `{"thinking": {"type": "enabled"|"disabled"}}` |
+| Thinking on/off | `extra_body`: `{"thinking": {"type": "enabled"}}` or `{"thinking": {"type": "disabled"}}` |
 | Effort | `reasoning_effort`: `low` \| `high` \| `max` (also accept product alias `medium` → map to `high` if needed) |
 | Default product | thinking **enabled**, effort **high** for Pro escalations; Flash default effort **high** or **low** per preset (spec 20/30) |
 

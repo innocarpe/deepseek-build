@@ -89,6 +89,7 @@ Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** p
 | 2026-10-15 | **`6.10.0`** dsb update install refresh, unanswered tool-call recovery, slash prefix ranking, and phone chrome fixes. | PR #357 |
 | 2026-10-15 | **`6.11.0`** `/model` shows the Flash row only (V4.1 name and the `max`/`high`/`low` effort menu), the Flash slot honours a standing `default_reasoning_effort`, and the product context window becomes 1048576. | PR #361 |
 | 2026-10-15 | **`6.12.0`** linux-x64 prebuilt installs and headless benchmark hardening for dsb run | PR #367 |
+| 2026-10-20 | **`6.13.0`** _short description (fill in)_ | PR #372 |
 | 2026-09-25 | **`6.0.0`** Grok Build base ported `1.0.0` → `1.0.41` (41 releases, 472 upstream items) with the DeepSeek overlay re-derived by three-way merge; sync infra (`grok-sync` skill, runbook, ledger, inventory) added so the next sync is a procedure rather than a rediscovery | [CHANGELIST_6_0_0.md](../CHANGELIST_6_0_0.md) · [UPSTREAM_SYNC_LEDGER.md](../UPSTREAM_SYNC_LEDGER.md) |
 | 2026-08-07 | **`5.0.1`** widen the DeepSeek whale logo to official terminal proportions | PR #113 |
 | 2026-08-07 | **`4.0.4`** Image attachments on text-only DeepSeek endpoints (persist to session assets + OCR hint); DeepSeek status line with account balance & cache hit rate; G003 mint file_version on Path A read_file | PR #98 |
@@ -108,6 +109,7 @@ Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** p
 | [REPLAN_2.0.md](../REPLAN_2.0.md) | Historical replan that defined 2.0.0 intent |
 | [KNOWN_LIMITS.md](../KNOWN_LIMITS.md) | Runtime honesty for current SemVer on disk |
 | [CHANGELOG.md](../../../CHANGELOG.md) | Per-release notes |
+
 
 
 

@@ -359,6 +359,13 @@ mod tests {
     fn description_falls_back_to_first_body_line() {
         let raw = "# Heading\n\nFirst body line.\n";
         assert_eq!(extract_description(raw), "First body line.");
+
+        let with_frontmatter =
+            "---\nname: no-description\n---\n\n# Heading\n\nFrontmatter body line.\n";
+        assert_eq!(
+            extract_description(with_frontmatter),
+            "Frontmatter body line."
+        );
     }
 
     #[test]

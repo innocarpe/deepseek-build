@@ -145,16 +145,57 @@ fn extract_description(raw: &str) -> String {
         && let Some(end) = rest.find("\n---")
     {
         let fm = &rest[..end];
-        for line in fm.lines() {
-            let line = line.trim();
-            if let Some(v) = line.strip_prefix("description:") {
-                let v = v.trim().trim_matches('"').trim_matches('\'');
-                if !v.is_empty() {
-                    return truncate(v, 200);
+        let lines: Vec<&str> = fm.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            let line = *line;
+            let Some(v) = line.trim().strip_prefix("description:") else {
+                continue;
+            };
+            let v = v.trim();
+            if is_block_scalar_indicator(v) {
+                let body = block_scalar_body(&lines[i + 1..], leading_indent(line));
+                if !body.is_empty() {
+                    return truncate(&body, 200);
                 }
+                continue;
+            }
+            let v = v.trim_matches('"').trim_matches('\'');
+            if !v.is_empty() {
+                return truncate(v, 200);
             }
         }
+        let body = rest[end + 4..].trim_start_matches(['\r', '\n']);
+        return fallback_description(body);
     }
+    fallback_description(text)
+}
+
+/// YAML block scalar indicators accepted for `description:`.
+fn is_block_scalar_indicator(v: &str) -> bool {
+    matches!(v, ">" | ">-" | "|" | "|-")
+}
+
+fn leading_indent(line: &str) -> usize {
+    line.chars().take_while(|c| c.is_whitespace()).count()
+}
+
+/// Join a block scalar's deeper-indented lines with spaces; stop at the next
+/// line indented no deeper than the `description:` key.
+fn block_scalar_body(lines: &[&str], key_indent: usize) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for line in lines {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if leading_indent(line) <= key_indent {
+            break;
+        }
+        parts.push(line.trim());
+    }
+    parts.join(" ")
+}
+
+fn fallback_description(text: &str) -> String {
     for line in text.lines() {
         let t = line.trim();
         if t.is_empty() || t.starts_with('#') || t.starts_with("---") {
@@ -263,5 +304,83 @@ mod tests {
         let idx = discover_skills_index(dir.path(), None).unwrap();
         let names: Vec<_> = idx.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["alpha", "mid", "zeta"]);
+    }
+
+    #[test]
+    fn description_folded_block_scalar_strip() {
+        let raw = "---\nname: folded\ndescription: >-\n  First line of the\n  description text.\nlicense: MIT\n---\n\n# Folded\n";
+        assert_eq!(
+            extract_description(raw),
+            "First line of the description text."
+        );
+    }
+
+    #[test]
+    fn description_folded_block_scalar_keep() {
+        let raw = "---\ndescription: >\n  Folded wording here.\n  Second line.\n---\n";
+        assert_eq!(
+            extract_description(raw),
+            "Folded wording here. Second line."
+        );
+    }
+
+    #[test]
+    fn description_literal_block_scalar_keep() {
+        let raw = "---\ndescription: |\n  Literal line one.\n  Literal line two.\n---\n";
+        assert_eq!(
+            extract_description(raw),
+            "Literal line one. Literal line two."
+        );
+    }
+
+    #[test]
+    fn description_literal_block_scalar_strip() {
+        let raw = "---\ndescription: |-\n  Literal strip line.\n---\n";
+        assert_eq!(extract_description(raw), "Literal strip line.");
+    }
+
+    #[test]
+    fn description_inline_values_unchanged() {
+        assert_eq!(
+            extract_description("---\ndescription: \"Double quoted\"\n---\n"),
+            "Double quoted"
+        );
+        assert_eq!(
+            extract_description("---\ndescription: 'Single quoted'\n---\n"),
+            "Single quoted"
+        );
+        assert_eq!(
+            extract_description("---\ndescription: Plain inline value\n---\n"),
+            "Plain inline value"
+        );
+    }
+
+    #[test]
+    fn description_falls_back_to_first_body_line() {
+        let raw = "# Heading\n\nFirst body line.\n";
+        assert_eq!(extract_description(raw), "First body line.");
+
+        let with_frontmatter =
+            "---\nname: no-description\n---\n\n# Heading\n\nFrontmatter body line.\n";
+        assert_eq!(
+            extract_description(with_frontmatter),
+            "Frontmatter body line."
+        );
+    }
+
+    #[test]
+    fn empty_description_block_falls_back_to_body() {
+        let raw = "---\nname: empty\ndescription: >-\n---\n\n# Heading\n\nFallback body line.\n";
+        assert_eq!(extract_description(raw), "Fallback body line.");
+    }
+
+    #[test]
+    fn description_truncated_to_200_chars() {
+        let long = "x".repeat(201);
+        let raw = format!("---\ndescription: >-\n  {long}\n---\n");
+        let desc = extract_description(&raw);
+        assert_eq!(desc.chars().count(), 201);
+        assert!(desc.ends_with('…'));
+        assert_eq!(desc.trim_end_matches('…'), "x".repeat(200));
     }
 }

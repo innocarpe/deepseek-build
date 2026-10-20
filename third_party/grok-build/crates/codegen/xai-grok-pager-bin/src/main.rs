@@ -2547,12 +2547,10 @@ async fn async_main(mut args: PagerArgs) -> Result<()> {
     match result {
         Ok(true) => {
             let adopted = bg_update_wait.lock().await.take();
-            let grok = "grok";
-            if finish_update_on_exit(adopted, &update_config).await {
-                eprintln!("Update installed. Run `{grok}` to start.");
-            } else {
-                eprintln!("Update did not complete. Run `{grok} update` to retry.");
-            }
+            let installed = finish_update_on_exit(adopted, &update_config).await;
+            let configured_name = std::env::var("GROK_INVOCATION_NAME").ok();
+            let invocation = update_invocation_name_from(configured_name.as_deref());
+            eprintln!("{}", update_exit_message(invocation, installed));
             Ok(())
         }
         Ok(false) => Ok(()),
@@ -2621,6 +2619,21 @@ fn build_update_config() -> UpdateConfig {
     }
     config
 }
+
+fn update_invocation_name_from(name: Option<&str>) -> &str {
+    name.map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("grok")
+}
+
+fn update_exit_message(invocation: &str, installed: bool) -> String {
+    if installed {
+        format!("Update installed. Run `{invocation}` to start.")
+    } else {
+        format!("Update did not complete. Run `{invocation} update` to retry.")
+    }
+}
+
 /// Ctrl+U quit-for-update: the user asked for this install. `run_update_if_available` reports its
 /// own failures to stderr; only a hard Err counts as "did not complete".
 async fn run_update_blocking(update_config: &UpdateConfig) -> bool {
@@ -2827,6 +2840,29 @@ async fn signal_leaders_to_relaunch(installed_version: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn update_exit_hints_use_the_invoked_cli_name() {
+        assert_eq!(update_invocation_name_from(Some("dsb")), "dsb");
+        assert_eq!(
+            update_invocation_name_from(Some("deepseek-build")),
+            "deepseek-build"
+        );
+        assert_eq!(update_invocation_name_from(Some("  ")), "grok");
+        assert_eq!(update_invocation_name_from(None), "grok");
+        assert_eq!(
+            update_exit_message("dsb", true),
+            "Update installed. Run `dsb` to start."
+        );
+        assert_eq!(
+            update_exit_message("deepseek-build", true),
+            "Update installed. Run `deepseek-build` to start."
+        );
+        assert_eq!(
+            update_exit_message("dsb", false),
+            "Update did not complete. Run `dsb update` to retry."
+        );
+    }
+
     #[test]
     fn embedded_agent_commands_heal_managed_policy_before_sandboxing() {
         for args in [

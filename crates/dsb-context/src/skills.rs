@@ -363,8 +363,7 @@ mod tests {
 
     #[test]
     fn empty_description_block_falls_back_to_body() {
-        let raw =
-            "---\nname: empty\ndescription: >-\n---\n\n# Heading\n\nFallback body line.\n";
+        let raw = "---\nname: empty\ndescription: >-\n---\n\n# Heading\n\nFallback body line.\n";
         assert_eq!(extract_description(raw), "Fallback body line.");
     }
 

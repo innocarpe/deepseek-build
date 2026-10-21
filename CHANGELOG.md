@@ -2,7 +2,10 @@
 
 ## Unreleased
 
+## 6.13.1 — 2026-10-21
+
 - Ctrl+U update completion and retry hints now use the invoked DeepSeek Build command (`dsb` or `deepseek-build`) instead of telling users to run `grok`.
+- The root TUI accepts `--model`/`-m` and forwards `--cwd`; one-off `--effort` overrides remain session-only, while explicit `/effort` and `/model` selections persist. Native `run`/`chat` map supported DeepSeek model IDs and reject unsupported IDs and conflicting `--pro` + `--model` arguments (#374).
 
 ## 6.13.0 — 2026-10-20
 

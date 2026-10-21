@@ -356,7 +356,14 @@ fn foreign_resume_still_detects_after_home_session_create() {
         claude: true,
         ..Default::default()
     };
-    let effect = app.begin_foreign_resume_detection();
+    let grok_home = xai_grok_tools::util::grok_home::grok_home();
+    let effect = crate::app::foreign_sessions::scan_effect(
+        &app.cwd,
+        app.foreign_session_compat,
+        &grok_home,
+        app.foreign_scan_coordinator.clone(),
+        app.foreign_session_scan_seq + 1,
+    );
     assert!(
         effect.is_some(),
         "Claude/Codex/Cursor continue hint must still run after optimistic home create"

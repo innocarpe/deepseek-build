@@ -1,6 +1,8 @@
 use crate::acp::model_state::{EffortTokenError, ModelState};
-use crate::app::agent::DeferredModelSwitch;
-use crate::app::dispatch::session::lifecycle::{DeferredSwitchOutcome, take_deferred_model_switch};
+use crate::app::agent::{DeferredModelSwitch, SwitchOrigin};
+use crate::app::dispatch::session::lifecycle::{
+    DeferredSwitchOutcome, take_deferred_model_switch,
+};
 use agent_client_protocol as acp;
 use std::sync::Arc;
 use xai_grok_shell::sampling::types::ReasoningEffort;
@@ -220,5 +222,45 @@ fn switch(model_id: acp::ModelId, effort: Option<ReasoningEffort>) -> DeferredMo
         model_id,
         effort,
         prev_model_id: None,
+        origin: SwitchOrigin::User,
     }
+}
+
+#[test]
+fn effort_only_switch_is_a_process_override() {
+    let models = models_with_current(true);
+    let out = take_deferred_model_switch(None, &models, Some("high"));
+    assert_eq!(
+        out.switch.expect("effort switch").origin,
+        SwitchOrigin::ProcessOverride
+    );
+}
+
+#[test]
+fn stashed_process_override_origin_is_preserved() {
+    let models = models_with_current(true);
+    let other = acp::ModelId::new(Arc::from("other-model"));
+    let cli = DeferredModelSwitch {
+        model_id: other,
+        effort: None,
+        prev_model_id: None,
+        origin: SwitchOrigin::ProcessOverride,
+    };
+    let out = take_deferred_model_switch(Some(cli), &models, None);
+    assert_eq!(
+        out.switch.expect("stashed switch").origin,
+        SwitchOrigin::ProcessOverride
+    );
+}
+
+#[test]
+fn stashed_user_origin_is_preserved() {
+    let models = models_with_current(true);
+    let current = models.current.clone().unwrap();
+    let user = switch(current, Some(ReasoningEffort::Low));
+    let out = take_deferred_model_switch(Some(user), &models, None);
+    assert_eq!(
+        out.switch.expect("stashed switch").origin,
+        SwitchOrigin::User
+    );
 }

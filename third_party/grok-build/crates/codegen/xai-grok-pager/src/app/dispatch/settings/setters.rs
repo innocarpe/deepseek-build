@@ -1817,6 +1817,7 @@ pub(in crate::app::dispatch) fn set_default_model(
             model_id: new_id,
             effort: None,
             prev_model_id: prev_id,
+            origin: crate::app::agent::SwitchOrigin::User,
         });
     }
     effects

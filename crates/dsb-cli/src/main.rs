@@ -51,6 +51,11 @@ struct Cli {
     #[arg(long, global = true)]
     cwd: Option<PathBuf>,
 
+    /// Model for this process. The TUI resolves the ID against its catalog;
+    /// native `run`/`chat` accept `deepseek-v4-flash` or `deepseek-v4-pro`.
+    #[arg(long, short = 'm', global = true, value_name = "MODEL")]
+    model: Option<String>,
+
     /// Session preset: flash | balanced | max (default: flash).
     #[arg(long, global = true, default_value = "flash")]
     preset: String,
@@ -297,6 +302,14 @@ Examples:\n  \
 /// Flags forwarded to the vendored TUI binary on the bare / `agent` paths.
 fn tui_forward_flags(cli: &Cli) -> Vec<String> {
     let mut out = Vec::new();
+    if let Some(cwd) = cli.cwd.as_deref() {
+        out.push("--cwd".to_string());
+        out.push(cwd.display().to_string());
+    }
+    if let Some(model) = cli.model.as_deref() {
+        out.push("--model".to_string());
+        out.push(model.to_string());
+    }
     if cli.minimal {
         out.push("--minimal".to_string());
     } else if cli.fullscreen {
@@ -363,6 +376,35 @@ fn is_tui_path(cli: &Cli) -> bool {
     matches!(&cli.command, None | Some(Commands::Agent { .. }))
 }
 
+/// Parse a product `--effort` value. The documented levels are `low`, `high`,
+/// and `max`; `medium`/`xhigh` remain accepted aliases. An unknown token is an
+/// error, so a typo cannot quietly become another level.
+fn parse_effort_arg(value: &str) -> Result<ReasoningEffort> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "low" => Ok(ReasoningEffort::Low),
+        "medium" | "high" => Ok(ReasoningEffort::High),
+        "max" | "xhigh" => Ok(ReasoningEffort::Max),
+        _ => bail!("invalid --effort `{value}`: expected low, high, or max"),
+    }
+}
+
+/// Routing preset for the native `run`/`chat` loop. `--model` picks the two
+/// product routes; catalog IDs outside them are rejected instead of ignored.
+fn native_preset(cli: &Cli) -> Result<Preset> {
+    let Some(model) = cli.model.as_deref() else {
+        return Ok(Preset::parse(&cli.preset).unwrap_or(Preset::Flash));
+    };
+    match model.trim().to_ascii_lowercase().as_str() {
+        "deepseek-v4-flash" | "flash" => Ok(Preset::Flash),
+        "deepseek-v4-pro" | "pro" => Ok(Preset::Max),
+        other => bail!(
+            "--model `{other}` is not available on `run`/`chat` \
+             (use `deepseek-v4-flash` or `deepseek-v4-pro`; the TUI and `agent` \
+             accept catalog model IDs)"
+        ),
+    }
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(e) = real_main().await {
@@ -374,6 +416,14 @@ async fn main() {
 async fn real_main() -> Result<()> {
     let cli = parse_cli();
     let inv = invocation_name();
+    if let Some(effort) = cli.effort.as_deref() {
+        parse_effort_arg(effort)?;
+    }
+    if let Some(model) = cli.model.as_deref()
+        && model.trim().is_empty()
+    {
+        bail!("--model requires a model ID");
+    }
     // TUI-only flags are meaningless outside the bare / `agent` TUI paths.
     if !is_tui_path(&cli) {
         reject_tui_only_flags(&cli)?;
@@ -408,6 +458,9 @@ async fn real_main() -> Result<()> {
             run_auth_cmd(cmd)?;
         }
         Some(Commands::Run { ref message, pro }) => {
+            if pro && cli.model.is_some() {
+                bail!("--pro and --model choose the same route; pass one of them");
+            }
             let text = match message {
                 Some(m) => m.clone(),
                 None => {
@@ -707,8 +760,11 @@ async fn build_agent(cli: &Cli) -> Result<Agent> {
         .clone()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-    let preset = Preset::parse(&cli.preset).unwrap_or(Preset::Flash);
-    let effort_override = cli.effort.as_deref().map(ReasoningEffort::from_product);
+    let preset = native_preset(cli)?;
+    let effort_override = match cli.effort.as_deref() {
+        Some(value) => Some(parse_effort_arg(value)?),
+        None => None,
+    };
     let thinking_enabled = if cli.no_thinking {
         Some(false)
     } else if cli.thinking {
@@ -1192,6 +1248,40 @@ mod tests {
             tui_forward_flags(&cli),
             vec!["--minimal", "--reasoning-effort", "max"]
         );
+    }
+
+    #[test]
+    fn tui_forward_flags_model_and_cwd() {
+        let cli =
+            Cli::try_parse_from(["dsb", "--model", "deepseek-v4-pro", "--cwd", "/tmp/ws"]).unwrap();
+        assert_eq!(
+            tui_forward_flags(&cli),
+            vec!["--cwd", "/tmp/ws", "--model", "deepseek-v4-pro"]
+        );
+        let short = Cli::try_parse_from(["dsb", "-m", "deepseek-v4-flash"]).unwrap();
+        assert_eq!(
+            tui_forward_flags(&short),
+            vec!["--model", "deepseek-v4-flash"]
+        );
+    }
+
+    #[test]
+    fn effort_parser_rejects_unknown_tokens() {
+        assert_eq!(parse_effort_arg("low").unwrap(), ReasoningEffort::Low);
+        assert_eq!(parse_effort_arg("high").unwrap(), ReasoningEffort::High);
+        assert_eq!(parse_effort_arg("MAX").unwrap(), ReasoningEffort::Max);
+        assert!(parse_effort_arg("bogus").is_err());
+        assert!(parse_effort_arg("").is_err());
+    }
+
+    #[test]
+    fn native_preset_maps_model_ids_and_rejects_catalog_only_ids() {
+        let flash = Cli::try_parse_from(["dsb", "--model", "deepseek-v4-flash"]).unwrap();
+        assert_eq!(native_preset(&flash).unwrap(), Preset::Flash);
+        let pro = Cli::try_parse_from(["dsb", "--model", "deepseek-v4-pro"]).unwrap();
+        assert_eq!(native_preset(&pro).unwrap(), Preset::Max);
+        let unknown = Cli::try_parse_from(["dsb", "--model", "grok-4.5"]).unwrap();
+        assert!(native_preset(&unknown).is_err());
     }
 
     #[test]

@@ -1376,6 +1376,7 @@ pub(super) fn apply_pending_dispatch_config(
             model_id: m.id.clone(),
             effort: Some(e),
             prev_model_id: None,
+            origin: crate::app::agent::SwitchOrigin::User,
         });
     }
     let pending_mode =

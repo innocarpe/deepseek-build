@@ -33,8 +33,9 @@ when Spec 10 assembly is active on Path A turns.
 
 | Flag / control | Effect |
 |----------------|--------|
-| `--effort low\|high\|max` | Override reasoning effort for the process (product CLI forwards on TUI/agent path) |
-| `[models] default_reasoning_effort` (config.toml) | Standing pin for the Flash slot; both paths (`dsb run` and the bare TUI) read it, and `--effort` still wins per process |
+| `--effort low\|high\|max` | Per-process override. Unknown values are rejected before launch; the flag never rewrites the saved default |
+| `--model ID` / `-m ID` | Per-process model override. The TUI resolves the ID against its catalog; native `run`/`chat` accept `deepseek-v4-flash` or `deepseek-v4-pro` |
+| `[models] default_reasoning_effort` (config.toml) | Standing default for the Flash slot; both paths (`dsb run` and the bare TUI) read it. `/effort` and `/model <name> <effort>` save a successful pick; CLI flags do not |
 | `--thinking` | Force thinking on |
 | `--no-thinking` | Disable thinking for the process |
 | (default) | Thinking on; effort from product model seed / sticky Pro preset (shipped default `high`) |
@@ -47,13 +48,43 @@ model=deepseek-flash thinking=on effort=high
 
 REPL: `/pro`, `/flash`, `/preset …`, `/model` (status via next-turn visibility).
 
+### Another process with a model and effort
+
+`--model` and `--effort` apply to the process that runs them. They do not
+change `[models] default` or `default_reasoning_effort`; interactive `/effort`
+and `/model` picks save the default for the next launch.
+
+`deepseek-build` is the primary command; `dsb` is its short alias.
+
+```bash
+# Full-screen TUI with a catalog model and effort for this process
+deepseek-build --model deepseek-v4-pro --effort high
+
+# Native one-shot: IDs map to the Flash and Max routes
+deepseek-build --model deepseek-v4-pro --effort high run "explain this repo"
+
+# Headless through the vendored agent flags
+dsb agent -- -m deepseek-v4-pro --reasoning-effort high -p "explain this repo"
+
+# Workspace root is used by the native loop and forwarded to the TUI
+deepseek-build --cwd /path/to/workspace --model deepseek-v4-flash --effort low
+
+# Scripted run: model/effort plus a JSON result and a turn cap
+dsb --cwd /path/to/workspace --model deepseek-v4-pro --effort high agent -- \
+  -p "explain this repo" --output-format json --max-turns 12
+```
+
+`--pro` and `--model` choose the same route on `run`; pass one. The headless
+`agent --` path keeps the vendored model menu, including its remapped effort
+option IDs.
+
 ### Effort honesty (L2 / Path A)
 
 | Claim | Reality |
 |-------|---------|
 | DeepSeek chat body can carry `reasoning_effort` | **Yes** on product Path A when product config seed/repair injects it (vision stack **VC008**) |
 | Product model stanzas seed effort | Flash/Pro defaults include `supports_reasoning_effort`, an effort string, and the `reasoning_efforts` menu (`max`/`high`/`low`) the vendored `/effort` picker reads |
-| CLI `--effort` override | Forwarded as agent `--reasoning-effort` on product TUI/agent path; hermetic wire proof is primarily the **default seed/repair** path |
+| CLI `--effort` override | Forwarded as agent `--reasoning-effort` on product TUI/agent path; process-scoped and never written back as the saved default. Hermetic wire proof is primarily the **default seed/repair** path |
 | Full Spec 30 “thinking body field” on every Grok wire shape | **Not claimed** — Path A Grok chat-completions path may not carry a separate thinking object; do not over-read effort as full Spec 30 |
 
 Evidence: [`docs/product/evidence/VC008_REASONING_EFFORT_WIRE_2026-08-08.md`](../product/evidence/VC008_REASONING_EFFORT_WIRE_2026-08-08.md)

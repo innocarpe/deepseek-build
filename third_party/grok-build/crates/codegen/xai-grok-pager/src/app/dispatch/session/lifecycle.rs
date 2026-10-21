@@ -7,7 +7,9 @@ use crate::acp::tracker::AcpUpdateTracker;
 use crate::app::actions::{
     Action, AfterSessionDelete, Effect, ModelChoice, PermissionModePersist, SwitchModelError,
 };
-use crate::app::agent::{AgentCommand, AgentId, AgentSession, AgentState, DeferredModelSwitch};
+use crate::app::agent::{
+    AgentCommand, AgentId, AgentSession, AgentState, DeferredModelSwitch, SwitchOrigin,
+};
 use crate::app::agent_view::{ActivePane, AgentView};
 use crate::app::app_view::{ActiveView, AppView, TrustState};
 use crate::app::cancel_latency::TurnEnd;
@@ -46,6 +48,7 @@ pub(crate) fn take_deferred_model_switch(
         model_id,
         mut effort,
         prev_model_id,
+        origin,
     }) = stashed
     {
         let effort_error = match cli_effort_token {
@@ -65,6 +68,7 @@ pub(crate) fn take_deferred_model_switch(
                 model_id,
                 effort,
                 prev_model_id,
+                origin,
             }),
             effort_error,
         };
@@ -91,6 +95,7 @@ pub(crate) fn take_deferred_model_switch(
                 model_id: current,
                 effort: Some(effort),
                 prev_model_id: None,
+                origin: SwitchOrigin::ProcessOverride,
             }),
             effort_error: None,
         },
@@ -1467,14 +1472,25 @@ pub(in crate::app::dispatch) fn handle_session_created(
             session_id: session_id_clone.clone(),
         });
         if let Some(switch) = deferred {
-            effects.push(Effect::SwitchModel {
-                agent_id,
-                session_id: session_id_clone.clone(),
-                choice: ModelChoice {
-                    effort: switch.effort,
-                    ..ModelChoice::new(switch.model_id)
-                },
-                prev_model_id: switch.prev_model_id,
+            let process_override = matches!(switch.origin, SwitchOrigin::ProcessOverride);
+            let choice = ModelChoice {
+                effort: switch.effort,
+                ..ModelChoice::new(switch.model_id)
+            };
+            effects.push(if process_override {
+                Effect::SwitchModelProcessOverride {
+                    agent_id,
+                    session_id: session_id_clone.clone(),
+                    choice,
+                    prev_model_id: switch.prev_model_id,
+                }
+            } else {
+                Effect::SwitchModel {
+                    agent_id,
+                    session_id: session_id_clone.clone(),
+                    choice,
+                    prev_model_id: switch.prev_model_id,
+                }
             });
         }
         if std::mem::take(&mut agent.pending_extensions_fetch)
@@ -1609,14 +1625,25 @@ pub(in crate::app::dispatch) fn handle_worktree_session_created(
             session_id: session_id_clone.clone(),
         });
         if let Some(switch) = deferred {
-            effects.push(Effect::SwitchModel {
-                agent_id,
-                session_id: session_id_clone.clone(),
-                choice: ModelChoice {
-                    effort: switch.effort,
-                    ..ModelChoice::new(switch.model_id)
-                },
-                prev_model_id: switch.prev_model_id,
+            let process_override = matches!(switch.origin, SwitchOrigin::ProcessOverride);
+            let choice = ModelChoice {
+                effort: switch.effort,
+                ..ModelChoice::new(switch.model_id)
+            };
+            effects.push(if process_override {
+                Effect::SwitchModelProcessOverride {
+                    agent_id,
+                    session_id: session_id_clone.clone(),
+                    choice,
+                    prev_model_id: switch.prev_model_id,
+                }
+            } else {
+                Effect::SwitchModel {
+                    agent_id,
+                    session_id: session_id_clone.clone(),
+                    choice,
+                    prev_model_id: switch.prev_model_id,
+                }
             });
         }
         if std::mem::take(&mut agent.pending_extensions_fetch)
@@ -1894,12 +1921,14 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
     choice: ModelChoice,
     result: Result<(), SwitchModelError>,
     prev_model_id: Option<acp::ModelId>,
+    process_override: bool,
 ) -> Vec<Effect> {
     let ModelChoice {
         model_id,
         effort,
         context_window_selection,
     } = choice;
+    let explicit_effort = effort.is_some();
     if let Some(agent) = app.agents.get_mut(&agent_id) {
         agent.session.model_switch_pending = false;
         let model_changed_during_switch =
@@ -1941,13 +1970,20 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
                         format_window(selection.get())
                     )));
                 }
-                if unchanged {
+                // A CLI launch override is process-scoped: apply it, never
+                // write it back as the saved default. A user pick that names an
+                // effort persists even when it matches the current value, so an
+                // explicit `/effort high` after a CLI `high` still becomes the
+                // next launch's default.
+                if process_override {
                     vec![]
-                } else {
+                } else if !unchanged || explicit_effort {
                     vec![Effect::PersistPreferredModel {
                         model_id: model_id.clone(),
                         reasoning_effort: resolved_effort,
                     }]
+                } else {
+                    vec![]
                 }
             }
             Err(SwitchModelError::IncompatibleAgent { .. }) => {
@@ -2002,6 +2038,7 @@ pub(in crate::app::dispatch) fn dispatch_agent_type_mismatch_answered(
                     model_id,
                     effort,
                     prev_model_id: None,
+                    origin: SwitchOrigin::User,
                 });
             }
         }

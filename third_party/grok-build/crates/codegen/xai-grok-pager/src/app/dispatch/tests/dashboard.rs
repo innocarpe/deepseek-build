@@ -1542,6 +1542,7 @@ fn dashboard_confirm_worktree_applies_pending_model_and_plan() {
             model_id,
             effort: Some(xai_grok_shell::sampling::types::ReasoningEffort::High),
             prev_model_id: None,
+            origin: crate::app::agent::SwitchOrigin::User,
         }),
         "effort must be stashed for the shell",
     );
@@ -3995,6 +3996,7 @@ fn dashboard_dispatch_applies_pending_model_and_plan() {
             model_id,
             effort: Some(xai_grok_shell::sampling::types::ReasoningEffort::High),
             prev_model_id: None,
+            origin: crate::app::agent::SwitchOrigin::User,
         }),
         "effort must be stashed for the shell"
     );
@@ -4034,6 +4036,7 @@ fn dashboard_new_agent_button_applies_pending_model_and_plan() {
             model_id,
             effort: Some(xai_grok_shell::sampling::types::ReasoningEffort::High),
             prev_model_id: None,
+            origin: crate::app::agent::SwitchOrigin::User,
         }),
         "effort must be stashed for the shell"
     );

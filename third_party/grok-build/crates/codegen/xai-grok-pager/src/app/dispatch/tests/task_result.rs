@@ -1177,6 +1177,89 @@ fn switch_model_complete_success_updates_model_and_pushes_message() {
 }
 
 #[test]
+fn switch_model_complete_process_override_skips_persist() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    let model_id = acp::ModelId::new(std::sync::Arc::from("cli-model"));
+    app.agents.get_mut(&id).unwrap().session.models.available.insert(
+        model_id.clone(),
+        acp::ModelInfo::new(model_id.clone(), "CLI Model".to_string()),
+    );
+    app.agents
+        .get_mut(&id)
+        .unwrap()
+        .session
+        .model_switch_pending = true;
+
+    let effects = dispatch(
+        Action::TaskComplete(TaskResult::SwitchModelCompleteProcessOverride {
+            agent_id: id,
+            choice: ModelChoice::new(model_id.clone()),
+            result: Ok(()),
+            prev_model_id: None,
+        }),
+        &mut app,
+    );
+
+    assert!(
+        !effects
+            .iter()
+            .any(|e| matches!(e, Effect::PersistPreferredModel { .. })),
+        "a CLI launch override must not rewrite the saved default"
+    );
+    assert_eq!(
+        expect_agent(&app, id).session.models.current,
+        Some(model_id),
+        "the process override still applies to the session"
+    );
+}
+
+#[test]
+fn switch_model_complete_explicit_effort_persists_when_unchanged() {
+    use xai_grok_shell::sampling::types::ReasoningEffort;
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    let model_id = acp::ModelId::new(std::sync::Arc::from("effort-model"));
+    {
+        let agent = app.agents.get_mut(&id).unwrap();
+        agent.session.models.available.insert(
+            model_id.clone(),
+            acp::ModelInfo::new(model_id.clone(), "Effort Model".to_string()),
+        );
+        agent
+            .session
+            .models
+            .set_current(model_id.clone(), Some(ReasoningEffort::High));
+        agent.session.model_switch_pending = true;
+    }
+
+    let effects = dispatch(
+        Action::TaskComplete(TaskResult::SwitchModelComplete {
+            agent_id: id,
+            choice: ModelChoice {
+                model_id: model_id.clone(),
+                effort: Some(ReasoningEffort::High),
+                context_window_selection: None,
+            },
+            result: Ok(()),
+            prev_model_id: None,
+        }),
+        &mut app,
+    );
+
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [Effect::PersistPreferredModel {
+                model_id: mid,
+                reasoning_effort: Some(ReasoningEffort::High),
+            }] if *mid == model_id
+        ),
+        "an explicit UI effort pick must save even when it equals the current value"
+    );
+}
+
+#[test]
 fn switch_model_complete_skips_message_and_persist_when_unchanged() {
     let mut app = test_app_with_agent();
     let id = AgentId(0);

@@ -1341,14 +1341,28 @@ pub(in crate::app::dispatch) fn handle_session_loaded(
         });
         if let Some(switch) = deferred {
             agent.session.model_switch_pending = true;
-            effects.push(Effect::SwitchModel {
-                agent_id,
-                session_id: hydrate_sid.clone(),
-                choice: ModelChoice {
-                    effort: switch.effort,
-                    ..ModelChoice::new(switch.model_id)
-                },
-                prev_model_id: switch.prev_model_id,
+            let process_override = matches!(
+                switch.origin,
+                crate::app::agent::SwitchOrigin::ProcessOverride
+            );
+            let choice = ModelChoice {
+                effort: switch.effort,
+                ..ModelChoice::new(switch.model_id)
+            };
+            effects.push(if process_override {
+                Effect::SwitchModelProcessOverride {
+                    agent_id,
+                    session_id: hydrate_sid.clone(),
+                    choice,
+                    prev_model_id: switch.prev_model_id,
+                }
+            } else {
+                Effect::SwitchModel {
+                    agent_id,
+                    session_id: hydrate_sid.clone(),
+                    choice,
+                    prev_model_id: switch.prev_model_id,
+                }
             });
         }
         if std::mem::take(&mut agent.pending_extensions_fetch)

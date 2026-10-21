@@ -1181,10 +1181,16 @@ fn switch_model_complete_process_override_skips_persist() {
     let mut app = test_app_with_agent();
     let id = AgentId(0);
     let model_id = acp::ModelId::new(std::sync::Arc::from("cli-model"));
-    app.agents.get_mut(&id).unwrap().session.models.available.insert(
-        model_id.clone(),
-        acp::ModelInfo::new(model_id.clone(), "CLI Model".to_string()),
-    );
+    app.agents
+        .get_mut(&id)
+        .unwrap()
+        .session
+        .models
+        .available
+        .insert(
+            model_id.clone(),
+            acp::ModelInfo::new(model_id.clone(), "CLI Model".to_string()),
+        );
     app.agents
         .get_mut(&id)
         .unwrap()

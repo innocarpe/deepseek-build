@@ -1,8 +1,6 @@
 use crate::acp::model_state::{EffortTokenError, ModelState};
 use crate::app::agent::{DeferredModelSwitch, SwitchOrigin};
-use crate::app::dispatch::session::lifecycle::{
-    DeferredSwitchOutcome, take_deferred_model_switch,
-};
+use crate::app::dispatch::session::lifecycle::{DeferredSwitchOutcome, take_deferred_model_switch};
 use agent_client_protocol as acp;
 use std::sync::Arc;
 use xai_grok_shell::sampling::types::ReasoningEffort;

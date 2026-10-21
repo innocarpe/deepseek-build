@@ -955,7 +955,13 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             choice,
             result,
             prev_model_id,
-        } => handle_switch_model_complete(app, agent_id, choice, result, prev_model_id),
+        } => handle_switch_model_complete(app, agent_id, choice, result, prev_model_id, false),
+        TaskResult::SwitchModelCompleteProcessOverride {
+            agent_id,
+            choice,
+            result,
+            prev_model_id,
+        } => handle_switch_model_complete(app, agent_id, choice, result, prev_model_id, true),
         TaskResult::BgTaskKilled {
             session_id,
             task_id,

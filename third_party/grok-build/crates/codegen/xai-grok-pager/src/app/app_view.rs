@@ -1644,6 +1644,7 @@ impl AppView {
             model_id: self.cli_model_override.clone()?,
             effort: None,
             prev_model_id: None,
+            origin: crate::app::agent::SwitchOrigin::ProcessOverride,
         })
     }
     /// Voice capture is available: the in-prompt dictation overlay can show and Ctrl+Space can start capture.

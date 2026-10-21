@@ -5,7 +5,8 @@ use tokio::task::JoinSet;
 use xai_acp_lib::{AcpAgentTx, acp_send};
 use xai_grok_telemetry::events::ClipboardProbeDropReason;
 use super::actions::{
-    PermissionModePersist, ProbedAttachment, SubagentKillOutcome, TaskResult,
+    ModelChoice, PermissionModePersist, ProbedAttachment, SubagentKillOutcome, SwitchModelError,
+    TaskResult,
 };
 use super::agent::AgentId;
 use crate::unified_log as ulog;
@@ -464,6 +465,44 @@ pub(crate) fn sanitize_user_error(raw: &str) -> String {
         result = format!("{truncated}...");
     }
     result
+}
+/// Send `session/set_model` for a model/effort switch. Both the user switch
+/// and the CLI process override use this request; their origins differ only in
+/// the completion variant the caller returns.
+pub(crate) async fn send_switch_model_request(
+    tx: &AcpAgentTx,
+    session_id: acp::SessionId,
+    choice: &ModelChoice,
+    prev_model_id: &Option<acp::ModelId>,
+) -> Result<(), SwitchModelError> {
+    use xai_grok_shell::sampling::types::{
+        CONTEXT_WINDOW_META_KEY, REASONING_EFFORT_META_KEY, context_window_meta_value,
+        reasoning_effort_meta_value,
+    };
+    let mut meta = choice.effort.map(|effort| {
+        let mut meta = acp::Meta::new();
+        meta.insert(
+            REASONING_EFFORT_META_KEY.to_string(),
+            reasoning_effort_meta_value(effort),
+        );
+        meta
+    });
+    if let Some(window) = choice.context_window_selection {
+        meta.get_or_insert_default()
+            .insert(CONTEXT_WINDOW_META_KEY.to_owned(), context_window_meta_value(window));
+    }
+    let request = acp::SetSessionModelRequest::new(session_id, choice.model_id.clone()).meta(meta);
+    acp_send(request, tx).await.map(|_| ()).map_err(|e| {
+        use xai_grok_shell::agent::config::ModelSwitchIncompatibleAgentError;
+        if let Some(typed) = ModelSwitchIncompatibleAgentError::from_acp_error(&e) {
+            SwitchModelError::IncompatibleAgent {
+                error: typed,
+                prev_model_id: prev_model_id.clone(),
+            }
+        } else {
+            SwitchModelError::Other(sanitize_user_error(&e.to_string()))
+        }
+    })
 }
 /// Additive session creation flags passed from the CLI through AppView into effects.
 /// `--no-ask-user` always strips the tool, regardless of which profile was selected.

@@ -32,8 +32,8 @@ use tokio::task::JoinSet;
 use xai_acp_lib::{AcpAgentTx, acp_send};
 use xai_grok_telemetry::startup::{self, StartupPhase};
 use actions::{
-    ClipboardPasteTarget, Effect, SubagentKillOutcome, SwitchModelError, TaskResult,
-    WorkspaceMutation, WorkspaceMutationFailure, WorkspaceWriteCompletion,
+    ClipboardPasteTarget, Effect, SubagentKillOutcome, TaskResult, WorkspaceMutation,
+    WorkspaceMutationFailure, WorkspaceWriteCompletion,
 };
 use actions::PermissionModeKind;
 use crate::app::session_startup::stamp_span_traceparent;
@@ -43,9 +43,6 @@ use actions::PermissionModePersist;
 use agent::AgentId;
 use crate::unified_log as ulog;
 use xai_grok_shell::sampling::error::http_status_from_error;
-use xai_grok_shell::sampling::types::{
-    CONTEXT_WINDOW_META_KEY, context_window_meta_value,
-};
 use xai_grok_shell::session::{ExtMethodResult, SessionInfoResponse};
 /// The shell's `x.ai/feedback/upload-trace` params. `intent` is omitted (not null) when absent, so a legacy upload's request stays byte-identical to the pre-intent shape.
 /// absent, so a legacy upload's request stays byte-identical to the pre-intent shape.
@@ -1880,48 +1877,23 @@ pub(crate) fn execute(
             let tx = acp_tx.clone();
             tasks
                 .spawn(async move {
-                    let mut meta = choice
-                        .effort
-                        .map(|eff| {
-                            use xai_grok_shell::sampling::types::{
-                                REASONING_EFFORT_META_KEY, reasoning_effort_meta_value,
-                            };
-                            let mut m = acp::Meta::new();
-                            m.insert(
-                                REASONING_EFFORT_META_KEY.to_string(),
-                                reasoning_effort_meta_value(eff),
-                            );
-                            m
-                        });
-                    if let Some(window) = choice.context_window_selection {
-                        meta.get_or_insert_default()
-                            .insert(
-                                CONTEXT_WINDOW_META_KEY.to_owned(),
-                                context_window_meta_value(window),
-                            );
-                    }
-                    let req = acp::SetSessionModelRequest::new(
-                            session_id,
-                            choice.model_id.clone(),
-                        )
-                        .meta(meta);
-                    let result = acp_send(req, &tx)
-                        .await
-                        .map(|_| ())
-                        .map_err(|e| {
-                            use xai_grok_shell::agent::config::ModelSwitchIncompatibleAgentError;
-                            if let Some(typed) = ModelSwitchIncompatibleAgentError::from_acp_error(
-                                &e,
-                            ) {
-                                SwitchModelError::IncompatibleAgent {
-                                    error: typed,
-                                    prev_model_id: prev_model_id.clone(),
-                                }
-                            } else {
-                                SwitchModelError::Other(sanitize_user_error(&e.to_string()))
-                            }
-                        });
+                    let result =
+                        send_switch_model_request(&tx, session_id, &choice, &prev_model_id).await;
                     TaskResult::SwitchModelComplete {
+                        agent_id,
+                        choice,
+                        result,
+                        prev_model_id,
+                    }
+                });
+        }
+        Effect::SwitchModelProcessOverride { agent_id, session_id, choice, prev_model_id } => {
+            let tx = acp_tx.clone();
+            tasks
+                .spawn(async move {
+                    let result =
+                        send_switch_model_request(&tx, session_id, &choice, &prev_model_id).await;
+                    TaskResult::SwitchModelCompleteProcessOverride {
                         agent_id,
                         choice,
                         result,

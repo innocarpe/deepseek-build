@@ -1167,6 +1167,7 @@ fn switch_model_deferred_when_no_session_id() {
             model_id,
             effort: None,
             prev_model_id: None,
+            origin: crate::app::agent::SwitchOrigin::User,
         })
     );
     assert!(!expect_agent(&app, id).session.model_switch_pending);
@@ -1211,6 +1212,7 @@ fn deferred_switch_prefers_authoritative_current_as_prev() {
         model_id: model_b.clone(),
         effort: None,
         prev_model_id: None,
+        origin: crate::app::agent::SwitchOrigin::User,
     });
     agent.session.models.current = Some(server_model.clone());
     let effects = dispatch(
@@ -1243,6 +1245,7 @@ fn deferred_model_switch_applied_on_session_created() {
         model_id: model_id.clone(),
         effort: None,
         prev_model_id: None,
+        origin: crate::app::agent::SwitchOrigin::User,
     });
     let effects = dispatch(
         Action::TaskComplete(TaskResult::SessionCreated {
@@ -1290,6 +1293,7 @@ fn deferred_model_switch_applied_on_worktree_session_created() {
         model_id: model_id.clone(),
         effort: None,
         prev_model_id: None,
+        origin: crate::app::agent::SwitchOrigin::User,
     });
     let session_id: acp::SessionId = "wt-session".into();
     let effects = dispatch(

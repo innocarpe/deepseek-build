@@ -1614,6 +1614,17 @@ pub enum Effect {
         /// Threaded through to `SwitchModelComplete` so `IncompatibleAgent` can roll back.
         prev_model_id: Option<acp::ModelId>,
     },
+    /// Switch active model for a CLI launch override (process scope).
+    ///
+    /// Applies to this process's session only. The completion is tagged
+    /// [`TaskResult::SwitchModelCompleteProcessOverride`], so it never rewrites
+    /// the saved `[models] default` / `default_reasoning_effort`.
+    SwitchModelProcessOverride {
+        agent_id: AgentId,
+        session_id: acp::SessionId,
+        choice: ModelChoice,
+        prev_model_id: Option<acp::ModelId>,
+    },
     /// Fetch changelog from CDN (both markdown and structured JSON).
     /// Runs off the render path via `spawn_blocking`.
     /// Result is cached on `AppView` so `/release-notes` and the welcome screen share it.
@@ -2666,6 +2677,14 @@ pub enum TaskResult {
         choice: ModelChoice,
         result: Result<(), SwitchModelError>,
         /// Forwarded from `Effect::SwitchModel.prev_model_id` for rollback on `IncompatibleAgent`.
+        prev_model_id: Option<acp::ModelId>,
+    },
+    /// CLI launch override completed. The origin travels with the result so a
+    /// concurrent UI switch cannot be mistaken for the process override.
+    SwitchModelCompleteProcessOverride {
+        agent_id: AgentId,
+        choice: ModelChoice,
+        result: Result<(), SwitchModelError>,
         prev_model_id: Option<acp::ModelId>,
     },
     /// Changelog fetched from CDN (both formats).

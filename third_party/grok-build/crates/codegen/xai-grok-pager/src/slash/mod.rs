@@ -1905,8 +1905,8 @@ mod tests {
         let models = ModelState::default();
         ctrl.refresh(&state, "/mo", 3, &models);
 
-        let names: Vec<&str> = state
-            .snapshot()
+        let snapshot = state.snapshot();
+        let names: Vec<&str> = snapshot
             .matches
             .iter()
             .map(|row| row.display.as_str())

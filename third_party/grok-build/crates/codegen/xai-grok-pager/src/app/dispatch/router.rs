@@ -986,6 +986,7 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
                 let ModelChoice {
                     model_id, effort, ..
                 } = choice;
+                let explicit_effort = effort.is_some();
                 let prev_model = agent.session.models.current.clone();
                 let prev_effort = agent.session.models.reasoning_effort;
                 agent.session.models.set_current(model_id.clone(), effort);
@@ -1003,8 +1004,9 @@ fn dispatch_inner(action: Action, app: &mut AppView) -> Vec<Effect> {
                         model_id: model_id.clone(),
                         effort,
                         prev_model_id: rollback_prev,
+                        origin: crate::app::agent::SwitchOrigin::User,
                     });
-                return if unchanged {
+                return if unchanged && !explicit_effort {
                     vec![]
                 } else {
                     vec![Effect::PersistPreferredModel {

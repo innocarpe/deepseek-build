@@ -644,6 +644,16 @@ pub struct BlockedPromptContext {
     /// The blocked turn was a combined submission of several queued rows.
     pub was_combined: bool,
 }
+/// Who asked for a model/effort switch. It travels from the stash through the
+/// effect and its completion, so a CLI process override and a concurrent UI
+/// pick are never separated by comparing effort spellings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwitchOrigin {
+    /// A user pick (`/model`, `/effort`, picker); a successful pick persists.
+    User,
+    /// A CLI launch flag (`--model` / `--effort`); process-scoped, never saved.
+    ProcessOverride,
+}
 /// A model switch stashed while no session exists, applied once the session id arrives (`apply_deferred_model_switch`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeferredModelSwitch {
@@ -651,6 +661,8 @@ pub struct DeferredModelSwitch {
     pub effort: Option<ReasoningEffort>,
     /// Displayed model at stash time, the rollback target (`Effect::SwitchModel.prev_model_id`) if the switch fails.
     pub prev_model_id: Option<acp::ModelId>,
+    /// Whether this switch came from a CLI launch flag or a user pick.
+    pub origin: SwitchOrigin,
 }
 /// Cap on remembered prompts, shared by every recall list.
 pub const PROMPT_HISTORY_CAP: usize = 200;

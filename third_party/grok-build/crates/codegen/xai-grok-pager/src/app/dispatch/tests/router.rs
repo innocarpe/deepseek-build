@@ -1039,6 +1039,7 @@ fn agent_type_mismatch_with_effort_stashes_deferred_switch() {
                 model_id,
                 effort,
                 prev_model_id: None,
+                origin: crate::app::agent::SwitchOrigin::User,
             }),
             "effort override must be stashed for the shell via deferred_model_switch",
         );
@@ -1059,6 +1060,7 @@ fn deferred_model_switch_still_works_for_cli_override() {
             model_id: cli_model,
             effort: None,
             prev_model_id: None,
+            origin: crate::app::agent::SwitchOrigin::ProcessOverride,
         }),
         "CLI -m override must still populate deferred_model_switch",
     );
@@ -1487,6 +1489,7 @@ fn deferred_switch_overwritten_by_second_switch() {
             model_id: model_b.clone(),
             effort: None,
             prev_model_id: Some(model_a),
+            origin: crate::app::agent::SwitchOrigin::User,
         })
     );
 }
@@ -1504,6 +1507,7 @@ fn pick_over_cli_seed_keeps_display_as_rollback_target() {
         model_id: cli_model,
         effort: None,
         prev_model_id: None,
+        origin: crate::app::agent::SwitchOrigin::ProcessOverride,
     });
     dispatch(
         Action::SwitchModel(ModelChoice::new(picked.clone())),
@@ -1515,6 +1519,7 @@ fn pick_over_cli_seed_keeps_display_as_rollback_target() {
             model_id: picked,
             effort: None,
             prev_model_id: Some(displayed),
+            origin: crate::app::agent::SwitchOrigin::User,
         })
     );
 }
@@ -1540,6 +1545,7 @@ fn deferred_switch_updates_display_and_persists() {
             model_id: model_id.clone(),
             effort: None,
             prev_model_id: None,
+            origin: crate::app::agent::SwitchOrigin::User,
         }),
         "switch must still round-trip once the session exists"
     );

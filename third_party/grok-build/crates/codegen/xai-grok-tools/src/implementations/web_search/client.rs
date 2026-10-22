@@ -3,6 +3,14 @@ use crate::attribution::{SharedAttributionCallback, ToolConsumer};
 use crate::types::SharedApiKeyProvider;
 use async_openai::types::responses as rs;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
+use std::time::Duration;
+
+/// DeepSeek's Search API returns short snippets; this keeps one result's text
+/// from crowding out later results in the model-visible body.
+const DEEPSEEK_MAX_SNIPPET_CHARS: usize = 400;
+/// Total model-visible body cap for one DeepSeek search.
+const DEEPSEEK_MAX_CONTENT_CHARS: usize = 8_000;
+
 /// A minimal, purpose-built HTTP client for calling the Responses API
 /// with web search capability.
 #[derive(Clone)]
@@ -23,78 +31,92 @@ pub struct WebSearchClient {
     /// from the Responses API emits an `auth_401_attribution` event
     /// with `consumer == "WebSearch"`.
     attribution_callback: Option<SharedAttributionCallback>,
+    /// Set when `WebSearchConfig::DeepSeek` is selected. The tool name, input
+    /// schema, and returned `(content, citations)` shape are shared with the
+    /// Responses backend.
+    deepseek: Option<DeepSeekBackend>,
 }
+
+#[derive(Clone)]
+struct DeepSeekBackend {
+    http: reqwest::Client,
+    /// Base including the `/v1/tools` route prefix; `/search` is appended.
+    base_url: String,
+    count: u32,
+}
+
 impl WebSearchClient {
-    /// Create a new web search client from `WebSearchConfig::Enabled`.
+    /// Create a new web search client from an enabled `WebSearchConfig`.
     ///
     /// Returns `Err` if the config is `Disabled` or if header values are invalid.
     pub fn new(
         config: &WebSearchConfig,
         api_key_provider: Option<SharedApiKeyProvider>,
     ) -> Result<Self, xai_tool_runtime::ToolError> {
-        let WebSearchConfig::Enabled {
-            api_key,
-            base_url,
-            model,
-            extra_headers,
-            alpha_test_key,
-            allowed_domains,
-            excluded_domains,
-        } = config
-        else {
-            return Err(xai_tool_runtime::ToolError::execution(
+        match config {
+            WebSearchConfig::Disabled => Err(xai_tool_runtime::ToolError::execution(
                 xai_tool_protocol::ToolId::new("web_search").expect("valid"),
                 "Cannot create WebSearchClient from disabled config".to_string(),
-            ));
-        };
-        let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        headers.insert(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {api_key}")).map_err(|e| {
-                xai_tool_runtime::ToolError::execution(
-                    xai_tool_protocol::ToolId::new("web_search").expect("valid"),
-                    format!("Invalid API key for header: {e}"),
-                )
-            })?,
-        );
-        for (key, value) in extra_headers {
-            let header_name = HeaderName::from_bytes(key.as_bytes()).map_err(|e| {
-                xai_tool_runtime::ToolError::execution(
-                    xai_tool_protocol::ToolId::new("web_search").expect("valid"),
-                    format!("Invalid header name '{key}': {e}"),
-                )
-            })?;
-            let header_value = HeaderValue::from_str(value).map_err(|e| {
-                xai_tool_runtime::ToolError::execution(
-                    xai_tool_protocol::ToolId::new("web_search").expect("valid"),
-                    format!("Invalid header value for '{key}': {e}"),
-                )
-            })?;
-            headers.insert(header_name, header_value);
+            )),
+            WebSearchConfig::Enabled {
+                api_key,
+                base_url,
+                model,
+                extra_headers,
+                alpha_test_key,
+                allowed_domains,
+                excluded_domains,
+            } => {
+                let mut headers = HeaderMap::new();
+                headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+                headers.insert(AUTHORIZATION, bearer_header(api_key)?);
+                for (key, value) in extra_headers {
+                    let header_name = HeaderName::from_bytes(key.as_bytes()).map_err(|e| {
+                        execution_error(format!("Invalid header name '{key}': {e}"))
+                    })?;
+                    let header_value = HeaderValue::from_str(value).map_err(|e| {
+                        execution_error(format!("Invalid header value for '{key}': {e}"))
+                    })?;
+                    headers.insert(header_name, header_value);
+                }
+                let _ = alpha_test_key;
+                let http = build_http(headers, "web_search")?;
+                Ok(Self {
+                    http,
+                    base_url: base_url.clone(),
+                    model: model.clone(),
+                    default_allowed_domains: allowed_domains.clone(),
+                    default_excluded_domains: excluded_domains.clone(),
+                    api_key_provider,
+                    attribution_callback: None,
+                    deepseek: None,
+                })
+            }
+            WebSearchConfig::DeepSeek {
+                api_key,
+                base_url,
+                count,
+            } => {
+                let mut headers = HeaderMap::new();
+                headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+                headers.insert(AUTHORIZATION, bearer_header(api_key)?);
+                let http = build_http(headers, "web_search_deepseek")?;
+                Ok(Self {
+                    http: http.clone(),
+                    base_url: base_url.clone(),
+                    model: String::new(),
+                    default_allowed_domains: None,
+                    default_excluded_domains: None,
+                    api_key_provider: None,
+                    attribution_callback: None,
+                    deepseek: Some(DeepSeekBackend {
+                        http,
+                        base_url: base_url.clone(),
+                        count: *count,
+                    }),
+                })
+            }
         }
-        let _ = alpha_test_key;
-        let key = crate::util::shared_http::cache_key("web_search", &headers);
-        let http = crate::util::shared_http::cached_client(key, || {
-            xai_grok_extra_ca::build_reqwest_client(|builder| {
-                builder.default_headers(headers.clone())
-            })
-        })
-        .map_err(|e| {
-            xai_tool_runtime::ToolError::execution(
-                xai_tool_protocol::ToolId::new("web_search").expect("valid"),
-                format!("Failed to build HTTP client: {e}"),
-            )
-        })?;
-        Ok(Self {
-            http,
-            base_url: base_url.clone(),
-            model: model.clone(),
-            default_allowed_domains: allowed_domains.clone(),
-            default_excluded_domains: excluded_domains.clone(),
-            api_key_provider,
-            attribution_callback: None,
-        })
     }
     /// Resolve the effective domain filters for a request. This is required for `excluded_domains` to be a real block. Otherwise the model could
     /// bypass the user's blocklist simply by naming the blocked domain in its own `allowed_domains`. Only when no config policy is set does the
@@ -193,6 +215,9 @@ impl WebSearchClient {
         query: &str,
         allowed_domains: Option<Vec<String>>,
     ) -> Result<(String, Vec<String>), xai_tool_runtime::ToolError> {
+        if self.deepseek.is_some() {
+            return self.search_deepseek(query).await;
+        }
         let (allowed, excluded) = self.resolve_filters(allowed_domains);
         let request = self.build_request_json(query, allowed, excluded)?;
         let url = format!("{}/responses", self.base_url.trim_end_matches('/'));
@@ -258,6 +283,9 @@ impl WebSearchClient {
         query: &str,
         allowed_domains: Option<Vec<String>>,
     ) -> Result<(String, Vec<(String, String)>), xai_tool_runtime::ToolError> {
+        if self.deepseek.is_some() {
+            return self.search_deepseek_with_titles(query).await;
+        }
         let (allowed, excluded) = self.resolve_filters(allowed_domains);
         let request = self.build_request_json(query, allowed, excluded)?;
         let url = format!("{}/responses", self.base_url.trim_end_matches('/'));
@@ -315,6 +343,189 @@ impl WebSearchClient {
         let pairs = extract_citation_pairs(&response_obj);
         Ok((content, pairs))
     }
+    /// Search through DeepSeek's direct Search API.
+    ///
+    /// The model's per-call `allowed_domains` is not forwarded: the API takes a
+    /// single query string, and the tool schema stays shared with the Responses
+    /// backend. Callers that need domain scoping can use the documented query
+    /// operators (`site:`) themselves.
+    async fn search_deepseek(
+        &self,
+        query: &str,
+    ) -> Result<(String, Vec<String>), xai_tool_runtime::ToolError> {
+        let results = self.deepseek_results(query).await?;
+        let (content, shown) = format_deepseek_results(query, &results);
+        let citations = shown
+            .iter()
+            .filter_map(|result| {
+                let url = result.url.trim();
+                (!url.is_empty()).then(|| url.to_string())
+            })
+            .fold(Vec::<String>::new(), |mut acc, url| {
+                if !acc.contains(&url) {
+                    acc.push(url);
+                }
+                acc
+            });
+        Ok((content, citations))
+    }
+
+    async fn search_deepseek_with_titles(
+        &self,
+        query: &str,
+    ) -> Result<(String, Vec<(String, String)>), xai_tool_runtime::ToolError> {
+        let results = self.deepseek_results(query).await?;
+        let (content, shown) = format_deepseek_results(query, &results);
+        let pairs = shown
+            .iter()
+            .filter_map(|result| {
+                let url = result.url.trim();
+                (!url.is_empty()).then(|| (result.title.trim().to_string(), url.to_string()))
+            })
+            .collect();
+        Ok((content, pairs))
+    }
+
+    async fn deepseek_results(
+        &self,
+        query: &str,
+    ) -> Result<Vec<DeepSeekSearchResult>, xai_tool_runtime::ToolError> {
+        let backend = self
+            .deepseek
+            .as_ref()
+            .ok_or_else(|| execution_error("DeepSeek backend is not configured".to_string()))?;
+        let request = serde_json::json!({
+            "query": query,
+            "count": backend.count,
+            "need_content": false,
+        });
+        let url = format!("{}/search", backend.base_url.trim_end_matches('/'));
+        let response = backend
+            .http
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| execution_error(format!("Search API request failed: {e}")))?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Failed to read error body".to_string());
+            return Err(execution_error(format!(
+                "Search API returned {status}: {}",
+                truncate_chars(&body, 500)
+            )));
+        }
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|e| execution_error(format!("Failed to read response body: {e}")))?;
+        let parsed: DeepSeekSearchResponse = serde_json::from_slice(&bytes)
+            .map_err(|e| execution_error(format!("Failed to parse Search API response: {e}")))?;
+        Ok(parsed.results)
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct DeepSeekSearchResponse {
+    results: Vec<DeepSeekSearchResult>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct DeepSeekSearchResult {
+    #[serde(default)]
+    title: String,
+    url: String,
+    #[serde(default)]
+    snippet: String,
+    #[serde(default)]
+    date: Option<String>,
+}
+
+/// Build the model-visible body and return the results that fit the budget.
+fn format_deepseek_results<'a>(
+    query: &str,
+    results: &'a [DeepSeekSearchResult],
+) -> (String, Vec<&'a DeepSeekSearchResult>) {
+    if results.is_empty() {
+        return (format!("No web results for \"{query}\"."), Vec::new());
+    }
+
+    let mut out = format!("Web results for \"{query}\":\n\n");
+    let mut shown = Vec::new();
+    for (index, result) in results.iter().enumerate() {
+        let title = if result.title.trim().is_empty() {
+            "Untitled"
+        } else {
+            result.title.trim()
+        };
+        let mut entry = format!("{}. {title}\n   {}\n", index + 1, result.url.trim());
+        let snippet = truncate_chars(result.snippet.trim(), DEEPSEEK_MAX_SNIPPET_CHARS);
+        if !snippet.is_empty() {
+            entry.push_str(&format!("   {}\n", snippet.replace('\n', " ")));
+        }
+        if let Some(date) = result
+            .date
+            .as_deref()
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+        {
+            entry.push_str(&format!("   Published: {date}\n"));
+        }
+        if out.len() + entry.len() > DEEPSEEK_MAX_CONTENT_CHARS {
+            break;
+        }
+        out.push_str(&entry);
+        shown.push(result);
+    }
+
+    if shown.len() < results.len() {
+        out.push_str(&format!(
+            "\n[web_search results truncated: showing {} of {} results]\n",
+            shown.len(),
+            results.len()
+        ));
+    }
+    (out.trim_end().to_string(), shown)
+}
+
+/// Truncate on a character boundary, appending an ellipsis when text was removed.
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(max_chars).collect();
+    out.push('…');
+    out
+}
+
+fn execution_error(message: String) -> xai_tool_runtime::ToolError {
+    xai_tool_runtime::ToolError::execution(
+        xai_tool_protocol::ToolId::new("web_search").expect("valid"),
+        message,
+    )
+}
+
+fn bearer_header(api_key: &str) -> Result<HeaderValue, xai_tool_runtime::ToolError> {
+    HeaderValue::from_str(&format!("Bearer {api_key}"))
+        .map_err(|e| execution_error(format!("Invalid API key for header: {e}")))
+}
+
+fn build_http(
+    headers: HeaderMap,
+    cache_tag: &str,
+) -> Result<reqwest::Client, xai_tool_runtime::ToolError> {
+    let key = crate::util::shared_http::cache_key(cache_tag, &headers);
+    crate::util::shared_http::cached_client(key, || {
+        xai_grok_extra_ca::build_reqwest_client(|builder| {
+            builder
+                .default_headers(headers.clone())
+                .timeout(Duration::from_secs(60))
+        })
+    })
+    .map_err(|e| execution_error(format!("Failed to build HTTP client: {e}")))
 }
 /// Extract citation URLs from the Response output items.
 /// The async-openai crate doesn't provide a helper for this, and the `url` field
@@ -893,5 +1104,225 @@ mod tests {
         }));
         let citations = extract_citations(&response);
         assert!(citations.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod deepseek_tests {
+    use super::*;
+    use wiremock::matchers::{body_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn config(server: &MockServer) -> WebSearchConfig {
+        WebSearchConfig::DeepSeek {
+            api_key: "test-key".to_string(),
+            base_url: format!("{}/v1/tools", server.uri()),
+            count: 8,
+        }
+    }
+
+    fn client(server: &MockServer) -> WebSearchClient {
+        WebSearchClient::new(&config(server), None).expect("client")
+    }
+
+    #[tokio::test]
+    async fn request_and_result_mapping() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/tools/search"))
+            .and(body_json(serde_json::json!({
+                "query": "rust async",
+                "count": 8,
+                "need_content": false,
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "results": [
+                    {
+                        "title": "Async Rust",
+                        "url": "https://example.com/async",
+                        "snippet": "A guide to async Rust.",
+                        "date": "2026-10-01",
+                        "summary": "not mapped",
+                        "site_name": "Example",
+                        "authority": 0.9,
+                        "rerank_score": 0.8
+                    },
+                    {
+                        "title": "Tokio",
+                        "url": "https://example.com/tokio",
+                        "snippet": "Runtime for async Rust.",
+                        "date": null
+                    }
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        // The model's per-call allowlist is deliberately not forwarded.
+        let (content, citations) = client(&server)
+            .search("rust async", Some(vec!["docs.rs".to_string()]))
+            .await
+            .expect("search");
+
+        assert!(content.contains("1. Async Rust"), "{content}");
+        assert!(content.contains("https://example.com/async"), "{content}");
+        assert!(content.contains("Published: 2026-10-01"), "{content}");
+        assert!(content.contains("2. Tokio"), "{content}");
+        assert!(!content.contains("not mapped"), "{content}");
+        assert_eq!(
+            citations,
+            vec![
+                "https://example.com/async".to_string(),
+                "https://example.com/tokio".to_string()
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_results_is_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/tools/search"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "results": []
+            })))
+            .mount(&server)
+            .await;
+
+        let (content, citations) = client(&server)
+            .search("nothing", None)
+            .await
+            .expect("search");
+        assert_eq!(content, "No web results for \"nothing\".");
+        assert!(citations.is_empty());
+    }
+
+    #[tokio::test]
+    async fn non_success_status_is_a_structured_error() {
+        for status in [404_u16, 500_u16] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/v1/tools/search"))
+                .respond_with(ResponseTemplate::new(status).set_body_string("upstream failure"))
+                .mount(&server)
+                .await;
+
+            let error = client(&server)
+                .search("query", None)
+                .await
+                .expect_err("status must fail");
+            let message = error.to_string();
+            assert!(message.contains(&status.to_string()), "{message}");
+            assert!(message.contains("upstream failure"), "{message}");
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_response_fails() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/tools/search"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "unexpected": true
+            })))
+            .mount(&server)
+            .await;
+
+        let error = client(&server)
+            .search("query", None)
+            .await
+            .expect_err("missing results must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to parse Search API response"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn long_results_are_truncated_with_a_marker() {
+        let server = MockServer::start().await;
+        let results: Vec<serde_json::Value> = (0..50)
+            .map(|index| {
+                serde_json::json!({
+                    "title": format!("Result {index}"),
+                    "url": format!("https://example.com/{index}"),
+                    "snippet": "x".repeat(1_000),
+                    "date": null
+                })
+            })
+            .collect();
+        Mock::given(method("POST"))
+            .and(path("/v1/tools/search"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "results": results })),
+            )
+            .mount(&server)
+            .await;
+
+        let (content, citations) = client(&server).search("many", None).await.expect("search");
+        assert!(
+            content.contains("[web_search results truncated:"),
+            "{content}"
+        );
+        assert!(content.contains('…'), "long snippets are cut: {content}");
+        assert!(
+            content.len() < DEEPSEEK_MAX_CONTENT_CHARS + 200,
+            "{}",
+            content.len()
+        );
+        assert!(
+            !citations.is_empty() && citations.len() < 50,
+            "only the results that fit the body are cited: {}",
+            citations.len()
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "live: requires DEEPSEEK_API_KEY; bills one Search request"]
+    async fn live_search_smoke() {
+        let Ok(api_key) = std::env::var("DEEPSEEK_API_KEY") else {
+            return;
+        };
+        let config = WebSearchConfig::DeepSeek {
+            api_key,
+            base_url: "https://api.deepseek.com/v1/tools".to_string(),
+            count: 3,
+        };
+        let client = WebSearchClient::new(&config, None).expect("client");
+        let (content, citations) = client
+            .search("DeepSeek API documentation", None)
+            .await
+            .expect("live search");
+        assert!(!citations.is_empty(), "{content}");
+        assert!(content.contains("http"), "{content}");
+    }
+
+    #[tokio::test]
+    async fn search_with_titles_keeps_result_order() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/tools/search"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "results": [
+                    {"title": "First", "url": "https://one.example", "snippet": "a", "date": null},
+                    {"title": "Second", "url": "https://two.example", "snippet": "b", "date": null}
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        let (_content, pairs) = client(&server)
+            .search_with_titles("query", None)
+            .await
+            .expect("search");
+        assert_eq!(
+            pairs,
+            vec![
+                ("First".to_string(), "https://one.example".to_string()),
+                ("Second".to_string(), "https://two.example".to_string())
+            ]
+        );
     }
 }

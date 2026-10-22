@@ -958,9 +958,7 @@ impl AgentBuilder {
         if task_stripped && !task_lifecycle_satisfier(&tool_config) {
             strip_task_lifecycle(&mut tool_config);
         }
-        if let xai_grok_tools::implementations::grok_build::web_fetch::WebFetchConfig::Enabled {
-            ref params,
-        } = self.web_fetch_config
+        if let Some(params) = self.web_fetch_config.params()
             && let Ok(params_value) = serde_json::to_value(params)
             && let Some(obj) = params_value.as_object()
         {

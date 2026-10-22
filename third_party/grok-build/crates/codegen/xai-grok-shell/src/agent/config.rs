@@ -710,6 +710,20 @@ pub struct ShellEnvironmentPolicyKnownKeys {
     pub set: Option<toml::Value>,
     pub include_only: Option<toml::Value>,
 }
+/// `[web]` known keys, declared for the unrecognized-key scan only; the values
+/// are resolved from raw layers by
+/// [`crate::util::config::resolve_web_provider_from_disk`].
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct WebKnownKeys {
+    /// `"deepseek"` selects the direct Search/Fetch APIs; absent or `"xai"`
+    /// keeps the vendored provider.
+    pub provider: Option<String>,
+    /// Base including the `/v1/tools` route prefix.
+    pub base_url: Option<String>,
+    /// Search API result count, clamped to 1..=50 at resolution.
+    pub search_count: Option<i64>,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
     pub features: Features,
@@ -764,6 +778,9 @@ pub struct Config {
     pub ui: UiConfig,
     #[serde(default)]
     pub toolset: ShellToolsetConfig,
+    /// Known keys only; values are resolved from raw layers at session start.
+    #[serde(default, skip_serializing)]
+    pub web: WebKnownKeys,
     /// Validation only; the value is parsed at spawn by `resolve_shell_env_policy`.
     #[serde(default, skip_serializing)]
     pub shell_environment_policy: ShellEnvironmentPolicyKnownKeys,
@@ -1141,6 +1158,7 @@ impl Default for Config {
             hints: None,
             ui: UiConfig::default(),
             toolset: ShellToolsetConfig::default(),
+            web: WebKnownKeys::default(),
             shell_environment_policy: ShellEnvironmentPolicyKnownKeys::default(),
             endpoints,
             telemetry: TelemetryConfig::default(),

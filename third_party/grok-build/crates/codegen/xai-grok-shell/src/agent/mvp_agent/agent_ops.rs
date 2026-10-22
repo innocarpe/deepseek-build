@@ -2304,11 +2304,37 @@ impl MvpAgent {
         if cfg.disable_web_search {
             return WebFetchConfig::Disabled;
         }
+        let context_window = Some(self.sampling_config.borrow().context_window);
+        // `[web] provider = "deepseek"` is an explicit opt-in, so it also
+        // enables the tool past the default-off `features.web_fetch` rollout
+        // flag. `disable_web_search` above remains the hard kill-switch.
+        if let Some(provider) = crate::util::config::resolve_web_provider_from_disk() {
+            let api_key = self
+                .prepare_web_search_sampling_config()
+                .and_then(|cfg| cfg.api_key)
+                .or_else(|| self.sampling_config.borrow().api_key.clone());
+            let params = cfg
+                .toolset
+                .web_fetch
+                .resolve_params(None, None, context_window);
+            return match api_key {
+                Some(api_key) => WebFetchConfig::DeepSeek {
+                    api_key,
+                    base_url: provider.base_url,
+                    params,
+                },
+                None => {
+                    tracing::warn!(
+                        "web_fetch disabled: [web] selects the DeepSeek Fetch API but no API key resolved"
+                    );
+                    WebFetchConfig::Disabled
+                }
+            };
+        }
         let remote = cfg.remote_settings.as_ref();
         if !cfg.is_feature_enabled(crate::agent::config::Feature::WebFetch) {
             return WebFetchConfig::Disabled;
         }
-        let context_window = Some(self.sampling_config.borrow().context_window);
         let params = cfg
             .toolset
             .web_fetch

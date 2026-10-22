@@ -28,12 +28,31 @@ pub enum WebSearchConfig {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         excluded_domains: Option<Vec<String>>,
     },
+    /// DeepSeek's direct Search API (`POST {base_url}/search`). The tool name,
+    /// input schema, and model-visible result shape stay the same as `Enabled`;
+    /// only the provider behind them changes.
+    #[serde(rename = "deepseek")]
+    DeepSeek {
+        api_key: String,
+        /// Base including the `/v1/tools` route prefix.
+        base_url: String,
+        /// Results requested per call, 1..=50.
+        count: u32,
+    },
 }
 
 impl WebSearchConfig {
-    /// Returns `true` when the config is the `Enabled` variant.
+    /// Returns `true` when a provider is configured.
     pub fn is_enabled(&self) -> bool {
-        matches!(self, Self::Enabled { .. })
+        matches!(self, Self::Enabled { .. } | Self::DeepSeek { .. })
+    }
+
+    /// The API key, whichever provider is selected.
+    pub fn api_key(&self) -> Option<&str> {
+        match self {
+            Self::Disabled => None,
+            Self::Enabled { api_key, .. } | Self::DeepSeek { api_key, .. } => Some(api_key),
+        }
     }
 
     /// Return a copy safe for returning to clients. The `api_key` is replaced with
@@ -56,6 +75,13 @@ impl WebSearchConfig {
                 alpha_test_key: None,
                 allowed_domains: allowed_domains.clone(),
                 excluded_domains: excluded_domains.clone(),
+            },
+            Self::DeepSeek {
+                base_url, count, ..
+            } => Self::DeepSeek {
+                api_key: "***REDACTED***".to_string(),
+                base_url: base_url.clone(),
+                count: *count,
             },
         }
     }

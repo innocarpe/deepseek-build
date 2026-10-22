@@ -18,6 +18,15 @@ pub enum WebFetchError {
     #[error("invalid URL: {0}")]
     InvalidUrl(#[from] url::ParseError),
 
+    #[error("invalid fetch provider configuration: {0}")]
+    ProviderConfig(String),
+
+    #[error("fetch provider returned HTTP {status}: {message}")]
+    ProviderHttpStatus { status: u16, message: String },
+
+    #[error("invalid fetch provider response: {0}")]
+    ProviderResponse(String),
+
     #[error("SSRF blocked: {host} resolves to private/internal IP {ip}{}", ssrf_recovery_hint(.host))]
     SsrfBlocked { host: String, ip: IpAddr },
 

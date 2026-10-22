@@ -1163,16 +1163,31 @@ impl ToolRegistryBuilder {
                 }
             }
         }
-        if let crate::implementations::grok_build::web_fetch::WebFetchConfig::Enabled { params } =
-            &ctx.web_fetch_config
         {
-            match crate::implementations::grok_build::web_fetch::WebFetchClient::new(params) {
-                Ok(client) => {
-                    resources.insert(client);
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to create WebFetchClient: {e}");
-                }
+            use crate::implementations::grok_build::web_fetch::{WebFetchClient, WebFetchConfig};
+            let client = match &ctx.web_fetch_config {
+                WebFetchConfig::Disabled => None,
+                WebFetchConfig::Enabled { params } => match WebFetchClient::new(params) {
+                    Ok(client) => Some(client),
+                    Err(e) => {
+                        tracing::warn!("Failed to create WebFetchClient: {e}");
+                        None
+                    }
+                },
+                WebFetchConfig::DeepSeek {
+                    api_key,
+                    base_url,
+                    params,
+                } => match WebFetchClient::new_deepseek(params, api_key, base_url) {
+                    Ok(client) => Some(client),
+                    Err(e) => {
+                        tracing::warn!("Failed to create DeepSeek WebFetchClient: {e}");
+                        None
+                    }
+                },
+            };
+            if let Some(client) = client {
+                resources.insert(client);
             }
         }
         let concise_ns = crate::types::tool::ToolNamespace::GrokBuildConcise.to_string();

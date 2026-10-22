@@ -30,6 +30,16 @@ pub struct WebFetchClient {
     image_writer: SessionFileWriter,
     video_writer: SessionFileWriter,
     overflow: OverflowHandler,
+    /// Set when `WebFetchConfig::DeepSeek` is selected. The tool name, input
+    /// schema, and `WebFetchOutput` shape are shared with the local backend.
+    deepseek: Option<DeepSeekFetchBackend>,
+}
+
+#[derive(Clone)]
+struct DeepSeekFetchBackend {
+    http: reqwest::Client,
+    /// Base including the `/v1/tools` route prefix; `/fetch` is appended.
+    base_url: String,
 }
 
 struct ProcessedText {
@@ -39,6 +49,11 @@ struct ProcessedText {
     was_truncated: bool,
     artifact_path: Option<PathBuf>,
     inline_fallback: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct DeepSeekFetchResponse {
+    content: String,
 }
 
 impl WebFetchClient {
@@ -64,7 +79,46 @@ impl WebFetchClient {
             image_writer: SessionFileWriter::new("images", "jpg"),
             video_writer: SessionFileWriter::new("videos", "mp4"),
             overflow: OverflowHandler::new(),
+            deepseek: None,
         })
+    }
+
+    /// Build a client that retrieves Markdown through DeepSeek's Fetch API.
+    ///
+    /// Page retrieval and target access policy belong to the service; this
+    /// client keeps the same output, overflow, and session-artifact behavior as
+    /// the local backend.
+    pub fn new_deepseek(
+        params: &WebFetchParams,
+        api_key: &str,
+        base_url: &str,
+    ) -> Result<Self, WebFetchError> {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {api_key}")).map_err(|e| {
+                WebFetchError::ProviderConfig(format!("invalid API key header: {e}"))
+            })?,
+        );
+        let http = xai_grok_extra_ca::build_reqwest_client(|builder| {
+            builder
+                .default_headers(headers.clone())
+                .timeout(std::time::Duration::from_secs(
+                    params.timeout_secs().as_secs(),
+                ))
+        })
+        .map_err(WebFetchError::ClientBuildError)?;
+
+        let mut client = Self::new(params)?;
+        client.deepseek = Some(DeepSeekFetchBackend {
+            http,
+            base_url: base_url.trim_end_matches('/').to_string(),
+        });
+        Ok(client)
     }
 
     /// Fetch a URL and return its content as markdown. Handles: validation, HTTPS upgrade, SSRF check, HTTP fetch with
@@ -77,6 +131,11 @@ impl WebFetchClient {
         read_tool_name: Option<&str>,
         execute_tool_name: Option<&str>,
     ) -> Result<WebFetchOutput, WebFetchError> {
+        if self.deepseek.is_some() {
+            return self
+                .fetch_deepseek(raw_url, session_folder, read_tool_name, execute_tool_name)
+                .await;
+        }
         let mut url = validate_url(raw_url)?;
         upgrade_to_https(&mut url);
 
@@ -236,6 +295,69 @@ impl WebFetchClient {
         }
 
         Ok(output)
+    }
+
+    async fn fetch_deepseek(
+        &self,
+        raw_url: &str,
+        session_folder: Option<&Path>,
+        read_tool_name: Option<&str>,
+        execute_tool_name: Option<&str>,
+    ) -> Result<WebFetchOutput, WebFetchError> {
+        let backend = self.deepseek.as_ref().ok_or_else(|| {
+            WebFetchError::ProviderConfig("DeepSeek backend is not configured".into())
+        })?;
+        let endpoint = format!("{}/fetch", backend.base_url.trim_end_matches('/'));
+        let response = backend
+            .http
+            .post(&endpoint)
+            .json(&serde_json::json!({ "url": raw_url }))
+            .send()
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Failed to read error body".to_string());
+            return Err(WebFetchError::ProviderHttpStatus {
+                status: status.as_u16(),
+                message: body.chars().take(500).collect(),
+            });
+        }
+        let payload: DeepSeekFetchResponse = response
+            .json()
+            .await
+            .map_err(|e| WebFetchError::ProviderResponse(e.to_string()))?;
+        let bytes = payload.content.len();
+        let overflow = self
+            .overflow
+            .process(
+                payload.content,
+                inline_budget(
+                    self.params.context_window_tokens(),
+                    self.params.max_markdown_length(),
+                ),
+                session_folder,
+                "markdown",
+                RecoveryTools {
+                    read: read_tool_name,
+                    execute: execute_tool_name,
+                },
+            )
+            .await;
+        Ok(WebFetchOutput::Content(WebFetchContent {
+            url: raw_url.to_string(),
+            content: overflow.content,
+            content_type: "markdown".to_string(),
+            status_code: 200,
+            bytes,
+            source_artifact: overflow
+                .artifact_path
+                .map(|path| WebFetchSourceArtifact { path }),
+            inline_fallback: overflow.path_free_content,
+            output_location: None,
+        }))
     }
 
     async fn process_text_content(
@@ -1552,5 +1674,153 @@ mod tests {
         assert_eq!(media_extension("image/x-custom"), "bin");
         assert_eq!(media_extension("video/x-custom"), "bin");
         assert_eq!(media_extension("application/octet-stream"), "bin");
+    }
+}
+
+#[cfg(test)]
+mod deepseek_fetch_tests {
+    use super::*;
+    use wiremock::matchers::{body_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn client(server: &MockServer, params: WebFetchParams) -> WebFetchClient {
+        WebFetchClient::new_deepseek(&params, "test-key", &format!("{}/v1/tools", server.uri()))
+            .expect("client")
+    }
+
+    fn content(output: WebFetchOutput) -> WebFetchContent {
+        match output {
+            WebFetchOutput::Content(content) => content,
+            other => panic!("expected content, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn maps_markdown_and_requested_url() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/tools/fetch"))
+            .and(body_json(
+                serde_json::json!({"url": "https://example.com/page"}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "title": "Example",
+                "content": "# Page\n\nBody text."
+            })))
+            .mount(&server)
+            .await;
+
+        let output = client(&server, WebFetchParams::default())
+            .fetch("https://example.com/page", None, None, None)
+            .await
+            .expect("fetch");
+        let content = content(output);
+        assert_eq!(content.url, "https://example.com/page");
+        assert_eq!(content.content, "# Page\n\nBody text.");
+        assert_eq!(content.content_type, "markdown");
+        assert_eq!(content.status_code, 200);
+        assert_eq!(content.bytes, "# Page\n\nBody text.".len());
+    }
+
+    #[tokio::test]
+    async fn non_success_status_is_a_structured_error() {
+        for status in [404_u16, 500_u16] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/v1/tools/fetch"))
+                .respond_with(ResponseTemplate::new(status).set_body_string("no usable page"))
+                .mount(&server)
+                .await;
+
+            let error = client(&server, WebFetchParams::default())
+                .fetch("https://example.com/missing", None, None, None)
+                .await
+                .expect_err("status must fail");
+            let message = error.to_string();
+            assert!(message.contains(&status.to_string()), "{message}");
+            assert!(message.contains("no usable page"), "{message}");
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_json_is_a_structured_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/tools/fetch"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "title": "No content"
+            })))
+            .mount(&server)
+            .await;
+
+        let error = client(&server, WebFetchParams::default())
+            .fetch("https://example.com/page", None, None, None)
+            .await
+            .expect_err("missing content must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid fetch provider response"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "live: requires DEEPSEEK_API_KEY; bills one Fetch request"]
+    async fn live_fetch_smoke() {
+        let Ok(api_key) = std::env::var("DEEPSEEK_API_KEY") else {
+            return;
+        };
+        let client = WebFetchClient::new_deepseek(
+            &WebFetchParams::default(),
+            &api_key,
+            "https://api.deepseek.com/v1/tools",
+        )
+        .expect("client");
+        let output = client
+            .fetch(
+                "https://api-docs.deepseek.com/guides/search",
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("live fetch");
+        let content = content(output);
+        assert_eq!(content.status_code, 200);
+        assert!(!content.content.is_empty());
+    }
+
+    #[tokio::test]
+    async fn overflow_truncates_with_a_recovery_marker() {
+        let server = MockServer::start().await;
+        let body = "x".repeat(20_000);
+        Mock::given(method("POST"))
+            .and(path("/v1/tools/fetch"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "title": "Long",
+                "content": body
+            })))
+            .mount(&server)
+            .await;
+
+        let params = WebFetchParams {
+            max_markdown_length: Some(1_000),
+            context_window_tokens: Some(1_000),
+            ..Default::default()
+        };
+        let output = client(&server, params)
+            .fetch("https://example.com/long", None, None, None)
+            .await
+            .expect("fetch");
+        let content = content(output);
+        assert!(
+            content.content.contains("[web_fetch content truncated:"),
+            "{}",
+            content.content
+        );
+        assert!(content.content.len() < 20_000);
+        assert_eq!(content.bytes, 20_000);
+        assert!(content.source_artifact.is_none());
     }
 }

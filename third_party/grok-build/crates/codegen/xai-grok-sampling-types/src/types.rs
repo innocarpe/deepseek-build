@@ -1192,6 +1192,9 @@ impl From<&str> for ConversationGroupId {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SamplingConfig {
     pub base_url: String,
+    /// OpenRouter 제공자 라우팅 설정. 미설정이면 샘플러 기본값을 사용한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openrouter_provider: Option<Value>,
     /// Local directory containing the mTLS client identity for this model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mtls_cert_dir: Option<std::path::PathBuf>,
@@ -1242,6 +1245,7 @@ impl Default for SamplingConfig {
     fn default() -> Self {
         Self {
             base_url: String::new(),
+            openrouter_provider: None,
             mtls_cert_dir: None,
             model: String::new(),
             max_completion_tokens: None,
@@ -1405,6 +1409,33 @@ impl From<crate::messages::MessagesRequest> for MessagesRequestWrapper {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn sampling_config_preserves_openrouter_provider_and_reads_older_state() {
+        for provider in [
+            json!({
+                "order": ["relace", "deepinfra"],
+                "allow_fallbacks": false,
+            }),
+            json!(false),
+        ] {
+            let config = SamplingConfig {
+                openrouter_provider: Some(provider.clone()),
+                ..SamplingConfig::default()
+            };
+            let encoded = serde_json::to_value(config).unwrap();
+            let decoded: SamplingConfig = serde_json::from_value(encoded).unwrap();
+            assert_eq!(decoded.openrouter_provider, Some(provider));
+        }
+
+        let older_state = json!({
+            "base_url": "https://openrouter.ai/api/v1",
+            "model": "deepseek/deepseek-v4.1-flash-1017",
+            "context_window": 1,
+        });
+        let decoded: SamplingConfig = serde_json::from_value(older_state).unwrap();
+        assert_eq!(decoded.openrouter_provider, None);
+    }
 
     #[test]
     fn reasoning_effort_serde_lowercase_round_trip() {

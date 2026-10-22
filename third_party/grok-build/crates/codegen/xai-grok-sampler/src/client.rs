@@ -50,6 +50,7 @@ const DEFAULT_CLIENT_IDENTIFIER: &str = "grok-shell";
 /// Product identifier baked into User-Agent strings.
 const AGENT_PRODUCT: &str = "grok-shell";
 const ANTHROPIC_DEFAULT_MAX_TOKENS: u32 = 128_000;
+const DEFAULT_OPENROUTER_PROVIDER_ORDER: [&str; 2] = ["relace", "deepinfra"];
 
 /// Text-only DeepSeek models reject `image_url` content blocks with a 400
 /// `unknown variant 'image_url'`. When a request bound for DeepSeek's
@@ -443,6 +444,7 @@ impl std::fmt::Debug for SamplingClient {
 #[derive(Clone, Debug, Default)]
 struct ClientDefaults {
     model: String,
+    openrouter_provider: Option<serde_json::Value>,
     max_completion_tokens: Option<u32>,
     temperature: Option<f32>,
     top_p: Option<f32>,
@@ -750,6 +752,7 @@ impl SamplingClient {
 
         let defaults = ClientDefaults {
             model: config.model,
+            openrouter_provider: config.openrouter_provider,
             max_completion_tokens: config.max_completion_tokens,
             temperature: config.temperature,
             top_p: config.top_p,
@@ -997,6 +1000,17 @@ impl SamplingClient {
         payload.session_id = Some(session_id.to_owned());
     }
 
+    fn openrouter_provider_for_request(&self) -> Option<serde_json::Value> {
+        match self.defaults.openrouter_provider.as_ref() {
+            Some(serde_json::Value::Bool(false)) => None,
+            Some(provider) => Some(provider.clone()),
+            None => Some(serde_json::json!({
+                "order": DEFAULT_OPENROUTER_PROVIDER_ORDER,
+                "allow_fallbacks": false,
+            })),
+        }
+    }
+
     /// `sent_bearer` is the fragment [`Self::post`] captured for the request that produced `response` (401 attribution).
     async fn handle_response(
         &self,
@@ -1109,10 +1123,33 @@ impl SamplingClient {
         builder: reqwest::RequestBuilder,
         payload: &T,
     ) -> Result<reqwest::Request> {
-        let json = serde_json::to_vec(payload).map_err(|e| {
+        let mut json = serde_json::to_vec(payload).map_err(|e| {
             tracing::error!("Failed to serialize request body: {}", e);
             SamplingError::Serialization(e)
         })?;
+        if is_openrouter_endpoint(&self.base_url)
+            && let Some(provider) = self.openrouter_provider_for_request()
+        {
+            let mut body: serde_json::Value = serde_json::from_slice(&json).map_err(|e| {
+                tracing::error!("Failed to parse serialized request body: {}", e);
+                SamplingError::Serialization(e)
+            })?;
+            if let Some(body) = body.as_object_mut() {
+                body.insert("provider".to_owned(), provider);
+            }
+            json = serde_json::to_vec(&body).map_err(|e| {
+                tracing::error!("Failed to serialize OpenRouter request body: {}", e);
+                SamplingError::Serialization(e)
+            })?;
+        }
+        self.build_json_request_from_bytes(builder, json).await
+    }
+
+    async fn build_json_request_from_bytes(
+        &self,
+        builder: reqwest::RequestBuilder,
+        json: Vec<u8>,
+    ) -> Result<reqwest::Request> {
         let mut request = builder.build().map_err(|e| {
             tracing::error!("Failed to build HTTP request: {}", e);
             SamplingError::Http(e)
@@ -3848,11 +3885,13 @@ mod tests {
         }
     }
 
-    /// One chat request through `streaming`'s entry point against a mock that
-    /// hands back the raw body. `openrouter` swaps only the endpoint
-    /// *identity* after construction, so the bytes still travel to the mock
-    /// while the OpenRouter gate reads its real input.
-    async fn captured_chat_body(openrouter: bool, streaming: bool) -> serde_json::Value {
+    /// 스트리밍 진입점으로 목 서버에 요청하고 전송 본문을 돌려받는다.
+    /// 연결 주소는 목 서버로 유지하고, 라우팅 판정에 쓰는 호스트만 바꾼다.
+    async fn captured_chat_body(
+        routing_base_url: &str,
+        streaming: bool,
+        openrouter_provider: Option<serde_json::Value>,
+    ) -> Vec<u8> {
         let (content_type, reply) = if streaming {
             ("text/event-stream", "data: [DONE]\n\n")
         } else {
@@ -3878,14 +3917,11 @@ mod tests {
         });
         let mut client = SamplingClient::new(SamplerConfig {
             base_url: format!("http://{addr}/v1"),
+            openrouter_provider,
             ..minimal_config()
         })
         .unwrap();
-        if openrouter {
-            // The connection still goes to the mock — its endpoint template was
-            // resolved above — while `base_url` is what the gate reads.
-            client.base_url = "https://openrouter.ai/api/v1".to_string();
-        }
+        client.base_url = routing_base_url.to_string();
         let mut request = chat_request_for_session(Some("session-abc"));
         request.model = Some("deepseek/deepseek-v4.1-flash".to_string());
         if streaming {
@@ -3895,24 +3931,125 @@ mod tests {
         }
         let body = rx.await.unwrap();
         server.abort();
-        serde_json::from_slice(&body).unwrap()
+        body.to_vec()
     }
 
     #[tokio::test]
-    async fn openrouter_session_id_rides_only_the_openrouter_wire() {
+    async fn openrouter_provider_default_override_and_opt_out_are_host_scoped() {
+        let default_provider = serde_json::json!({
+            "order": ["relace", "deepinfra"],
+            "allow_fallbacks": false,
+        });
+        let custom_provider = serde_json::json!({
+            "only": ["deepinfra/fp8"],
+            "sort": "price",
+        });
         for streaming in [true, false] {
-            let body = captured_chat_body(true, streaming).await;
+            let body = captured_chat_body("https://openrouter.ai/api/v1", streaming, None).await;
+            let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(body.get("provider"), Some(&default_provider));
             assert_eq!(
                 body.get("session_id").and_then(|v| v.as_str()),
                 Some("session-abc"),
                 "streaming={streaming}: OpenRouter must receive the session id: {body}"
             );
-            let control = captured_chat_body(false, streaming).await;
-            assert!(
-                control.get("session_id").is_none(),
-                "streaming={streaming}: a non-OpenRouter endpoint must not: {control}"
-            );
+
+            let overridden = captured_chat_body(
+                "https://openrouter.ai/api/v1",
+                streaming,
+                Some(custom_provider.clone()),
+            )
+            .await;
+            let overridden: serde_json::Value = serde_json::from_slice(&overridden).unwrap();
+            assert_eq!(overridden.get("provider"), Some(&custom_provider));
+
+            let disabled = captured_chat_body(
+                "https://openrouter.ai/api/v1",
+                streaming,
+                Some(serde_json::Value::Bool(false)),
+            )
+            .await;
+            let disabled: serde_json::Value = serde_json::from_slice(&disabled).unwrap();
+            assert!(disabled.get("provider").is_none());
+
+            for host in ["https://api.deepseek.com/v1", "https://api.x.ai/v1"] {
+                let control =
+                    captured_chat_body(host, streaming, Some(custom_provider.clone())).await;
+                let expected = serialized_non_openrouter_chat_body(host, streaming);
+                assert!(
+                    serde_json::from_slice::<serde_json::Value>(&control)
+                        .unwrap()
+                        .get("session_id")
+                        .is_none(),
+                    "{host}, streaming={streaming}: a non-OpenRouter endpoint must not add session_id"
+                );
+                assert_eq!(
+                    control, expected,
+                    "{host}, streaming={streaming}: a non-OpenRouter body must remain byte-identical"
+                );
+            }
         }
+    }
+
+    fn serialized_non_openrouter_chat_body(routing_base_url: &str, streaming: bool) -> Vec<u8> {
+        let client = SamplingClient::new(SamplerConfig {
+            base_url: routing_base_url.to_owned(),
+            ..minimal_config()
+        })
+        .unwrap();
+        let request = client
+            .apply_defaults(chat_request_for_session(Some("session-abc")))
+            .unwrap();
+        if streaming {
+            serde_json::to_vec(&StreamingChatRequest {
+                inner: &request,
+                stream: true,
+                stream_options: StreamOptions {
+                    include_usage: true,
+                },
+            })
+            .unwrap()
+        } else {
+            serde_json::to_vec(&request).unwrap()
+        }
+    }
+
+    #[tokio::test]
+    async fn openrouter_provider_is_added_to_responses_request() {
+        let client = SamplingClient::new(SamplerConfig {
+            base_url: "https://openrouter.ai/api/v1".to_owned(),
+            ..minimal_config()
+        })
+        .unwrap();
+        let request = client
+            .build_json_request(
+                client.http.post("http://127.0.0.1/v1/responses"),
+                &serde_json::json!({
+                    "model": "deepseek/deepseek-v4.1-flash-1017",
+                    "input": "Keep this payload unchanged.",
+                }),
+            )
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(
+            request
+                .body()
+                .and_then(reqwest::Body::as_bytes)
+                .expect("JSON request body should be buffered"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            body.get("provider"),
+            Some(&serde_json::json!({
+                "order": ["relace", "deepinfra"],
+                "allow_fallbacks": false,
+            }))
+        );
+        assert_eq!(
+            body.get("input").and_then(|value| value.as_str()),
+            Some("Keep this payload unchanged.")
+        );
     }
 
     #[test]

@@ -660,6 +660,7 @@ impl SessionActor {
             .await
             .unwrap_or_else(|| xai_grok_sampling_types::SamplingConfig {
                 base_url: String::new(),
+                openrouter_provider: None,
                 mtls_cert_dir: None,
                 model: String::new(),
                 max_completion_tokens: None,
@@ -745,6 +746,7 @@ impl SessionActor {
         SamplingConfig {
             api_key,
             base_url: cfg.base_url,
+            openrouter_provider: cfg.openrouter_provider,
             mtls_cert_dir: cfg.mtls_cert_dir,
             model: cfg.model,
             max_completion_tokens: cfg.max_completion_tokens,

@@ -1201,6 +1201,44 @@ fn sampling_config_uses_fallback_when_no_model_api_key() {
     assert_eq!(sampling_config.api_key, Some("fallback-key".to_string()));
 }
 #[test]
+fn openrouter_provider_model_config_reaches_the_sampler_unchanged() {
+    let model_id = crate::models::default_model();
+    let (_, models) = resolve_models_from_toml(
+        &format!(
+            r#"
+                [model."{model_id}"]
+                openrouter_provider = {{ only = ["deepinfra/fp8"], sort = "price" }}
+            "#,
+        ),
+        None,
+    );
+    let model = models.get(model_id).expect("default model should exist");
+    let expected = serde_json::json!({
+        "only": ["deepinfra/fp8"],
+        "sort": "price",
+    });
+    assert_eq!(model.info.openrouter_provider, Some(expected.clone()));
+    assert_eq!(
+        resolve_sampling(model, None).openrouter_provider,
+        Some(expected)
+    );
+
+    let (_, models) = resolve_models_from_toml(
+        &format!(
+            r#"
+                [model."{model_id}"]
+                openrouter_provider = false
+            "#,
+        ),
+        None,
+    );
+    let model = models.get(model_id).expect("default model should exist");
+    assert_eq!(
+        resolve_sampling(model, None).openrouter_provider,
+        Some(serde_json::Value::Bool(false))
+    );
+}
+#[test]
 fn sampling_config_scopes_no_inline_citations_include() {
     for (supports_search, backend, base_url, expected) in [
         (

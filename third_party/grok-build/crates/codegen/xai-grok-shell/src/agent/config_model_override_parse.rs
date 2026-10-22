@@ -727,6 +727,7 @@ mod tests {
                 label: Some("deprecated".into()),
             }),
             api_key: Some("key".into()),
+            openrouter_provider: None,
             env_key: Some(crate::agent::config::EnvKeys::single("ENV_KEY")),
             auth_provider: Some("corp-gateway".into()),
             model_provider: Some("gateway".into()),

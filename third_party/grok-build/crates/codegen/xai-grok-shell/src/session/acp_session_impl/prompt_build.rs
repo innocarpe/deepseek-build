@@ -67,7 +67,7 @@ fn without_stable_project_instruction_aliases(
         .into_iter()
         .filter(|file| {
             let path = std::path::Path::new(&file.file_path);
-            let identity = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+            let identity = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
             !included.contains(&identity)
         })
         .collect()

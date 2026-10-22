@@ -572,7 +572,7 @@ fn read_project_instruction(
     label: &str,
     seen: &mut HashSet<PathBuf>,
 ) -> Option<(PathBuf, String)> {
-    let identity = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let identity = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if !seen.insert(identity.clone()) {
         return None;
     }

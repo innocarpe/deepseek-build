@@ -432,6 +432,9 @@ async fn build_report(cwd: &Path) -> InspectReport {
     );
 
     let external_compat = resolve_inspect_compat(effective_config_result.as_ref().ok());
+    // The same cells the report prints, as the merge consumes them, so the MCP
+    // listing is built from the definitions a session would load.
+    let live_compat = external_compat.resolved_config();
 
     // This is the same `[skills]` table the runtime loads: `paths` skills appear, `ignore`d ones are hidden, `disabled` ones show as disabled
     let skills_config = crate::config::parse_skills_config(&effective_config);
@@ -466,7 +469,7 @@ async fn build_report(cwd: &Path) -> InspectReport {
     let agents = list_agents(cwd, &plugin_registry);
     let plugins = list_plugins(&discovered_plugins);
     let marketplaces = list_marketplaces(git_root.as_deref());
-    let mut mcp = list_mcp_servers(cwd, &plugin_registry);
+    let mut mcp = list_mcp_servers(cwd, &plugin_registry, &live_compat);
     for entry in &mut mcp {
         entry.compatibility_status = vendor_compat_status(&entry.vendor, "mcps", &external_compat);
         entry.disabled |= entry.compatibility_status == Some(CompatEntryStatus::Disabled);
@@ -1068,19 +1071,63 @@ fn list_marketplaces(git_root: Option<&Path>) -> Vec<MarketplaceEntry> {
         .collect()
 }
 
-/// Discovers MCPs with every vendor enabled so compatibility can be annotated later.
+/// Merges MCP definitions the way a session loads them, then adds the ones a
+/// turned-off vendor surface would have contributed when no live definition
+/// carries that name.
+///
+/// The merge keeps the first definition of a name and gates a vendor surface at
+/// discovery, so the choice of compat decides which definition owns a shared
+/// name. Merging with every vendor on lets a disabled vendor's definition win a
+/// name that a running session loads from somewhere else, so the live entry is
+/// reported as disabled. Merging with only the live compat drops a name whose
+/// only definition belongs to a disabled vendor, and the report omits it instead
+/// of showing it disabled. The live merge therefore decides the live entries, and
+/// the all-on merge contributes only names the live merge did not produce.
+fn live_then_shadowed_mcp_servers<F>(
+    compat: &xai_grok_tools::types::compat::CompatConfig,
+    mut merge: F,
+) -> Vec<(
+    agent_client_protocol::McpServer,
+    xai_grok_config::mcp_servers::McpServerOrigin,
+)>
+where
+    F: FnMut(
+        &xai_grok_tools::types::compat::CompatConfig,
+    ) -> Vec<(
+        agent_client_protocol::McpServer,
+        xai_grok_config::mcp_servers::McpServerOrigin,
+    )>,
+{
+    let mut sourced = merge(compat);
+    let all_on = xai_grok_tools::types::compat::CompatConfig::default();
+    if *compat == all_on {
+        return sourced;
+    }
+    let live_names: std::collections::HashSet<String> = sourced
+        .iter()
+        .map(|(server, _)| crate::session::managed_mcp::mcp_server_name(server).to_owned())
+        .collect();
+    sourced.extend(merge(&all_on).into_iter().filter(|(server, _)| {
+        !live_names.contains(crate::session::managed_mcp::mcp_server_name(server))
+    }));
+    sourced
+}
+
+/// Lists MCPs through [`live_then_shadowed_mcp_servers`], annotated for the report.
 fn list_mcp_servers(
     cwd: &Path,
     plugin_registry: &xai_grok_agent::plugins::PluginRegistry,
+    compat: &xai_grok_tools::types::compat::CompatConfig,
 ) -> Vec<McpServerEntry> {
     use xai_grok_workspace::permission::resolution;
 
-    let all_on = xai_grok_tools::types::compat::CompatConfig::default();
-    let sourced = crate::session::managed_mcp::merge_managed_mcp_servers_sourced(
-        cwd,
-        Some(plugin_registry),
-        &all_on,
-    );
+    let sourced = live_then_shadowed_mcp_servers(compat, |compat| {
+        crate::session::managed_mcp::merge_managed_mcp_servers_sourced(
+            cwd,
+            Some(plugin_registry),
+            compat,
+        )
+    });
     let ms = resolution::managed_settings();
     let project = crate::agent::folder_trust::project_scoped_mcp_names(cwd);
 
@@ -1843,6 +1890,177 @@ mod tests {
     use crate::agent::config::PathsConfig;
     use xai_grok_agent::prompt::skills::{SkillInfo, SkillsConfig};
     use xai_grok_tools::implementations::skills::types::SkillScope;
+
+    /// A home with no vendor MCP files, so a test's scratch files are the only
+    /// definitions discovery can see.
+    fn isolated_home() -> (
+        tempfile::TempDir,
+        xai_grok_test_support::EnvGuard,
+        xai_grok_test_support::EnvGuard,
+    ) {
+        let home = tempfile::tempdir().unwrap();
+        let grok_home = home.path().join(".grok");
+        std::fs::create_dir_all(&grok_home).unwrap();
+        std::fs::write(grok_home.join("config.toml"), "").unwrap();
+        let home_guard = xai_grok_test_support::EnvGuard::set("HOME", home.path());
+        let grok_guard = xai_grok_test_support::EnvGuard::set("GROK_HOME", &grok_home);
+        (home, home_guard, grok_guard)
+    }
+
+    fn write_json_mcp(path: &Path, entries: &[(&str, &str)]) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        let servers: Vec<String> = entries
+            .iter()
+            .map(|(name, url)| format!(r#""{name}":{{"type":"http","url":"{url}"}}"#))
+            .collect();
+        std::fs::write(
+            path,
+            format!(r#"{{"mcpServers":{{{}}}}}"#, servers.join(",")),
+        )
+        .unwrap();
+    }
+
+    fn merged_names(
+        sourced: &[(
+            agent_client_protocol::McpServer,
+            xai_grok_config::mcp_servers::McpServerOrigin,
+        )],
+    ) -> Vec<String> {
+        sourced
+            .iter()
+            .map(|(server, _)| crate::session::managed_mcp::mcp_server_name(server).to_owned())
+            .collect()
+    }
+
+    /// A definition a live source owns must keep its name when a turned-off vendor
+    /// defines the same name: the report then shows the entry a session loads.
+    /// Before this, the merge ran with every vendor on, the vendor's definition
+    /// won the name, and the live entry was reported as disabled.
+    #[test]
+    #[serial_test::serial]
+    fn live_definition_keeps_its_name_when_a_disabled_vendor_defines_it_too() {
+        let (home, _home_guard, _grok_guard) = isolated_home();
+        let cwd = tempfile::tempdir().unwrap();
+        let live_url = "http://127.0.0.1:47900/mcp";
+        write_json_mcp(&cwd.path().join(".mcp.json"), &[("shared", live_url)]);
+        // The same name in the vendor file reproduces the reported case: the live
+        // server plus one only the turned-off vendor declares.
+        write_json_mcp(
+            &home.path().join(".cursor").join("mcp.json"),
+            &[
+                ("shared", "http://127.0.0.1:47900/mcp"),
+                ("vendor-only", live_url),
+            ],
+        );
+        let vendor_path = home.path().join(".cursor").join("mcp.json");
+        let live_path = cwd.path().join(".mcp.json");
+
+        let merge = |compat: &xai_grok_tools::types::compat::CompatConfig| {
+            crate::session::managed_mcp::merge_managed_mcp_servers_sourced(cwd.path(), None, compat)
+        };
+
+        // Every vendor on: the vendor file is read before the project `.mcp.json`,
+        // so it wins the shared name. This is the merge the report used to print.
+        let all_on = merge(&xai_grok_tools::types::compat::CompatConfig::default());
+        let shared_all_on = all_on
+            .iter()
+            .find(|(server, _)| crate::session::managed_mcp::mcp_server_name(server) == "shared")
+            .expect("the all-on merge defines the shared name");
+        assert!(
+            matches!(&shared_all_on.1, xai_grok_config::mcp_servers::McpServerOrigin::McpJson { path } if path == &vendor_path),
+            "the all-on merge keeps the vendor definition first, got {:?}",
+            shared_all_on.1
+        );
+
+        // Cursor MCPs off is the live stack on this machine.
+        let mut live_compat = xai_grok_tools::types::compat::CompatConfig::default();
+        live_compat.cursor.mcps = false;
+        let sourced = live_then_shadowed_mcp_servers(&live_compat, merge);
+
+        let shared: Vec<_> = sourced
+            .iter()
+            .filter(|(server, _)| crate::session::managed_mcp::mcp_server_name(server) == "shared")
+            .collect();
+        assert_eq!(shared.len(), 1, "one definition per name: {sourced:?}");
+        assert!(
+            matches!(&shared[0].1, xai_grok_config::mcp_servers::McpServerOrigin::McpJson { path } if path == &live_path),
+            "the live definition must own the name, got {:?}",
+            shared[0].1
+        );
+
+        let names = merged_names(&sourced);
+        assert!(
+            names.iter().any(|name| name == "vendor-only"),
+            "a vendor-only definition still appears so it can be shown disabled: {names:?}"
+        );
+    }
+
+    /// A name only a turned-off vendor defines must stay listed. Dropping it would
+    /// hide a server from the report instead of showing it disabled.
+    #[test]
+    #[serial_test::serial]
+    fn vendor_only_definition_survives_a_turned_off_surface() {
+        let (home, _home_guard, _grok_guard) = isolated_home();
+        let cwd = tempfile::tempdir().unwrap();
+        write_json_mcp(
+            &home.path().join(".cursor").join("mcp.json"),
+            &[("vendor-only", "http://127.0.0.1:47901/mcp")],
+        );
+
+        let mut live_compat = xai_grok_tools::types::compat::CompatConfig::default();
+        live_compat.cursor.mcps = false;
+        let sourced = live_then_shadowed_mcp_servers(&live_compat, |compat| {
+            crate::session::managed_mcp::merge_managed_mcp_servers_sourced(cwd.path(), None, compat)
+        });
+
+        assert!(
+            merged_names(&sourced)
+                .iter()
+                .any(|name| name == "vendor-only"),
+            "a disabled vendor's definition must still be listed: {sourced:?}"
+        );
+    }
+
+    /// With every vendor on there is nothing shadowed to add, so the merge runs once.
+    #[test]
+    fn all_on_compat_merges_once() {
+        let mut calls = 0;
+        let sourced = live_then_shadowed_mcp_servers(
+            &xai_grok_tools::types::compat::CompatConfig::default(),
+            |_| {
+                calls += 1;
+                Vec::new()
+            },
+        );
+
+        assert_eq!(calls, 1, "the all-on case must not merge twice");
+        assert!(sourced.is_empty());
+    }
+
+    /// The report's printed cells are what the merge consumes, so a cell printed
+    /// as disabled is disabled for the merge and an omitted cell keeps its default.
+    #[test]
+    fn resolved_config_matches_the_printed_cells() {
+        let report = ExternalCompatReport {
+            remote_settings_loaded: false,
+            cells: vec![ExternalCompatEntry {
+                vendor: "cursor".to_owned(),
+                surface: "mcps".to_owned(),
+                enabled: false,
+                source: CompatSource::Config,
+            }],
+        };
+
+        let resolved = report.resolved_config();
+
+        assert!(!resolved.cursor.mcps, "a disabled cell stays disabled");
+        assert!(
+            resolved.claude.mcps,
+            "a cell the report omits keeps its default"
+        );
+    }
 
     fn paths_config(extra_rule_dir: &Path) -> PathsConfig {
         PathsConfig {

@@ -12,17 +12,19 @@
 //!   + later stable bodies  // appended when the assembled body changes
 //! ```
 //!
-//! Stable section order (normative Spec 10 §1.1):
-//! 1. System prompt body
-//! 2. Tools document (canonical JSON, sorted object keys)
-//! 3. Skills index only (name + description; sorted by name)
-//! 4. Environment summary (os family + cwd; no wall-clock)
-//! 5. Standing project instructions
+//! 안정 시스템 메시지 구성(Spec 10 §1.1):
+//! 1. 시스템 프롬프트 본문
+//! 2. 환경 요약(OS 종류와 cwd, 시각 정보 없음)
+//! 3. 프로젝트 상시 지침
+//!
+//! 도구 스키마는 요청의 `tools` 필드에 남긴다. 스킬 검색 안내도 시작 알림에 두며,
+//! 둘 다 안정 시스템 메시지에 복사하지 않는다.
 //!
 //! See: `docs/specs/10-cache-contract.md`, VC007 evidence under
 //! `docs/product/evidence/VC007_*`.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
 use sha2::{Digest, Sha256};
@@ -30,10 +32,10 @@ use xai_chat_state::conversation_util::canonical_system_prompt_eq;
 use xai_grok_sampling_types::ToolSpec;
 use xai_grok_sampling_types::conversation::ConversationItem;
 
-/// Marker `assemble_spec10_path_a_turn` writes between the product template
-/// and the tools document. Its presence means a system message is already a
-/// Spec 10 stable body (Spec 10 §1.10 rules 3–4).
-const SPEC10_TOOLS_MARKER: &str = "\n\n## Tools\n";
+/// 새 본문은 Environment부터 Spec 10 절을 시작한다. 이어진 대화에서 원래 접두를
+/// 유지하도록 예전 Tools 표지도 인식한다.
+const SPEC10_ENVIRONMENT_MARKER: &str = "\n\n## Environment\n";
+const LEGACY_SPEC10_TOOLS_MARKER: &str = "\n\n## Tools\n";
 
 /// How [`place_stable_body`] put the assembled body onto the request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,7 +48,7 @@ pub enum StableBodyPlacement {
     Appended,
 }
 
-/// One skills-index row for Spec 10 stable prefix (index only — no body).
+/// 요청 메타데이터로 보존하는 스킬 색인 행 하나(색인만 있고 본문은 없다).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Spec10SkillIndexEntry {
     pub name: String,
@@ -61,7 +63,7 @@ pub struct Spec10EnvironmentSummary {
     pub cwd: String,
 }
 
-/// Inputs that fully determine the Spec 10 stable prefix for one Path A turn.
+/// Spec 10 안정 접두와 요청 단위 도구·스킬 메타데이터의 입력이다.
 #[derive(Debug, Clone)]
 pub struct Spec10PathAInputs {
     pub system_prompt: String,
@@ -84,8 +86,8 @@ pub struct Spec10PathAAssembled {
     pub epoch_sha256_hex: String,
     /// Number of volatile tail items (does not affect epoch).
     pub volatile_count: usize,
-    /// Component hashes over the documents concatenated into `stable_body`.
-    /// Observational: it is not an input to the epoch (Spec 10 Path A attribution).
+    /// 안정 본문 해시와 요청 단위 도구·스킬 메타데이터 해시다.
+    /// 도구·스킬 해시는 관측용이며 epoch에 영향을 주지 않는다.
     pub shape: PathAPrefixShape,
 }
 
@@ -113,21 +115,15 @@ pub fn assemble_spec10_path_a_turn(inputs: &Spec10PathAInputs) -> Spec10PathAAss
     let project_included = included_project_instructions(&inputs.project_instructions);
 
     let mut stable_body = system_bytes.clone();
-    stable_body.push_str("\n\n## Tools\n");
-    stable_body.push_str(&tools_doc);
-    stable_body.push_str("\n\n## Skills index\n");
-    stable_body.push_str(&skills_doc);
-    stable_body.push_str("\n\n## Environment\n");
+    stable_body.push_str(SPEC10_ENVIRONMENT_MARKER);
     stable_body.push_str(&env_doc);
     if !project_included.is_empty() {
         stable_body.push_str("\n\n## Project instructions\n");
         stable_body.push_str(&project_included);
     }
 
-    // Epoch is over the stable body alone (Spec 10 §1.3 / §1.5). Volatile
-    // strings are tracked for call-site honesty but never hashed. The shape
-    // hashes the same documents that were just concatenated, so naming a
-    // component cannot drift from the bytes in the body.
+    // epoch는 안정 본문만으로 계산한다(Spec 10 §1.3 / §1.5). 도구·스킬 메타데이터는
+    // 요청 진단에 남기지만 본문 밖에 실리므로 epoch를 바꾸지 않는다.
     let stable_prefix_bytes = stable_body.as_bytes().to_vec();
     let epoch_sha256_hex = sha256_hex(&stable_prefix_bytes);
     let shape = PathAPrefixShape {
@@ -282,7 +278,9 @@ fn epoch_short(hex: &str) -> &str {
 pub struct PathAPrefixShape {
     pub epoch_sha256_hex: String,
     pub system: String,
+    /// 요청 단위 메타데이터이며 `stable_body`와 epoch에는 포함되지 않는다.
     pub tools: String,
+    /// 요청 단위 메타데이터이며 `stable_body`와 epoch에는 포함되지 않는다.
     pub skills: String,
     pub environment: String,
     pub project_instructions: String,
@@ -308,12 +306,6 @@ impl PathAPrefixChange {
         if prev.system != cur.system {
             axes.push("system");
         }
-        if prev.tools != cur.tools {
-            axes.push("tools");
-        }
-        if prev.skills != cur.skills {
-            axes.push("skills");
-        }
         if prev.environment != cur.environment {
             axes.push("environment");
         }
@@ -322,16 +314,6 @@ impl PathAPrefixChange {
         }
 
         let mut detail = Vec::new();
-        if axes.contains(&"tools") {
-            let before = detail.len();
-            collect_named_detail("tools", &prev.tool_names, &cur.tool_names, &mut detail);
-            if detail.len() == before {
-                detail.push("tools.reordered".to_string());
-            }
-        }
-        if axes.contains(&"skills") {
-            collect_named_detail("skills", &prev.skill_names, &cur.skill_names, &mut detail);
-        }
         if axes.contains(&"environment") {
             if prev.environment_os_family != cur.environment_os_family {
                 detail.push("environment.os_family".to_string());
@@ -387,26 +369,6 @@ impl PathAPrefixChange {
             out.push_str(&detail);
         }
         out
-    }
-}
-
-fn collect_named_detail(
-    prefix: &str,
-    prev: &BTreeMap<String, String>,
-    cur: &BTreeMap<String, String>,
-    out: &mut Vec<String>,
-) {
-    for (name, hash) in cur {
-        match prev.get(name) {
-            None => out.push(format!("{prefix}.added={name}")),
-            Some(before) if before != hash => out.push(format!("{prefix}.changed={name}")),
-            Some(_) => {}
-        }
-    }
-    for name in prev.keys() {
-        if !cur.contains_key(name) {
-            out.push(format!("{prefix}.removed={name}"));
-        }
     }
 }
 
@@ -494,10 +456,13 @@ pub fn path_a_inputs_from_turn(
 
 /// Strip a previously applied Spec 10 section block so re-assembly is idempotent.
 ///
-/// The product base system prompt is everything before the first
-/// `\n\n## Tools\n` marker introduced by this module.
+/// 제품 기본 시스템 프롬프트는 이 모듈의 현재 또는 예전 절 표지보다 앞선 부분이다.
 pub fn extract_base_system_prompt(system_content: &str) -> String {
-    match system_content.find(SPEC10_TOOLS_MARKER) {
+    let boundary = [SPEC10_ENVIRONMENT_MARKER, LEGACY_SPEC10_TOOLS_MARKER]
+        .iter()
+        .filter_map(|marker| system_content.find(marker))
+        .min();
+    match boundary {
         Some(i) => system_content[..i].to_string(),
         None => system_content.to_string(),
     }
@@ -512,7 +477,10 @@ fn last_system_content(items: &[ConversationItem]) -> Option<&str> {
 
 fn has_spec10_system(items: &[ConversationItem]) -> bool {
     items.iter().any(|item| match item {
-        ConversationItem::System(sys) => sys.content.contains(SPEC10_TOOLS_MARKER),
+        ConversationItem::System(sys) => {
+            sys.content.contains(SPEC10_ENVIRONMENT_MARKER)
+                || sys.content.contains(LEGACY_SPEC10_TOOLS_MARKER)
+        }
         _ => false,
     })
 }
@@ -521,7 +489,7 @@ fn has_spec10_system(items: &[ConversationItem]) -> bool {
 ///
 /// The product template is recovered by the caller from the earliest system
 /// message. This function does not rewrite a system message that already
-/// contains [`SPEC10_TOOLS_MARKER`].
+/// 현재 또는 예전 Spec 10 표지가 있는 시스템 메시지는 다시 쓰지 않는다.
 pub fn place_stable_body(
     items: &mut Vec<ConversationItem>,
     stable_body: &str,
@@ -552,36 +520,65 @@ pub fn place_stable_body(
 /// Discover standing project instructions (Spec 10 §1.4) under `workspace_root`.
 ///
 /// Order: DEEPSEEK.md | DEEPSEEK_BUILD.md (first found), AGENTS.md,
-/// `.deepseek-build/instructions.md`. Missing files skip. Best-effort IO.
+/// `.deepseek-build/instructions.md` 순으로 찾는다. 없는 파일은 건너뛰고 이미 포함한
+/// 파일의 심링크 별칭도 제외한다. 입출력 오류는 가능한 범위에서 건너뛴다.
 pub fn discover_project_instructions(workspace_root: &std::path::Path) -> String {
-    let mut parts: Vec<String> = Vec::new();
+    discover_project_instruction_documents(workspace_root)
+        .into_iter()
+        .map(|(_, document)| document)
+        .collect::<Vec<_>>()
+        .join("\n\n---\n\n")
+}
+
+/// [`discover_project_instructions`]가 포함한 지침 파일의 정규 경로를 돌려준다.
+pub fn discover_project_instruction_paths(workspace_root: &Path) -> Vec<PathBuf> {
+    discover_project_instruction_documents(workspace_root)
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect()
+}
+
+fn discover_project_instruction_documents(workspace_root: &Path) -> Vec<(PathBuf, String)> {
+    let mut seen = HashSet::new();
+    let mut documents = Vec::new();
     for name in ["DEEPSEEK.md", "DEEPSEEK_BUILD.md"] {
         let p = workspace_root.join(name);
         if p.is_file() {
-            if let Ok(body) = std::fs::read_to_string(&p) {
-                let body = body.replace("\r\n", "\n").replace('\r', "\n");
-                parts.push(format!("### {name}\n\n{}", body.trim_end()));
+            if let Some(document) = read_project_instruction(&p, name, &mut seen) {
+                documents.push(document);
             }
             break;
         }
     }
     let agents = workspace_root.join("AGENTS.md");
     if agents.is_file()
-        && let Ok(body) = std::fs::read_to_string(&agents)
+        && let Some(document) = read_project_instruction(&agents, "AGENTS.md", &mut seen)
     {
-        let body = body.replace("\r\n", "\n").replace('\r', "\n");
-        parts.push(format!("### AGENTS.md\n\n{}", body.trim_end()));
+        documents.push(document);
     }
     let nested = workspace_root
         .join(".deepseek-build")
         .join("instructions.md");
     if nested.is_file()
-        && let Ok(body) = std::fs::read_to_string(&nested)
+        && let Some(document) = read_project_instruction(&nested, "instructions.md", &mut seen)
     {
-        let body = body.replace("\r\n", "\n").replace('\r', "\n");
-        parts.push(format!("### instructions.md\n\n{}", body.trim_end()));
+        documents.push(document);
     }
-    parts.join("\n\n---\n\n")
+    documents
+}
+
+fn read_project_instruction(
+    path: &Path,
+    label: &str,
+    seen: &mut HashSet<PathBuf>,
+) -> Option<(PathBuf, String)> {
+    let identity = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if !seen.insert(identity.clone()) {
+        return None;
+    }
+    let body = std::fs::read_to_string(path).ok()?;
+    let body = body.replace("\r\n", "\n").replace('\r', "\n");
+    Some((identity, format!("### {label}\n\n{}", body.trim_end())))
 }
 
 /// Discover skills **index only** (name + one-line description) under workspace.
@@ -815,12 +812,14 @@ mod tests {
     }
 
     #[test]
-    fn vc007_tool_schema_change_changes_epoch() {
+    fn vc007_tool_schema_change_does_not_change_stable_epoch() {
         let mut inputs = base_inputs();
         let a = assemble_spec10_path_a_turn(&inputs);
         inputs.tools[0].description = Some("edit carefully".into());
         let b = assemble_spec10_path_a_turn(&inputs);
-        assert_ne!(a.epoch_sha256_hex, b.epoch_sha256_hex);
+        assert_eq!(a.epoch_sha256_hex, b.epoch_sha256_hex);
+        assert_eq!(a.stable_body, b.stable_body);
+        assert_ne!(a.shape.tools, b.shape.tools);
     }
 
     #[test]
@@ -837,18 +836,16 @@ mod tests {
     }
 
     #[test]
-    fn vc007_layout_order_sections() {
+    fn vc007_stable_system_body_contains_only_template_environment_and_instructions() {
         let assembled = assemble_spec10_path_a_turn(&base_inputs());
         let body = &assembled.stable_body;
         let i_sys = body.find("SYSTEM_FIXED").expect("system");
-        let i_tools = body.find("## Tools\n").expect("tools");
-        let i_skills = body.find("## Skills index\n").expect("skills");
         let i_env = body.find("## Environment\n").expect("env");
         let i_proj = body.find("## Project instructions\n").expect("project");
-        assert!(i_sys < i_tools);
-        assert!(i_tools < i_skills);
-        assert!(i_skills < i_env);
+        assert!(i_sys < i_env);
         assert!(i_env < i_proj);
+        assert!(!body.contains("## Tools\n"));
+        assert!(!body.contains("## Skills index\n"));
     }
 
     #[test]
@@ -884,11 +881,12 @@ mod tests {
             },
         ];
         let assembled = assemble_spec10_path_a_turn(&inputs);
-        let skills_pos = assembled.stable_body.find("## Skills index\n").unwrap();
-        let skills_section = &assembled.stable_body[skills_pos..];
-        let alpha = skills_section.find("alpha").expect("alpha");
-        let zeta = skills_section.find("zeta").expect("zeta");
+        let skills_doc = skills_document(&inputs.skills_index);
+        let alpha = skills_doc.find("alpha").expect("alpha");
+        let zeta = skills_doc.find("zeta").expect("zeta");
         assert!(alpha < zeta, "skills index must sort by name");
+        assert!(!assembled.stable_body.contains("alpha"));
+        assert!(!assembled.stable_body.contains("zeta"));
     }
 
     #[test]
@@ -926,6 +924,9 @@ mod tests {
         inputs.system_prompt = base;
         let again = assemble_spec10_path_a_turn(&inputs);
         assert_eq!(again.epoch_sha256_hex, assembled.epoch_sha256_hex);
+
+        let legacy = "SYSTEM_FIXED\n\n## Tools\n[]\n\n## Skills index\n[]";
+        assert_eq!(extract_base_system_prompt(legacy), "SYSTEM_FIXED");
     }
 
     #[test]
@@ -974,12 +975,15 @@ mod tests {
             _ => panic!("expected system first"),
         };
         assert!(sys.contains("GROK_BASE_TEMPLATE"));
-        assert!(sys.contains("## Tools\n"));
-        assert!(sys.contains("## Skills index\n"));
         assert!(sys.contains("## Environment\n"));
         assert!(sys.contains("## Project instructions\n"));
+        assert!(!sys.contains("## Tools\n"));
+        assert!(!sys.contains("## Skills index\n"));
+        assert!(!sys.contains("read_file"));
         assert!(sys.contains("project rules"));
         assert_eq!(sys, assembled.stable_body.as_str());
+        assert_eq!(req.tools.len(), tools.len());
+        assert_eq!(req.tools[0].name, tools[0].name);
         // Second apply is idempotent (epoch stable).
         let e1 = assembled.epoch_sha256_hex.clone();
         let a2 = apply_spec10_to_conversation_request(
@@ -1018,12 +1022,11 @@ mod tests {
             .count()
     }
 
-    /// §1.10. The mock's hit is the shared byte prefix of the serialized
-    /// messages. The §1.9 scenario bench is the sibling `cache_guard` module;
-    /// this test keeps its own byte-prefix mock so the append rule does not
-    /// depend on that bench.
+    /// §1.10에서 직렬화한 메시지의 공통 바이트 접두를 적중으로 센다.
+    /// §1.9 시나리오 검사는 형제 `cache_guard` 모듈에 있다. 이 시험은 append
+    /// 규칙이 그 검사에 기대지 않도록 별도의 바이트 접두 모형을 사용한다.
     #[test]
-    fn in_history_update_appends_and_head_rewrite_breaks_the_byte_prefix() {
+    fn tool_changes_keep_prefix_stable_and_instruction_changes_append() {
         let tools = vec![tool(
             "read_file",
             json!({"type":"object","properties":{"target_file":{"type":"string"}}}),
@@ -1066,7 +1069,11 @@ mod tests {
             xai_grok_sampling_types::ConversationItem::System(s) => s.content.as_ref().to_string(),
             _ => panic!("first placement writes the leading system"),
         };
-        assert!(old_body.contains("read_file"));
+        assert!(!old_body.contains("## Tools\n"));
+        assert!(!old_body.contains("## Skills index\n"));
+        assert!(!old_body.contains("read_file"));
+        assert_eq!(req.tools.len(), 1);
+        assert_eq!(req.tools[0].name, "read_file");
         let before = system_message_bytes(&req.items);
         let old_body_end =
             before.find(&old_body).expect("old body is on the wire") + old_body.len();
@@ -1081,23 +1088,41 @@ mod tests {
             Some(dir.path()),
             None,
         );
+        assert_eq!(updated.stable_body, old_body);
+        assert_eq!(req.tools.len(), 2);
+        assert_eq!(req.tools[1].name, "write_file");
+        assert_eq!(
+            req.items.len(),
+            2,
+            "tool changes do not append a system message"
+        );
+        assert_eq!(system_message_bytes(&req.items), before);
+
+        std::fs::write(dir.path().join("AGENTS.md"), "project rules changed").unwrap();
+        let updated = apply_spec10_to_conversation_request(
+            &mut req,
+            dir.path().to_str().unwrap(),
+            Some(dir.path()),
+            None,
+        );
+        assert!(updated.stable_body.contains("project rules changed"));
         match &req.items[0] {
             xai_grok_sampling_types::ConversationItem::System(s) => {
                 assert_eq!(
                     s.content.as_ref(),
                     old_body,
-                    "leading system stays byte-for-byte"
+                    "the leading system remains byte-for-byte"
                 );
             }
-            _ => panic!("leading item stays a system message"),
+            _ => panic!("the leading item remains a system message"),
         }
         match req.items.last() {
             Some(xai_grok_sampling_types::ConversationItem::System(s)) => {
                 assert_eq!(s.content.as_ref(), updated.stable_body.as_str());
-                assert!(s.content.contains("write_file"));
+                assert!(s.content.contains("project rules changed"));
                 assert_ne!(s.content.as_ref(), old_body);
             }
-            _ => panic!("the new body is an appended system message"),
+            _ => panic!("the changed body is an appended system message"),
         }
         assert_eq!(req.items.len(), 3, "system, user, appended system");
 
@@ -1108,18 +1133,18 @@ mod tests {
             append_hit >= old_body_end,
             "append hit {append_hit} must cover the old body ending at {old_body_end}"
         );
-        assert!(append_miss > 0, "the appended body is the miss");
+        assert!(append_miss > 0, "the appended system body is the miss");
 
         let mut rewritten = req.items.clone();
         if let xai_grok_sampling_types::ConversationItem::System(s) = &mut rewritten[0] {
             s.content = std::sync::Arc::<str>::from(updated.stable_body.as_str());
         }
-        // Drop the appended message so the rewrite shape is "same items, new head".
+        // 추가 메시지를 빼서 같은 항목에서 첫 시스템 메시지만 바뀐 경우를 만든다.
         rewritten.pop();
         let rewrite_hit = shared_prefix_len(&before, &system_message_bytes(&rewritten));
         assert!(
-            rewrite_hit < old_body_end,
-            "head rewrite hit {rewrite_hit} must end inside the old body ({old_body_end})"
+            rewrite_hit <= old_body_end + 1,
+            "head rewrite hit {rewrite_hit} must stop at the old body boundary ({old_body_end})"
         );
         assert!(rewrite_hit < append_hit);
 
@@ -1133,7 +1158,7 @@ mod tests {
         assert_eq!(
             req.items.len(),
             len_after_append,
-            "same body does not append again"
+            "an unchanged body is not appended"
         );
     }
 
@@ -1156,8 +1181,23 @@ mod tests {
         assert_eq!(idx[0].description, "Demo skill");
     }
 
+    #[cfg(unix)]
     #[test]
-    fn path_a_shape_is_the_concatenated_documents() {
+    fn vc007_project_instruction_symlink_is_included_once() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let primary = dir.path().join("DEEPSEEK.md");
+        std::fs::write(&primary, "shared instructions").unwrap();
+        std::os::unix::fs::symlink(&primary, dir.path().join("AGENTS.md")).unwrap();
+
+        let instructions = discover_project_instructions(dir.path());
+        assert_eq!(instructions.matches("shared instructions").count(), 1);
+        assert!(instructions.contains("### DEEPSEEK.md"));
+        assert!(!instructions.contains("### AGENTS.md"));
+        assert_eq!(discover_project_instruction_paths(dir.path()).len(), 1);
+    }
+
+    #[test]
+    fn path_a_shape_tracks_stable_body_and_request_metadata() {
         let inputs = base_inputs();
         let assembled = assemble_spec10_path_a_turn(&inputs);
         let tools = tools_document(&inputs.tools);
@@ -1166,20 +1206,19 @@ mod tests {
         let mut project = inputs.project_instructions.trim_end().to_string();
         project.push('\n');
         let mut expected = inputs.system_prompt.trim_end().to_string();
-        expected.push_str("\n\n## Tools\n");
-        expected.push_str(&tools);
-        expected.push_str("\n\n## Skills index\n");
-        expected.push_str(&skills);
         expected.push_str("\n\n## Environment\n");
         expected.push_str(&env);
         expected.push_str("\n\n## Project instructions\n");
         expected.push_str(&project);
         assert_eq!(assembled.stable_body, expected);
         assert_eq!(assembled.shape.tools, sha256_hex(tools.as_bytes()));
+        assert_eq!(assembled.shape.skills, sha256_hex(skills.as_bytes()));
         assert_eq!(
             assembled.shape.system,
             sha256_hex(inputs.system_prompt.trim_end().as_bytes())
         );
+        assert!(!assembled.stable_body.contains("read_file"));
+        assert!(!assembled.stable_body.contains("pr-authoring"));
         assert_eq!(
             sha256_hex(&assembled.stable_prefix_bytes),
             assembled.epoch_sha256_hex
@@ -1195,20 +1234,19 @@ mod tests {
     }
 
     #[test]
-    fn path_a_tool_add_names_tools_added() {
+    fn path_a_tool_add_does_not_move_the_stable_prefix() {
         let prev = assemble_spec10_path_a_turn(&base_inputs());
         let mut next = base_inputs();
         next.tools.push(tool("write", json!({"type":"object"})));
         let cur = assemble_spec10_path_a_turn(&next);
         let change = PathAPrefixChange::between(&prev.shape, &cur.shape);
-        assert_eq!(change.label(), "tools");
-        assert_eq!(change.detail_label().as_deref(), Some("tools.added=write"));
-        assert!(!change.log_block().contains("SYSTEM_FIXED"));
-        let id = "path_a_tool_add_names_tools_added";
+        assert_eq!(change.label(), "none");
+        assert!(change.detail_label().is_none());
+        assert_eq!(prev.epoch_sha256_hex, cur.epoch_sha256_hex);
+        assert_ne!(prev.shape.tools, cur.shape.tools);
+        let id = "path_a_tool_add_does_not_move_the_stable_prefix";
         assert!(observe_path_a_prefix_change(id, &prev.shape).is_none());
-        let observed = observe_path_a_prefix_change(id, &cur.shape).expect("epoch moved");
-        assert_eq!(observed.label(), "tools");
-        assert_eq!(observed.log_block(), change.log_block());
+        assert!(observe_path_a_prefix_change(id, &cur.shape).is_none());
     }
 
     #[test]
@@ -1224,7 +1262,7 @@ mod tests {
     }
 
     #[test]
-    fn path_a_tool_reorder_names_reordered() {
+    fn path_a_tool_reorder_does_not_move_the_stable_prefix() {
         let mut first = base_inputs();
         first.tools.push(tool(
             "write",
@@ -1234,27 +1272,23 @@ mod tests {
         second.tools.reverse();
         let prev = assemble_spec10_path_a_turn(&first);
         let cur = assemble_spec10_path_a_turn(&second);
-        assert_ne!(prev.epoch_sha256_hex, cur.epoch_sha256_hex);
+        assert_eq!(prev.epoch_sha256_hex, cur.epoch_sha256_hex);
         let change = PathAPrefixChange::between(&prev.shape, &cur.shape);
-        assert_eq!(change.label(), "tools");
-        assert_eq!(change.detail_label().as_deref(), Some("tools.reordered"));
+        assert_eq!(change.label(), "none");
+        assert!(change.detail_label().is_none());
     }
 
     #[test]
-    fn path_a_skill_description_names_the_skill_not_the_text() {
+    fn path_a_skill_description_does_not_move_the_stable_prefix() {
         let prev = assemble_spec10_path_a_turn(&base_inputs());
         let mut next = base_inputs();
         next.skills_index[0].description = "Different".into();
         let cur = assemble_spec10_path_a_turn(&next);
         let change = PathAPrefixChange::between(&prev.shape, &cur.shape);
-        assert_eq!(change.label(), "skills");
-        assert_eq!(
-            change.detail_label().as_deref(),
-            Some("skills.changed=pr-authoring")
-        );
-        let line = change.log_block();
-        assert!(!line.contains("Different"));
-        assert!(!line.contains("Write PRs"));
+        assert_eq!(change.label(), "none");
+        assert!(change.detail_label().is_none());
+        assert_eq!(prev.epoch_sha256_hex, cur.epoch_sha256_hex);
+        assert_ne!(prev.shape.skills, cur.shape.skills);
     }
 
     #[test]

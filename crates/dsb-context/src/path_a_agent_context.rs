@@ -113,12 +113,13 @@ mod tests {
     }
 
     #[test]
-    fn h10_2_tool_schema_change_changes_epoch() {
+    fn h10_2_tool_schema_change_does_not_change_stable_epoch() {
         let mut inputs = base_inputs();
         let a = assemble_path_a_context(&inputs).unwrap();
         inputs.tools[0].function.description = Some("edit files carefully".into());
         let b = assemble_path_a_context(&inputs).unwrap();
-        assert_ne!(a.epoch().sha256_hex, b.epoch().sha256_hex);
+        assert_eq!(a.epoch().sha256_hex, b.epoch().sha256_hex);
+        assert_ne!(a.stable.shape.tools, b.stable.shape.tools);
     }
 
     #[test]
@@ -136,7 +137,7 @@ mod tests {
     }
 
     #[test]
-    fn h10_skills_index_change_changes_epoch() {
+    fn h10_skills_index_change_does_not_change_stable_epoch() {
         let mut inputs = base_inputs();
         let a = assemble_path_a_context(&inputs).unwrap();
         inputs.skills_index.push(SkillIndexEntry {
@@ -144,7 +145,11 @@ mod tests {
             description: "x".into(),
         });
         let b = assemble_path_a_context(&inputs).unwrap();
-        assert_ne!(a.epoch().sha256_hex, b.epoch().sha256_hex);
+        assert_eq!(a.epoch().sha256_hex, b.epoch().sha256_hex);
+        assert_ne!(a.stable.shape.skills, b.stable.shape.skills);
+        let body = a.stable.messages[0].content.as_ref().unwrap();
+        assert!(!body.contains("## Tools"));
+        assert!(!body.contains("## Skills index"));
     }
 
     #[test]

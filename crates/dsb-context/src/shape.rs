@@ -1,14 +1,13 @@
-//! Prefix shape — component-level attribution for cache-epoch changes
+//! 접두 모양 — 안정 접두 귀속과 요청 단위 메타데이터
 //! (spec 10 §1.5.1).
 //!
-//! An epoch ([`crate::PrefixEpoch`]) answers *whether* the stable prefix moved.
-//! A [`PrefixShape`] answers **what** moved: one hash per §1.1 component, taken
-//! over the exact document strings the builder emits.
+//! epoch([`crate::PrefixEpoch`])은 안정 접두가 바뀌었는지를 나타낸다.
+//! [`PrefixShape`]는 실제 출력된 안정 접두 구성요소의 해시를 기록한다.
+//! 도구·스킬 해시는 요청 메타데이터로 남지만 해당 문서는 안정 시스템 메시지 밖에
+//! 있으므로 epoch를 바꾸지 않는다.
 //!
-//! The shape is observational. It is computed from the same strings that
-//! compose the prefix, so it cannot change `stable_prefix_bytes` — and it uses
-//! the same document functions, so a component hash cannot drift from the bytes
-//! it names.
+//! 모양은 관측값이다. 접두를 구성하는 문자열에서 계산하므로 `stable_prefix_bytes`를
+//! 바꾸지 않는다. 요청 단위 메타데이터 해시도 관측값이다.
 
 use std::collections::BTreeMap;
 
@@ -27,12 +26,10 @@ pub fn sub_hash(bytes: &[u8]) -> String {
     digest[..SUB_HASH_HEX].to_string()
 }
 
-/// One §1.1 component of the stable prefix.
+/// 출력된 안정 접두 구성요소 하나다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PrefixAxis {
     System,
-    Tools,
-    Skills,
     Environment,
     ProjectInstructions,
 }
@@ -41,28 +38,21 @@ impl PrefixAxis {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::System => "system",
-            Self::Tools => "tools",
-            Self::Skills => "skills",
             Self::Environment => "environment",
             Self::ProjectInstructions => "project_instructions",
         }
     }
 
-    /// Log order: the §1.1 order, so two logs of the same change read alike.
-    pub const ALL: [Self; 5] = [
-        Self::System,
-        Self::Tools,
-        Self::Skills,
-        Self::Environment,
-        Self::ProjectInstructions,
-    ];
+    /// 안정 시스템 메시지 바이트의 로그 순서다.
+    pub const ALL: [Self; 3] = [Self::System, Self::Environment, Self::ProjectInstructions];
 }
 
-/// Per-component hashes over exactly the documents `PrefixBuilder::build` emits.
+/// 안정 접두 구성요소와 요청 단위 도구·스킬 메타데이터의 해시다.
 ///
 /// All fields are hashes or identifiers — never instruction content, never a
 /// cwd value (spec 10 §1.5.1 rule 3). An absent/empty shape means "no shape",
-/// not "everything changed".
+/// 이 뜻은 "모든 항목이 바뀜"이 아니다. `tools`, `skills`, `tool_names`,
+/// `skill_names`는 안정 시스템 메시지 밖의 요청 입력을 나타낸다.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrefixShape {
     pub system: String,
@@ -82,12 +72,10 @@ pub struct PrefixShape {
 }
 
 impl PrefixShape {
-    /// True when every component hash matches. Two equal shapes for one set of
-    /// inputs are the same shape; the epoch is separately compared.
+    /// 안정 접두 구성요소의 해시가 모두 같으면 참이다. 요청 메타데이터가 달라도
+    /// 안정 접두 바이트는 같을 수 있다.
     pub fn components_equal(&self, other: &Self) -> bool {
         self.system == other.system
-            && self.tools == other.tools
-            && self.skills == other.skills
             && self.environment == other.environment
             && self.project_instructions == other.project_instructions
     }
@@ -96,9 +84,9 @@ impl PrefixShape {
 /// What changed between two prefix shapes (spec 10 §1.5.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrefixChange {
-    /// Components that moved, in §1.1 order.
+    /// 바뀐 안정 접두 구성요소를 Spec 10 순서로 담는다.
     pub axes: Vec<PrefixAxis>,
-    /// `tools.added=write`, `environment.cwd`, … in deterministic order.
+    /// `environment.cwd` 등 안정 메시지 세부 정보를 결정적 순서로 담는다.
     pub detail: Vec<String>,
     /// Epoch moved but no component hash did — a coverage bug in §1.5.1,
     /// never a provider event.
@@ -114,8 +102,6 @@ impl PrefixChange {
             .into_iter()
             .filter(|axis| match axis {
                 PrefixAxis::System => prev.system != cur.system,
-                PrefixAxis::Tools => prev.tools != cur.tools,
-                PrefixAxis::Skills => prev.skills != cur.skills,
                 PrefixAxis::Environment => prev.environment != cur.environment,
                 PrefixAxis::ProjectInstructions => {
                     prev.project_instructions != cur.project_instructions
@@ -124,18 +110,6 @@ impl PrefixChange {
             .collect();
 
         let mut detail = Vec::new();
-        if axes.contains(&PrefixAxis::Tools) {
-            collect_named_detail("tools", &prev.tool_names, &cur.tool_names, &mut detail);
-            // The document moved but every named entry matches: the tool list
-            // was reordered. Tool order is byte-affecting (§1.1 item 2), so this
-            // is a real axis and names nothing at entry level.
-            if detail.is_empty() {
-                detail.push("tools.reordered".to_string());
-            }
-        }
-        if axes.contains(&PrefixAxis::Skills) {
-            collect_named_detail("skills", &prev.skill_names, &cur.skill_names, &mut detail);
-        }
         if axes.contains(&PrefixAxis::Environment) {
             // Fixed axis order: os_family then cwd.
             for (key, axis_name) in [
@@ -201,27 +175,6 @@ impl PrefixChange {
     }
 }
 
-fn collect_named_detail(
-    prefix: &str,
-    prev: &BTreeMap<String, String>,
-    cur: &BTreeMap<String, String>,
-    out: &mut Vec<String>,
-) {
-    // Deterministic: added, removed, changed; each sorted by name (BTreeMap).
-    for (name, hash) in cur {
-        match prev.get(name) {
-            None => out.push(format!("{prefix}.added={name}")),
-            Some(before) if before != hash => out.push(format!("{prefix}.changed={name}")),
-            Some(_) => {}
-        }
-    }
-    for name in prev.keys() {
-        if !cur.contains_key(name) {
-            out.push(format!("{prefix}.removed={name}"));
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,7 +215,7 @@ mod tests {
         cur.project_instructions = sub_hash(b"new");
         cur.skills = sub_hash(b"sk");
         let c = PrefixChange::between(&prev, &cur, true);
-        assert_eq!(c.label(), "system,tools,project_instructions");
+        assert_eq!(c.label(), "system,project_instructions");
     }
 
     #[test]
@@ -274,53 +227,20 @@ mod tests {
     }
 
     #[test]
-    fn tool_names_added_removed_changed() {
+    fn request_tool_and_skill_changes_do_not_move_the_prefix() {
         let mut prev = shape("s", "doc-a");
-        prev.tool_names.insert("read".into(), sub_hash(b"read-v1"));
-        prev.tool_names
-            .insert("write".into(), sub_hash(b"write-v1"));
-        prev.tool_names.insert("grep".into(), sub_hash(b"grep-v1"));
         let mut cur = shape("s", "doc-b");
-        cur.tool_names.insert("read".into(), sub_hash(b"read-v1"));
-        cur.tool_names.insert("grep".into(), sub_hash(b"grep-v2"));
-        cur.tool_names.insert("bash".into(), sub_hash(b"bash-v1"));
-        let c = PrefixChange::between(&prev, &cur, true);
-        assert_eq!(c.label(), "tools");
-        assert_eq!(
-            c.detail_label().unwrap(),
-            "tools.added=bash,tools.changed=grep,tools.removed=write"
-        );
-    }
-
-    #[test]
-    fn tool_reorder_names_reordered() {
-        let mut prev = shape("s", "doc-order-a");
-        prev.tool_names.insert("read".into(), sub_hash(b"read"));
-        prev.tool_names.insert("write".into(), sub_hash(b"write"));
-        let mut cur = shape("s", "doc-order-b");
-        cur.tool_names.insert("read".into(), sub_hash(b"read"));
-        cur.tool_names.insert("write".into(), sub_hash(b"write"));
-        let c = PrefixChange::between(&prev, &cur, true);
-        assert_eq!(c.label(), "tools");
-        assert_eq!(c.detail_label().unwrap(), "tools.reordered");
-    }
-
-    #[test]
-    fn skill_names_added_removed_changed() {
-        let mut prev = shape("s", "t");
-        prev.skills = sub_hash(b"sk-a");
-        prev.skill_names.insert("alpha".into(), sub_hash(b"a1"));
-        prev.skill_names.insert("beta".into(), sub_hash(b"b1"));
-        let mut cur = shape("s", "t");
-        cur.skills = sub_hash(b"sk-b");
-        cur.skill_names.insert("alpha".into(), sub_hash(b"a1"));
-        cur.skill_names.insert("gamma".into(), sub_hash(b"g1"));
-        let c = PrefixChange::between(&prev, &cur, true);
-        assert_eq!(c.label(), "skills");
-        assert_eq!(
-            c.detail_label().unwrap(),
-            "skills.added=gamma,skills.removed=beta"
-        );
+        prev.tool_names.insert("read".into(), sub_hash(b"read-v1"));
+        prev.skill_names
+            .insert("pr-authoring".into(), sub_hash(b"Write PRs"));
+        cur.tool_names.insert("write".into(), sub_hash(b"write-v1"));
+        cur.skill_names
+            .insert("new-skill".into(), sub_hash(b"new description"));
+        assert!(prev.components_equal(&cur));
+        let c = PrefixChange::between(&prev, &cur, false);
+        assert_eq!(c.label(), "none");
+        assert!(c.detail_label().is_none());
+        assert!(!c.unattributed);
     }
 
     #[test]
@@ -352,15 +272,12 @@ mod tests {
             c.log_block("aaaa", "bbbb"),
             "prefix_change=system prev=aaaa cur=bbbb"
         );
-        let mut prev2 = shape("s", "t-doc");
-        prev2.tool_names.insert("read".into(), sub_hash(b"read"));
-        let mut cur2 = shape("s", "t-doc-2");
-        cur2.tool_names.insert("read".into(), sub_hash(b"read"));
-        cur2.tool_names.insert("write".into(), sub_hash(b"write"));
-        let c2 = PrefixChange::between(&prev2, &cur2, true);
+        let prev2 = shape("s", "t-doc");
+        let cur2 = shape("s", "t-doc-2");
+        let c2 = PrefixChange::between(&prev2, &cur2, false);
         assert_eq!(
             c2.log_block("aaaa", "bbbb"),
-            "prefix_change=tools prev=aaaa cur=bbbb\nprefix_change_detail=tools.added=write"
+            "prefix_change=none prev=aaaa cur=bbbb"
         );
     }
 

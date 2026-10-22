@@ -51,9 +51,31 @@ fn partition_rules_by_scope(
     }
     (workspace, user)
 }
+
+/// 실제 파일이 Path A의 안정 프로젝트 지침 절에 이미 포함됐으면 규칙 항목에서 뺀다.
+fn without_stable_project_instruction_aliases(
+    files: Vec<xai_grok_agent::prompt::agents_md::AgentConfigFile>,
+    workspace_root: &std::path::Path,
+) -> Vec<xai_grok_agent::prompt::agents_md::AgentConfigFile> {
+    let included =
+        crate::session::helpers::spec10_path_a_assembly::discover_project_instruction_paths(
+            workspace_root,
+        )
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
+    files
+        .into_iter()
+        .filter(|file| {
+            let path = std::path::Path::new(&file.file_path);
+            let identity = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+            !included.contains(&identity)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod partition_rules_by_scope_tests {
-    use super::partition_rules_by_scope;
+    use super::{partition_rules_by_scope, without_stable_project_instruction_aliases};
     use std::path::Path;
     use xai_grok_agent::prompt::agents_md::AgentConfigFile;
     fn file(path: &str) -> AgentConfigFile {
@@ -67,6 +89,27 @@ mod partition_rules_by_scope_tests {
             content: path.to_string(),
             source: Default::default(),
         }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn stable_project_instruction_symlink_is_not_repeated_as_a_rule() {
+        let dir = tempfile::tempdir().unwrap();
+        let agents = dir.path().join("AGENTS.md");
+        std::fs::write(&agents, "shared instruction").unwrap();
+        let claude = dir.path().join(".claude/CLAUDE.md");
+        std::fs::create_dir_all(claude.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&agents, &claude).unwrap();
+        let independent = dir.path().join(".claude/rules/extra.md");
+        std::fs::create_dir_all(independent.parent().unwrap()).unwrap();
+        std::fs::write(&independent, "independent rule").unwrap();
+
+        let files = vec![
+            file(claude.to_str().unwrap()),
+            file(independent.to_str().unwrap()),
+        ];
+        let filtered = without_stable_project_instruction_aliases(files, dir.path());
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].file_path, independent.to_str().unwrap());
     }
     #[test]
     fn configured_rule_dir_is_a_user_rule_wherever_it_sits() {
@@ -585,7 +628,11 @@ impl SessionActor {
         Vec<xai_grok_agent::prompt::user_message::RuleEntry>,
         Vec<xai_grok_agent::prompt::user_message::RuleEntry>,
     ) {
-        let files = self.agent.borrow().prompt_context().agents_md_files.clone();
+        let workspace_root = std::path::Path::new(&self.hook_resolved_workspace_root);
+        let files = without_stable_project_instruction_aliases(
+            self.agent.borrow().prompt_context().agents_md_files.clone(),
+            workspace_root,
+        );
         let grok_home = xai_grok_config::grok_home();
         let vendor_homes = xai_dirs::home_dir()
             .map(|home_dir| {

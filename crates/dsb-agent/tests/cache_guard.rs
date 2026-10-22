@@ -60,6 +60,11 @@ beta: a tool result grows the volatile tail by a known amount.
 gamma: the stable prefix above it must stay warm.
 ";
 
+/// 릴리스 행렬은 작은 가상 작업 폴더를 쓴다. 고정 지침을 넣어 90% 비율이
+/// 설치된 에이전트 문맥 대부분을 뺀 픽스처의 영향이 아니라 접두 재사용을 재게 한다.
+const STABLE_BENCH_RULE: &str =
+    "Keep edits scoped, preserve user data, and make each request reproducible.\n";
+
 // ---------------------------------------------------------------------------
 // Prefix-accounting mock provider
 // ---------------------------------------------------------------------------
@@ -275,9 +280,7 @@ async fn start_mock(state: Arc<Mutex<MockState>>) -> MockServer {
 /// prefix — the resume shape a real prefix move takes (§1.5.1 rule 5).
 #[derive(Debug, Clone)]
 enum Mutation {
-    /// §1.1 item 3 — a skill enters the index.
-    AddSkill(String),
-    /// §1.1 item 5 — standing project instructions change (AGENTS.md).
+    /// §1.1 항목 3 — 프로젝트 지침(AGENTS.md)이 바뀐다.
     ChangeInstructions(String),
 }
 
@@ -397,16 +400,17 @@ fn input_change_by_design() -> Scenario {
     }
 }
 
-/// The negative control (§1.9): a §1.1 input is perturbed before **every**
-/// turn, so each request starts a new prefix and nothing is ever carried. If
-/// this scenario meets the threshold, the mock is not accounting from the
-/// request and the bench must fail.
+/// 음성 대조군(§1.9): 매 턴 **모두** 안정 입력을 바꿔 각 요청이 새 접두로
+/// 시작하고 이전 접두가 재사용되지 않게 한다. 이 시나리오가 기준을 넘으면
+/// 모형이 요청 내용을 기준으로 계산하지 않는 것이므로 검사를 실패시킨다.
 fn negative_control() -> Scenario {
     let mut turns: Vec<Turn> = vec![turn(format!("Turn 1: {DIALOGUE_LINE}"), 0)];
     for i in 2..=6 {
         turns.push(mutated_turn(
             format!("Turn {i}: {DIALOGUE_LINE}"),
-            Mutation::AddSkill(format!("noise-{i}")),
+            Mutation::ChangeInstructions(format!(
+                "Bench workspace instructions: perturbed before turn {i}.\n"
+            )),
             0,
         ));
     }
@@ -453,7 +457,7 @@ impl ScenarioInputs {
     fn base(workspace: &Path) -> Self {
         Self {
             workspace: workspace.to_path_buf(),
-            system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
+            system_prompt: format!("{DEFAULT_SYSTEM_PROMPT}\n{}", STABLE_BENCH_RULE.repeat(96)),
             skills: vec![SkillIndexEntry {
                 name: "bench-skill".to_string(),
                 description: "A skill the bench keeps in the index.".to_string(),
@@ -467,10 +471,6 @@ impl ScenarioInputs {
 
     fn apply(&mut self, mutation: &Mutation) {
         match mutation {
-            Mutation::AddSkill(name) => self.skills.push(SkillIndexEntry {
-                name: name.clone(),
-                description: format!("skill {name}"),
-            }),
             Mutation::ChangeInstructions(text) => self.instructions = Some(text.clone()),
         }
     }

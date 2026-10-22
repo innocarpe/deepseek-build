@@ -1,7 +1,8 @@
 //! Prefix builder: stable sections + volatile tail (spec 10).
 
+use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use dsb_provider_deepseek::{ChatMessage, ToolDefinition};
 use serde::Serialize;
@@ -47,7 +48,7 @@ impl EnvironmentSummary {
     }
 }
 
-/// Inputs that fully determine the stable prefix (no clocks/random).
+/// 안정 접두와 요청 단위 도구·스킬 메타데이터의 입력이다.
 #[derive(Debug, Clone)]
 pub struct PrefixBuildInputs {
     pub system_prompt: String,
@@ -78,8 +79,8 @@ pub struct StablePrefix {
     pub messages: Vec<ChatMessage>,
     pub bytes: Vec<u8>,
     pub epoch: PrefixEpoch,
-    /// Per-component hashes over the same documents that composed `bytes`
-    /// (spec 10 §1.5.1). Observational: it never affects `bytes` or `epoch`.
+    /// 안정 접두 구성요소와 요청 단위 도구·스킬 메타데이터의 해시다
+    /// (Spec 10 §1.5.1). 도구·스킬 해시는 관측용이며 `bytes`나 `epoch`에 영향을 주지 않는다.
     pub shape: PrefixShape,
 }
 
@@ -111,9 +112,8 @@ impl PrefixBuilder {
     }
 
     pub fn build(&self, inputs: &PrefixBuildInputs) -> Result<StablePrefix, PrefixError> {
-        // Component documents, in §1.1 order. The body is assembled from exactly
-        // these strings and the shape hashes exactly these strings, so a
-        // component hash cannot describe bytes other than the ones emitted.
+        // 도구 스키마와 스킬 색인은 다른 요청 입력에 실린다. 안정 시스템 메시지에는
+        // 시스템 템플릿, 환경, 프로젝트 지침만 둔다.
         let system_component = inputs.system_prompt.trim_end().to_string();
         let tools_component = tools_document(&inputs.tools)?;
         let skills_component = skills_document(&inputs.skills_index)?;
@@ -121,11 +121,6 @@ impl PrefixBuilder {
         let project_instructions_component = inputs.project_instructions.trim_end().to_string();
 
         let mut system_body = system_component.clone();
-        system_body.push_str("\n\n");
-        system_body.push_str("## Tools\n");
-        system_body.push_str(&tools_component);
-        system_body.push_str("\n\n## Skills index\n");
-        system_body.push_str(&skills_component);
         system_body.push_str("\n\n## Environment\n");
         system_body.push_str(&environment_component);
         if !inputs.project_instructions.trim().is_empty() {
@@ -225,47 +220,54 @@ fn env_document(env: &EnvironmentSummary) -> Result<String, PrefixError> {
     Ok(String::from_utf8(bytes).expect("json is utf-8"))
 }
 
-/// Discover standing project instructions (spec 10 §1.4).
+/// 프로젝트 지침(Spec 10 §1.4)을 찾는다. 설정된 경로가 심링크 별칭이면 실제 파일은
+/// 한 번만 포함한다.
 ///
 /// Order:
 /// 1. `./DEEPSEEK.md` or `./DEEPSEEK_BUILD.md` (first found)
 /// 2. `./AGENTS.md`
 /// 3. `./.deepseek-build/instructions.md`
 pub fn discover_project_instructions(workspace_root: &Path) -> Result<String, PrefixError> {
-    let mut parts: Vec<String> = Vec::new();
+    let mut seen = HashSet::new();
+    let mut parts = Vec::new();
+    for path in project_instruction_candidates(workspace_root) {
+        let identity = path.canonicalize().unwrap_or_else(|_| path.clone());
+        if seen.insert(identity) {
+            parts.push(read_labeled(&path)?);
+        }
+    }
+    Ok(parts.join("\n\n---\n\n"))
+}
 
-    let primary = [
-        workspace_root.join("DEEPSEEK.md"),
-        workspace_root.join("DEEPSEEK_BUILD.md"),
-    ];
-    for p in primary {
-        if p.is_file() {
-            parts.push(read_labeled(&p)?);
+fn project_instruction_candidates(workspace_root: &Path) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for name in ["DEEPSEEK.md", "DEEPSEEK_BUILD.md"] {
+        let path = workspace_root.join(name);
+        if path.is_file() {
+            paths.push(path);
             break;
         }
     }
 
-    let agents = workspace_root.join("AGENTS.md");
-    if agents.is_file() {
-        parts.push(read_labeled(&agents)?);
-    }
-
-    let nested = workspace_root
-        .join(".deepseek-build")
-        .join("instructions.md");
-    if nested.is_file() {
-        parts.push(read_labeled(&nested)?);
-    }
-
-    Ok(parts.join("\n\n---\n\n"))
+    paths.extend(
+        [
+            workspace_root.join("AGENTS.md"),
+            workspace_root
+                .join(".deepseek-build")
+                .join("instructions.md"),
+        ]
+        .into_iter()
+        .filter(|path| path.is_file()),
+    );
+    paths
 }
 
 fn read_labeled(path: &Path) -> Result<String, PrefixError> {
+    let body = fs::read_to_string(path)?;
     let name = path
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("instructions");
-    let body = fs::read_to_string(path)?;
     // Normalize newlines to \n only.
     let body = body.replace("\r\n", "\n").replace('\r', "\n");
     Ok(format!("### {name}\n\n{}", body.trim_end()))
@@ -344,16 +346,14 @@ mod tests {
 
     #[test]
     fn stable_prefix_bytes_golden_lock() {
-        // Measured before the §1.5.1 attribution work landed and unchanged by it.
-        // If this fails, the shared prefix bytes moved: every existing session's
-        // provider cache is invalidated by that change, and the PR that moves it
-        // must say so in its cache-impact section (spec 10 §4).
+        // 이 골든은 중복 도구·스킬 절을 뺀 안정 본문이다. 업그레이드 시 기존 세션은
+        // 새 캐시 epoch를 한 번 받고, 업그레이드 뒤 같은 요청은 이 본문을 유지한다.
         let p = PrefixBuilder::new().build(&sample_inputs()).unwrap();
         assert_eq!(
-            p.epoch.sha256_hex, "c4b3cc9b5c5e847f9e57bb5b21cf3674a0a72859a3fb48dbb8669028c6aba20e",
+            p.epoch.sha256_hex, "6443c449b3c6acd55fa2e76bc7206706a1243268b47593fa89b91b60a6e7dab3",
             "stable prefix bytes moved — this is cache-breaking for live sessions"
         );
-        assert_eq!(p.bytes.len(), 463);
+        assert_eq!(p.bytes.len(), 145);
     }
 
     #[test]
@@ -371,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn shape_names_one_axis_per_changed_component() {
+    fn stable_prefix_axes_move_the_epoch_but_request_metadata_does_not() {
         use crate::shape::PrefixChange;
         let b = PrefixBuilder::new();
         let base = sample_inputs();
@@ -398,8 +398,6 @@ mod tests {
         let base_build = b.build(&base).unwrap();
         for (inputs, expected) in [
             (system, "system"),
-            (tools, "tools"),
-            (skills, "skills"),
             (environment, "environment"),
             (instructions, "project_instructions"),
         ] {
@@ -416,10 +414,31 @@ mod tests {
             );
             assert!(!change.unattributed);
         }
+
+        let base_build = b.build(&base).unwrap();
+        for (inputs, expected_hash) in [(tools, "tools"), (skills, "skills")] {
+            let cur = b.build(&inputs).unwrap();
+            assert_eq!(base_build.epoch, cur.epoch);
+            assert_eq!(base_build.bytes, cur.bytes);
+            assert_ne!(
+                match expected_hash {
+                    "tools" => &base_build.shape.tools,
+                    _ => &base_build.shape.skills,
+                },
+                match expected_hash {
+                    "tools" => &cur.shape.tools,
+                    _ => &cur.shape.skills,
+                },
+                "{expected_hash} request metadata should still be observable"
+            );
+            let change = PrefixChange::between(&base_build.shape, &cur.shape, false);
+            assert_eq!(change.label(), "none");
+            assert!(!change.unattributed);
+        }
     }
 
     #[test]
-    fn attribute_detail_holds_names_not_content() {
+    fn prefix_change_logs_never_contain_request_or_instruction_content() {
         use crate::shape::PrefixChange;
         let b = PrefixBuilder::new();
         let base = sample_inputs();
@@ -432,15 +451,15 @@ mod tests {
         let prev_build = b.build(&base).unwrap();
         let cur_build = b.build(&cur).unwrap();
         let change = PrefixChange::between(&prev_build.shape, &cur_build.shape, true);
-        let detail = change.detail_label().expect("detail for named axes");
-        assert!(detail.contains("skills.added=gamma"));
+        assert_eq!(change.label(), "project_instructions");
+        let log = change.log_block("previous", "current");
         assert!(
-            !detail.contains("SECRET_SKILL_DESCRIPTION"),
-            "detail must not carry skill content: {detail}"
+            !log.contains("SECRET_SKILL_DESCRIPTION"),
+            "change log must not carry skill content: {log}"
         );
         assert!(
-            !detail.contains("SECRET_INSTRUCTION_BODY"),
-            "detail must not carry instruction content: {detail}"
+            !log.contains("SECRET_INSTRUCTION_BODY"),
+            "change log must not carry instruction content: {log}"
         );
     }
 
@@ -455,7 +474,7 @@ mod tests {
     }
 
     #[test]
-    fn prefix_changes_when_tool_added() {
+    fn prefix_tool_metadata_does_not_change_stable_bytes() {
         let b = PrefixBuilder::new();
         let mut inputs = sample_inputs();
         let p1 = b.build(&inputs).unwrap();
@@ -464,8 +483,9 @@ mod tests {
             json!({"type":"object","properties":{}}),
         ));
         let p2 = b.build(&inputs).unwrap();
-        assert_ne!(p1.bytes, p2.bytes);
-        assert_ne!(p1.epoch.sha256_hex, p2.epoch.sha256_hex);
+        assert_eq!(p1.bytes, p2.bytes);
+        assert_eq!(p1.epoch, p2.epoch);
+        assert_ne!(p1.shape.tools, p2.shape.tools);
     }
 
     #[test]
@@ -506,12 +526,14 @@ mod tests {
 
     #[test]
     fn skills_sorted_by_name() {
-        let b = PrefixBuilder::new();
-        let p = b.build(&sample_inputs()).unwrap();
-        let s = p.messages[0].content.as_ref().unwrap();
+        let s = skills_document(&sample_inputs().skills_index).unwrap();
         let alpha = s.find("\"name\":\"alpha\"").unwrap();
         let beta = s.find("\"name\":\"beta\"").unwrap();
         assert!(alpha < beta, "skills must be sorted by name");
+        let prefix = PrefixBuilder::new().build(&sample_inputs()).unwrap();
+        let body = prefix.messages[0].content.as_ref().unwrap();
+        assert!(!body.contains("## Skills index"));
+        assert!(!body.contains("\"name\":\"alpha\""));
     }
 
     #[test]
@@ -530,6 +552,20 @@ mod tests {
         assert!(text.contains("nested"));
         // DEEPSEEK_BUILD.md should not also load when DEEPSEEK.md exists
         assert!(!text.contains("DEEPSEEK_BUILD"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discover_project_instructions_includes_a_symlinked_file_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let primary = dir.path().join("DEEPSEEK.md");
+        fs::write(&primary, "shared body").unwrap();
+        std::os::unix::fs::symlink(&primary, dir.path().join("AGENTS.md")).unwrap();
+
+        let text = discover_project_instructions(dir.path()).unwrap();
+        assert_eq!(text.matches("shared body").count(), 1);
+        assert!(text.contains("### DEEPSEEK.md"));
+        assert!(!text.contains("### AGENTS.md"));
     }
 
     #[test]

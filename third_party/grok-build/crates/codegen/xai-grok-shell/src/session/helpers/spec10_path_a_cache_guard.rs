@@ -21,9 +21,9 @@
 //!    The mock accounts the serialized `messages` array, message by message,
 //!    the same rule as the overlay mock. The `tools[]` field is a full
 //!    replacement on every request (spec 10 §1.10 rule 5) and is not part of
-//!    the carry; a tools change still moves the score because the tools
-//!    document is inside the stable body. Sampler defaults (`model`,
-//!    temperature) are not message bytes.
+//!    메시지 적중 계산에는 포함하지 않는다. 도구 스키마는 안정 본문에 중복되지
+//!    않으므로 도구만 바뀌면 메시지 바이트 점수는 그대로다. 샘플러 기본값(`model`,
+//!    `temperature`)도 메시지 바이트가 아니다.
 //!
 //! Hit and miss tokens are `bytes / 4`. The constant cancels in the ratio.
 //! It is the overlay's unit, not a provider bill.
@@ -284,15 +284,6 @@ fn write_base(workspace: &Path) {
 
 fn apply_mutation(workspace: &Path, mutation: &Mutation) {
     match mutation {
-        Mutation::AddSkill(name) => {
-            let skill = workspace.join("skills").join(name);
-            std::fs::create_dir_all(&skill).expect("skill dir");
-            std::fs::write(
-                skill.join("SKILL.md"),
-                format!("---\ndescription: skill {name}\n---\n# {name}\n"),
-            )
-            .expect("write SKILL.md");
-        }
         Mutation::ChangeInstructions(text) => {
             std::fs::write(workspace.join("AGENTS.md"), text).expect("write AGENTS.md");
         }
@@ -350,8 +341,6 @@ fn score_current(
 /// Path A appends the new stable body (§1.10); it does not rewrite the head.
 #[derive(Debug, Clone)]
 enum Mutation {
-    /// §1.1 item 3 — a skill enters the index.
-    AddSkill(String),
     /// §1.1 item 5 — standing project instructions change (AGENTS.md).
     ChangeInstructions(String),
 }
@@ -461,15 +450,17 @@ fn input_change_by_design() -> Scenario {
     }
 }
 
-/// A §1.1 input is perturbed before every turn after the first, so each
-/// request appends a new stable body. The last-3 average must land below
-/// the threshold. If it does not, the mock is not accounting from the bytes.
+/// 첫 요청 뒤 매 턴마다 §1.1 안정 입력을 바꾸므로 안정 본문이 새로 추가된다.
+/// 마지막 3개 요청의 평균은 기준 아래여야 한다. 그렇지 않으면 모형이 바이트를
+/// 기준으로 적중을 계산하지 않는 것이다.
 fn negative_control() -> Scenario {
     let mut turns: Vec<Turn> = vec![turn(format!("Turn 1: {DIALOGUE_LINE}"), 0)];
     for i in 2..=6 {
         turns.push(mutated_turn(
             format!("Turn {i}: {DIALOGUE_LINE}"),
-            Mutation::AddSkill(format!("noise-{i}")),
+            Mutation::ChangeInstructions(format!(
+                "Bench workspace instructions: perturbed before turn {i}.\n"
+            )),
             0,
         ));
     }

@@ -1,8 +1,8 @@
-//! Skills index (stable prefix) + on-demand body load (volatile).
+//! 스킬 색인 메타데이터와 요청 시 본문 읽기.
 //!
-//! Index entries are name + short description only — full SKILL.md bodies are
-//! **not** embedded in the stable prefix so loading a skill mid-session does not
-//! thrash the cache epoch.
+//! 색인 항목에는 이름과 짧은 설명만 둔다. SKILL.md 본문은 안정 시스템 메시지에
+//! **포함하지 않는다**. 스킬 검색 안내는 시작 알림에 실리며, 세션 중 스킬을 읽어도
+//! 접두는 바뀌지 않는다.
 
 use std::fs;
 use std::path::{Path, PathBuf};

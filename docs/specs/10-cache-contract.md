@@ -19,11 +19,12 @@ messages_to_api =
 
 ### 1.1 Stable prefix contents (ordered)
 
-1. System prompt body (product template; no wall-clock, no random IDs).  
-2. Tool schemas document (canonical JSON; **sorted object keys** recursively).  
-3. Skills **index only** (name + one-line description; deterministic sort by name).  
-4. Small environment summary (OS family, cwd **as normalized path**, not hostname unless user opts in).  
-5. Standing project instructions (discovered files; deterministic order — see §1.4).  
+1. System prompt body (product template; no wall-clock, no random IDs).
+2. Small environment summary (OS family, cwd **as normalized path**, not hostname unless user opts in).
+3. Standing project instructions (discovered files; deterministic order — see §1.4).
+
+Tool schemas are sent in the API request's `tools[]` field. The skills index is
+sent in the startup reminder. Neither is copied into the stable system message.
 
 ### 1.2 Volatile tail
 
@@ -45,6 +46,10 @@ Define `stable_prefix_bytes = UTF-8 encoding of canonicalize(stable_prefix_messa
 
 **Invariant:** For identical inputs to the prefix builder, two consecutive builds produce **equal** `stable_prefix_bytes`.
 
+Moving duplicated tool and skills sections out of the stable message intentionally
+changes the epoch for existing sessions once. After upgrade, unchanged inputs
+reuse the new stable body and its cache prefix.
+
 ### 1.4 Project instruction discovery (minimal for M1)
 
 Load if present, in order, concatenate with clear separators:
@@ -54,30 +59,32 @@ Load if present, in order, concatenate with clear separators:
 3. `./.deepseek-build/instructions.md` if present  
 
 Missing files skip. Content changes → **new cache epoch** (prefix hash changes; expected).
+If multiple discovered instruction paths resolve to the same physical file,
+include that file once, keeping the first path in the order above. Path A also
+omits those same files from its separate project-rule reminder.
 
 ### 1.5 Epochs
 
-An **epoch** is the hash of `stable_prefix_bytes`. Log `prefix_epoch=sha256_hex` per request (or first 16 hex chars). Mid-session tool schema change **must** bump epoch (new tools list → new prefix).
+An **epoch** is the hash of `stable_prefix_bytes`. Log `prefix_epoch=sha256_hex` per request (or first 16 hex chars). Tool schema changes do not bump the epoch because tools are carried in `tools[]`, outside the stable system message. Skills-index changes likewise do not bump it because the index is carried in the startup reminder.
 
-Selecting or clearing the network provider (spec 40 §1.3) adds or removes
-`web_search` and `web_fetch` from the advertised tools. That changes the tools
-document and starts a new epoch. The wire schema of each tool is unchanged
-across providers, so the epoch moves because the tool set changed.
+Selecting or clearing the network provider (spec 40 §1.3) can add or remove
+`web_search` and `web_fetch` from the API request's `tools[]` field. The stable
+system-message epoch remains unchanged.
 
 #### 1.5.1 Change attribution (normative)
 
 An epoch says *that* the prefix moved. It must not be the only thing the log says.
 
-A **prefix shape** is the per-component hashes over exactly the inputs the
-builder consumed — the five components of §1.1:
+A **prefix shape** names changes to the three stable-message components in §1.1.
+Tool and skill metadata may also be hashed for diagnostics, but those hashes
+are request metadata and do not participate in prefix attribution or epoch
+comparison.
 
 | Component | Covers |
 |-----------|--------|
 | `system` | System prompt template body (§1.1 item 1) |
-| `tools` | Tool schemas document (§1.1 item 2) |
-| `skills` | Skills index (§1.1 item 3) |
-| `environment` | OS family + normalized cwd (§1.1 item 4) |
-| `project_instructions` | Standing project instructions (§1.1 item 5) |
+| `environment` | OS family + normalized cwd (§1.1 item 2) |
+| `project_instructions` | Standing project instructions (§1.1 item 3) |
 
 Each component hash is SHA-256 over that component's bytes **as `build()`
 emits them**, produced by the same document functions — so a component hash
@@ -92,15 +99,13 @@ set — including when nothing moved, because `none` is the evidence that the
 comparison actually ran:
 
 ```text
-prefix_change=system,tools prev=<epoch_short> cur=<epoch_short>
-prefix_change_detail=tools.added=write,skills.removed=old-skill
+prefix_change=system,project_instructions prev=<epoch_short> cur=<epoch_short>
+prefix_change_detail=environment.cwd
 ```
 
-- Axis names: `system` · `tools` · `skills` · `environment` ·
-  `project_instructions`. Sorted by that order, comma-joined.
+- Axis names: `system` · `environment` · `project_instructions`. Sorted in
+  that order, comma-joined.
 - Detail sub-keys, only where the component exposes a finer axis:
-  - `tools.added=<name>` · `tools.removed=<name>` · `tools.changed=<name>`
-  - `skills.added=<name>` · `skills.removed=<name>` · `skills.changed=<name>`
   - `environment.os_family` · `environment.cwd`
 - `prefix_change=none` when nothing moved.
 - `prefix_change=unattributed` when the epoch moved but **no** component hash
@@ -116,8 +121,8 @@ Rules:
 2. A component with no finer axis reports its name only. `project_instructions`
    reaches the builder already concatenated (§1.4) and re-parsing file
    boundaries out of it is not a contract; `system` likewise.
-3. Detail carries axis names and tool/skill **names** — never instruction
-   content: no prompt body, no skill description, no cwd value.
+3. Detail carries axis names only — never instruction content, skill names or
+   descriptions, tool names, or cwd values.
 4. A comparison with no baseline makes **no claim**: the shape is recorded and
    no `prefix_change=` line is logged. Guessing from an absent baseline is how
    false attribution starts. A baseline that exists always produces a line,
@@ -138,20 +143,19 @@ Rules:
 Path A builds the prefix in `assemble_spec10_path_a_turn` and applies it from
 `apply_spec10_to_conversation_request`, called from
 `acp_session_impl/turn.rs` on every main turn. Attribution uses only the
-documents that function already concatenates, hashed **before** concatenation:
+stable-message components, hashed **before** concatenation:
 
 | Axis | Bytes hashed |
 |---|---|
-| `system` | System prompt after `trim_end`, the bytes before `## Tools` |
-| `tools` | `tools_document` |
-| `skills` | `skills_document` |
+| `system` | System prompt after `trim_end`, the bytes before `## Environment` |
 | `environment` | `env_document` |
 | `project_instructions` | The project-instructions bytes actually appended, or empty when that section is omitted |
 
 No other axis. The volatile tail, the §1.10 placement
 (`unchanged` / `first_write` / `appended`), and the wire `tools[]` array are
-not attribution categories. The tools axis is the tools document inside the
-stable body. A category this assembly cannot see is not added.
+not attribution categories. The startup skills reminder is also outside the
+stable body. Tool and skill metadata hashes do not create prefix axes. A
+category this assembly cannot see is not added.
 
 Rules for this path, against §1.5.1:
 
@@ -166,18 +170,15 @@ Rules for this path, against §1.5.1:
 3. When the epoch differs, log one block:
 
    ```text
-   prefix_change=system,tools prev=<epoch_short> cur=<epoch_short>
-   prefix_change_detail=tools.added=write
+   prefix_change=system,environment prev=<epoch_short> cur=<epoch_short>
+   prefix_change_detail=environment.cwd
    ```
 
    Axes are in the §1.1 order above. The detail line is omitted when the
    moved component has no finer axis (`system`, `project_instructions`).
-4. Finer axes, and only these: `tools.added=<name>`, `tools.removed=<name>`,
-   `tools.changed=<name>`, `tools.reordered` (the tools document moved and
-   every named tool hash matches), `skills.added=<name>`,
-   `skills.removed=<name>`, `skills.changed=<name>`, `environment.os_family`,
-   `environment.cwd`. Detail names the axis. It does not include prompt text,
-   a skill description, or a cwd value (rule 3).
+4. Finer axes, and only these: `environment.os_family` and
+   `environment.cwd`. Detail names the axis. It does not include prompt text
+   or a cwd value (rule 3).
 5. If the epoch differs and every component hash matches, log
    `prefix_change=unattributed`. That is a coverage bug in this section, not
    a sixth component and not a provider event (§3).
@@ -363,9 +364,10 @@ one identical insert that returned 0. Identical bodies were not
 token-stable (641, 712, and 768 on one 792-token request). This section
 therefore binds **bytes of system messages**, not a live token count.
 
-The product template is still recovered from the earliest system message, as
-the text before the `\n\n## Tools\n` marker. Every system message this
-section writes is a full stable body, not a delta.
+The product template is recovered from the earliest current or legacy stable
+section marker: `\n\n## Environment\n` for new bodies and
+`\n\n## Tools\n` for conversations created by older builds. Every system
+message this section writes is a full stable body, not a delta.
 
 1. **The latest system message is the effective prompt.** The model treats
    the last system message as the current stable body. Earlier system
@@ -373,19 +375,20 @@ section writes is a full stable body, not a delta.
 2. **Unchanged body.** When the newly assembled body equals the latest
    system message, ignoring trailing newlines, no system message is edited
    and none is added.
-3. **First placement.** When no system message contains the `\n\n## Tools\n`
-   marker, the body is written into the leading system message, or inserted
-   at index 0 when the request has none. There is no earlier stable body
-   to keep.
-4. **Later change.** When a system message already contains that marker and
+3. **First placement.** When no system message contains either the current
+   `\n\n## Environment\n` marker or the legacy `\n\n## Tools\n` marker, the
+   body is written into the leading system message, or inserted at index 0
+   when the request has none. There is no earlier stable body to keep.
+4. **Later change.** When a system message already contains either marker and
    the assembled body differs from the latest system message, every earlier
-   system message stays byte-for-byte, and the new body is appended after
-   the current items.
-5. **What can move the body.** The tools document is inside the stable body
-   (§1.1 item 2), so a tools, skills, environment, or project-instruction
-   change appends under rule 4. The request `tools` array is still the full
-   list on every request. This section does not define a tool-addition or
-   tool-removal history message. Chat Completions has no field for one.
+   system message stays byte-for-byte, and the new body is appended after the
+   current items.
+5. **What can move the body.** System-template, environment, or
+   project-instruction changes append under rule 4. Tool schemas stay in the
+   request's full `tools[]` array, and the skills index stays in the startup
+   reminder; changes to either do not change this stable system body. This
+   section does not define a tool-addition or tool-removal history message.
+   Chat Completions has no field for one.
 6. **Not this section.** `replace_or_insert_system_head` rewrites the stored
    leading system (model switch, memory) before this assembly runs. That
    rewrite is a different byte change. This section does not turn it into
@@ -413,7 +416,7 @@ append rule does not depend on the bench.
 |------|----------|
 | Non-deterministic field in system template | **Bug**; tests must catch |
 | Tool schema key order shuffle | **Bug** |
-| Compaction rewrites system tools mid-epoch without bump | **Bug** |
+| Compaction rewrites the stable system body mid-epoch without bump | **Bug** |
 | Epoch moved, no component hash moved | `prefix_change=unattributed`; **bug in §1.5.1 coverage**; test must exist |
 | Attribution names a component on an unchanged prefix | **Bug**; false positives make the line worthless |
 | Detail line carries instruction content or a cwd value | **Bug**; §1.5.1 rule 3 |
@@ -435,25 +438,24 @@ run inside `xai-grok-shell` (`cargo test -p xai-grok-shell --lib`, from
 | Test | Expect |
 |------|--------|
 | `prefix_stable_across_two_builds` | bytes equal |
-| `prefix_changes_when_tool_added` | bytes differ; epoch differs |
+| `prefix_tool_metadata_does_not_change_stable_bytes` | tools metadata changes; stable bytes and epoch stay equal |
 | `prefix_no_timestamp` | fixture system template without clock |
 | `sorted_tool_schema_keys_same_bytes` | permuting input map → same bytes |
+| `discover_project_instructions_includes_a_symlinked_file_once` | physical instruction aliases contribute one document |
 | Negative: inject `Utc::now` into builder path | test fails if someone reintroduces |
 
 ### 4.2 §1.3 bytes and §1.5.1 shape
 
 | Test | Expect |
 |------|--------|
-| `stable_prefix_bytes_golden_lock` | fixture epoch pinned to `c4b3cc9b…a20e` / 463 bytes; a change that moves prefix bytes fails with "this is cache-breaking for live sessions" |
+| `stable_prefix_bytes_golden_lock` | fixture epoch pinned to `6443c449…dab3` / 145 bytes; a change that moves prefix bytes fails with "this is cache-breaking for live sessions" |
 | `shape_is_observational_not_byte_affecting` | two builds of one input → equal bytes, epoch, **and** shape |
-| `shape_names_one_axis_per_changed_component` | each of the five components mutated in turn → exactly its own axis, no false positive |
-| `attribute_detail_holds_names_not_content` | skill/instruction text absent from the detail line |
+| `stable_prefix_axes_move_the_epoch_but_request_metadata_does_not` | the three stable components each name their axis; tool/skill metadata changes leave bytes and epoch equal |
+| `prefix_change_logs_never_contain_request_or_instruction_content` | skill/instruction text absent from the change log |
 | `system_change_names_system_only` | prompt body changed → `system`, no detail (no finer axis) |
-| `tool_names_added_removed_changed` | → `tools` + `tools.added=`/`changed=`/`removed=` with names |
-| `tool_reorder_names_reordered` | tool order moved, entries identical → `tools.reordered` |
-| `skill_names_added_removed_changed` | → `skills` + the exact `skills.<axis>=<name>` |
+| `request_tool_and_skill_changes_do_not_move_the_prefix` | request metadata differs; attribution remains `none` |
 | `environment_axes_are_named_not_valued` | cwd change → `environment.cwd`; neither value appears |
-| `multiple_axes_sorted_in_spec_order` | §1.1 order in the label |
+| `multiple_axes_sorted_in_spec_order` | stable components follow §1.1 order in the label |
 | `unchanged_shape_reports_none` | → `none`, no detail |
 | `epoch_moved_without_component_change_is_unattributed` | → `unattributed` (coverage bug, §3) |
 | `log_block_carries_epochs_and_detail_only_when_present` | `prev=`/`cur=` present; detail line only when there is detail |
@@ -540,12 +542,15 @@ persist→resume cases in `crates/dsb-agent/src/loop_.rs`.
 
 | Test | Expect |
 |------|--------|
-| `path_a_shape_is_the_concatenated_documents` | The stable body is the five documents concatenated, and the tools/system hashes are those documents |
+| `path_a_shape_tracks_stable_body_and_request_metadata` | The stable body contains system, environment, and project instructions; tool/skill hashes remain request metadata |
 | `path_a_first_sight_and_unchanged_epoch_have_no_change_line` | No baseline, and a repeated epoch, both return no `prefix_change=` line |
-| `path_a_tool_add_names_tools_added` | A new tool is `tools` / `tools.added=<name>`, and the session observer agrees |
+| `path_a_tool_add_does_not_move_the_stable_prefix` | A new tool changes request metadata but leaves stable bytes and epoch unchanged |
 | `path_a_system_change_names_system_only` | A system-template change names `system` and has no detail line |
-| `path_a_tool_reorder_names_reordered` | Reordering tools moves the epoch and the detail is `tools.reordered` |
-| `path_a_skill_description_names_the_skill_not_the_text` | `skills.changed=<name>`; the description text is not in the line |
+| `path_a_tool_reorder_does_not_move_the_stable_prefix` | Reordering request tools leaves stable bytes and epoch unchanged |
+| `path_a_skill_description_does_not_move_the_stable_prefix` | Changing the request skill metadata leaves stable bytes and epoch unchanged |
+| `vc007_stable_system_body_contains_only_template_environment_and_instructions` | the stable system message contains neither the tool schema nor skills index |
+| `vc007_wire_rewrite_mutates_system_message` | a tool definition appears once in the serialized request, in `tools[]` |
+| `stable_project_instruction_symlink_is_not_repeated_as_a_rule` | a stable instruction file alias is omitted from the separate rule bundle |
 | `path_a_environment_detail_names_the_axis_not_the_cwd` | `environment.cwd`; the cwd value is not in the line |
 | `path_a_project_instructions_have_no_finer_axis` | `project_instructions` with no detail line and no instruction text |
 | `path_a_axes_stay_in_section_order` | Moved axes join in §1.1 order |
@@ -577,7 +582,8 @@ tests, plus the actual Path A resume/request/status regression.
 - `dsb-agent` carries the shape on the built prefix and persists it with the
   session; `dsb-cli` prints the lines. That is the overlay resume path.
 - Path A carries its own shape inside `assemble_spec10_path_a_turn`, over the
-  five documents that function concatenates. `turn.rs` logs
+  stable message components plus request-level tool/skill metadata hashes.
+  `turn.rs` logs
   `prefix_change=` only when that epoch differs from the previous assembly
   of the same session in this process. The Path A baseline is not persisted.  
 - The §1.5.2 counter is `crates/dsb-agent/src/cache_totals.rs`, carried on

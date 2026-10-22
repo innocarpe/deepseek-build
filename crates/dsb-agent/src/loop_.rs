@@ -235,7 +235,7 @@ impl Agent {
         } else {
             config.skills_index.clone()
         };
-        // MCP catalog (spec 80): load static catalogs; fingerprint joins tool schemas for epoch.
+        // MCP 카탈로그(Spec 80): 정적 카탈로그를 읽고 도구 스키마는 API 요청에 보낸다.
         let mcp_cfg = load_mcp_config(&config.workspace_root, config.grants_home.as_deref())
             .unwrap_or_default();
         let mcp_catalog = catalog_from_config(&mcp_cfg).unwrap_or_default();
@@ -246,7 +246,7 @@ impl Agent {
         };
         if !mcp_catalog.is_empty() {
             tools_defs.extend(catalog_tool_definitions(&mcp_catalog));
-            // Embed fingerprint note in system via tools doc already; also stamp description.
+            // 요청에 보내는 도구 설명에 카탈로그 지문을 넣는다.
             let _fp = mcp_catalog.fingerprint_hex.clone();
         }
         let inputs = PrefixBuildInputs {
@@ -1039,7 +1039,7 @@ mod tests {
     }
 
     #[test]
-    fn a_changed_tool_schema_is_named_tools_on_resume() {
+    fn a_changed_tool_schema_is_request_metadata_on_resume() {
         let dir = tempdir().unwrap();
         // First process: explicit tool list.
         let client = Arc::new(
@@ -1071,8 +1071,9 @@ mod tests {
         .unwrap();
 
         let change = second.attribute_against_snapshot(&stored);
-        assert_eq!(change.label(), "tools");
-        assert_ne!(second.prefix_epoch_short(), stored.epoch_short);
+        assert_eq!(change.label(), "none");
+        assert_eq!(second.prefix_epoch_short(), stored.epoch_short);
+        assert_ne!(second.stable.shape.tools, stored.shape.tools);
     }
 
     #[tokio::test]

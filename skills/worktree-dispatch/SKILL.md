@@ -312,10 +312,18 @@ Run this from inside the worktree, after the push. From the tower the same
 command runs in one `cd "$WT" && …` segment, because the route reads that cwd;
 staying there afterwards is still the anti-pattern below.
 
+The route also reads the command string before the shell expands it. A
+`--match-head-commit "$HEAD_SHA"` argument arrives as the literal token
+`$HEAD_SHA` and is denied. Read the PR's 40-hex head with `gh pr view` and type
+that value into the merge command.
+
 ```sh
-HEAD_SHA="$(git -C "$WT" rev-parse HEAD)"
 GH_TOKEN="$(gh auth token --user <account>)" \
-  gh pr merge <n> --repo innocarpe/deepseek-build --merge --match-head-commit "$HEAD_SHA"
+  gh pr view <n> --repo innocarpe/deepseek-build --json headRefOid
+# paste the 40-hex headRefOid value into the next command, literally
+GH_TOKEN="$(gh auth token --user <account>)" \
+  gh pr merge <n> --repo innocarpe/deepseek-build --merge \
+  --match-head-commit <40-hex-headRefOid>
 gh pr view <n> --repo innocarpe/deepseek-build --json state,mergedAt,mergeCommit,headRefOid
 ```
 
@@ -381,6 +389,7 @@ worktree whose agent was mid-build (2026-09-25).
 | `cd "$WT"` and keep working | The next command meant for the tower runs in the tree, or the reverse |
 | `gh auth switch` | Flips the active account for every session on the machine |
 | `gh pr merge … --delete-branch` | The route allows only `--repo`, `--merge`, and `--match-head-commit`; `delete_branch_on_merge=true` already removes the remote branch |
+| `gh pr merge … --match-head-commit "$HEAD_SHA"` | The route reads the command before the shell expands it, so it sees the token `$HEAD_SHA`; paste the literal 40-hex SHA |
 | Two vendored Grok builds at once | 30–60+ min cold each; parallel builds starve each other |
 | `export CARGO_TARGET_DIR=<another worktree>/third_party/grok-build/target` | One target, two worktrees: cargo writes the same artifact names and its mtime-only freshness hands the older-sourced tree the other's code (measured 2026-09-27). Use `scripts/vendor-cargo.sh` |
 | `--name feat/x` | Becomes `feat-x`; name the worktree by slug and rename the branch |

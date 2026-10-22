@@ -100,6 +100,20 @@ pub struct ExternalCompatReport {
 }
 
 impl ExternalCompatReport {
+    /// The report's cells as a resolved [`CompatConfig`], so a caller can load
+    /// exactly the surfaces the runtime loads.
+    /// A cell the report omits keeps its default, like a surface no vendor gates.
+    pub(super) fn resolved_config(&self) -> CompatConfig {
+        let mut compat = CompatConfig::default();
+        for cell in COMPAT_CELLS {
+            let Some(status) = self.status(cell.vendor().as_ref(), cell.surface().as_ref()) else {
+                continue;
+            };
+            compat.set(cell, status == CompatEntryStatus::Enabled);
+        }
+        compat
+    }
+
     fn status(&self, vendor: &str, surface: &str) -> Option<CompatEntryStatus> {
         self.cells
             .iter()

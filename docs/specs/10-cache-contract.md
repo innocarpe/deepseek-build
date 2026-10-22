@@ -59,6 +59,11 @@ Missing files skip. Content changes → **new cache epoch** (prefix hash changes
 
 An **epoch** is the hash of `stable_prefix_bytes`. Log `prefix_epoch=sha256_hex` per request (or first 16 hex chars). Mid-session tool schema change **must** bump epoch (new tools list → new prefix).
 
+Selecting or clearing the network provider (spec 40 §1.3) adds or removes
+`web_search` and `web_fetch` from the advertised tools. That changes the tools
+document and starts a new epoch. The wire schema of each tool is unchanged
+across providers, so the epoch moves because the tool set changed.
+
 #### 1.5.1 Change attribution (normative)
 
 An epoch says *that* the prefix moved. It must not be the only thing the log says.

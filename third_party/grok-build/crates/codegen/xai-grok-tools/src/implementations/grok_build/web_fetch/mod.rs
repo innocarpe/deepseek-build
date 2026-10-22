@@ -25,7 +25,7 @@ pub use error::WebFetchError;
 // Config enum (feature flag gating)
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Configuration for the `web_fetch` tool. When `Enabled`, the tool is registered and a
+/// Configuration for the `web_fetch` tool. When enabled, the tool is registered and a
 /// `WebFetchClient` is injected into `Resources`. When `Disabled` (default), the tool is not
 /// registered.
 #[derive(Debug, Clone, Default)]
@@ -36,12 +36,29 @@ pub enum WebFetchConfig {
         /// Runtime parameters (allowed_domains, proxy_endpoint, timeouts, etc.)
         params: WebFetchParams,
     },
+    /// DeepSeek's direct Fetch API (`POST {base_url}/fetch`). The tool name,
+    /// input schema, and `WebFetchOutput` shape stay the same as `Enabled`.
+    DeepSeek {
+        api_key: String,
+        /// Base including the `/v1/tools` route prefix.
+        base_url: String,
+        /// Output bounds (context window, max markdown length).
+        params: WebFetchParams,
+    },
 }
 
 impl WebFetchConfig {
-    /// Returns `true` when the config is the `Enabled` variant.
+    /// Returns `true` when a provider is configured.
     pub fn is_enabled(&self) -> bool {
-        matches!(self, Self::Enabled { .. })
+        matches!(self, Self::Enabled { .. } | Self::DeepSeek { .. })
+    }
+
+    /// Runtime parameters, whichever provider is selected.
+    pub fn params(&self) -> Option<&WebFetchParams> {
+        match self {
+            Self::Disabled => None,
+            Self::Enabled { params } | Self::DeepSeek { params, .. } => Some(params),
+        }
     }
 }
 

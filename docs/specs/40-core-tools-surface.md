@@ -38,7 +38,6 @@ It does **not** re-specify snippet version algorithms (spec 45), permission scop
 | Tool | Status |
 |------|--------|
 | `ask_user` / interactive confirm | deferred (permissions UX `0.9.0`) |
-| `web_search` | deferred |
 | Parallel multi-tool fan-out | **G4** / Wave C |
 | Subagent tools | **G5** / Wave C |
 | MCP-mounted tools | **G6c** / `0.11.0` |
@@ -62,6 +61,23 @@ Default product goal: **≤ 8** built-in tools in the stable prefix. Adding a to
 1. This catalog update (spec 40).  
 2. A documented cache epoch if schema JSON changes mid-session (spec 10).  
 3. Tests updating the registry golden set.
+
+### 1.3 Network tools (Path A)
+
+The product TUI builds its tool surface from the vendored tree, not from the
+six-tool overlay above. Two read-only network tools are part of this catalog
+and keep the same canonical names and wire schemas on both surfaces:
+
+| Canonical name | Role | Mutating? | Default |
+|----------------|------|-----------|---------|
+| `web_search` | Search the web through the configured provider | no | off |
+| `web_fetch` | Retrieve one URL as Markdown through the configured provider | no | off |
+
+With both enabled the catalog holds **8** named built-ins, which is the
+product goal above. Both are opt-in through `[web]` (§2.7–2.8); when the
+section is absent or selects the vendored provider, they keep the pre-existing
+behavior: `web_search` uses the Responses backend when a search model
+resolves, and `web_fetch` stays behind its rollout flag.
 
 ---
 
@@ -140,6 +156,74 @@ Prefer `grep` over `bash` for workspace text search (cost + permission clarity).
 
 Loads **body on demand**. Does **not** mutate the stable skills **index** in the prefix (spec 10 / 70). `mutated` on the tool response is always `false` for a pure load.
 
+### 2.7 `web_search`
+
+| Arg | Required | Type | Notes |
+|-----|----------|------|-------|
+| `query` | **yes** | string | Passed through unchanged, including documented operators (`site:`, date, exclusion) |
+| `allowed_domains` | no | string[] | Advertised for schema compatibility; the DeepSeek provider does not forward it (§2.7.2) |
+
+**Success content:** `query`, `content`, `citations[]`, `allowed_domains`. `content` is the model-visible result body; `citations` are unique result URLs in provider order.
+
+#### 2.7.1 Provider selection (opt-in)
+
+`[web]` in the product `config.toml` selects the backend. Absent, empty, or
+`provider = "xai"` keeps the pre-existing vendored behavior.
+
+```toml
+[web]
+provider = "deepseek"          # opt-in; default is off
+base_url = "https://api.deepseek.com/v1/tools"  # optional; /search and /fetch are appended
+search_count = 8               # optional; clamped to 1..=50
+```
+
+- The API key is the resolved key of the `[models] web_search` stanza, then the
+  session model's key. With no key the tool is not advertised.
+- The DeepSeek request is `{"query", "count", "need_content": false}`.
+  `count` comes from `search_count`; the model cannot override it.
+- `ori_question` is **not** sent. The API defines it as up to 128 characters of
+  the user's latest prompt; dsb keeps that text out of the search service.
+  This is a product choice, not an API limitation.
+- `allowed_domains` is not forwarded. The API takes one query string; callers
+  that need scoping use `site:` in `query`. The argument stays in the schema so
+  the tool definition remains stable across providers.
+- Response fields `summary`, `site_name`, `site_icon`, `authority`, and
+  `rerank_score` are not mapped. Result order and `title` / `url` / `snippet` /
+  `date` are.
+- A non-2xx status is a structured tool error carrying the status and a
+  truncated body. An empty `results` array is a successful empty search.
+- The body is capped at 8,000 characters and each snippet at 400 characters;
+  a truncation marker names how many results were shown.
+
+#### 2.7.2 Cost
+
+DeepSeek prices Search and Fetch at **CNY 5 per 1,000 successful requests**
+(the request count, not the result count). A search is one request; multiple
+queries are multiple requests. The tool does not retry or fall back.
+
+### 2.8 `web_fetch`
+
+| Arg | Required | Type | Notes |
+|-----|----------|------|-------|
+| `url` | **yes** | string | Passed to the provider; the returned `url` is the requested URL |
+
+**Success content:** `url`, `content` (Markdown), `content_type` (`"markdown"`),
+`status_code` (`200`), `bytes` (complete body before truncation), optional
+`outputLocation`.
+
+- The DeepSeek request is `{"url"}` to `{base_url}/fetch`. The response `title`
+  is not mapped; the Markdown body already carries the page heading.
+- The service reports success as HTTP 200 and does not return the target's
+  status or final URL. Its 403/404/500 mean retrieval failed, so every non-2xx
+  response is a structured tool error, not a target diagnosis.
+- Target access policy belongs to the service for this backend. The local
+  static domain allowlist and SSRF checks apply to the local HTTP backend only;
+  the request this product makes egresses to the configured API base.
+- Output uses the existing overflow behavior: a session artifact when the
+  body exceeds the inline budget, plus a truncation marker. Without a session
+  folder the inline preview is bounded and the full body is not saved.
+- `bytes` is the complete body size before truncation.
+
 ---
 
 ## 3. Runtime boundary
@@ -173,6 +257,12 @@ Every tool path that touches the tree runs **permission decision** first (spec 9
 read, edit, write, grep, skill, bash
 ```
 
+Network tools (§1.3), when enabled, append after `bash` in this order:
+
+```text
+web_search, web_fetch
+```
+
 (or document and test the chosen order).
 
 ### 3.4 Schema stability (cache)
@@ -182,6 +272,7 @@ Per spec 10:
 - Tool schemas live in the **stable prefix**.  
 - Canonical JSON for schemas must be **byte-stable** for identical registry code.  
 - Changing any tool name, required field, or property shape starts a **new cache epoch** (document in release notes when shipping).
+- Selecting or clearing `[web]` changes which network tools the session advertises. The per-tool schema bytes do not change with the provider, so the epoch moves because the tool set changed, not because a schema was rewritten.
 
 ---
 
@@ -200,7 +291,7 @@ Per spec 10:
 
 | ID | Case | Expect |
 |----|------|--------|
-| T1 | Registry name set | Exactly the six canonical names; no extras |
+| T1 | Overlay registry name set | Exactly the six canonical overlay names; no extras |
 | T2 | Alias parse | `search`→grep, `load_skill`→skill; unknown → None |
 | T3 | Schema required fields | Each tool’s `required` matches §2 |
 | T4 | `edit` without `snippet_id` | Args error |
@@ -211,8 +302,17 @@ Per spec 10:
 | T9 | Allowed mutating bash | Snippets expired (or path-touched) |
 | T10 | `skill` load | Body returned; `mutated` false |
 | T11 | Schema JSON stability | Golden or hash of canonical tool schema document |
+| T12 | `[web]` absent / `xai` / unknown | No DeepSeek backend; pre-existing behavior |
+| T13 | `[web] provider = "deepseek"` | Default base `https://api.deepseek.com/v1/tools`; `search_count` clamped to 1..=50 |
+| T14 | DeepSeek search request | `query`, `count`, `need_content: false`; no `allowed_domains`, no `ori_question` |
+| T15 | DeepSeek search mapping | `title` / `url` / `snippet` / `date` in provider order; empty results succeeds |
+| T16 | DeepSeek search non-2xx | Structured error with status and truncated body |
+| T17 | DeepSeek fetch mapping | Markdown content, requested URL, `status_code` 200, complete `bytes` |
+| T18 | DeepSeek fetch non-2xx / invalid body | Structured error |
+| T19 | Search / fetch truncation | Result/snippet caps with marker; fetch overflow marker with complete `bytes` |
 
-T1–T10 already covered or extended under `dsb-tools` / agent tests for Wave A. T11 may be added when aligning code to this spec (Wave B unit B).
+T1–T10 already covered or extended under `dsb-tools` / agent tests for Wave A. T11 may be added when aligning code to this spec (Wave B unit B). T12–T19
+live in the vendored tree (`xai-grok-tools`, `xai-grok-shell`).
 
 ---
 
@@ -225,6 +325,10 @@ T1–T10 already covered or extended under `dsb-tools` / agent tests for Wave A.
 | Permissions | `crates/dsb-tools/src/permissions.rs` |
 | Agent wires `tool_definitions()` | `crates/dsb-agent/src/loop_.rs` |
 | Prefix tools document | `crates/dsb-context` |
+| Path A `web_search` client | `third_party/grok-build/crates/codegen/xai-grok-tools/src/implementations/web_search/` |
+| Path A `web_fetch` client | `third_party/grok-build/crates/codegen/xai-grok-tools/src/implementations/grok_build/web_fetch/` |
+| `[web]` resolution | `third_party/grok-build/crates/codegen/xai-grok-shell/src/util/config/resolve/toolset.rs` |
+| Session wiring | `.../xai-grok-shell/src/session/acp_session_impl/spawn.rs`, `.../agent/mvp_agent/agent_ops.rs` |
 
 ---
 

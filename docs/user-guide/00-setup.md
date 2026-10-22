@@ -52,6 +52,31 @@ Session titles, web search, and image description are pinned to the Flash
 stanza (`[models] session_summary` / `web_search` / `image_description`), so
 those side requests use the same provider instead of a vendored default model.
 
+## Web search and fetch
+
+The TUI's `web_search` and `web_fetch` tools are off by default. Enable them
+with the DeepSeek Search and Fetch APIs by adding this to
+`~/.deepseek-build/config.toml`:
+
+```toml
+[web]
+provider = "deepseek"
+# Optional: both default to the values below.
+# base_url = "https://api.deepseek.com/v1/tools"
+# search_count = 8
+```
+
+The API key comes from the resolved `[models] web_search` stanza, then the
+session model's key. Both tools ask for permission on first use.
+
+- Search sends the query, the result count, and `need_content: false`. It does
+  **not** send your latest prompt (`ori_question`), and the model's
+  `allowed_domains` argument is not forwarded.
+- Fetch returns the page as Markdown. DeepSeek retrieves the page, so its
+  access policy applies rather than the local HTTP fetch allowlist.
+- DeepSeek bills CNY 5 per 1,000 successful requests for each API; result
+  count does not change the price.
+
 ## Non-interactive
 
 ```bash

@@ -164,6 +164,28 @@ M2 classifier need not be perfect ML; a **deterministic rule engine** is enough:
 
 Golden tests pin rule outcomes for a fixture table of commands.
 
+### 1.9 Web tools (Path A)
+
+The product TUI's `web_search` and `web_fetch` use the vendored permission
+path. They map onto the `network` scope as follows.
+
+| Tool | Default decision | Notes |
+|------|------------------|-------|
+| `web_search` | **ask** | No session grant pre-decision; the prompt shows the query. |
+| `web_fetch` | **ask**, except documented static hosts | Hosts in the vendored documentation allowlist are allowed without a prompt; every other host asks. A per-domain grant persists after an “always allow” answer. |
+
+- The query or URL is part of the prompt, so the user sees what would leave
+  the machine before approving.
+- `--dangerously-allow-all` / yolo mode bypasses these prompts and stays an
+  explicit, per-invocation opt-in (§1.4).
+- With `[web] provider = "deepseek"` (spec 40 §2.7) the product's only egress
+  for these tools is the configured API base (`https://api.deepseek.com/v1/tools`
+  by default). The DeepSeek Fetch API retrieves the target page itself; the
+  local SSRF and static-domain checks describe the local HTTP backend and do
+  not constrain that service-side retrieval. The ask still applies.
+- A denied call returns the standard `permission_denied` tool error and does
+  not mutate disk or expire snippets.
+
 ## 2. Non-goals (minimum)
 
 - Perfect semantic understanding of all shell scripts  

@@ -522,6 +522,170 @@ fn web_search_options_from_section(
     }
 }
 
+/// Default DeepSeek Search/Fetch API base, including the `/v1/tools` route prefix.
+pub(crate) const DEFAULT_DEEPSEEK_WEB_BASE_URL: &str = "https://api.deepseek.com/v1/tools";
+
+/// Default DeepSeek Search API result count.
+pub(crate) const DEFAULT_DEEPSEEK_SEARCH_COUNT: u32 = 8;
+
+/// Providers selectable for the product `web_search` / `web_fetch` tools.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WebProvider {
+    DeepSeek,
+}
+
+/// Resolved `[web]` provider settings for one session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WebProviderConfig {
+    pub provider: WebProvider,
+    /// Base URL including its route prefix; `/search` and `/fetch` are appended.
+    pub base_url: String,
+    /// Search API result count, clamped to 1..=50.
+    pub search_count: u32,
+}
+
+/// Read the opt-in `[web]` provider from the merged effective config.
+///
+/// Absent, `provider = "xai"`, and an unknown provider all return `None`, which
+/// keeps the vendored Responses path. The product default is off.
+pub(crate) fn resolve_web_provider_from_disk() -> Option<WebProviderConfig> {
+    let effective = match crate::config::load_effective_config() {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "web provider: failed to load effective config");
+            return None;
+        }
+    };
+    web_provider_from_section(effective.get("web"))
+}
+
+fn web_provider_from_section(section: Option<&TomlValue>) -> Option<WebProviderConfig> {
+    let section = section?;
+    let provider = section
+        .get("provider")
+        .and_then(TomlValue::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?;
+    let provider = provider.to_ascii_lowercase();
+    if provider == "xai" {
+        return None;
+    }
+    if provider != "deepseek" {
+        tracing::warn!(
+            provider = %provider,
+            "[web] provider is not recognized; keeping the vendored web provider"
+        );
+        return None;
+    }
+
+    let base_url = section
+        .get("base_url")
+        .and_then(TomlValue::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_DEEPSEEK_WEB_BASE_URL)
+        .trim_end_matches('/')
+        .to_string();
+
+    let search_count = match section.get("search_count").and_then(TomlValue::as_integer) {
+        Some(value) => {
+            let clamped = value.clamp(1, 50) as u32;
+            if clamped as i64 != value {
+                tracing::warn!(
+                    value,
+                    clamped,
+                    "[web] search_count is outside 1..=50; using the clamped value"
+                );
+            }
+            clamped
+        }
+        None => DEFAULT_DEEPSEEK_SEARCH_COUNT,
+    };
+
+    Some(WebProviderConfig {
+        provider: WebProvider::DeepSeek,
+        base_url,
+        search_count,
+    })
+}
+
+#[cfg(test)]
+mod web_provider_tests {
+    use super::*;
+
+    fn section(body: &str) -> TomlValue {
+        let full: TomlValue = toml::from_str(&format!("[web]\n{body}\n")).unwrap();
+        full.get("web").unwrap().clone()
+    }
+
+    #[test]
+    fn absent_section_keeps_the_vendored_provider() {
+        assert_eq!(web_provider_from_section(None), None);
+    }
+
+    #[test]
+    fn missing_or_xai_provider_keeps_the_vendored_provider() {
+        assert_eq!(web_provider_from_section(Some(&section(""))), None);
+        assert_eq!(
+            web_provider_from_section(Some(&section("provider = \"xai\""))),
+            None
+        );
+    }
+
+    #[test]
+    fn unknown_provider_keeps_the_vendored_provider() {
+        assert_eq!(
+            web_provider_from_section(Some(&section("provider = \"deepsek\""))),
+            None
+        );
+    }
+
+    #[test]
+    fn deepseek_defaults_are_the_documented_public_route() {
+        assert_eq!(
+            web_provider_from_section(Some(&section("provider = \"deepseek\""))),
+            Some(WebProviderConfig {
+                provider: WebProvider::DeepSeek,
+                base_url: DEFAULT_DEEPSEEK_WEB_BASE_URL.to_string(),
+                search_count: DEFAULT_DEEPSEEK_SEARCH_COUNT,
+            })
+        );
+    }
+
+    #[test]
+    fn deepseek_accepts_an_explicit_base_and_strips_trailing_slashes() {
+        let resolved = web_provider_from_section(Some(&section(
+            "provider = \"deepseek\"\nbase_url = \"https://gateway.example/v1/tools//\"",
+        )))
+        .expect("deepseek provider");
+        assert_eq!(resolved.base_url, "https://gateway.example/v1/tools");
+    }
+
+    #[test]
+    fn search_count_is_clamped_to_the_api_range() {
+        let low =
+            web_provider_from_section(Some(&section("provider = \"deepseek\"\nsearch_count = 0")))
+                .expect("deepseek provider");
+        assert_eq!(low.search_count, 1);
+
+        let high = web_provider_from_section(Some(&section(
+            "provider = \"deepseek\"\nsearch_count = 500",
+        )))
+        .expect("deepseek provider");
+        assert_eq!(high.search_count, 50);
+
+        let exact =
+            web_provider_from_section(Some(&section("provider = \"deepseek\"\nsearch_count = 12")))
+                .expect("deepseek provider");
+        assert_eq!(exact.search_count, 12);
+    }
+
+    #[test]
+    fn provider_is_case_insensitive() {
+        assert!(web_provider_from_section(Some(&section("provider = \" DeepSeek \""))).is_some());
+    }
+}
+
 #[cfg(test)]
 mod web_search_domains_tests {
     use super::*;

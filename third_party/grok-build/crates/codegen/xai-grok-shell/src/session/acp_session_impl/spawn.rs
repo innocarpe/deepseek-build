@@ -373,6 +373,9 @@ pub(crate) async fn spawn_session_actor(
         } else {
             let web_fetch_allowed_domains = match &web_fetch_config {
                 WebFetchConfig::Enabled { params } => params.allowed_domains(),
+                // The DeepSeek Fetch API retrieves the target; the local
+                // static allowlist does not apply to that route.
+                WebFetchConfig::DeepSeek { .. } => vec![],
                 WebFetchConfig::Disabled => vec![],
             };
             let project_trusted = if prefetch.scan().is_gathered() {
@@ -536,6 +539,11 @@ pub(crate) async fn spawn_session_actor(
     drop(history_scan);
     let primary_model_id = sampling_config.model.clone();
     let web_search_config_step = spawn_step!("web_search_config_load");
+    let web_provider = if disable_web_search {
+        None
+    } else {
+        crate::util::config::resolve_web_provider_from_disk()
+    };
     let web_search_domains = if disable_web_search {
         None
     } else {
@@ -543,6 +551,24 @@ pub(crate) async fn spawn_session_actor(
     };
     let web_search_config = if disable_web_search {
         xai_grok_tools::implementations::WebSearchConfig::Disabled
+    } else if let Some(provider) = web_provider {
+        let api_key = web_search_sampling_config
+            .as_ref()
+            .and_then(|cfg| cfg.api_key.clone())
+            .or_else(|| sampling_config.api_key.clone());
+        match api_key {
+            Some(api_key) => xai_grok_tools::implementations::WebSearchConfig::DeepSeek {
+                api_key,
+                base_url: provider.base_url,
+                count: provider.search_count,
+            },
+            None => {
+                tracing::warn!(
+                    "web_search disabled: [web] selects the DeepSeek Search API but no API key resolved"
+                );
+                xai_grok_tools::implementations::WebSearchConfig::Disabled
+            }
+        }
     } else if let Some(cfg) = web_search_sampling_config {
         if let Some(api_key) = cfg.api_key {
             xai_grok_tools::implementations::WebSearchConfig::Enabled {

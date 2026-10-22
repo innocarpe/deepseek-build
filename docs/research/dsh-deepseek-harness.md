@@ -20,6 +20,10 @@ that tree; the survey reports are summarized here and the raw findings stay
 in the session record. dsb's side was read against its own `docs/specs/`,
 `crates/`, and `third_party/grok-build/`.
 
+**Later read.** The `0.2.1-rc.2` delta (`687f282e86`, 2026-10-17) is recorded
+separately in [dsh-0.2.1-delta.md](dsh-0.2.1-delta.md); this note keeps the
+`0.1.7-rc.2` reading and is not updated by it.
+
 > **One line.** dsh is not a better *agent* than this product — it is a
 > different *architecture* (TypeScript, everything-is-a-plugin, browser-first)
 > that has solved several problems this product has not yet reached, all of

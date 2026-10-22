@@ -40,7 +40,7 @@ fn effort_only_resolves_canonical_token() {
     assert_eq!(
         out,
         DeferredSwitchOutcome {
-            switch: Some(switch(
+            switch: Some(override_switch(
                 models.current.clone().unwrap(),
                 Some(ReasoningEffort::High)
             )),
@@ -56,7 +56,7 @@ fn effort_only_resolves_remapped_menu_id() {
     assert_eq!(
         out,
         DeferredSwitchOutcome {
-            switch: Some(switch(
+            switch: Some(override_switch(
                 models.current.clone().unwrap(),
                 Some(ReasoningEffort::Xhigh)
             )),
@@ -221,6 +221,14 @@ fn switch(model_id: acp::ModelId, effort: Option<ReasoningEffort>) -> DeferredMo
         effort,
         prev_model_id: None,
         origin: SwitchOrigin::User,
+    }
+}
+
+/// CLI effort tokens are a process override, so they never become a saved default.
+fn override_switch(model_id: acp::ModelId, effort: Option<ReasoningEffort>) -> DeferredModelSwitch {
+    DeferredModelSwitch {
+        origin: SwitchOrigin::ProcessOverride,
+        ..switch(model_id, effort)
     }
 }
 

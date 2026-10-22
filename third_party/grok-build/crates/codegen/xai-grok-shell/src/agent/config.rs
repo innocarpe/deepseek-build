@@ -710,6 +710,24 @@ pub struct ShellEnvironmentPolicyKnownKeys {
     pub set: Option<toml::Value>,
     pub include_only: Option<toml::Value>,
 }
+/// `[folder_trust]` known keys, declared for the unrecognized-key scan only.
+/// The trust gate reads `enabled` from the raw user and managed layers
+/// (`xai_grok_workspace::folder_trust::feature_enabled`), so the value has no
+/// [`Config`] field. Keys stay listed so `[folder_trust] enabld` still warns.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct FolderTrustKnownKeys {
+    pub enabled: Option<toml::Value>,
+}
+/// `[privacy]` known keys, declared for the unrecognized-key scan only.
+/// The pager reads and persists this section through
+/// [`crate::util::config::load_config_from_toml`], a loader separate from
+/// [`Config`]. Keys stay listed so `[privacy] privacy_banner_ackd` still warns.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct PrivacyKnownKeys {
+    pub privacy_banner_acked: Option<toml::Value>,
+}
 /// `[web]` known keys, declared for the unrecognized-key scan only; the values
 /// are resolved from raw layers by
 /// [`crate::util::config::resolve_web_provider_from_disk`].
@@ -869,6 +887,12 @@ pub struct Config {
     /// `[diagnostics]`: crash handler toggle (`load_crash_handler_enabled_sync`).
     #[serde(default, skip_serializing)]
     pub diagnostics: DiagnosticsConfig,
+    /// `[folder_trust]`: read from the raw layers by the trust gate; see [`FolderTrustKnownKeys`].
+    #[serde(default, skip_serializing)]
+    pub folder_trust: FolderTrustKnownKeys,
+    /// `[privacy]`: read and persisted by the pager's config loader; see [`PrivacyKnownKeys`].
+    #[serde(default, skip_serializing)]
+    pub privacy: PrivacyKnownKeys,
     /// When running in relay/headless mode, this should be set to Writeback.
     /// Defaults to reading from GROK_STORAGE_MODE env var.
     #[serde(skip)]
@@ -1197,6 +1221,8 @@ impl Default for Config {
             storage: StorageConfig::default(),
             marketplace: MarketplaceConfig::default(),
             diagnostics: DiagnosticsConfig::default(),
+            folder_trust: FolderTrustKnownKeys::default(),
+            privacy: PrivacyKnownKeys::default(),
             storage_mode: StorageMode::resolve(None, None),
             default_model_override: None,
             reasoning_effort_override: None,

@@ -5824,6 +5824,98 @@ fn known_non_serde_config_paths_are_not_reported_unused() {
         );
     }
 }
+/// `[folder_trust]` and `[privacy]` are read by resolvers outside [`Config`]
+/// (`folder_trust::feature_enabled` reads the raw layers, and the pager's config
+/// loader owns `[privacy]`), so their documented keys must not read as typos.
+/// Both sections keep live effects, so this only declares the names — dropping
+/// them would move the false warning into a real one and a typo would go silent.
+#[test]
+fn folder_trust_and_privacy_documented_keys_are_not_reported_unused() {
+    let unused = unused_keys_from_toml(
+        r#"
+            [folder_trust]
+            enabled = false
+
+            [privacy]
+            privacy_banner_acked = "2026-09-25T15:53:58Z"
+        "#,
+    );
+
+    for path in ["folder_trust", "privacy"] {
+        assert!(
+            !unused.iter().any(|k| k == path),
+            "{path} is documented and consumed out-of-band: {unused:?}"
+        );
+    }
+
+    let typo = unused_keys_from_toml(
+        r#"
+            [folder_trust]
+            enabld = false
+
+            [privacy]
+            privacy_banner_ackd = "2026-09-25T15:53:58Z"
+        "#,
+    );
+    assert!(
+        typo.iter().any(|k| k == "folder_trust.enabld"),
+        "a folder_trust typo must still warn: {typo:?}"
+    );
+    assert!(
+        typo.iter().any(|k| k == "privacy.privacy_banner_ackd"),
+        "a privacy typo must still warn: {typo:?}"
+    );
+}
+
+/// The declared names are scan-only: the values stay out of `Config`, so neither
+/// section can start deciding behaviour from a field nobody reads.
+#[test]
+fn folder_trust_and_privacy_keep_consuming_their_raw_values() {
+    let raw: toml::Value = toml::from_str(
+        r#"
+            [folder_trust]
+            enabled = false
+
+            [privacy]
+            privacy_banner_acked = "2026-09-25T15:53:58Z"
+
+            [compat.cursor]
+            mcps = false
+        "#,
+    )
+    .unwrap();
+
+    let config = Config::new_from_toml_cfg(&raw).expect("documented sections must load");
+
+    assert!(
+        config.config_warnings.iter().all(|w| {
+            !matches!(
+                &w.target,
+                super::super::config_model_override_parse::WarningTarget::ConfigKey { path }
+                    if path == "folder_trust" || path == "privacy"
+            )
+        }),
+        "the documented sections must load without an unknown-field warning: {:?}",
+        config.config_warnings
+    );
+    // The gate reads the raw table, not a `Config` field: the same document still
+    // resolves the trust flag and the printed compat cell.
+    assert!(
+        !xai_grok_config::compat::compat_config_cell(Some(&raw), {
+            use xai_grok_config::compat::{COMPAT_CELLS, CompatSurface, CompatVendor};
+            COMPAT_CELLS
+                .into_iter()
+                .find(|cell| {
+                    cell.vendor() == CompatVendor::Cursor && cell.surface() == CompatSurface::Mcps
+                })
+                .expect("cursor mcps cell")
+        })
+        .expect("cursor mcps cell reads")
+        .expect("cursor mcps is set"),
+        "the compat cell beside the declared section still resolves from the raw document"
+    );
+}
+
 /// `[toolset.web_search]`'s domain keys are read from the raw layers, not from `ShellToolsetConfig::web_search` (a `SamplerConfig`).
 /// The scan must therefore not call the documented settings typos.
 #[test]

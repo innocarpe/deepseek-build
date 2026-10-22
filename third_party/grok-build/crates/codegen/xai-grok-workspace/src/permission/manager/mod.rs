@@ -1162,7 +1162,9 @@ pub fn spawn_permission_manager_with_pin(
                             None
                         }
                         AccessKind::Read(_) => Some((Decision::Allow, reasons::SAFE_COMMAND)),
-                        AccessKind::WebSearch(_) => Some((Decision::Allow, reasons::SAFE_COMMAND)),
+                        // Network egress: the product profile asks before a
+                        // search query leaves the machine (spec 90 §1.9).
+                        AccessKind::WebSearch(_) => None,
                         AccessKind::Grep { .. } => Some((Decision::Allow, reasons::SAFE_COMMAND)),
                         AccessKind::MCPTool { name, .. } => mcp_pre_decision(
                             name,
@@ -4256,6 +4258,29 @@ mod tests {
                         ev.decision_reason.as_deref(),
                         Some(reasons::STATIC_ALLOWLIST)
                     );
+                })
+                .await;
+        }
+
+        /// A search query is network egress; the product profile asks before sending it.
+        #[tokio::test]
+        async fn web_search_prompts_before_network_egress() {
+            let local = tokio::task::LocalSet::new();
+            local
+                .run_until(async {
+                    let tmp = tempfile::tempdir().unwrap();
+                    let cwd = AbsPathBuf::new(tmp.path().to_path_buf()).unwrap();
+                    let client = RecordingClient::default();
+                    let prompts = client.prompts.clone();
+                    let (mgr, _events) =
+                        manager_with_recording_client(&cwd, None, client, ClientType::GrokPager);
+
+                    let decision = request(&mgr, AccessKind::WebSearch("rust lang".into())).await;
+                    assert!(
+                        matches!(decision, Decision::Reject(_)),
+                        "the recording client rejects once; a prompt must have been asked: {decision:?}"
+                    );
+                    assert_eq!(prompts.borrow().len(), 1, "web_search must prompt");
                 })
                 .await;
         }

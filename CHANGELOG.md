@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 6.14.0 — 2026-10-22
+
+- `web_search` and `web_fetch` can run on DeepSeek's direct Search and Fetch APIs through an opt-in `[web]` section (`provider = "deepseek"`, optional `base_url` and `search_count`). The tool names, input schemas, and output shapes stay; without a configured key the tools are not advertised. `web_search` now asks before network egress instead of being auto-allowed as a safe read.
+- OpenRouter model configurations accept `openrouter_provider`; the JSON value is forwarded only to OpenRouter hosts. Unset uses `{"order":["relace","deepinfra"],"allow_fallbacks":false}`, a configured object replaces it as a whole, and `false` disables provider routing so a conversation can stay on cache-compatible upstream providers.
+- A cancelled Path A turn again returns its bounded test-change evidence snapshot in `turn_snapshot`, restoring the overlay lost in the 1.0.45 vendor refresh. The snapshot stays absent for turns whose test criteria did not change.
+- The vendored 1.0.45 test suite builds and runs green again: the permission test fixtures carry the DeepSeek `file_version`, `snippet_id`, and `block_until_ms` fields, the by-model usage snapshot records the unknown main-loop note, and the phone footer and effort-only expectations match the current renderer and process-override behavior.
+
 ## 6.13.1 — 2026-10-21
 
 - Ctrl+U update completion and retry hints now use the invoked DeepSeek Build command (`dsb` or `deepseek-build`) instead of telling users to run `grok`.

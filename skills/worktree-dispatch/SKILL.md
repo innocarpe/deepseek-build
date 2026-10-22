@@ -282,18 +282,61 @@ do not leave a green PR for a later prompt.
 **Order: merge, then `session-unit`'s debrief, then this cleanup block.** The
 debrief counts with `git -C "$WT"` and fails on a removed tree.
 
+### The merge command the publication route allows
+
+The publication route that judges this repository's `gh` writes allows one
+shape for `gh pr merge`:
+
+| Argument | Value |
+|----------|-------|
+| `--repo` | `innocarpe/deepseek-build` |
+| `--merge` | no value — a merge commit. Squash and rebase are disabled on the repository, so this is its only merge shape |
+| `--match-head-commit` | the PR's head SHA. It must equal `git -C "$WT" rev-parse HEAD` |
+
+`--delete-branch`, `--squash`, `--rebase`, `--admin`, and `--auto` are outside
+the allow list, and the route denies the whole command when one appears. No
+flag is needed to remove the remote branch: the repository sets
+`delete_branch_on_merge=true`, so GitHub deletes the head branch when the merge
+commit lands.
+
+The route re-reads the PR before it allows the call. It refuses when the PR is
+a draft, when `--match-head-commit` differs from `headRefOid`, when the
+command's cwd is not the unit's worktree, when the worktree HEAD or branch
+differs from the PR, when `origin/<branch>` has not caught up with that HEAD,
+or when any check reports `fail`, `cancel`, or `pending`. It also requires a
+passing check named `required` (or `ci / required`); an empty check list fails
+closed. Read CI first — a pending check is a reason to wait, not to retry the
+merge.
+
+Run this from inside the worktree, after the push. From the tower the same
+command runs in one `cd "$WT" && …` segment, because the route reads that cwd;
+staying there afterwards is still the anti-pattern below.
+
 ```sh
-GH_TOKEN="$(gh auth token --user <account>)" gh pr merge <n> --repo innocarpe/deepseek-build --merge --delete-branch
-gh pr view <n> --repo innocarpe/deepseek-build --json state,mergeCommit   # state must read MERGED
+HEAD_SHA="$(git -C "$WT" rev-parse HEAD)"
+GH_TOKEN="$(gh auth token --user <account>)" \
+  gh pr merge <n> --repo innocarpe/deepseek-build --merge --match-head-commit "$HEAD_SHA"
+gh pr view <n> --repo innocarpe/deepseek-build --json state,mergedAt,mergeCommit,headRefOid
+```
+
+`state` must read `MERGED`. `scripts/check-pr-merged.sh <n>` is the read the
+report cites: it prints `pass` only with `MERGED`, a non-empty `mergedAt`, a
+`mergeCommit`, and two parents.
+
+Then remove the local side. GitHub has already removed the remote branch; the
+worktree, its tabs, and its local branch are this block:
+
+```sh
 git -C "$WT" status --short                          # must print nothing
+git -C "$WT" ls-remote --heads origin <branch>       # prints nothing; GitHub removed it on merge
 orca terminal list --worktree "id:$WT_ID" --json      # see what is actually open
 orca terminal close --worktree "id:$WT_ID" --all --json
 orca worktree rm --worktree "id:$WT_ID" --json
 ```
 
 `orca worktree rm` also deletes the local branch, but only when Orca can prove
-it is merged. GitHub deletes the remote branch on merge (repo setting).
-`--force` removes a dirty tree; use it only after reading what is dirty.
+it is merged. `--force` removes a dirty tree; use it only after reading what is
+dirty.
 
 **`--all` closes the launcher and setup tabs too**, which is usually what you
 want at the end of a unit — but read the list first if any tab might hold
@@ -337,6 +380,7 @@ worktree whose agent was mid-build (2026-09-25).
 | `terminal send … --enter` right after `tui-idle` without reading the screen | A first-run dialog swallows the brief and exits the agent (`orca-tab` §4) |
 | `cd "$WT"` and keep working | The next command meant for the tower runs in the tree, or the reverse |
 | `gh auth switch` | Flips the active account for every session on the machine |
+| `gh pr merge … --delete-branch` | The route allows only `--repo`, `--merge`, and `--match-head-commit`; `delete_branch_on_merge=true` already removes the remote branch |
 | Two vendored Grok builds at once | 30–60+ min cold each; parallel builds starve each other |
 | `export CARGO_TARGET_DIR=<another worktree>/third_party/grok-build/target` | One target, two worktrees: cargo writes the same artifact names and its mtime-only freshness hands the older-sourced tree the other's code (measured 2026-09-27). Use `scripts/vendor-cargo.sh` |
 | `--name feat/x` | Becomes `feat-x`; name the worktree by slug and rename the branch |

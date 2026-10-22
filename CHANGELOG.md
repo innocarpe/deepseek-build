@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 6.14.0 — 2026-10-22
+
 - `web_search` and `web_fetch` can run on DeepSeek's direct Search and Fetch APIs through an opt-in `[web]` section (`provider = "deepseek"`, optional `base_url` and `search_count`). The tool names, input schemas, and output shapes stay; without a configured key the tools are not advertised. `web_search` now asks before network egress instead of being auto-allowed as a safe read.
 - OpenRouter model configurations accept `openrouter_provider`; the JSON value is forwarded only to OpenRouter hosts. Unset uses `{"order":["relace","deepinfra"],"allow_fallbacks":false}`, a configured object replaces it as a whole, and `false` disables provider routing so a conversation can stay on cache-compatible upstream providers.
 - A cancelled Path A turn again returns its bounded test-change evidence snapshot in `turn_snapshot`, restoring the overlay lost in the 1.0.45 vendor refresh. The snapshot stays absent for turns whose test criteria did not change.

@@ -237,7 +237,7 @@ was not a claim of that cut.
 
 ### `6.8.3` baseline status (historical) — verified 2026-09-29
 
-Current release is `6.13.1` (2026-10-21); this section records the `6.8.3`
+Current release is `6.14.0` (2026-10-22); this section records the `6.8.3`
 baseline, not the current version check.
 
 Root `Cargo.toml` and `package.json` are `6.8.3`; npm latest is `6.8.3`

@@ -9,8 +9,8 @@
 ## Product chain status
 
 **Active:** none. As verified on 2026-10-22, `main` and `package.json` carry
-**`6.13.1`**, npm latest is **`6.13.1`**, and GitHub Latest is **`v6.13.1`**;
-both external releases were published on 2026-10-21. The earlier
+**`6.14.0`**, npm latest is **`6.14.0`**, and GitHub Latest is **`v6.14.0`**;
+both external releases were published on 2026-10-22. The earlier
 **`vision-complete-5x`** train completed and shipped `5.5.0` on 2026-08-08.
 
 The historical **`deepseek-native-depth-6x`** cut was published as `6.1.0` on
@@ -25,7 +25,7 @@ This is a historical record, not an active next train.
 | — | **`owner-bar-5x`** | **Complete** owner-bar product cut **`5.0.0`** | [CUT_5_0_0_2026-08-07.md](./evidence/CUT_5_0_0_2026-08-07.md) · [OWNER_BAR_5X_GOALS.md](./OWNER_BAR_5X_GOALS.md) · [PRD-v5.md](./PRD-v5.md) |
 
 **SemVer floor:** at the 2026-10-22 check, `main` and `package.json` carry
-**`6.13.1`**, npm latest is **`6.13.1`**, and GitHub Latest is **`v6.13.1`**.
+**`6.14.0`**, npm latest is **`6.14.0`**, and GitHub Latest is **`v6.14.0`**.
 Do not re-plan `5.0.1` through `5.5.0` as future feature cuts.
 
 ```text

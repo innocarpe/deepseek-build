@@ -8,9 +8,9 @@
 
 ## Product chain status
 
-**Active:** none. As verified on 2026-09-29, `main` and `package.json` carry
-**`6.8.3`**, npm latest is **`6.8.3`**, and GitHub Latest is **`v6.8.3`**;
-both external releases were published on 2026-09-28. The earlier
+**Active:** none. As verified on 2026-10-22, `main` and `package.json` carry
+**`6.13.1`**, npm latest is **`6.13.1`**, and GitHub Latest is **`v6.13.1`**;
+both external releases were published on 2026-10-21. The earlier
 **`vision-complete-5x`** train completed and shipped `5.5.0` on 2026-08-08.
 
 The historical **`deepseek-native-depth-6x`** cut was published as `6.1.0` on
@@ -24,8 +24,8 @@ This is a historical record, not an active next train.
 | **1** | **`vision-complete-5x`** | **Complete and published at `5.5.0`** on npm + GitHub Releases (2026-08-08) | [VISION_COMPLETE_5X_GOALS.md](./VISION_COMPLETE_5X_GOALS.md) · [WAVE_5x_VISION_PR_DAG.md](./WAVE_5x_VISION_PR_DAG.md) · [VISION.md](./VISION.md) |
 | — | **`owner-bar-5x`** | **Complete** owner-bar product cut **`5.0.0`** | [CUT_5_0_0_2026-08-07.md](./evidence/CUT_5_0_0_2026-08-07.md) · [OWNER_BAR_5X_GOALS.md](./OWNER_BAR_5X_GOALS.md) · [PRD-v5.md](./PRD-v5.md) |
 
-**SemVer floor:** at the 2026-09-29 check, `main` and `package.json` carry
-**`6.8.3`**, npm latest is **`6.8.3`**, and GitHub Latest is **`v6.8.3`**.
+**SemVer floor:** at the 2026-10-22 check, `main` and `package.json` carry
+**`6.13.1`**, npm latest is **`6.13.1`**, and GitHub Latest is **`v6.13.1`**.
 Do not re-plan `5.0.1` through `5.5.0` as future feature cuts.
 
 ```text

@@ -4,10 +4,10 @@
 **SemVer:** Always full `MAJOR.MINOR.PATCH` ([versioning.md](../../contributing/versioning.md))
 **Code truth:** root `Cargo.toml` / `package.json` on `main`
 
-**Current release (verified 2026-09-29):** root `Cargo.toml` and `package.json`
-are `6.8.3`; [npm latest](https://www.npmjs.com/package/@innocarpe/deepseek-build)
-is `6.8.3`, and [GitHub Latest](https://github.com/innocarpe/deepseek-build/releases/tag/v6.8.3)
-is `v6.8.3`. Both were published on 2026-09-28.
+**Current release (verified 2026-10-22):** root `Cargo.toml` and `package.json`
+are `6.13.1`; [npm latest](https://www.npmjs.com/package/@innocarpe/deepseek-build)
+is `6.13.1`, and [GitHub Latest](https://github.com/innocarpe/deepseek-build/releases/tag/v6.13.1)
+is `v6.13.1`. Both were published on 2026-10-21.
 
 When agents or humans start a train, **pick the major line first**, then the PRD for that line. Do not invent a new major without updating this index + a `PRD-vN.md`.
 
@@ -26,7 +26,7 @@ Tags and line PRDs do **not** override that file.
 | **3.x** | [PRD-v3.md](../PRD-v3.md) | **Tagged `3.0.0` — owner-bar NOT MET** | Heart fusion *attempt*; Path A fusion incomplete (library / dead wiring) — [OWNER_BAR_ACCEPTANCE.md](../OWNER_BAR_ACCEPTANCE.md) |
 | **4.x** | [PRD-v4.md](../PRD-v4.md) | **Tagged `4.0.0`–`4.0.2` — owner-bar NOT MET** | L3 productization *attempt*; machinery + docs, not full product identity |
 | **5.x** | [PRD-v5.md](../PRD-v5.md) | Historical line · **Owner-bar MET (`5.0.0`)** · **vision-complete `5.5.0` published** · later 5.x cuts recorded below | Owner-bar cut [CUT_5_0_0](../evidence/CUT_5_0_0_2026-08-07.md) · completed vision board [VISION_COMPLETE_5X_GOALS.md](../VISION_COMPLETE_5X_GOALS.md) |
-| **6.x** | [PRD-v6.md](../PRD-v6.md) | **Current published release `6.8.3`** · DeepSeek-native depth cut **`6.1.0` published** · no active ultragoal train | Grok Build ported `1.0.0` → `1.0.41`; the product's own overlay was re-derived on the new base. Owner-readable: [CHANGELIST_6_0_0.md](../CHANGELIST_6_0_0.md). **Historical continuation ([PRD-v6 §7](../PRD-v6.md)):** cache-preserving context lifecycle, attribution, runtime invariants, and spill. Board: [DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md](../DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md) · Evidence: [research/dsh-deepseek-harness.md](../../research/dsh-deepseek-harness.md). The board is historical, not proposed; it still does not claim the live spill demonstration complete. |
+| **6.x** | [PRD-v6.md](../PRD-v6.md) | **Current published release `6.13.1`** · DeepSeek-native depth cut **`6.1.0` published** · no active ultragoal train | Grok Build ported `1.0.0` → `1.0.41`; the product's own overlay was re-derived on the new base. Owner-readable: [CHANGELIST_6_0_0.md](../CHANGELIST_6_0_0.md). **Historical continuation ([PRD-v6 §7](../PRD-v6.md)):** cache-preserving context lifecycle, attribution, runtime invariants, and spill. Board: [DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md](../DEEPSEEK_NATIVE_DEPTH_6X_GOALS.md) · Evidence: [research/dsh-deepseek-harness.md](../../research/dsh-deepseek-harness.md). The board is historical, not proposed; it still does not claim the live spill demonstration complete. |
 
 Historical scaffold waves (A–D) remain under [prd/](../prd/) and are **not** product major PRDs.
 

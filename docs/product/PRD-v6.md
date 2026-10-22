@@ -235,7 +235,10 @@ was not a claim of that cut.
 | Spill demonstrated on a session that blew the context | **not claimed** | Present in the `1.0.41` tree (board §1). Not re-demonstrated |
 | Tag `v6.1.0` on npm | **not shipped** | `v6.0.2` tags `e914dfb`. `v6.1.0` does not exist |
 
-### Current release and `6.8.3` baseline status — verified 2026-09-29
+### `6.8.3` baseline status (historical) — verified 2026-09-29
+
+Current release is `6.13.1` (2026-10-21); this section records the `6.8.3`
+baseline, not the current version check.
 
 Root `Cargo.toml` and `package.json` are `6.8.3`; npm latest is `6.8.3`
 (published 2026-09-28), and GitHub Latest is `v6.8.3` (published
@@ -256,8 +259,8 @@ loads the session summary from `usage.json` and restores cumulative billing and
 Path A cache hit/miss totals before the actor accepts new requests. The first
 new turn is measured against that restored baseline, so old usage is not added
 twice. Legacy sessions with no saved cache fields retain unknown cache history;
-existing chat history without a usage file is marked incomplete. This describes
-merged source, not the published `v6.8.3` release.
+existing chat history without a usage file is marked incomplete. This landed in
+`6.9.0`; it was merged source, not part of the published `v6.8.3` release.
 
 The live spill demonstration in exit criterion 4 remains **not claimed**. The
 `v6.1.0` publication is confirmed, but this status refresh did not verify the

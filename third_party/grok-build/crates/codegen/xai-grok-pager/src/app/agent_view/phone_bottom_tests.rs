@@ -461,7 +461,14 @@ fn phone_pane_keeps_other_permission_modes_whole() {
     auto.session.set_auto_mode_for_test(true);
     let buf = draw(&mut auto, PHONE_COLS, PHONE_ROWS);
     eprintln!("phone 55x41 auto — bottom rows:\n{}", bottom_rows(&buf, 4));
-    assert_footer(&buf, "$15.87", "cache 88%", model, tokens, Some("auto"));
+    assert_footer(
+        &buf,
+        "$15.87",
+        "cache 88%",
+        model,
+        tokens,
+        Some("auto-review"),
+    );
 
     let mut ask = phone_agent();
     ask.session.set_yolo_mode_for_test(false);

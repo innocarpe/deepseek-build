@@ -38,6 +38,9 @@ pub enum RequestCompression {
 pub struct SamplerConfig {
     pub api_key: Option<String>,
     pub base_url: String,
+    /// OpenRouter 제공자 라우팅 재정의값. `false`면 캐시 친화 기본 경로를 끈다.
+    #[serde(skip)]
+    pub openrouter_provider: Option<serde_json::Value>,
     /// Resolved local directory for this model's mTLS client identity.
     #[serde(default)]
     pub mtls_cert_dir: Option<PathBuf>,
@@ -130,6 +133,7 @@ impl Default for SamplerConfig {
         Self {
             api_key: None,
             base_url: String::new(),
+            openrouter_provider: None,
             mtls_cert_dir: None,
             model: String::new(),
             max_completion_tokens: None,

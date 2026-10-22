@@ -156,6 +156,19 @@ deepseek-build auth status
 deepseek-build auth logout
 ```
 
+OpenRouter keeps prompt caches separate for each upstream provider. DSB sends
+`{"order":["relace","deepinfra"],"allow_fallbacks":false}` by default, which
+tries Relace first and limits routing to those two providers. Override it per
+model with OpenRouter's `provider` object; a configured object replaces the
+default entirely. Set it to `false` to disable routing:
+
+```toml
+[model.deepseek-v4-flash]
+openrouter_provider = { order = ["relace", "deepinfra"], allow_fallbacks = false }
+# openrouter_provider = { only = ["deepinfra/fp8"] }
+# openrouter_provider = false
+```
+
 For CI or another non-interactive environment, set `DEEPSEEK_API_KEY`; the
 environment variable takes precedence over a DeepSeek credentials file.
 Line mode (`run` / `chat`) uses the DeepSeek API only. Product

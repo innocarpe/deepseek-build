@@ -3490,6 +3490,8 @@ pub struct ConfigModelOverride {
     /// A notice with blank `text` clears the inherited one.
     pub notice: Option<ModelNotice>,
     pub api_key: Option<String>,
+    /// OpenRouter 제공자 라우팅 설정. `false`면 샘플러 기본 경로를 끈다.
+    pub openrouter_provider: Option<serde_json::Value>,
     /// Env var name(s) for the provider key: string or array in config.toml.
     pub env_key: Option<EnvKeys>,
     /// Name of a `[auth_provider.<name>]` credential helper that mints this model's bearer token.
@@ -3648,6 +3650,12 @@ impl ConfigModelOverride {
         if let Some(v) = self.supports_backend_search {
             entry.info.supports_backend_search = v;
         }
+        if self.openrouter_provider.is_some() {
+            entry
+                .info
+                .openrouter_provider
+                .clone_from(&self.openrouter_provider);
+        }
         if self.compactions_remaining.is_some() {
             entry.info.compactions_remaining = self.compactions_remaining;
         }
@@ -3708,6 +3716,9 @@ pub struct ModelInfo {
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
     pub api_backend: ApiBackend,
+    /// `[model.<id>]`에서 읽은 런타임 전용 OpenRouter 제공자 라우팅 설정.
+    #[serde(skip)]
+    pub openrouter_provider: Option<serde_json::Value>,
     pub auth_scheme: AuthScheme,
     pub extra_headers: IndexMap<String, String>,
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
@@ -3800,6 +3811,7 @@ impl ModelInfo {
             temperature: None,
             top_p: None,
             api_backend: ApiBackend::default(),
+            openrouter_provider: None,
             auth_scheme: Default::default(),
             extra_headers: IndexMap::new(),
             query_params: IndexMap::new(),
@@ -3845,6 +3857,7 @@ impl ModelInfo {
             temperature: entry.temperature,
             top_p: entry.top_p,
             api_backend: entry.api_backend.clone(),
+            openrouter_provider: None,
             auth_scheme: entry.auth_scheme.unwrap_or_default(),
             extra_headers: entry.extra_headers.clone(),
             query_params: IndexMap::new(),
@@ -4558,6 +4571,7 @@ pub(crate) fn resolve_aux_model_sampling_config(
                 temperature: None,
                 top_p: None,
                 api_backend: ApiBackend::Responses,
+                openrouter_provider: None,
                 auth_scheme: Default::default(),
                 extra_headers: IndexMap::new(),
                 query_params: IndexMap::new(),
@@ -4717,6 +4731,7 @@ pub(crate) fn sampling_config_for_model(
         temperature,
         top_p,
         api_backend,
+        openrouter_provider: info.openrouter_provider.clone(),
         auth_scheme: credentials.auth_scheme,
         request_compression,
         extra_headers,
@@ -4792,6 +4807,7 @@ fn resolve_hidden_default_web_search_sampling_config(
             temperature: None,
             top_p: None,
             api_backend: ApiBackend::Responses,
+            openrouter_provider: None,
             auth_scheme: Default::default(),
             extra_headers: IndexMap::new(),
             query_params: IndexMap::new(),

@@ -5,8 +5,8 @@ This file is standing instructions for any coding agent working in this repo.
 ## Current phase
 
 **No active product ultragoal train.** As verified on 2026-10-22, `main` and
-`package.json` carry **`6.13.1`**, npm latest is **`6.13.1`**, and GitHub Latest
-is **`v6.13.1`** (both published 2026-10-21). The earlier
+`package.json` carry **`6.14.0`**, npm latest is **`6.14.0`**, and GitHub Latest
+is **`v6.14.0`** (both published 2026-10-22). The earlier
 **`vision-complete-5x`** train completed at **`5.5.0`** and was published to
 npm and GitHub Releases on 2026-08-08. Do **not** re-plan
 `5.0.1` through `5.5.0` as future feature cuts, and do not infer a new train
@@ -31,7 +31,7 @@ from the current release.
 - **3.x tagged hearts *attempt*** — [PRD-v3](docs/product/PRD-v3.md) (`3.0.0`) — **not owner-bar green**
 - **4.x tagged L3 *attempt*** — [PRD-v4](docs/product/PRD-v4.md) (`4.0.0`+) — **not owner-bar green**
 - **5.x** owner-bar **`5.0.0`** + vision-complete **`5.5.0` published** — [PRD-v5](docs/product/PRD-v5.md) · [VISION_COMPLETE_5X_GOALS](docs/product/VISION_COMPLETE_5X_GOALS.md)
-- **6.x** current release **`6.13.1`** — [PRD-v6](docs/product/PRD-v6.md); the historical DeepSeek-native depth cut **`6.1.0`** shipped, while its board still has an unclaimed live spill demonstration and is not an active or fully closed plan.
+- **6.x** current release **`6.14.0`** — [PRD-v6](docs/product/PRD-v6.md); the historical DeepSeek-native depth cut **`6.1.0`** shipped, while its board still has an unclaimed live spill demonstration and is not an active or fully closed plan.
 
 
 **SSOT priority:** [`docs/product/SSOT.md`](docs/product/SSOT.md)

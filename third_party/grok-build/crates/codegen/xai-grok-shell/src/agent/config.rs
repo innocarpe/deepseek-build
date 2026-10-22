@@ -713,16 +713,18 @@ pub struct ShellEnvironmentPolicyKnownKeys {
 /// `[web]` known keys, declared for the unrecognized-key scan only; the values
 /// are resolved from raw layers by
 /// [`crate::util::config::resolve_web_provider_from_disk`].
+/// `Option<toml::Value>` keeps a wrong type a resolver warning, not a load
+/// failure, like [`ShellEnvironmentPolicyKnownKeys`].
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct WebKnownKeys {
     /// `"deepseek"` selects the direct Search/Fetch APIs; absent or `"xai"`
     /// keeps the vendored provider.
-    pub provider: Option<String>,
+    pub provider: Option<toml::Value>,
     /// Base including the `/v1/tools` route prefix.
-    pub base_url: Option<String>,
+    pub base_url: Option<toml::Value>,
     /// Search API result count, clamped to 1..=50 at resolution.
-    pub search_count: Option<i64>,
+    pub search_count: Option<toml::Value>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {

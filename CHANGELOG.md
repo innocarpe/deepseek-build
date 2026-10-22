@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 6.14.1 — 2026-10-22
+
+- The config warning scan recognizes `[folder_trust].enabled` and `[privacy].privacy_banner_acked` while still reporting misspelled keys in those sections.
+- Inspect now builds its MCP list with the resolved runtime compatibility settings, preserving live definitions over same-named disabled vendor entries while retaining vendor-only entries as disabled.
+
 ## 6.14.0 — 2026-10-22
 
 - `web_search` and `web_fetch` can run on DeepSeek's direct Search and Fetch APIs through an opt-in `[web]` section (`provider = "deepseek"`, optional `base_url` and `search_count`). The tool names, input schemas, and output shapes stay; without a configured key the tools are not advertised. `web_search` now asks before network egress instead of being auto-allowed as a safe read.

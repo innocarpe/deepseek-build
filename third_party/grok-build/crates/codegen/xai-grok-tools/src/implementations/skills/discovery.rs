@@ -112,7 +112,9 @@ pub fn find_skill_md_paths(dir: &Path) -> Vec<PathBuf> {
 
 /// Recursively walk directories looking for SKILL.md files. Visits entries in lexicographic order:
 /// `read_dir` order is filesystem-dependent, and name-collision handling downstream is
-/// first-seen-wins, so an unsorted walk picks a nondeterministic winner.
+/// first-seen-wins, so an unsorted walk picks a nondeterministic winner. Hidden directories are
+/// skipped: they hold tool state such as `~/.claude/skills/.trash`, whose deleted skills would
+/// otherwise be listed and could shadow a live skill of the same name.
 pub fn walk_for_skill_md(dir: &Path, paths: &mut Vec<PathBuf>, depth: usize) {
     if depth > MAX_SKILL_WALK_DEPTH {
         return;
@@ -120,6 +122,7 @@ pub fn walk_for_skill_md(dir: &Path, paths: &mut Vec<PathBuf>, depth: usize) {
     if let Ok(entries) = std::fs::read_dir(dir) {
         let mut dirs: Vec<PathBuf> = entries
             .flatten()
+            .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
             .map(|entry| entry.path())
             .filter(|path| path.is_dir())
             .collect();
@@ -1584,6 +1587,32 @@ model: test-model
             !names_off.contains(&"claude-dyn"),
             "claude-dyn must be gated off: {names_off:?}"
         );
+    }
+
+    #[test]
+    fn walk_for_skill_md_skips_hidden_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        for dir in [
+            "live",
+            ".trash/1791894263290-38512-vczFNf/live",
+            ".hidden-skill",
+        ] {
+            let d = tmp.path().join(dir);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("SKILL.md"), "---\nname: x\n---\n").unwrap();
+        }
+
+        let paths = find_skill_md_paths(tmp.path());
+        let rel: Vec<String> = paths
+            .iter()
+            .map(|p| {
+                p.strip_prefix(tmp.path())
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert_eq!(rel, ["live/SKILL.md"]);
     }
 
     #[test]

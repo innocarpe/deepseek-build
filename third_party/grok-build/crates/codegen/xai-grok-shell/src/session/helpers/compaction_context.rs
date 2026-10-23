@@ -143,7 +143,7 @@ fn to_system_reminder_inner(
 
     // Available skills (startup and dynamically discovered, from SkillManager)
     // Reuse the standard listing renderer so the post-compaction listing matches the startup `<system-reminder>`
-    // The shared renderer has no hard-coded tool name and includes `Use when:` triggers and `Absolute path:`
+    // The shared renderer has no hard-coded tool name and includes `Use when:` triggers and `Path pattern:` / `Absolute path:` lines
     if let Some(listing) =
         xai_grok_tools::types::skill_discovery_tracker::format_compaction_skill_listing(skills)
     {

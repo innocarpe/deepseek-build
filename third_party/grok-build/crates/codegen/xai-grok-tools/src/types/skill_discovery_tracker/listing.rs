@@ -257,17 +257,16 @@ impl<'a> SkillListing<'a> {
         let patterns: Vec<Option<String>> = self.0.iter().map(SkillEntry::path_pattern).collect();
         let mut sections: Vec<ListingSection> = Vec::new();
         let mut start = 0;
-        while start < patterns.len() {
-            let mut end = start + 1;
-            while end < patterns.len()
-                && patterns[start].is_some()
-                && patterns[end] == patterns[start]
-            {
-                end += 1;
-            }
-            if patterns[start].is_some() && end - start >= MIN_PATH_GROUP_LEN {
+        for run in patterns.chunk_by(|a, b| a.is_some() && a == b) {
+            let end = start + run.len();
+            let pattern = run
+                .first()
+                .cloned()
+                .flatten()
+                .filter(|_| run.len() >= MIN_PATH_GROUP_LEN);
+            if pattern.is_some() {
                 sections.push(ListingSection {
-                    pattern: patterns[start].clone(),
+                    pattern,
                     entries: start..end,
                 });
             } else if let Some(last) = sections.last_mut().filter(|s| s.pattern.is_none()) {
@@ -304,7 +303,10 @@ impl<'a> SkillListing<'a> {
             .iter()
             .map(|section| {
                 let show_path = section.pattern.is_none();
-                let rows = self.0[section.entries.clone()]
+                let rows = self
+                    .0
+                    .get(section.entries.clone())
+                    .unwrap_or_default()
                     .iter()
                     .map(|e| entry(e, show_path))
                     .collect::<Vec<_>>()
@@ -354,7 +356,9 @@ impl<'a> SkillListing<'a> {
             + sections
                 .iter()
                 .map(|s| {
-                    self.0[s.entries.clone()]
+                    self.0
+                        .get(s.entries.clone())
+                        .unwrap_or_default()
                         .iter()
                         .map(|e| e.overhead(s.pattern.is_none()))
                         .sum::<usize>()

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 6.14.2 — 2026-10-23
+
 - The startup skill reminder gives each run of two or more skills from the same directory one `Path pattern:` line instead of an `Absolute path:` line per entry; single entries and paths that do not follow `<dir>/<name>/SKILL.md` or `<dir>/<name>.md` keep their absolute path. In an HQ workspace with 169 skills the reminder shrank from 41,959 to 26,124 characters, and live prompts still opened the listed skill files in one tool call (#388).
 - Skill discovery skips hidden directories, so deleted skills that Claude Code keeps under `~/.claude/skills/.trash/` are no longer listed next to live skills of the same name (#388).
 

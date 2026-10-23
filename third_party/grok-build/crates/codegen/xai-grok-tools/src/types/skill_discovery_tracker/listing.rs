@@ -45,6 +45,15 @@ fn listing_header(_tool_name: &str) -> String {
     "The following skills are available for use:\n\n".to_string()
 }
 
+/// Follows the header when at least one group shares a `Path pattern:` line.
+const PATH_PATTERN_NOTE: &str = "Where a group starts with a \"Path pattern:\" line, replace <name> with the skill name to get the absolute path of its file.\n\n";
+/// Label of the line that carries a group's shared path.
+const PATH_PATTERN_LABEL: &str = "Path pattern: ";
+/// A run of at least this many consecutive entries with the same path pattern
+/// shares one `Path pattern:` line; a shorter run keeps per-entry paths, since
+/// the pattern line would cost more than it saves.
+const MIN_PATH_GROUP_LEN: usize = 2;
+
 /// Whether a skill belongs in the model-facing listing. Native, bundled, and
 /// repo/user skills always qualify (they carry a body-derived description);
 /// plugin skills must have an authored `description` or `when_to_use`.
@@ -75,21 +84,46 @@ impl<'a> SkillEntry<'a> {
 
     /// Render the entry with description and when_to_use truncated to the
     /// budgets from `proportional_budgets`. `func_desc` must be the result of
-    /// `self.func_desc()`.
-    fn format(&self, func_desc: &str, desc_budget: usize, wtu_budget: usize) -> String {
+    /// `self.func_desc()`. `show_path` is false when the entry sits under a
+    /// shared `Path pattern:` line.
+    fn format(
+        &self,
+        func_desc: &str,
+        desc_budget: usize,
+        wtu_budget: usize,
+        show_path: bool,
+    ) -> String {
         let desc = truncate_str_with_marker(func_desc, desc_budget);
+        let mut out = format!("- {}: {}", self.name, desc);
         if let Some(wtu) = self.when_to_use {
             let wtu = truncate_str_with_marker(strip_leading_trigger_prefix(wtu), wtu_budget);
-            format!(
-                "- {}: {}\n  Use when: {}\n  Absolute path: {}",
-                self.name, desc, wtu, self.display_path
-            )
-        } else {
-            format!(
-                "- {}: {}\n  Absolute path: {}",
-                self.name, desc, self.display_path
-            )
+            out.push_str(&format!("\n  Use when: {wtu}"));
         }
+        if show_path {
+            out.push_str(&format!("\n  Absolute path: {}", self.display_path));
+        }
+        out
+    }
+
+    /// The path with this entry's name replaced by `<name>`, when the file is
+    /// `<dir>/<name>/SKILL.md` or `<dir>/<name>.md`. Entries in a row that
+    /// share a pattern can drop their own path line.
+    fn path_pattern(&self) -> Option<String> {
+        for sep in ['/', '\\'] {
+            let skill_dir = format!("{sep}{}{sep}SKILL.md", self.name);
+            if let Some(root) = self.display_path.strip_suffix(&skill_dir)
+                && !root.is_empty()
+            {
+                return Some(format!("{root}{sep}<name>{sep}SKILL.md"));
+            }
+            let command_file = format!("{sep}{}.md", self.name);
+            if let Some(root) = self.display_path.strip_suffix(&command_file)
+                && !root.is_empty()
+            {
+                return Some(format!("{root}{sep}<name>.md"));
+            }
+        }
+        None
     }
 
     /// Split `total` between description and when_to_use proportionally to their
@@ -118,14 +152,13 @@ impl<'a> SkillEntry<'a> {
     }
 
     /// Byte length of the fixed overhead (name, path, Use when label) excluding content.
-    fn overhead(&self) -> usize {
-        // "- " + name + ": " + "\n  Absolute path: " + path + "\n"
-        let base = "- ".len()
-            + self.name.len()
-            + ": ".len()
-            + "\n  Absolute path: ".len()
-            + self.display_path.len()
-            + "\n".len();
+    /// The path line is left out when the entry sits under a shared `Path pattern:` line.
+    fn overhead(&self, show_path: bool) -> usize {
+        // "- " + name + ": " + ["\n  Absolute path: " + path] + "\n"
+        let mut base = "- ".len() + self.name.len() + ": ".len() + "\n".len();
+        if show_path {
+            base += "\n  Absolute path: ".len() + self.display_path.len();
+        }
         if self.when_to_use.is_some() {
             base + "  Use when: ".len() + "\n".len()
         } else {
@@ -208,7 +241,93 @@ impl<'a> SkillEntry<'a> {
 /// A budget-aware collection of skill entries ready to render into a listing.
 struct SkillListing<'a>(Vec<SkillEntry<'a>>);
 
+/// Consecutive entries rendered together. `pattern` is set when the entries
+/// share one `Path pattern:` line instead of carrying their own paths.
+struct ListingSection {
+    pattern: Option<String>,
+    entries: std::ops::Range<usize>,
+}
+
 impl<'a> SkillListing<'a> {
+    /// Split the entries, in order, into sections: each run of at least
+    /// `MIN_PATH_GROUP_LEN` entries with the same path pattern becomes a
+    /// grouped section, and the entries between such runs keep their paths.
+    /// Order is never changed, so the listing stays byte-stable.
+    fn sections(&self) -> Vec<ListingSection> {
+        let patterns: Vec<Option<String>> = self.0.iter().map(SkillEntry::path_pattern).collect();
+        let mut sections: Vec<ListingSection> = Vec::new();
+        let mut start = 0;
+        while start < patterns.len() {
+            let mut end = start + 1;
+            while end < patterns.len()
+                && patterns[start].is_some()
+                && patterns[end] == patterns[start]
+            {
+                end += 1;
+            }
+            if patterns[start].is_some() && end - start >= MIN_PATH_GROUP_LEN {
+                sections.push(ListingSection {
+                    pattern: patterns[start].clone(),
+                    entries: start..end,
+                });
+            } else if let Some(last) = sections.last_mut().filter(|s| s.pattern.is_none()) {
+                last.entries.end = end;
+            } else {
+                sections.push(ListingSection {
+                    pattern: None,
+                    entries: start..end,
+                });
+            }
+            start = end;
+        }
+        sections
+    }
+
+    /// Header plus the note that explains `Path pattern:` lines when any section uses one.
+    fn header(sections: &[ListingSection], skill_tool_name: &str) -> String {
+        let mut header = listing_header(skill_tool_name);
+        if sections.iter().any(|s| s.pattern.is_some()) {
+            header.push_str(PATH_PATTERN_NOTE);
+        }
+        header
+    }
+
+    /// Join rendered entries by section: a grouped section opens with its
+    /// `Path pattern:` line, and sections are separated by a blank line.
+    /// `entry` receives each entry and whether it must show its own path.
+    fn render_sections(
+        &self,
+        sections: &[ListingSection],
+        mut entry: impl FnMut(&SkillEntry<'a>, bool) -> String,
+    ) -> String {
+        sections
+            .iter()
+            .map(|section| {
+                let show_path = section.pattern.is_none();
+                let rows = self.0[section.entries.clone()]
+                    .iter()
+                    .map(|e| entry(e, show_path))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                match &section.pattern {
+                    Some(pattern) => format!("{PATH_PATTERN_LABEL}{pattern}\n{rows}"),
+                    None => rows,
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
+    /// Fixed bytes of a sectioned listing outside the entries: pattern lines and section breaks.
+    fn sections_overhead(sections: &[ListingSection]) -> usize {
+        let pattern_lines: usize = sections
+            .iter()
+            .filter_map(|s| s.pattern.as_ref())
+            .map(|p| PATH_PATTERN_LABEL.len() + p.len() + "\n".len())
+            .sum();
+        pattern_lines + sections.len().saturating_sub(1) * "\n".len()
+    }
+
     /// Render the listing within `budget` bytes, returning `None` if empty. Full descriptions (each capped at
     /// `MAX_LISTING_COMBINED_BYTES`) -- if within budget. Proportionally shortened descriptions -- if descriptions are the
     /// bottleneck. Names-only with overflow indicator -- when even short descriptions don't fit.
@@ -216,44 +335,46 @@ impl<'a> SkillListing<'a> {
         if self.0.is_empty() {
             return None;
         }
-        let header = listing_header(skill_tool_name);
+        let sections = self.sections();
+        let header = Self::header(&sections, skill_tool_name);
         let header_len = header.len();
 
         // Tier 1: full descriptions.
-        let full_listing = self
-            .0
-            .iter()
-            .map(|e| {
-                let fd = e.func_desc();
-                let (db, wb) = e.proportional_budgets(fd.len().max(1), MAX_LISTING_COMBINED_BYTES);
-                e.format(fd, db, wb)
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let full_listing = self.render_sections(&sections, |e, show_path| {
+            let fd = e.func_desc();
+            let (db, wb) = e.proportional_budgets(fd.len().max(1), MAX_LISTING_COMBINED_BYTES);
+            e.format(fd, db, wb, show_path)
+        });
         if header_len + full_listing.len() <= budget {
             return Some(format!("{header}{full_listing}"));
         }
 
         // Tier 2: shortened descriptions with proportional allocation.
-        let total_overhead: usize = self.0.iter().map(|e| e.overhead()).sum();
+        let total_overhead: usize = Self::sections_overhead(&sections)
+            + sections
+                .iter()
+                .map(|s| {
+                    self.0[s.entries.clone()]
+                        .iter()
+                        .map(|e| e.overhead(s.pattern.is_none()))
+                        .sum::<usize>()
+                })
+                .sum::<usize>();
         let available = budget.saturating_sub(header_len + total_overhead);
         let budget_per_entry = available / self.0.len().max(1);
 
         if budget_per_entry >= MIN_DESC_LENGTH {
-            let listing = self
-                .0
-                .iter()
-                .map(|e| {
-                    let fd = e.func_desc();
-                    let (db, wb) = e.proportional_budgets(fd.len().max(1), budget_per_entry);
-                    e.format(fd, db, wb)
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let listing = self.render_sections(&sections, |e, show_path| {
+                let fd = e.func_desc();
+                let (db, wb) = e.proportional_budgets(fd.len().max(1), budget_per_entry);
+                e.format(fd, db, wb, show_path)
+            });
             return Some(format!("{header}{listing}"));
         }
 
         // Tier 3: names-only, drop entries that exceed remaining budget.
+        let header = listing_header(skill_tool_name);
+        let header_len = header.len();
         Some(format!(
             "{header}{}",
             self.names_only(budget.saturating_sub(header_len))
@@ -600,7 +721,7 @@ pub(super) fn format_announcement(
 }
 
 /// Render the standard skill listing for the post-compaction system-reminder. Reuses [`format_announcement`] so the post-compaction listing
-/// matches the startup `<system-reminder>` byte-for-byte (standard header, `Use when:` triggers, `Absolute path:`) instead of a hand-rolled
+/// matches the startup `<system-reminder>` byte-for-byte (standard header, `Use when:` triggers, `Path pattern:` / `Absolute path:`) instead of a hand-rolled
 /// divergent format. Lists every enabled, model-invocable skill with no carried-over dedup state.
 pub fn format_compaction_skill_listing(skills: &[SkillInfo]) -> Option<String> {
     let mut announced = HashSet::new();
@@ -1161,6 +1282,116 @@ mod tests {
         assert!(text.starts_with(&listing_header(DEFAULT_SKILL_TOOL_NAME)));
     }
 
+    // ── Path patterns ────────────────────────────────────────────
+
+    #[test]
+    fn same_dir_run_shares_one_path_pattern_line() {
+        let skills = [
+            skill("commit", "Commit staged changes."),
+            skill("review", "Review pull request."),
+        ];
+        let text = announce(&skills, 8_000).unwrap();
+        assert_eq!(
+            text,
+            format!(
+                "{}{PATH_PATTERN_NOTE}Path pattern: /skills/<name>/SKILL.md\n\
+                 - commit: Commit staged changes.\n\
+                 - review: Review pull request.",
+                listing_header(DEFAULT_SKILL_TOOL_NAME)
+            )
+        );
+        assert!(!text.contains("Absolute path:"), "{text}");
+    }
+
+    #[test]
+    fn mixed_roots_keep_paths_that_do_not_fit_a_group() {
+        let skills = [
+            skill("a", "First."),
+            skill("b", "Second."),
+            SkillInfo {
+                path: "/home/.agents/skills/c/SKILL.md".into(),
+                ..skill("c", "Third.")
+            },
+            SkillInfo {
+                path: "/repo/.claude/commands/deploy.md".into(),
+                ..skill("deploy", "Deploy.")
+            },
+            SkillInfo {
+                path: "/repo/.claude/commands/ship.md".into(),
+                ..skill("ship", "Ship.")
+            },
+            SkillInfo {
+                path: "/plugins/x/skills/other-dir/SKILL.md".into(),
+                ..skill("plugin:skill", "Plugin.")
+            },
+        ];
+        let text = announce(&skills, 8_000).unwrap();
+        assert_eq!(
+            text,
+            format!(
+                "{}{PATH_PATTERN_NOTE}Path pattern: /skills/<name>/SKILL.md\n\
+                 - a: First.\n\
+                 - b: Second.\n\
+                 \n\
+                 - c: Third.\n  Absolute path: /home/.agents/skills/c/SKILL.md\n\
+                 \n\
+                 Path pattern: /repo/.claude/commands/<name>.md\n\
+                 - deploy: Deploy.\n\
+                 - ship: Ship.\n\
+                 \n\
+                 - plugin:skill: Plugin.\n  Absolute path: /plugins/x/skills/other-dir/SKILL.md",
+                listing_header(DEFAULT_SKILL_TOOL_NAME)
+            )
+        );
+    }
+
+    #[test]
+    fn grouped_entry_keeps_use_when_line() {
+        let skills = [
+            SkillInfo {
+                when_to_use: Some("user says memorize".into()),
+                ..skill("memorize", "Persist knowledge.")
+            },
+            skill("recall", "Recall knowledge."),
+        ];
+        let text = announce(&skills, 8_000).unwrap();
+        assert!(
+            text.contains(
+                "- memorize: Persist knowledge.\n  Use when: user says memorize\n- recall"
+            ),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn tier2_with_groups_stays_within_budget() {
+        let skills: Vec<SkillInfo> = (0..30)
+            .map(|i| skill(&format!("skill-{i:02}"), &"Z".repeat(300)))
+            .collect();
+        let budget = 3_000;
+        let text = announce(&skills, budget).unwrap();
+        assert!(
+            text.contains("Path pattern: /skills/<name>/SKILL.md"),
+            "{text}"
+        );
+        assert!(text.contains("…"), "{text}");
+        assert!(text.len() <= budget + 50, "{} > {budget}", text.len());
+    }
+
+    #[test]
+    fn path_pattern_accepts_windows_separators() {
+        let entry = SkillEntry {
+            name: "commit",
+            description: "d",
+            when_to_use: None,
+            display_path: r"C:\skills\commit\SKILL.md".to_owned(),
+        };
+        assert_eq!(
+            entry.path_pattern().as_deref(),
+            Some(r"C:\skills\<name>\SKILL.md")
+        );
+    }
+
     #[test]
     fn two_skills_both_appear() {
         let skills = [
@@ -1624,8 +1855,10 @@ mod tests {
             when_to_use: Some("trigger"),
             display_path: "/p/SKILL.md".to_owned(),
         };
-        let diff = with.overhead() - without.overhead();
+        let diff = with.overhead(true) - without.overhead(true);
         assert_eq!(diff, "  Use when: ".len() + "\n".len());
+        let path_line = without.overhead(true) - without.overhead(false);
+        assert_eq!(path_line, "\n  Absolute path: ".len() + "/p/SKILL.md".len());
     }
 
     #[test]
